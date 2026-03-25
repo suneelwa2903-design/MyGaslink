@@ -1,0 +1,79 @@
+{
+  "expo": {
+    "name": "MyGasLink",
+    "slug": "mygaslink",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#338dff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mygaslink.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We need your location for delivery tracking",
+        "NSCameraUsageDescription": "We need camera access for delivery proof photos",
+        "NSPhotoLibraryUsageDescription": "Allow MyGasLink to save delivery proof photos"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#338dff"
+      },
+      "package": "com.mygaslink.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow MyGasLink to use your location for delivery tracking.",
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow MyGasLink to access your camera for delivery proof."
+        }
+      ],
+      ["expo-notifications", { "icon": "./assets/notification-icon.png", "color": "#338dff" }]
+    ],
+    "scheme": "mygaslink",
+    "extra": {
+      "eas": {
+        "projectId": "f6e20f06-1ee0-48da-be19-e4426997c0ff"
+      },
+      "router": {
+        "origin": false
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/",
+      "fallbackToCacheTimeout": 5000
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "owner": "poultryproplus"
+  }
+}

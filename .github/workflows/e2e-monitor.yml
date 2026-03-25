@@ -1,0 +1,229 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# E2E Production Monitor
+#
+# Spins up a full environment (Postgres + API) and runs critical-path E2E tests
+# daily at 2:30 AM IST (21:00 UTC previous day).
+#
+# On failure: sends email via SMTP and creates a GitHub issue.
+#
+# Required GitHub Secrets:
+#   DATABASE_URL        – Postgres connection string (only needed for prod mode;
+#                         the CI job builds its own via services)
+#   SMTP_HOST           – SMTP host (e.g. smtp.gmail.com)
+#   SMTP_USER           – SMTP login
+#   SMTP_PASS           – SMTP password / app-specific password
+#   ALERT_EMAIL         – Recipient email for the results report
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: E2E Production Monitor
+
+on:
+  schedule:
+    # 2:30 AM IST = 21:00 UTC (previous day)
+    - cron: '0 21 * * *'
+  workflow_dispatch: # allow manual trigger from the Actions tab
+
+concurrency:
+  group: e2e-monitor
+  cancel-in-progress: true
+
+jobs:
+  e2e-tests:
+    name: Run E2E tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: gaslink
+          POSTGRES_PASSWORD: gaslink_test
+          POSTGRES_DB: gaslink_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://gaslink:gaslink_test@localhost:5432/gaslink_e2e
+      JWT_SECRET: e2e-test-jwt-secret-not-for-production
+      JWT_REFRESH_SECRET: e2e-test-refresh-secret-not-for-production
+      NODE_ENV: test
+      PORT: 5000
+
+    steps:
+      # ── Setup ────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── Database ─────────────────────────────────────────────────────────
+      - name: Push schema to database
+        run: pnpm exec prisma db push --skip-generate
+        working-directory: packages/api
+
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+        working-directory: packages/api
+
+      - name: Seed test data
+        run: pnpm exec tsx prisma/seed.ts
+        working-directory: packages/api
+
+      # ── Start API server ─────────────────────────────────────────────────
+      - name: Start API server
+        run: |
+          pnpm exec tsx src/server.ts &
+          echo "Waiting for API to be ready..."
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:5000/api/health | grep -q healthy; then
+              echo "API is ready!"
+              break
+            fi
+            sleep 1
+          done
+        working-directory: packages/api
+
+      # ── Run E2E tests ───────────────────────────────────────────────────
+      - name: Run E2E monitor script
+        id: e2e
+        continue-on-error: true
+        env:
+          BASE_URL: http://localhost:5000/api
+          PROD_ADMIN_EMAIL: bhargava@gasagency.com
+          PROD_ADMIN_PASSWORD: Distadmin@123
+        run: pnpm exec tsx scripts/e2e-monitor.ts
+        working-directory: packages/api
+
+      # ── Upload results artifact ──────────────────────────────────────────
+      - name: Upload results JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: packages/api/e2e-results.json
+          retention-days: 30
+
+      # ── Build email body ─────────────────────────────────────────────────
+      - name: Build email body
+        if: always()
+        id: email
+        run: |
+          if [ ! -f packages/api/e2e-results.json ]; then
+            echo "body=E2E monitor script crashed before producing results." >> "$GITHUB_OUTPUT"
+            echo "subject=[GASLINK] E2E Monitor CRASHED" >> "$GITHUB_OUTPUT"
+            echo "status=FAILED" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PASSED=$(jq '.passed' packages/api/e2e-results.json)
+          FAILED=$(jq '.failed' packages/api/e2e-results.json)
+          SKIPPED=$(jq '.skipped' packages/api/e2e-results.json)
+          TOTAL=$(jq '.totalTests' packages/api/e2e-results.json)
+          DURATION=$(jq '.totalDurationMs' packages/api/e2e-results.json)
+          RUN_AT=$(jq -r '.runAt' packages/api/e2e-results.json)
+
+          if [ "$FAILED" -gt 0 ]; then
+            STATUS="FAILED"
+          else
+            STATUS="PASSED"
+          fi
+
+          BODY=$(cat <<REPORT
+          GasLink E2E Monitor — ${STATUS}
+
+          Run at:     ${RUN_AT}
+          Duration:   ${DURATION}ms
+          Passed:     ${PASSED}/${TOTAL}
+          Failed:     ${FAILED}/${TOTAL}
+          Skipped:    ${SKIPPED}/${TOTAL}
+
+          ---
+
+          $(jq -r '.results[] | "[\(.status | ascii_upcase)] \(.group) > \(.name) (\(.durationMs)ms)\(if .error then " — " + .error else "" end)"' packages/api/e2e-results.json)
+
+          ---
+          Full results: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT
+          )
+
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "body<<${EOF_MARKER}" >> "$GITHUB_OUTPUT"
+          echo "${BODY}" >> "$GITHUB_OUTPUT"
+          echo "${EOF_MARKER}" >> "$GITHUB_OUTPUT"
+          echo "subject=[GASLINK] E2E Monitor ${STATUS} — ${PASSED}/${TOTAL} passed" >> "$GITHUB_OUTPUT"
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+      # ── Send email ───────────────────────────────────────────────────────
+      - name: Send results email
+        if: always() && env.HAS_SMTP == 'true'
+        env:
+          HAS_SMTP: ${{ secrets.SMTP_HOST != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: 587
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: ${{ steps.email.outputs.subject }}
+          body: ${{ steps.email.outputs.body }}
+          to: ${{ secrets.ALERT_EMAIL }}
+          from: GasLink Monitor <${{ secrets.SMTP_USER }}>
+
+      # ── Create issue on failure ──────────────────────────────────────────
+      - name: Create GitHub issue on failure
+        if: always() && steps.email.outputs.status == 'FAILED'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let resultsText = 'No results file found.';
+            try {
+              const raw = fs.readFileSync('packages/api/e2e-results.json', 'utf8');
+              const data = JSON.parse(raw);
+              const failures = data.results
+                .filter(r => r.status === 'fail')
+                .map(r => `- **${r.group} > ${r.name}** (${r.durationMs}ms): ${r.error}`)
+                .join('\n');
+              resultsText = `## Failed Tests\n\n${failures}\n\n` +
+                `**Passed:** ${data.passed}/${data.totalTests}  |  ` +
+                `**Failed:** ${data.failed}/${data.totalTests}  |  ` +
+                `**Duration:** ${data.totalDurationMs}ms\n\n` +
+                `[View full run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            } catch (e) {
+              resultsText = `Error reading results: ${e.message}`;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[E2E Monitor] Test failures — ${new Date().toISOString().slice(0, 10)}`,
+              body: resultsText,
+              labels: ['bug', 'monitoring'],
+            });
+
+      # ── Fail the workflow if tests failed ────────────────────────────────
+      - name: Check result
+        if: always()
+        run: |
+          if [ "${{ steps.email.outputs.status }}" = "FAILED" ]; then
+            echo "E2E tests failed!"
+            exit 1
+          fi

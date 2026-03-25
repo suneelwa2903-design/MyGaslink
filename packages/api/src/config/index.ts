@@ -1,0 +1,88 @@
+import 'dotenv/config';
+
+export const config = {
+  port: parseInt(process.env.PORT || '5000', 10),
+  nodeEnv: process.env.NODE_ENV || 'development',
+  isDev: process.env.NODE_ENV !== 'production',
+  isProd: process.env.NODE_ENV === 'production',
+
+  cors: {
+    origins: (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map(s => s.trim()),
+  },
+
+  jwt: {
+    accessSecret: process.env.JWT_ACCESS_SECRET || 'dev-access-secret-change-in-production',
+    refreshSecret: process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-change-in-production',
+    accessExpiresIn: '15m',
+    refreshExpiresIn: '7d',
+  },
+
+  smtp: {
+    host: process.env.SMTP_HOST || '',
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.SMTP_FROM || 'noreply@mygaslink.com',
+    contactEmail: process.env.CONTACT_FORM_EMAIL || 'info@mygaslink.com',
+  },
+
+  gst: {
+    clientId: process.env.GASLINK_GST_CLIENT_ID || '',
+    clientSecret: process.env.GASLINK_GST_CLIENT_SECRET || '',
+    username: process.env.GASLINK_GST_USERNAME || '',
+    gstin: process.env.GASLINK_GST_GSTIN || '',
+    isSandbox: process.env.GASLINK_GST_SANDBOX === 'true',
+  },
+
+  aws: {
+    region: process.env.AWS_REGION || 'ap-south-1',
+    s3Bucket: process.env.AWS_S3_BUCKET || '',
+    cloudFrontUrl: process.env.AWS_CLOUDFRONT_URL || '',
+  },
+} as const;
+
+/**
+ * Validate required environment variables at startup.
+ * In production, missing critical vars cause a hard failure.
+ * In development, warnings are logged but the server continues.
+ */
+export function validateEnv(): void {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // DATABASE_URL is always required
+  if (!process.env.DATABASE_URL) {
+    errors.push('DATABASE_URL is required');
+  }
+
+  if (config.isProd) {
+    // In production, JWT secrets must not be defaults
+    if (config.jwt.accessSecret === 'dev-access-secret-change-in-production') {
+      errors.push('JWT_ACCESS_SECRET must be set in production (not default)');
+    }
+    if (config.jwt.refreshSecret === 'dev-refresh-secret-change-in-production') {
+      errors.push('JWT_REFRESH_SECRET must be set in production (not default)');
+    }
+    // CORS must be explicitly configured
+    if (!process.env.CORS_ORIGINS) {
+      errors.push('CORS_ORIGINS must be set in production');
+    }
+  } else {
+    // Dev warnings
+    if (config.jwt.accessSecret === 'dev-access-secret-change-in-production') {
+      warnings.push('JWT_ACCESS_SECRET using dev default — set before deploying');
+    }
+    if (config.jwt.refreshSecret === 'dev-refresh-secret-change-in-production') {
+      warnings.push('JWT_REFRESH_SECRET using dev default — set before deploying');
+    }
+  }
+
+  if (warnings.length > 0) {
+    console.warn(`\n⚠️  Environment warnings:\n  - ${warnings.join('\n  - ')}\n`);
+  }
+
+  if (errors.length > 0) {
+    console.error(`\n❌ Environment validation failed:\n  - ${errors.join('\n  - ')}\n`);
+    process.exit(1);
+  }
+}

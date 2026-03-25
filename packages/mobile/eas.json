@@ -1,0 +1,50 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://localhost:5000/api"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.mygaslink.com/api",
+        "EXPO_PUBLIC_SENTRY_DSN": "https://b78dc94670acb7b35cfb7dc79969eaf2@o4511100730605568.ingest.us.sentry.io/4511100732506112"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "ios": {
+        "image": "latest"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.mygaslink.com/api",
+        "EXPO_PUBLIC_SENTRY_DSN": "https://b78dc94670acb7b35cfb7dc79969eaf2@o4511100730605568.ingest.us.sentry.io/4511100732506112"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

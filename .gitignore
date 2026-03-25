@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+
+# Docker
+docker-data/
+
+# Prisma
+packages/api/prisma/*.db
+
+# Mobile
+packages/mobile/.expo/
+packages/mobile/android/
+packages/mobile/ios/
+
+# Python (legacy)
+__pycache__/
+*.pyc
+.venv/
+
+# Temporary
+*.tmp
+*.bak
+
+# Original project (reference only, not part of build)
+New_GasLink/

@@ -1,0 +1,16 @@
+node_modules
+.git
+.github
+*.md
+.env
+.env.*
+!.env.example
+dist
+coverage
+.vscode
+.idea
+*.log
+backups
+New_GasLink
+packages/mobile
+packages/api/test-*.ts

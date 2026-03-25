@@ -1,0 +1,1297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENUMS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum UserRole {
+  super_admin
+  distributor_admin
+  finance
+  inventory
+  driver
+  customer
+}
+
+enum UserStatus {
+  active
+  inactive
+  suspended
+}
+
+enum ProvisioningStatus {
+  pending_approval
+  approved
+  provisioning
+  active
+  failed
+}
+
+enum DistributorStatus {
+  active
+  suspended
+  inactive
+}
+
+enum GstMode {
+  disabled
+  sandbox
+  live
+}
+
+enum CustomerStatus {
+  active
+  suspended
+  inactive
+}
+
+enum OrderStatus {
+  pending_driver_assignment
+  pending_dispatch
+  pending_delivery
+  delivered
+  modified_delivered
+  cancelled
+  returns_only
+}
+
+enum OrderType {
+  delivery
+  returns_only @map("returns_only")
+}
+
+enum InvoiceStatus {
+  draft
+  issued
+  partially_paid
+  paid
+  overdue
+  cancelled
+}
+
+enum IrnStatus {
+  not_attempted
+  pending
+  success
+  failed
+  cancelled
+}
+
+enum EwbStatus {
+  not_attempted
+  pending
+  active
+  failed
+  cancelled
+}
+
+enum GstDocType {
+  INV
+  CRN
+  DBN
+}
+
+enum DriverStatus {
+  active
+  inactive
+}
+
+enum VehicleStatus {
+  idle
+  dispatched
+  returned
+  inactive
+}
+
+enum AssignmentStatus {
+  dispatch_ready
+  loaded_and_dispatched
+  returned_inventory
+  reconciled
+  cancelled
+}
+
+enum AdjustmentStatus {
+  pending
+  approved
+  rejected
+}
+
+enum CancelledStockStatus {
+  pending_return     @map("pending")
+  on_vehicle
+  returned_to_depot
+  reconciled
+  written_off
+}
+
+enum InventoryEventType {
+  incoming_fulls
+  outgoing_empties
+  delivery
+  collection
+  manual_adjustment
+  cancellation
+  cancellation_return
+  initial_balance
+  write_off
+  returns_collection
+}
+
+enum ReplenishmentStatus {
+  pending_replenishment  @map("pending")
+  in_transit
+  completed
+  rejected
+}
+
+enum PaymentMethod {
+  cash
+  cheque
+  online
+  upi
+  bank_transfer
+  credit
+}
+
+enum PaymentAllocationStatus {
+  unallocated
+  partially_allocated
+  fully_allocated
+}
+
+enum CreditNoteStatus {
+  pending_cn  @map("pending")
+  approved_cn @map("approved")
+  issued
+  rejected_cn @map("rejected")
+  cancelled_cn @map("cancelled")
+}
+
+enum DebitNoteStatus {
+  pending_dn  @map("pending")
+  approved_dn @map("approved")
+  issued_dn   @map("issued")
+  rejected_dn @map("rejected")
+  cancelled_dn @map("cancelled")
+}
+
+enum BillingPeriodType {
+  monthly
+  quarterly
+  half_yearly
+  yearly
+}
+
+enum BillingStatus {
+  pending_generation
+  invoice_generated
+  pending_payment
+  paid_billing @map("paid")
+  overdue_billing @map("overdue")
+  suspended_billing @map("suspended")
+}
+
+enum BillingTier {
+  tier_1
+  tier_2
+  tier_3
+  tier_4
+}
+
+enum BillingItemType {
+  base_subscription
+  driver_login
+  other_login
+  custom_addon
+  discount
+}
+
+enum PendingActionModule {
+  inventory
+  invoice
+  gst_compliance
+  payment
+  customer
+  order
+  driver
+}
+
+enum PendingActionStatus {
+  open
+  in_progress
+  resolved
+  failed
+  skipped
+}
+
+enum PendingActionSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum AccountabilityType {
+  lost_cylinder
+  damaged_cylinder
+  missing_cylinder
+  delivery_shortage
+  customer_dispute
+}
+
+enum AccountabilityStatus {
+  open_accountability @map("open")
+  investigating
+  resolved_recovered
+  resolved_written_off
+  resolved_charged
+  closed
+}
+
+enum LedgerEntryType {
+  invoice_entry  @map("invoice")
+  credit_note
+  debit_note
+  payment_entry  @map("payment")
+  adjustment
+}
+
+enum ModificationType {
+  update_info
+  credit_limit_change
+  stop_supply
+  resume_supply
+}
+
+enum LicenseType {
+  peso
+  gst_license @map("gst")
+  date_of_incorporation
+  partnership_deed
+  pan
+  bank_account_details
+  cancellation_cheque
+  custom
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODELS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Organization & Users ────────────────────────────────────────────────────
+
+model Distributor {
+  id              String            @id @default(uuid()) @map("distributor_id")
+  businessName    String            @map("business_name")
+  legalName       String            @map("legal_name")
+  gstin           String?
+  address         String?
+  city            String?
+  state           String?
+  pincode         String?
+  phone           String?
+  email           String?
+  status          DistributorStatus @default(active)
+  gstMode         GstMode           @default(disabled) @map("gst_mode")
+  providerCodes   String[]          @default([]) @map("provider_codes")
+  subscriptionPlan String?          @map("subscription_plan")
+  billingTier     BillingTier?      @map("billing_tier")
+  billingSuspended Boolean          @default(false) @map("billing_suspended")
+  gaslinkBillingEnabled Boolean     @default(false) @map("gaslink_billing_enabled")
+  gaslinkBillingStartDate DateTime? @map("gaslink_billing_start_date") @db.Date
+  latitude        Float?            @map("latitude")
+  longitude       Float?            @map("longitude")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  deletedAt       DateTime?         @map("deleted_at")
+
+  // Relations
+  users                 User[]
+  customers             Customer[]
+  orders                Order[]
+  invoices              Invoice[]
+  payments              PaymentTransaction[]
+  drivers               Driver[]
+  vehicles              Vehicle[]
+  cylinderTypes         CylinderType[]
+  cylinderPrices        CylinderPrice[]
+  emptyCylinderPrices   EmptyCylinderPrice[]
+  inventoryEvents       InventoryEvent[]
+  inventorySummaries    InventorySummary[]
+  settings              DistributorSetting[]
+  billingCycles         BillingCycle[]
+  pendingActions        PendingAction[]
+  accountabilityLogs    AccountabilityLog[]
+  auditLogs             AuditLog[]
+  licenses              License[]
+  gstCredentials        GstCredential[]
+  contactSubmissions    ContactSubmission[]
+
+  @@map("distributors")
+}
+
+model User {
+  id                    String             @id @default(uuid()) @map("user_id")
+  email                 String             @unique
+  passwordHash          String             @map("password_hash")
+  firstName             String             @map("first_name")
+  lastName              String             @map("last_name")
+  phone                 String?
+  role                  UserRole
+  status                UserStatus         @default(active)
+  provisioningStatus    ProvisioningStatus @default(active) @map("provisioning_status")
+  distributorId         String?            @map("distributor_id")
+  customerId            String?            @map("customer_id")
+  requiresPasswordReset Boolean            @default(true) @map("requires_password_reset")
+  refreshToken          String?            @map("refresh_token")
+  lastLoginAt           DateTime?          @map("last_login_at")
+  loginAttempts         Int                @default(0) @map("login_attempts")
+  lockedUntil           DateTime?          @map("locked_until")
+  resetOtp              String?            @map("reset_otp")
+  resetOtpExpiresAt     DateTime?          @map("reset_otp_expires_at")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+  deletedAt             DateTime?          @map("deleted_at")
+
+  // Relations
+  distributor    Distributor? @relation(fields: [distributorId], references: [id])
+  customer       Customer?   @relation(fields: [customerId], references: [id])
+  auditLogs      AuditLog[]
+  driverAssignments DriverAssignment[] @relation("AssignedBy")
+
+  @@index([email])
+  @@index([distributorId])
+  @@index([role, status])
+  @@map("users")
+}
+
+// ─── Customers ───────────────────────────────────────────────────────────────
+
+model Customer {
+  id                    String         @id @default(uuid()) @map("customer_id")
+  distributorId         String         @map("distributor_id")
+  customerName          String         @map("customer_name")
+  businessName          String?        @map("business_name")
+  gstin                 String?
+  customerType          String         @default("B2C") @map("customer_type") // B2B or B2C
+  phone                 String
+  email                 String?
+  billingAddressLine1   String?        @map("billing_address_line1")
+  billingAddressLine2   String?        @map("billing_address_line2")
+  billingCity           String?        @map("billing_city")
+  billingState          String?        @map("billing_state")
+  billingPincode        String?        @map("billing_pincode")
+  shippingAddressLine1  String?        @map("shipping_address_line1")
+  shippingAddressLine2  String?        @map("shipping_address_line2")
+  shippingCity          String?        @map("shipping_city")
+  shippingState         String?        @map("shipping_state")
+  shippingPincode       String?        @map("shipping_pincode")
+  creditPeriodDays      Int            @default(30) @map("credit_period_days")
+  status                CustomerStatus @default(active)
+  stopSupply            Boolean        @default(false) @map("stop_supply")
+  preferredDriverId     String?        @map("preferred_driver_id")
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+  deletedAt             DateTime?      @map("deleted_at")
+
+  // Relations
+  distributor           Distributor    @relation(fields: [distributorId], references: [id])
+  users                 User[]
+  contacts              CustomerContact[]
+  cylinderDiscounts     CustomerCylinderDiscount[]
+  orders                Order[]
+  invoices              Invoice[]
+  payments              PaymentTransaction[]
+  inventoryBalances     CustomerInventoryBalance[]
+  ledgerEntries         CustomerLedgerEntry[]
+  modificationRequests  CustomerModificationRequest[]
+  auditTrail            CustomerAuditTrail[]
+  accountabilityLogs    AccountabilityLog[]
+
+  @@index([distributorId, status])
+  @@index([distributorId, customerName])
+  @@index([gstin])
+  @@map("customers")
+}
+
+model CustomerContact {
+  id          String  @id @default(uuid()) @map("contact_id")
+  customerId  String  @map("customer_id")
+  name        String
+  phone       String
+  email       String?
+  isPrimary   Boolean @default(false) @map("is_primary")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("customer_contacts")
+}
+
+model CustomerCylinderDiscount {
+  id              String @id @default(uuid()) @map("discount_id")
+  customerId      String @map("customer_id")
+  cylinderTypeId  String @map("cylinder_type_id")
+  discountPerUnit Float  @default(0) @map("discount_per_unit")
+
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@unique([customerId, cylinderTypeId])
+  @@map("customer_cylinder_discounts")
+}
+
+model CustomerInventoryBalance {
+  id              String   @id @default(uuid()) @map("balance_id")
+  customerId      String   @map("customer_id")
+  cylinderTypeId  String   @map("cylinder_type_id")
+  withCustomerQty Int      @default(0) @map("with_customer_qty")
+  pendingReturns  Int      @default(0) @map("pending_returns")
+  missingQty      Int      @default(0) @map("missing_qty")
+  lastUpdated     DateTime @default(now()) @map("last_updated") @updatedAt
+
+  customer     Customer     @relation(fields: [customerId], references: [id])
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@unique([customerId, cylinderTypeId])
+  @@map("customer_inventory_balances")
+}
+
+model CustomerModificationRequest {
+  id               String           @id @default(uuid()) @map("request_id")
+  customerId       String           @map("customer_id")
+  distributorId    String           @map("distributor_id")
+  modificationType ModificationType @map("modification_type")
+  requestedBy      String           @map("requested_by")
+  reviewedBy       String?          @map("reviewed_by")
+  status           AdjustmentStatus @default(pending)
+  reason           String?
+  changes          Json?            // JSONB for field changes
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([distributorId, status])
+  @@map("customer_modification_requests")
+}
+
+model CustomerAuditTrail {
+  id            String   @id @default(uuid()) @map("trail_id")
+  customerId    String   @map("customer_id")
+  distributorId String   @map("distributor_id")
+  performedBy   String   @map("performed_by")
+  actionType    String   @map("action_type")
+  fieldName     String?  @map("field_name")
+  oldValue      Json?    @map("old_value")
+  newValue      Json?    @map("new_value")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId, createdAt])
+  @@map("customer_audit_trail")
+}
+
+model CustomerLedgerEntry {
+  id            String          @id @default(uuid())
+  distributorId String          @map("distributor_id")
+  customerId    String          @map("customer_id")
+  entryType     LedgerEntryType @map("entry_type")
+  referenceId   String          @map("reference_id")
+  invoiceId     String?         @map("invoice_id")
+  amountDelta   Float           @map("amount_delta")
+  narration     String?
+  entryDate     DateTime        @map("entry_date") @db.Date
+  createdBy     String?         @map("created_by")
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([distributorId, customerId, entryDate])
+  @@index([referenceId])
+  @@map("customer_ledger_entries")
+}
+
+// ─── Products ────────────────────────────────────────────────────────────────
+
+model CylinderType {
+  id              String   @id @default(uuid()) @map("cylinder_type_id")
+  distributorId   String   @map("distributor_id")
+  typeName        String   @map("type_name")
+  capacity        Float
+  unit            String   @default("KG")
+  hsnCode         String   @default("27111900") @map("hsn_code")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  distributor        Distributor                @relation(fields: [distributorId], references: [id])
+  prices             CylinderPrice[]
+  emptyPrices        EmptyCylinderPrice[]
+  discounts          CustomerCylinderDiscount[]
+  orderItems         OrderItem[]
+  invoiceItems       InvoiceItem[]
+  inventoryEvents    InventoryEvent[]
+  inventorySummaries InventorySummary[]
+  customerBalances   CustomerInventoryBalance[]
+  thresholds         CylinderThreshold[]
+  cancelledStocks    CancelledStockEvent[]
+  accountabilityLogs AccountabilityLog[]
+
+  @@unique([distributorId, typeName])
+  @@map("cylinder_types")
+}
+
+model CylinderPrice {
+  id             String   @id @default(uuid()) @map("price_id")
+  distributorId  String   @map("distributor_id")
+  cylinderTypeId String   @map("cylinder_type_id")
+  price          Float
+  effectiveDate  DateTime @map("effective_date") @db.Date
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  distributor  Distributor  @relation(fields: [distributorId], references: [id])
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@index([distributorId, cylinderTypeId, effectiveDate(sort: Desc)])
+  @@map("cylinder_prices")
+}
+
+model EmptyCylinderPrice {
+  id                String   @id @default(uuid()) @map("empty_price_id")
+  distributorId     String   @map("distributor_id")
+  cylinderTypeId    String   @map("cylinder_type_id")
+  emptyCylinderPrice Float   @map("empty_cylinder_price")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  distributor  Distributor  @relation(fields: [distributorId], references: [id])
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@unique([distributorId, cylinderTypeId])
+  @@map("empty_cylinder_prices")
+}
+
+model CylinderThreshold {
+  id             String  @id @default(uuid()) @map("threshold_id")
+  distributorId  String  @map("distributor_id")
+  cylinderTypeId String  @map("cylinder_type_id")
+  warningLevel   Int     @map("warning_level")
+  criticalLevel  Int     @map("critical_level")
+  alertEnabled   Boolean @default(true) @map("alert_enabled")
+
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@unique([distributorId, cylinderTypeId])
+  @@map("cylinder_thresholds")
+}
+
+// ─── Orders ──────────────────────────────────────────────────────────────────
+
+model Order {
+  id                  String      @id @default(uuid()) @map("order_id")
+  orderNumber         String      @unique @map("order_number")
+  distributorId       String      @map("distributor_id")
+  customerId          String      @map("customer_id")
+  driverId            String?     @map("driver_id")
+  vehicleId           String?     @map("vehicle_id")
+  orderDate           DateTime    @map("order_date") @db.Date
+  deliveryDate        DateTime    @map("delivery_date") @db.Date
+  status              OrderStatus @default(pending_driver_assignment)
+  orderType           OrderType   @default(delivery) @map("order_type")
+  totalAmount         Float       @default(0) @map("total_amount")
+  specialInstructions String?     @map("special_instructions")
+  deliveryLatitude    Float?      @map("delivery_latitude")
+  deliveryLongitude   Float?      @map("delivery_longitude")
+  deliveryNotes       String?     @map("delivery_notes")
+  deliveredAt         DateTime?   @map("delivered_at")
+  cancelledAt         DateTime?   @map("cancelled_at")
+  cancellationReason    String?     @map("cancellation_reason")
+  customerConfirmed     Boolean?    @map("customer_confirmed")
+  customerConfirmedAt   DateTime?   @map("customer_confirmed_at")
+  customerDisputeReason String?     @map("customer_dispute_reason")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+  deletedAt           DateTime?   @map("deleted_at")
+
+  // Relations
+  distributor          Distributor          @relation(fields: [distributorId], references: [id])
+  customer             Customer             @relation(fields: [customerId], references: [id])
+  driver               Driver?              @relation(fields: [driverId], references: [id])
+  vehicle              Vehicle?             @relation(fields: [vehicleId], references: [id])
+  items                OrderItem[]
+  invoice              Invoice?
+  statusLogs           OrderStatusLog[]
+  driverAssignments    DriverAssignment[]
+  cancelledStockEvents CancelledStockEvent[]
+  cancelledStockEventId String?              @unique @map("cancelled_stock_event_id")
+  cancelledStockEvent   CancelledStockEvent? @relation("TaggedOrder", fields: [cancelledStockEventId], references: [id])
+  gstDocuments         GstDocument[]
+
+  @@index([distributorId, status, deliveryDate])
+  @@index([distributorId, customerId, createdAt(sort: Desc)])
+  @@index([driverId, deliveryDate])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                String  @id @default(uuid()) @map("order_item_id")
+  orderId           String  @map("order_id")
+  cylinderTypeId    String  @map("cylinder_type_id")
+  quantity          Int
+  deliveredQuantity Int?    @map("delivered_quantity")
+  emptiesCollected  Int?    @map("empties_collected")
+  unitPrice         Float   @map("unit_price")
+  discountPerUnit   Float   @default(0) @map("discount_per_unit")
+  totalPrice        Float   @map("total_price")
+
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@map("order_items")
+}
+
+model OrderStatusLog {
+  id        String   @id @default(uuid())
+  orderId   String   @map("order_id")
+  oldStatus String   @map("old_status")
+  newStatus String   @map("new_status")
+  changedBy String   @map("changed_by")
+  notes     String?
+  changedAt DateTime @default(now()) @map("changed_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, changedAt])
+  @@map("order_status_log")
+}
+
+// ─── Drivers & Vehicles ──────────────────────────────────────────────────────
+
+model Driver {
+  id               String       @id @default(uuid()) @map("driver_id")
+  distributorId    String       @map("distributor_id")
+  driverName       String       @map("driver_name")
+  phone            String
+  licenseNumber    String?      @map("license_number")
+  employmentType   String?      @map("employment_type")
+  status           DriverStatus @default(active)
+  availableToday   Boolean      @default(true) @map("available_today")
+  preferredVehicleId String?    @map("preferred_vehicle_id")
+  joiningDate      DateTime?    @map("joining_date") @db.Date
+  deactivatedAt    DateTime?    @map("deactivated_at")
+  deactivationNotes String?     @map("deactivation_notes")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  deletedAt        DateTime?    @map("deleted_at")
+
+  // Relations
+  distributor          Distributor            @relation(fields: [distributorId], references: [id])
+  orders               Order[]
+  vehicleAssignments   DriverVehicleAssignment[]
+  driverAssignments    DriverAssignment[]
+  accountabilityLogs   AccountabilityLog[]
+  cancelledStockEvents CancelledStockEvent[]
+
+  @@index([distributorId, status])
+  @@map("drivers")
+}
+
+model Vehicle {
+  id              String        @id @default(uuid()) @map("vehicle_id")
+  distributorId   String        @map("distributor_id")
+  vehicleNumber   String        @map("vehicle_number")
+  vehicleType     String?       @map("vehicle_type")
+  capacity        Int?
+  status          VehicleStatus @default(idle)
+  deactivatedAt   DateTime?     @map("deactivated_at")
+  deactivationNotes String?     @map("deactivation_notes")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  deletedAt       DateTime?     @map("deleted_at")
+
+  // Relations
+  distributor        Distributor            @relation(fields: [distributorId], references: [id])
+  orders             Order[]
+  vehicleAssignments DriverVehicleAssignment[]
+  vehicleInventory   VehicleInventory[]
+  cancelledStockEvents CancelledStockEvent[]
+
+  @@unique([distributorId, vehicleNumber])
+  @@map("vehicles")
+}
+
+model DriverVehicleAssignment {
+  id             String           @id @default(uuid()) @map("assignment_id")
+  driverId       String           @map("driver_id")
+  vehicleId      String           @map("vehicle_id")
+  distributorId  String           @map("distributor_id")
+  assignmentDate DateTime         @map("assignment_date") @db.Date
+  tripNumber     Int              @default(1) @map("trip_number")
+  status         AssignmentStatus @default(dispatch_ready)
+  isReconciled   Boolean          @default(false) @map("is_reconciled")
+  isSubmitted    Boolean          @default(false) @map("is_submitted")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  driver  Driver  @relation(fields: [driverId], references: [id])
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+
+  @@index([distributorId, assignmentDate])
+  @@index([driverId, assignmentDate])
+  @@map("driver_vehicle_assignments")
+}
+
+model DriverAssignment {
+  id         String   @id @default(uuid()) @map("assignment_id")
+  orderId    String   @map("order_id")
+  driverId   String   @map("driver_id")
+  assignedBy String   @map("assigned_by")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+  status     String   @default("active")
+  notes      String?
+
+  order       Order @relation(fields: [orderId], references: [id])
+  driver      Driver @relation(fields: [driverId], references: [id])
+  assignedByUser User @relation("AssignedBy", fields: [assignedBy], references: [id])
+
+  @@index([orderId])
+  @@map("driver_assignments")
+}
+
+model VehicleInventory {
+  id             String   @id @default(uuid())
+  vehicleId      String   @map("vehicle_id")
+  cylinderTypeId String   @map("cylinder_type_id")
+  fullQuantity   Int      @default(0) @map("full_quantity")
+  emptyQuantity  Int      @default(0) @map("empty_quantity")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+
+  @@unique([vehicleId, cylinderTypeId])
+  @@map("vehicle_inventory")
+}
+
+// ─── Invoices ────────────────────────────────────────────────────────────────
+
+model Invoice {
+  id                String        @id @default(uuid()) @map("invoice_id")
+  invoiceNumber     String        @unique @map("invoice_number")
+  distributorId     String        @map("distributor_id")
+  customerId        String?       @map("customer_id")
+  orderId           String?       @unique @map("order_id")
+  issueDate         DateTime      @map("issue_date") @db.Date
+  dueDate           DateTime      @map("due_date") @db.Date
+  totalAmount       Float         @default(0) @map("total_amount")
+  amountPaid        Float         @default(0) @map("amount_paid")
+  outstandingAmount Float         @default(0) @map("outstanding_amount")
+  status            InvoiceStatus @default(draft)
+  irnStatus         IrnStatus     @default(not_attempted) @map("irn_status")
+  ewbStatus         EwbStatus     @default(not_attempted) @map("ewb_status")
+  irn               String?
+  ackNo             String?       @map("ack_no")
+  ackDate           DateTime?     @map("ack_date")
+  cgstValue         Float         @default(0) @map("cgst_value")
+  sgstValue         Float         @default(0) @map("sgst_value")
+  igstValue         Float         @default(0) @map("igst_value")
+  isGaslinkBilling  Boolean       @default(false) @map("is_gaslink_billing")
+  issuedBy          String?       @map("issued_by")
+  closedAt          DateTime?     @map("closed_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  deletedAt         DateTime?     @map("deleted_at")
+
+  // Relations
+  distributor      Distributor          @relation(fields: [distributorId], references: [id])
+  customer         Customer?            @relation(fields: [customerId], references: [id])
+  order            Order?               @relation(fields: [orderId], references: [id])
+  items            InvoiceItem[]
+  paymentAllocations PaymentAllocation[]
+  creditNotes      CreditNote[]
+  debitNotes       DebitNote[]
+  gstDocuments     GstDocument[]
+
+  @@index([distributorId, status, dueDate])
+  @@index([distributorId, customerId, createdAt(sort: Desc)])
+  @@index([irnStatus])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id             String  @id @default(uuid()) @map("invoice_item_id")
+  invoiceId      String  @map("invoice_id")
+  cylinderTypeId String? @map("cylinder_type_id")
+  description    String
+  hsnCode        String  @default("27111900") @map("hsn_code")
+  quantity       Int
+  unitPrice      Float   @map("unit_price")
+  discountPerUnit Float  @default(0) @map("discount_per_unit")
+  gstRate        Float   @default(18) @map("gst_rate")
+  totalPrice     Float   @map("total_price")
+
+  invoice      Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id])
+
+  @@map("invoice_items")
+}
+
+model CreditNote {
+  id          String           @id @default(uuid()) @map("credit_note_id")
+  invoiceId   String           @map("invoice_id")
+  creditNoteNumber String?     @unique @map("credit_note_number")
+  totalAmount Float            @map("total_amount")
+  reason      String
+  status      CreditNoteStatus @default(pending_cn)
+  issueDate   DateTime?        @map("issue_date") @db.Date
+  issuedBy    String?          @map("issued_by")
+  approvedBy  String?          @map("approved_by")
+  approvedAt  DateTime?        @map("approved_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@map("credit_notes")
+}
+
+model DebitNote {
+  id             String          @id @default(uuid()) @map("debit_note_id")
+  invoiceId      String          @map("invoice_id")
+  debitNoteNumber String?        @unique @map("debit_note_number")
+  totalAmount    Float           @map("total_amount")
+  reason         String
+  status         DebitNoteStatus @default(pending_dn)
+  issueDate      DateTime?       @map("issue_date") @db.Date
+  issuedBy       String?         @map("issued_by")
+  approvedBy     String?         @map("approved_by")
+  approvedAt     DateTime?       @map("approved_at")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@map("debit_notes")
+}
+
+// ─── Payments ────────────────────────────────────────────────────────────────
+
+model PaymentTransaction {
+  id              String               @id @default(uuid()) @map("payment_id")
+  distributorId   String               @map("distributor_id")
+  customerId      String               @map("customer_id")
+  amount          Float
+  paymentMethod   PaymentMethod        @map("payment_method")
+  referenceNumber String?              @map("reference_number")
+  transactionDate DateTime             @map("transaction_date") @db.Date
+  allocationStatus PaymentAllocationStatus @default(unallocated) @map("allocation_status")
+  receivedBy      String?              @map("received_by")
+  notes           String?
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+  deletedAt       DateTime?            @map("deleted_at")
+
+  distributor Distributor       @relation(fields: [distributorId], references: [id])
+  customer    Customer          @relation(fields: [customerId], references: [id])
+  allocations PaymentAllocation[]
+
+  @@index([distributorId, customerId, createdAt(sort: Desc)])
+  @@index([distributorId, transactionDate])
+  @@map("payment_transactions")
+}
+
+model PaymentAllocation {
+  id              String   @id @default(uuid()) @map("allocation_id")
+  paymentId       String   @map("payment_id")
+  invoiceId       String   @map("invoice_id")
+  allocatedAmount Float    @map("allocated_amount")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  payment PaymentTransaction @relation(fields: [paymentId], references: [id])
+  invoice Invoice            @relation(fields: [invoiceId], references: [id])
+
+  @@map("payment_allocations")
+}
+
+// ─── Inventory (Event-Sourced) ───────────────────────────────────────────────
+
+model InventoryEvent {
+  id             String             @id @default(uuid()) @map("event_id")
+  distributorId  String             @map("distributor_id")
+  cylinderTypeId String             @map("cylinder_type_id")
+  eventType      InventoryEventType @map("event_type")
+  fullsChange    Int                @default(0) @map("fulls_change")
+  emptiesChange  Int                @default(0) @map("empties_change")
+  eventDate      DateTime           @map("event_date") @db.Date
+  referenceId    String?            @map("reference_id")
+  referenceType  String?            @map("reference_type")
+  documentType   String?            @map("document_type")
+  documentNumber String?            @map("document_number")
+  documentDate   DateTime?          @map("document_date") @db.Date
+  vehicleNumber  String?            @map("vehicle_number")
+  driverName     String?            @map("driver_name")
+  notes          String?
+  createdBy      String             @map("created_by")
+  createdAt      DateTime           @default(now()) @map("created_at")
+
+  distributor  Distributor  @relation(fields: [distributorId], references: [id])
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@index([distributorId, cylinderTypeId, eventDate])
+  @@index([distributorId, eventDate])
+  @@index([referenceId, referenceType])
+  @@map("inventory_events")
+}
+
+model InventorySummary {
+  id              String   @id @default(uuid()) @map("summary_id")
+  distributorId   String   @map("distributor_id")
+  cylinderTypeId  String   @map("cylinder_type_id")
+  summaryDate     DateTime @map("summary_date") @db.Date
+  openingFulls    Int      @default(0) @map("opening_fulls")
+  openingEmpties  Int      @default(0) @map("opening_empties")
+  incomingFulls   Int      @default(0) @map("incoming_fulls")
+  outgoingEmpties Int      @default(0) @map("outgoing_empties")
+  deliveredQty    Int      @default(0) @map("delivered_qty")
+  collectedEmpties Int     @default(0) @map("collected_empties")
+  cancelledStockQty Int    @default(0) @map("cancelled_stock_qty")
+  manualAdjustment Int     @default(0) @map("manual_adjustment")
+  closingFulls    Int      @default(0) @map("closing_fulls")
+  closingEmpties  Int      @default(0) @map("closing_empties")
+  isLocked        Boolean  @default(false) @map("is_locked")
+  lockedAt        DateTime? @map("locked_at")
+  lockedBy        String?   @map("locked_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  distributor  Distributor  @relation(fields: [distributorId], references: [id])
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@unique([distributorId, cylinderTypeId, summaryDate])
+  @@index([distributorId, summaryDate])
+  @@map("inventory_summaries")
+}
+
+model CancelledStockEvent {
+  id               String               @id @default(uuid()) @map("event_id")
+  orderId          String               @map("order_id")
+  vehicleId        String?              @map("vehicle_id")
+  driverId         String?              @map("driver_id")
+  cylinderTypeId   String               @map("cylinder_type_id")
+  distributorId    String               @map("distributor_id")
+  quantity         Int
+  cancellationDate DateTime             @map("cancellation_date") @db.Date
+  status           CancelledStockStatus @default(pending_return)
+  returnedDate     DateTime?            @map("returned_date") @db.Date
+  reconciledDate   DateTime?            @map("reconciled_date") @db.Date
+  reconciledBy     String?              @map("reconciled_by")
+  notes            String?
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  order        Order        @relation(fields: [orderId], references: [id])
+  vehicle      Vehicle?     @relation(fields: [vehicleId], references: [id])
+  driver       Driver?      @relation(fields: [driverId], references: [id])
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+  taggedOrder  Order?       @relation("TaggedOrder")
+
+  @@index([distributorId, status])
+  @@index([vehicleId, status])
+  @@index([driverId, status])
+  @@map("cancelled_stock_events")
+}
+
+// ─── GST Documents ───────────────────────────────────────────────────────────
+
+model GstDocument {
+  id              String     @id @default(uuid()) @map("gst_document_id")
+  invoiceId       String?    @map("invoice_id")
+  orderId         String?    @map("order_id")
+  distributorId   String     @map("distributor_id")
+  gstDocNo        String?    @map("gst_doc_no")
+  docType         GstDocType @map("doc_type")
+  irnStatus       IrnStatus  @default(not_attempted) @map("irn_status")
+  ewbStatus       EwbStatus  @default(not_attempted) @map("ewb_status")
+  irn             String?
+  ackNo           String?    @map("ack_no")
+  ackDate         DateTime?  @map("ack_date")
+  signedQr        String?    @map("signed_qr")
+  ewbNo           String?    @map("ewb_no")
+  ewbDate         DateTime?  @map("ewb_date")
+  ewbValidTill    DateTime?  @map("ewb_valid_till")
+  requestPayload  Json?      @map("request_payload")
+  responsePayload Json?      @map("response_payload")
+  errorCode       String?    @map("error_code")
+  errorMessage    String?    @map("error_message")
+  isLatest        Boolean    @default(true) @map("is_latest")
+  cancelledAt     DateTime?  @map("cancelled_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  deletedAt       DateTime?  @map("deleted_at")
+
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  order   Order?   @relation(fields: [orderId], references: [id])
+
+  @@index([invoiceId, isLatest])
+  @@index([distributorId])
+  @@index([irn])
+  @@map("gst_documents")
+}
+
+model GstCredential {
+  id             String   @id @default(uuid()) @map("credential_id")
+  distributorId  String?  @map("distributor_id")
+  scope          String   @default("einvoice") // 'einvoice' or 'ewaybill'
+  clientId       String   @map("client_id")
+  clientSecret   String   @map("client_secret")
+  username       String
+  password       String   @default("")
+  gstin          String
+  email          String?
+  isValid        Boolean  @default(false) @map("is_valid")
+  lastValidated  DateTime? @map("last_validated")
+  tokenCache     String?   @map("token_cache")
+  tokenExpiresAt DateTime? @map("token_expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  distributor Distributor? @relation(fields: [distributorId], references: [id])
+
+  @@unique([distributorId, scope])
+  @@map("gst_credentials")
+}
+
+// ─── GasLink SaaS Billing ────────────────────────────────────────────────────
+
+model BillingCycle {
+  id                  String            @id @default(uuid()) @map("cycle_id")
+  distributorId       String            @map("distributor_id")
+  periodType          BillingPeriodType @map("period_type")
+  periodStartDate     DateTime          @map("period_start_date") @db.Date
+  periodEndDate       DateTime          @map("period_end_date") @db.Date
+  billingStatus       BillingStatus     @default(pending_generation) @map("billing_status")
+  billingTier         BillingTier       @map("billing_tier")
+  totalAmountExclGst  Float             @default(0) @map("total_amount_excl_gst")
+  totalGstAmount      Float             @default(0) @map("total_gst_amount")
+  totalAmountInclGst  Float             @default(0) @map("total_amount_incl_gst")
+  invoiceId           String?           @map("invoice_id")
+  dueDate             DateTime?         @map("due_date") @db.Date
+  suspendDate         DateTime?         @map("suspend_date") @db.Date
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+
+  distributor Distributor   @relation(fields: [distributorId], references: [id])
+  items       BillingItem[]
+
+  @@index([distributorId, periodStartDate])
+  @@index([billingStatus])
+  @@map("gaslink_billing_cycles")
+}
+
+model BillingItem {
+  id                String          @id @default(uuid()) @map("item_id")
+  billingCycleId    String          @map("billing_cycle_id")
+  itemType          BillingItemType @map("item_type")
+  description       String
+  hsnCode           String          @default("998314") @map("hsn_code")
+  uom               String          @default("NOS")
+  quantity           Int
+  unitPriceExclGst  Float           @map("unit_price_excl_gst")
+  gstRate           Float           @default(18) @map("gst_rate")
+  discountAmount    Float           @default(0) @map("discount_amount")
+  lineTotalExclGst  Float           @map("line_total_excl_gst")
+  lineGstAmount     Float           @map("line_gst_amount")
+  lineTotalInclGst  Float           @map("line_total_incl_gst")
+  metadata          Json?
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  billingCycle BillingCycle @relation(fields: [billingCycleId], references: [id], onDelete: Cascade)
+
+  @@map("gaslink_billing_items")
+}
+
+// ─── Pending Actions ─────────────────────────────────────────────────────────
+
+model PendingAction {
+  id               String               @id @default(uuid()) @map("action_id")
+  distributorId    String               @map("distributor_id")
+  module           PendingActionModule
+  entityType       String               @map("entity_type")
+  entityId         String               @map("entity_id")
+  actionType       String               @map("action_type")
+  description      String
+  status           PendingActionStatus  @default(open)
+  severity         PendingActionSeverity @default(medium)
+  requiresApproval Boolean              @default(false) @map("requires_approval")
+  approvedBy       String?              @map("approved_by")
+  approvedAt       DateTime?            @map("approved_at")
+  resolvedBy       String?              @map("resolved_by")
+  resolvedAt       DateTime?            @map("resolved_at")
+  resolutionNotes  String?              @map("resolution_notes")
+  errorCode        String?              @map("error_code")
+  errorMessage     String?              @map("error_message")
+  errorContext     Json?                @map("error_context")
+  retryCount       Int                  @default(0) @map("retry_count")
+  nextRetryAt      DateTime?            @map("next_retry_at")
+  slaDeadline      DateTime?            @map("sla_deadline")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  distributor Distributor @relation(fields: [distributorId], references: [id])
+
+  @@index([distributorId, status])
+  @@index([module, status])
+  @@index([slaDeadline])
+  @@map("pending_actions")
+}
+
+// ─── Accountability ──────────────────────────────────────────────────────────
+
+model AccountabilityLog {
+  id               String               @id @default(uuid()) @map("log_id")
+  distributorId    String               @map("distributor_id")
+  driverId         String?              @map("driver_id")
+  customerId       String?              @map("customer_id")
+  cylinderTypeId   String?              @map("cylinder_type_id")
+  incidentType     AccountabilityType   @map("incident_type")
+  incidentDate     DateTime             @map("incident_date") @db.Date
+  quantity         Int
+  costAmount       Float                @default(0) @map("cost_amount")
+  description      String
+  status           AccountabilityStatus @default(open_accountability)
+  resolvedBy       String?              @map("resolved_by")
+  resolvedAt       DateTime?            @map("resolved_at")
+  resolutionNotes  String?              @map("resolution_notes")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  distributor  Distributor   @relation(fields: [distributorId], references: [id])
+  driver       Driver?       @relation(fields: [driverId], references: [id])
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id])
+
+  @@index([distributorId, status])
+  @@index([driverId, status])
+  @@map("accountability_logs")
+}
+
+// ─── Audit & Logging ─────────────────────────────────────────────────────────
+
+model AuditLog {
+  id            String   @id @default(uuid()) @map("log_id")
+  distributorId String?  @map("distributor_id")
+  userId        String   @map("user_id")
+  action        String
+  entityType    String   @map("entity_type")
+  entityId      String?  @map("entity_id")
+  details       Json?
+  ipAddress     String?  @map("ip_address")
+  userAgent     String?  @map("user_agent")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  distributor Distributor? @relation(fields: [distributorId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+
+  @@index([distributorId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+
+model DistributorSetting {
+  id            String   @id @default(uuid()) @map("setting_id")
+  distributorId String   @map("distributor_id")
+  settingKey    String   @map("setting_key")
+  settingValue  Json     @map("setting_value")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  distributor Distributor @relation(fields: [distributorId], references: [id])
+
+  @@unique([distributorId, settingKey])
+  @@map("distributor_settings")
+}
+
+// ─── Licenses ────────────────────────────────────────────────────────────────
+
+model License {
+  id            String      @id @default(uuid()) @map("license_id")
+  distributorId String      @map("distributor_id")
+  licenseType   LicenseType @map("license_type")
+  licenseName   String      @map("license_name")
+  licenseNumber String?     @map("license_number")
+  expiryDate    DateTime?   @map("expiry_date") @db.Date
+  documentUrl   String?     @map("document_url")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  distributor Distributor @relation(fields: [distributorId], references: [id])
+
+  @@index([distributorId, expiryDate])
+  @@map("licenses")
+}
+
+// ─── Contact Form (Lead Tracking) ────────────────────────────────────────────
+
+model ContactSubmission {
+  id            String   @id @default(uuid()) @map("submission_id")
+  distributorId String?  @map("distributor_id") // NULL until they become a distributor
+  name          String
+  phone         String
+  email         String?
+  agency        String
+  agencyName    String   @map("agency_name")
+  monthlySale   String   @map("monthly_sale")
+  status        String   @default("new") // new, contacted, converted, rejected
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  distributor Distributor? @relation(fields: [distributorId], references: [id])
+
+  @@map("contact_submissions")
+}
+
+// ─── GST Reference Data ─────────────────────────────────────────────────────
+
+model GstState {
+  stateCode String @id @map("state_code")
+  stateName String @map("state_name")
+
+  @@map("gst_states")
+}
+
+model HsnCode {
+  hsnCode     String @id @map("hsn_code")
+  description String
+
+  @@map("hsn_codes")
+}
+
+// ─── Provider Catalog (Super Admin Master) ──────────────────────────────────
+
+model ProviderCatalogCylinderType {
+  id           String   @id @default(uuid())
+  providerCode String   @map("provider_code") // IOCL, HPCL, BPCL, GOGAS, SUPERGAS, TOTALGAS, OTHERS
+  shortName    String   @map("short_name")    // e.g. "19 KG"
+  longName     String   @map("long_name")     // e.g. "HPCL 19 KG Domestic Cylinder"
+  weight       Float                          // capacity in KG
+  hsnCode      String   @default("27111900") @map("hsn_code")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([providerCode, shortName])
+  @@unique([providerCode, weight])
+  @@map("provider_catalog_cylinder_types")
+}

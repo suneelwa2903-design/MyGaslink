@@ -1,0 +1,235 @@
+import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
+
+export async function listDrivers(distributorId: string, status?: string) {
+  const where: Prisma.DriverWhereInput = { distributorId, deletedAt: null };
+  if (status) where.status = status as any;
+
+  return prisma.driver.findMany({
+    where,
+    include: {
+      vehicleAssignments: {
+        where: { isReconciled: false },
+        include: { vehicle: { select: { id: true, vehicleNumber: true } } },
+        orderBy: { assignmentDate: 'desc' },
+        take: 1,
+      },
+    },
+    orderBy: { driverName: 'asc' },
+  });
+}
+
+export async function getDriverById(id: string, distributorId: string) {
+  return prisma.driver.findFirst({
+    where: { id, distributorId, deletedAt: null },
+    include: {
+      vehicleAssignments: {
+        orderBy: { assignmentDate: 'desc' },
+        take: 10,
+        include: { vehicle: { select: { vehicleNumber: true } } },
+      },
+      orders: {
+        where: { deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { id: true, orderNumber: true, status: true, deliveryDate: true },
+      },
+    },
+  });
+}
+
+export async function createDriver(distributorId: string, data: {
+  driverName: string;
+  phone: string;
+  licenseNumber?: string;
+  employmentType?: string;
+  joiningDate?: string;
+}) {
+  return prisma.driver.create({
+    data: {
+      distributorId,
+      driverName: data.driverName,
+      phone: data.phone,
+      licenseNumber: data.licenseNumber || null,
+      employmentType: data.employmentType || null,
+      joiningDate: data.joiningDate ? new Date(data.joiningDate) : null,
+    },
+  });
+}
+
+export async function updateDriver(id: string, distributorId: string, data: Record<string, any>) {
+  const existing = await prisma.driver.findFirst({ where: { id, distributorId, deletedAt: null } });
+  if (!existing) return null;
+
+  const updateData: Prisma.DriverUpdateInput = {};
+  if (data.driverName !== undefined) updateData.driverName = data.driverName;
+  if (data.phone !== undefined) updateData.phone = data.phone;
+  if (data.licenseNumber !== undefined) updateData.licenseNumber = data.licenseNumber;
+  if (data.employmentType !== undefined) updateData.employmentType = data.employmentType;
+  if (data.status !== undefined) {
+    updateData.status = data.status;
+    if (data.status === 'inactive') {
+      updateData.deactivatedAt = new Date();
+      updateData.deactivationNotes = data.deactivationNotes || null;
+    }
+  }
+  if (data.availableToday !== undefined) updateData.availableToday = data.availableToday;
+  if (data.preferredVehicleId !== undefined) updateData.preferredVehicleId = data.preferredVehicleId;
+
+  return prisma.driver.update({ where: { id }, data: updateData });
+}
+
+export async function deleteDriver(id: string, distributorId: string) {
+  const existing = await prisma.driver.findFirst({ where: { id, distributorId, deletedAt: null } });
+  if (!existing) return null;
+  return prisma.driver.update({
+    where: { id },
+    data: { deletedAt: new Date(), status: 'inactive' },
+  });
+}
+
+export async function toggleAvailability(id: string, distributorId: string, available: boolean) {
+  const existing = await prisma.driver.findFirst({ where: { id, distributorId, deletedAt: null } });
+  if (!existing) return null;
+  return prisma.driver.update({
+    where: { id },
+    data: { availableToday: available },
+  });
+}
+
+// ─── Driver-Vehicle Assignments ─────────────────────────────────────────────
+
+export async function createDriverVehicleAssignment(
+  distributorId: string,
+  data: { driverId: string; vehicleId: string; assignmentDate: string }
+) {
+  // Check for existing active assignment
+  const existing = await prisma.driverVehicleAssignment.findFirst({
+    where: {
+      driverId: data.driverId,
+      assignmentDate: new Date(data.assignmentDate),
+      isReconciled: false,
+      status: { notIn: ['cancelled', 'reconciled'] },
+    },
+  });
+  if (existing) {
+    throw new DriverError('Driver already has an active assignment for this date', 400);
+  }
+
+  return prisma.driverVehicleAssignment.create({
+    data: {
+      driverId: data.driverId,
+      vehicleId: data.vehicleId,
+      distributorId,
+      assignmentDate: new Date(data.assignmentDate),
+    },
+    include: {
+      driver: { select: { driverName: true } },
+      vehicle: { select: { vehicleNumber: true } },
+    },
+  });
+}
+
+export async function updateAssignmentStatus(
+  assignmentId: string,
+  distributorId: string,
+  newStatus: string
+) {
+  const assignment = await prisma.driverVehicleAssignment.findFirst({
+    where: { id: assignmentId, distributorId },
+  });
+  if (!assignment) throw new DriverError('Assignment not found', 404);
+
+  const updateData: Prisma.DriverVehicleAssignmentUpdateInput = {
+    status: newStatus as any,
+  };
+
+  // Auto-increment trip number on RETURNED_INVENTORY
+  if (newStatus === 'returned_inventory') {
+    const maxTrip = await prisma.driverVehicleAssignment.findFirst({
+      where: {
+        driverId: assignment.driverId,
+        assignmentDate: assignment.assignmentDate,
+        distributorId,
+      },
+      orderBy: { tripNumber: 'desc' },
+    });
+
+    // If reconciled, mark it and optionally create next trip
+    updateData.isReconciled = false;
+    updateData.isSubmitted = true;
+  }
+
+  if (newStatus === 'reconciled') {
+    updateData.isReconciled = true;
+  }
+
+  return prisma.driverVehicleAssignment.update({
+    where: { id: assignmentId },
+    data: updateData,
+    include: {
+      driver: { select: { driverName: true } },
+      vehicle: { select: { vehicleNumber: true } },
+    },
+  });
+}
+
+export async function listAssignments(
+  distributorId: string,
+  date?: string,
+  driverId?: string
+) {
+  const where: Prisma.DriverVehicleAssignmentWhereInput = { distributorId };
+  if (date) where.assignmentDate = new Date(date);
+  if (driverId) where.driverId = driverId;
+
+  return prisma.driverVehicleAssignment.findMany({
+    where,
+    include: {
+      driver: { select: { id: true, driverName: true, phone: true } },
+      vehicle: { select: { id: true, vehicleNumber: true } },
+    },
+    orderBy: [{ assignmentDate: 'desc' }, { tripNumber: 'asc' }],
+  });
+}
+
+// ─── Driver Performance ─────────────────────────────────────────────────────
+
+export async function getDriverPerformance(distributorId: string, driverId: string, dateFrom?: string, dateTo?: string) {
+  const where: Prisma.OrderWhereInput = {
+    distributorId,
+    driverId,
+    deletedAt: null,
+  };
+  if (dateFrom || dateTo) {
+    where.deliveryDate = {};
+    if (dateFrom) where.deliveryDate.gte = new Date(dateFrom);
+    if (dateTo) where.deliveryDate.lte = new Date(dateTo);
+  }
+
+  const [totalOrders, deliveredOrders, cancelledOrders] = await Promise.all([
+    prisma.order.count({ where }),
+    prisma.order.count({ where: { ...where, status: { in: ['delivered', 'modified_delivered'] } } }),
+    prisma.order.count({ where: { ...where, status: 'cancelled' } }),
+  ]);
+
+  const cancelledStock = await prisma.cancelledStockEvent.aggregate({
+    where: { distributorId, driverId },
+    _sum: { quantity: true },
+  });
+
+  return {
+    totalOrders,
+    deliveredOrders,
+    cancelledOrders,
+    deliveryRate: totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0,
+    cancelledStockQty: cancelledStock._sum.quantity || 0,
+  };
+}
+
+export class DriverError extends Error {
+  constructor(message: string, public statusCode: number) {
+    super(message);
+    this.name = 'DriverError';
+  }
+}

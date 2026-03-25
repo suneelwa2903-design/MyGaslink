@@ -1,0 +1,156 @@
+import { prisma } from '../lib/prisma.js';
+
+export async function listCylinderTypes(distributorId: string) {
+  return prisma.cylinderType.findMany({
+    where: { distributorId, isActive: true },
+    include: {
+      prices: { orderBy: { effectiveDate: 'desc' }, take: 1 },
+      emptyPrices: true,
+      thresholds: true,
+    },
+    orderBy: { typeName: 'asc' },
+  });
+}
+
+export async function getCylinderTypeById(id: string, distributorId: string) {
+  return prisma.cylinderType.findFirst({
+    where: { id, distributorId },
+    include: {
+      prices: { orderBy: { effectiveDate: 'desc' } },
+      emptyPrices: true,
+      thresholds: true,
+    },
+  });
+}
+
+export async function createCylinderType(distributorId: string, data: {
+  typeName: string;
+  capacity: number;
+  unit?: string;
+  hsnCode?: string;
+}) {
+  return prisma.cylinderType.create({
+    data: {
+      distributorId,
+      typeName: data.typeName,
+      capacity: data.capacity,
+      unit: data.unit || 'KG',
+      hsnCode: data.hsnCode || '27111900',
+    },
+  });
+}
+
+export async function updateCylinderType(id: string, distributorId: string, data: {
+  typeName?: string;
+  capacity?: number;
+  unit?: string;
+  hsnCode?: string;
+  isActive?: boolean;
+}) {
+  const existing = await prisma.cylinderType.findFirst({ where: { id, distributorId } });
+  if (!existing) return null;
+  return prisma.cylinderType.update({ where: { id }, data });
+}
+
+export async function deleteCylinderType(id: string, distributorId: string) {
+  const existing = await prisma.cylinderType.findFirst({ where: { id, distributorId } });
+  if (!existing) return null;
+  return prisma.cylinderType.update({ where: { id }, data: { isActive: false } });
+}
+
+// Cylinder Prices
+export async function listPrices(distributorId: string, cylinderTypeId?: string) {
+  const where: any = { distributorId };
+  if (cylinderTypeId) where.cylinderTypeId = cylinderTypeId;
+  return prisma.cylinderPrice.findMany({
+    where,
+    include: { cylinderType: { select: { typeName: true } } },
+    orderBy: { effectiveDate: 'desc' },
+  });
+}
+
+export async function createPrice(distributorId: string, data: {
+  cylinderTypeId: string;
+  price: number;
+  effectiveDate: string;
+}) {
+  return prisma.cylinderPrice.create({
+    data: {
+      distributorId,
+      cylinderTypeId: data.cylinderTypeId,
+      price: data.price,
+      effectiveDate: new Date(data.effectiveDate),
+    },
+    include: { cylinderType: { select: { typeName: true } } },
+  });
+}
+
+export async function deletePrice(id: string, distributorId: string) {
+  const existing = await prisma.cylinderPrice.findFirst({ where: { id, distributorId } });
+  if (!existing) return null;
+  return prisma.cylinderPrice.delete({ where: { id } });
+}
+
+export async function getEffectivePrice(
+  distributorId: string,
+  cylinderTypeId: string,
+  date: Date
+): Promise<number> {
+  const price = await prisma.cylinderPrice.findFirst({
+    where: {
+      distributorId,
+      cylinderTypeId,
+      effectiveDate: { lte: date },
+    },
+    orderBy: { effectiveDate: 'desc' },
+  });
+  return price?.price ?? 0;
+}
+
+// Empty Cylinder Prices
+export async function listEmptyPrices(distributorId: string) {
+  return prisma.emptyCylinderPrice.findMany({
+    where: { distributorId },
+    include: { cylinderType: { select: { typeName: true } } },
+  });
+}
+
+export async function upsertEmptyPrice(distributorId: string, data: {
+  cylinderTypeId: string;
+  emptyCylinderPrice: number;
+}) {
+  return prisma.emptyCylinderPrice.upsert({
+    where: { distributorId_cylinderTypeId: { distributorId, cylinderTypeId: data.cylinderTypeId } },
+    create: {
+      distributorId,
+      cylinderTypeId: data.cylinderTypeId,
+      emptyCylinderPrice: data.emptyCylinderPrice,
+    },
+    update: { emptyCylinderPrice: data.emptyCylinderPrice },
+    include: { cylinderType: { select: { typeName: true } } },
+  });
+}
+
+// Thresholds
+export async function upsertThreshold(distributorId: string, data: {
+  cylinderTypeId: string;
+  warningLevel: number;
+  criticalLevel: number;
+  alertEnabled?: boolean;
+}) {
+  return prisma.cylinderThreshold.upsert({
+    where: { distributorId_cylinderTypeId: { distributorId, cylinderTypeId: data.cylinderTypeId } },
+    create: {
+      distributorId,
+      cylinderTypeId: data.cylinderTypeId,
+      warningLevel: data.warningLevel,
+      criticalLevel: data.criticalLevel,
+      alertEnabled: data.alertEnabled ?? true,
+    },
+    update: {
+      warningLevel: data.warningLevel,
+      criticalLevel: data.criticalLevel,
+      alertEnabled: data.alertEnabled ?? true,
+    },
+  });
+}
