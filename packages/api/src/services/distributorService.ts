@@ -20,6 +20,18 @@ const distributorSelect = {
   billingSuspended: true,
   gaslinkBillingEnabled: true,
   gaslinkBillingStartDate: true,
+  latitude: true,
+  longitude: true,
+  godownAddress: true,
+  godownCity: true,
+  godownState: true,
+  godownPincode: true,
+  godownLatitude: true,
+  godownLongitude: true,
+  officeAddress: true,
+  officeCity: true,
+  officeState: true,
+  officePincode: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.DistributorSelect;
@@ -53,6 +65,18 @@ export async function createDistributor(data: {
   phone?: string;
   email?: string;
   providerCodes?: string[];
+  latitude?: number;
+  longitude?: number;
+  godownAddress?: string;
+  godownCity?: string;
+  godownState?: string;
+  godownPincode?: string;
+  godownLatitude?: number;
+  godownLongitude?: number;
+  officeAddress?: string;
+  officeCity?: string;
+  officeState?: string;
+  officePincode?: string;
 }) {
   return prisma.distributor.create({
     data: {
@@ -66,6 +90,18 @@ export async function createDistributor(data: {
       phone: data.phone || null,
       email: data.email || null,
       providerCodes: data.providerCodes || [],
+      latitude: data.latitude ?? null,
+      longitude: data.longitude ?? null,
+      godownAddress: data.godownAddress || null,
+      godownCity: data.godownCity || null,
+      godownState: data.godownState || null,
+      godownPincode: data.godownPincode || null,
+      godownLatitude: data.godownLatitude ?? null,
+      godownLongitude: data.godownLongitude ?? null,
+      officeAddress: data.officeAddress || null,
+      officeCity: data.officeCity || null,
+      officeState: data.officeState || null,
+      officePincode: data.officePincode || null,
     },
     select: distributorSelect,
   });
@@ -82,10 +118,27 @@ export async function updateDistributor(id: string, data: Partial<{
   phone: string;
   email: string;
   providerCodes: string[];
+  gstMode: string;
+  status: string;
+  subscriptionPlan: string | null;
+  billingTier: string | null;
+  gaslinkBillingEnabled: boolean;
+  godownAddress: string;
+  godownCity: string;
+  godownState: string;
+  godownPincode: string;
+  godownLatitude: number;
+  godownLongitude: number;
+  officeAddress: string;
+  officeCity: string;
+  officeState: string;
+  officePincode: string;
+  latitude: number;
+  longitude: number;
 }>) {
   return prisma.distributor.update({
     where: { id },
-    data,
+    data: data as any,
     select: distributorSelect,
   });
 }

@@ -15,6 +15,8 @@ import {
   HiOutlineServerStack,
   HiOutlineDocumentText,
   HiOutlineRectangleStack,
+  HiChevronDoubleLeft,
+  HiChevronDoubleRight,
 } from 'react-icons/hi2';
 import { useAuthStore } from '@/stores/authStore';
 import { UserRole } from '@gaslink/shared';
@@ -157,9 +159,11 @@ const customerMenuItems: MenuItem[] = [
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-export function Sidebar({ isOpen, onClose }: SidebarProps) {
+export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: SidebarProps) {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
 
@@ -192,14 +196,21 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-slate-900 dark:bg-slate-100 border-r border-slate-800 dark:border-slate-200 transition-transform duration-300 ease-in-out lg:static lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex flex-col bg-slate-900 dark:bg-slate-100 border-r border-slate-800 dark:border-slate-200 transition-all duration-300 ease-in-out lg:static lg:translate-x-0',
+          collapsed ? 'lg:w-16' : 'w-64',
+          // Mobile: always w-64, use translate for show/hide
+          'max-lg:w-64',
           isOpen ? 'translate-x-0' : '-translate-x-full',
         )}
       >
         {/* Brand / Logo */}
-        <div className="flex h-16 items-center gap-3 px-5 border-b border-slate-800 dark:border-slate-200 shrink-0">
-          <img src="/logo.png" alt="MyGasLink" className="h-11 w-11 rounded-xl object-contain" />
-          <div>
+        <div className="flex h-16 items-center gap-3 px-5 border-b border-slate-800 dark:border-slate-200 shrink-0 overflow-hidden">
+          <img
+            src="/logo.png"
+            alt="MyGasLink"
+            className={cn('h-11 w-11 rounded-xl object-contain shrink-0', collapsed && 'lg:h-8 lg:w-8 lg:mx-auto')}
+          />
+          <div className={cn(collapsed && 'lg:hidden')}>
             <h1 className="text-lg font-bold text-white dark:text-slate-900 leading-tight">
               MyGasLink
             </h1>
@@ -210,7 +221,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+        <nav className={cn('flex-1 overflow-y-auto py-4 space-y-1', collapsed ? 'lg:px-1.5' : 'px-3')}>
           {visibleItems.map((item) =>
             item.external ? (
               <a
@@ -219,10 +230,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => onClose()}
-                className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors text-slate-400 dark:text-slate-600 hover:bg-slate-800 dark:hover:bg-slate-200 hover:text-white dark:hover:text-slate-900"
+                className={cn(
+                  'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors text-slate-400 dark:text-slate-600 hover:bg-slate-800 dark:hover:bg-slate-200 hover:text-white dark:hover:text-slate-900',
+                  collapsed && 'lg:justify-center lg:px-0',
+                )}
+                title={collapsed ? item.label : undefined}
               >
                 <item.icon className="h-5 w-5 shrink-0" />
-                <span>{item.label}</span>
+                <span className={cn(collapsed && 'lg:hidden')}>{item.label}</span>
               </a>
             ) : (
               <NavLink
@@ -235,24 +250,49 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                     isActive
                       ? 'bg-brand-500/20 text-brand-400 dark:bg-brand-500/15 dark:text-brand-600'
                       : 'text-slate-400 dark:text-slate-600 hover:bg-slate-800 dark:hover:bg-slate-200 hover:text-white dark:hover:text-slate-900',
+                    collapsed && 'lg:justify-center lg:px-0',
                   )
                 }
+                title={collapsed ? item.label : undefined}
               >
                 <item.icon className="h-5 w-5 shrink-0" />
-                <span>{item.label}</span>
+                <span className={cn(collapsed && 'lg:hidden')}>{item.label}</span>
               </NavLink>
             ),
           )}
         </nav>
 
+        {/* Collapse toggle - desktop only */}
+        {onToggleCollapse && (
+          <div className="hidden lg:block shrink-0 border-t border-slate-800 dark:border-slate-200 p-2">
+            <button
+              onClick={onToggleCollapse}
+              className={cn(
+                'flex items-center gap-3 w-full rounded-xl px-3 py-2 text-sm font-medium text-slate-400 dark:text-slate-600 hover:bg-slate-800 dark:hover:bg-slate-200 hover:text-white dark:hover:text-slate-900 transition-colors',
+                collapsed && 'justify-center px-0',
+              )}
+              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {collapsed ? (
+                <HiChevronDoubleRight className="h-4 w-4 shrink-0" />
+              ) : (
+                <>
+                  <HiChevronDoubleLeft className="h-4 w-4 shrink-0" />
+                  <span>Collapse</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
         {/* User info + Logout */}
-        <div className="shrink-0 border-t border-slate-800 dark:border-slate-200 p-4">
-          <div className="flex items-center gap-3">
+        <div className={cn('shrink-0 border-t border-slate-800 dark:border-slate-200', collapsed ? 'lg:p-2' : 'p-4')}>
+          <div className={cn('flex items-center gap-3', collapsed && 'lg:justify-center')}>
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/20 text-brand-400 dark:text-brand-600 text-sm font-semibold shrink-0">
               {user?.firstName?.charAt(0) ?? ''}
               {user?.lastName?.charAt(0) ?? ''}
             </div>
-            <div className="min-w-0 flex-1">
+            <div className={cn('min-w-0 flex-1', collapsed && 'lg:hidden')}>
               <p className="truncate text-sm font-medium text-white dark:text-slate-900">
                 {user?.firstName} {user?.lastName}
               </p>
@@ -262,7 +302,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             </div>
             <button
               onClick={handleLogout}
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 dark:hover:bg-slate-200 hover:text-red-500 transition-colors"
+              className={cn(
+                'rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 dark:hover:bg-slate-200 hover:text-red-500 transition-colors',
+                collapsed && 'lg:hidden',
+              )}
               title="Log out"
             >
               <HiOutlineArrowRightOnRectangle className="h-5 w-5" />

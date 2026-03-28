@@ -13,9 +13,9 @@ import {
   HiOutlinePlus,
   HiOutlinePencilSquare,
   HiOutlineTrash,
-  HiOutlineCreditCard,
-  HiOutlineEye,
   HiOutlineCurrencyRupee,
+  HiOutlineCube,
+  HiOutlineDocumentArrowDown,
 } from 'react-icons/hi2';
 import {
   type DistributorSettings,
@@ -23,8 +23,6 @@ import {
   type ApprovalWorkflowConfig,
   type User,
   type License,
-  type BillingCycle,
-  BillingStatus,
   GstMode,
   UserRole,
   LicenseType,
@@ -33,26 +31,26 @@ import {
   createUserSchema,
   type CreateUserInput,
 } from '@gaslink/shared';
-import { apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
-  const showBilling = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DISTRIBUTOR_ADMIN;
   const showPrices = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DISTRIBUTOR_ADMIN;
-  const [tab, setTab] = useState<'general' | 'gst' | 'prices' | 'thresholds' | 'approvals' | 'users' | 'licenses' | 'billing'>('general');
+  const [tab, setTab] = useState<'general' | 'subscription' | 'gst' | 'cylinders' | 'prices' | 'thresholds' | 'approvals' | 'users' | 'licenses'>('general');
 
   const tabs = [
     { key: 'general' as const, label: 'General', icon: HiOutlineCog6Tooth },
+    ...(showPrices ? [{ key: 'subscription' as const, label: 'Subscription', icon: HiOutlineCurrencyRupee }] : []),
     { key: 'gst' as const, label: 'GST', icon: HiOutlineShieldCheck },
+    ...(showPrices ? [{ key: 'cylinders' as const, label: 'Cylinder Types', icon: HiOutlineCube }] : []),
     ...(showPrices ? [{ key: 'prices' as const, label: 'Cylinder Prices', icon: HiOutlineCurrencyRupee }] : []),
     { key: 'thresholds' as const, label: 'Thresholds', icon: HiOutlineExclamationTriangle },
     { key: 'approvals' as const, label: 'Approvals', icon: HiOutlineCheckCircle },
     { key: 'users' as const, label: 'Users', icon: HiOutlineUsers },
     { key: 'licenses' as const, label: 'Licenses', icon: HiOutlineDocumentText },
-    ...(showBilling ? [{ key: 'billing' as const, label: 'Billing', icon: HiOutlineCreditCard }] : []),
   ];
 
   return (
@@ -83,13 +81,14 @@ export default function SettingsPage() {
 
       {/* Tab Content */}
       {tab === 'general' && <GeneralTab />}
+      {tab === 'subscription' && <SubscriptionTab />}
       {tab === 'gst' && <GstTab />}
+      {tab === 'cylinders' && <CylinderConfigTab />}
       {tab === 'prices' && <PricesTab />}
       {tab === 'thresholds' && <ThresholdsTab />}
       {tab === 'approvals' && <ApprovalsTab />}
       {tab === 'users' && <UsersTab />}
       {tab === 'licenses' && <LicensesTab />}
-      {tab === 'billing' && <BillingTab />}
     </div>
   );
 }
@@ -515,9 +514,15 @@ function PricesTab() {
 
 function ThresholdsTab() {
   const queryClient = useQueryClient();
-  const { data: settings, isLoading } = useQuery({
+  const { data: settings, isLoading: settingsLoading } = useQuery({
     queryKey: ['settings'],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
+  });
+
+  // Also fetch cylinder types to pre-populate thresholds
+  const { data: cylinderTypesData, isLoading: ctLoading } = useQuery({
+    queryKey: ['cylinder-types'],
+    queryFn: () => apiGet<{ cylinderTypes: Array<{ cylinderTypeId: string; typeName: string; capacity: number; isActive: boolean }> }>('/cylinder-types'),
   });
 
   const mutation = useMutation({
@@ -529,10 +534,28 @@ function ThresholdsTab() {
   const [editThresholds, setEditThresholds] = useState<CylinderThreshold[]>([]);
   const [initialized, setInitialized] = useState(false);
 
+  const isLoading = settingsLoading || ctLoading;
   if (isLoading) return <div className="flex justify-center py-20"><Loader size="lg" /></div>;
 
-  if (!initialized && settings?.cylinderThresholds) {
-    setEditThresholds(settings.cylinderThresholds);
+  if (!initialized) {
+    const existing = settings?.cylinderThresholds || [];
+    const existingIds = new Set(existing.map(t => t.cylinderTypeId));
+    const activeCts = (cylinderTypesData?.cylinderTypes || []).filter(ct => ct.isActive);
+
+    // Merge existing thresholds with defaults for any cylinder types that don't have one yet
+    const merged = [
+      ...existing,
+      ...activeCts
+        .filter(ct => !existingIds.has(ct.cylinderTypeId))
+        .map(ct => ({
+          cylinderTypeId: ct.cylinderTypeId,
+          cylinderTypeName: ct.typeName,
+          warningLevel: 10,
+          criticalLevel: 5,
+          alertEnabled: true,
+        })),
+    ];
+    setEditThresholds(merged);
     setInitialized(true);
   }
 
@@ -870,183 +893,327 @@ function LicenseFormModal({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-// ─── Billing Tab ──────────────────────────────────────────────────────────────
+// ─── Cylinder Config Tab ────────────────────────────────────────────────────
 
-const BILLING_STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
-  [BillingStatus.PENDING_GENERATION]: 'neutral',
-  [BillingStatus.INVOICE_GENERATED]: 'info',
-  [BillingStatus.PENDING_PAYMENT]: 'warning',
-  [BillingStatus.PAID]: 'success',
-  [BillingStatus.OVERDUE]: 'danger',
-  [BillingStatus.SUSPENDED]: 'danger',
-};
-
-function formatBillingCurrency(n: number) {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n);
+interface CatalogItem {
+  id: string;
+  providerCode: string;
+  shortName: string;
+  longName: string;
+  weight: number;
+  hsnCode: string;
+  alreadyAdded: boolean;
 }
 
-function BillingTab() {
-  const { user } = useAuthStore();
+function CylinderConfigTab() {
   const queryClient = useQueryClient();
-  const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
-  const [statusFilter, setStatusFilter] = useState('');
-  const [viewCycle, setViewCycle] = useState<BillingCycle | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  const queryParams: Record<string, unknown> = {};
-  if (statusFilter) queryParams.billingStatus = statusFilter;
-
-  const { data: cycles, isLoading } = useQuery({
-    queryKey: ['billing-cycles', queryParams],
-    queryFn: () => apiGet<{ cycles: BillingCycle[] }>('/billing/cycles', queryParams),
-    select: (data) => data.cycles,
+  const { data: catalogData, isLoading } = useQuery({
+    queryKey: ['provider-catalog-for-distributor'],
+    queryFn: () => apiGet<{ items: CatalogItem[]; providers: string[] }>('/provider-catalog/for-distributor'),
   });
 
-  const generateMutation = useMutation({
-    mutationFn: () => apiPost('/billing/generate'),
-    onSuccess: () => {
-      toast.success('Billing generated');
-      queryClient.invalidateQueries({ queryKey: ['billing-cycles'] });
+  const { data: existingTypes } = useQuery({
+    queryKey: ['cylinder-types'],
+    queryFn: () => apiGet<{ cylinderTypes: Array<{ cylinderTypeId: string; typeName: string; capacity: number; isActive: boolean }> }>('/cylinder-types'),
+  });
+
+  const importMutation = useMutation({
+    mutationFn: (catalogItemIds: string[]) => apiPost('/provider-catalog/import', { catalogItemIds }),
+    onSuccess: (data: any) => {
+      toast.success(`Imported ${data.imported} cylinder type(s)`);
+      setSelectedIds([]);
+      queryClient.invalidateQueries({ queryKey: ['provider-catalog-for-distributor'] });
+      queryClient.invalidateQueries({ queryKey: ['cylinder-types'] });
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const markPaidMutation = useMutation({
-    mutationFn: (cycleId: string) => apiPut(`/billing/cycles/${cycleId}/mark-paid`),
-    onSuccess: () => {
-      toast.success('Marked as paid');
-      queryClient.invalidateQueries({ queryKey: ['billing-cycles'] });
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
+  const items = catalogData?.items || [];
+  const providers = catalogData?.providers || [];
+  const availableItems = items.filter(i => !i.alreadyAdded);
+  const addedItems = items.filter(i => i.alreadyAdded);
 
-  const statusOptions = Object.values(BillingStatus).map((s) => ({ value: s, label: s.replace(/_/g, ' ') }));
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }
+
+  function selectAllAvailable() {
+    setSelectedIds(availableItems.map(i => i.id));
+  }
+
+  if (isLoading) return <div className="flex justify-center py-10"><Loader size="lg" /></div>;
+
+  if (providers.length === 0) {
+    return (
+      <EmptyState
+        title="No providers configured"
+        description="Ask your super admin to assign LPG providers (IOCL, HPCL, etc.) to your distributor before configuring cylinder types."
+      />
+    );
+  }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-surface-500 dark:text-surface-400">
-          {isSuperAdmin ? 'Manage GasLink billing for all distributors' : 'View your billing status'}
-        </p>
-        {isSuperAdmin && (
-          <Button onClick={() => generateMutation.mutate()} loading={generateMutation.isPending}>
-            <HiOutlinePlus className="h-4 w-4" />Generate Billing
-          </Button>
+        <div>
+          <p className="text-sm text-surface-500 dark:text-surface-400">
+            Your providers: {providers.map(p => (
+              <span key={p} className="inline-block ml-1 px-2 py-0.5 rounded bg-surface-100 dark:bg-surface-700 text-xs font-medium">{p}</span>
+            ))}
+          </p>
+        </div>
+        {availableItems.length > 0 && (
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={selectAllAvailable}>Select All</Button>
+            <Button
+              onClick={() => importMutation.mutate(selectedIds)}
+              loading={importMutation.isPending}
+              disabled={selectedIds.length === 0}
+            >
+              <HiOutlinePlus className="h-4 w-4" />
+              Import Selected ({selectedIds.length})
+            </Button>
+          </div>
         )}
       </div>
 
-      <div className="card p-4">
-        <Select
-          options={statusOptions}
-          placeholder="All Statuses"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        />
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-20"><Loader size="lg" /></div>
-      ) : !cycles?.length ? (
-        <EmptyState title="No billing cycles" description="Billing cycles will appear here once generated." />
-      ) : (
-        <div className="table-container">
-          <table className="table">
-            <thead>
-              <tr>
-                {isSuperAdmin && <th>Distributor</th>}
-                <th>Period</th>
-                <th>Start</th>
-                <th>End</th>
-                <th>Tier</th>
-                <th>Excl GST</th>
-                <th>GST</th>
-                <th>Total</th>
-                <th>Due Date</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cycles.map((cycle) => (
-                <tr key={cycle.cycleId}>
-                  {isSuperAdmin && <td className="font-medium text-surface-900 dark:text-white">{cycle.distributorName}</td>}
-                  <td><Badge variant="neutral">{cycle.periodType}</Badge></td>
-                  <td>{new Date(cycle.periodStartDate).toLocaleDateString('en-IN')}</td>
-                  <td>{new Date(cycle.periodEndDate).toLocaleDateString('en-IN')}</td>
-                  <td><Badge variant="info">{cycle.billingTier}</Badge></td>
-                  <td>{formatBillingCurrency(cycle.totalAmountExclGst)}</td>
-                  <td>{formatBillingCurrency(cycle.totalGstAmount)}</td>
-                  <td className="font-medium">{formatBillingCurrency(cycle.totalAmountInclGst)}</td>
-                  <td>{cycle.dueDate ? new Date(cycle.dueDate).toLocaleDateString('en-IN') : '-'}</td>
-                  <td><Badge variant={BILLING_STATUS_VARIANTS[cycle.billingStatus] || 'neutral'}>{cycle.billingStatus.replace(/_/g, ' ')}</Badge></td>
-                  <td>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setViewCycle(cycle)}
-                        className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500"
-                        title="View Details"
-                      >
-                        <HiOutlineEye className="h-4 w-4" />
-                      </button>
-                      {isSuperAdmin && cycle.billingStatus !== BillingStatus.PAID && (
-                        <button
-                          onClick={() => markPaidMutation.mutate(cycle.cycleId)}
-                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-accent-500"
-                          title="Mark Paid"
-                        >
-                          <HiOutlineCheckCircle className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Available from catalog */}
+      {availableItems.length > 0 && (
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-3">Available from Provider Catalog</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {availableItems.map(item => (
+              <label
+                key={item.id}
+                className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                  selectedIds.includes(item.id)
+                    ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20'
+                    : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(item.id)}
+                  onChange={() => toggleSelect(item.id)}
+                  className="rounded border-surface-300 text-brand-600 focus:ring-brand-500"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-surface-900 dark:text-white">{item.longName}</p>
+                  <p className="text-xs text-surface-500">{item.providerCode} &middot; {item.weight} KG &middot; HSN: {item.hsnCode}</p>
+                </div>
+              </label>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* Cycle Detail Modal */}
-      {viewCycle && (
-        <Modal open={!!viewCycle} onClose={() => setViewCycle(null)} title="Billing Cycle Details" size="lg">
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div><p className="text-xs text-surface-400">Distributor</p><p className="text-sm font-medium text-surface-900 dark:text-white">{viewCycle.distributorName}</p></div>
-              <div><p className="text-xs text-surface-400">Period</p><p className="text-sm font-medium">{viewCycle.periodType}</p></div>
-              <div><p className="text-xs text-surface-400">Tier</p><p className="text-sm font-medium">{viewCycle.billingTier}</p></div>
-              <div><p className="text-xs text-surface-400">Status</p><Badge variant={BILLING_STATUS_VARIANTS[viewCycle.billingStatus] || 'neutral'}>{viewCycle.billingStatus}</Badge></div>
-            </div>
-
-            {viewCycle.items.length > 0 && (
-              <div className="table-container">
-                <table className="table">
-                  <thead>
-                    <tr><th>Description</th><th>HSN</th><th>Qty</th><th>Unit Price</th><th>GST%</th><th>Discount</th><th>Total</th></tr>
-                  </thead>
-                  <tbody>
-                    {viewCycle.items.map((item) => (
-                      <tr key={item.itemId}>
-                        <td>{item.description}</td>
-                        <td>{item.hsnCode}</td>
-                        <td>{item.quantity}</td>
-                        <td>{formatBillingCurrency(item.unitPriceExclGst)}</td>
-                        <td>{item.gstRate}%</td>
-                        <td>{formatBillingCurrency(item.discountAmount)}</td>
-                        <td className="font-medium">{formatBillingCurrency(item.lineTotalInclGst)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="grid grid-cols-3 gap-4 pt-4 border-t border-surface-200 dark:border-surface-700">
-              <div><p className="text-xs text-surface-400">Subtotal</p><p className="font-medium">{formatBillingCurrency(viewCycle.totalAmountExclGst)}</p></div>
-              <div><p className="text-xs text-surface-400">GST</p><p className="font-medium">{formatBillingCurrency(viewCycle.totalGstAmount)}</p></div>
-              <div><p className="text-xs text-surface-400">Total</p><p className="font-bold text-lg">{formatBillingCurrency(viewCycle.totalAmountInclGst)}</p></div>
-            </div>
+      {/* Already configured */}
+      <div className="card p-5">
+        <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-3">
+          Your Cylinder Types ({(existingTypes?.cylinderTypes || []).length})
+        </h3>
+        {!(existingTypes?.cylinderTypes?.length) ? (
+          <p className="text-sm text-surface-500">No cylinder types configured yet. Import from the provider catalog above.</p>
+        ) : (
+          <div className="table-container">
+            <table className="table">
+              <thead><tr><th>Type</th><th>Capacity</th><th>Status</th></tr></thead>
+              <tbody>
+                {existingTypes.cylinderTypes.map(ct => (
+                  <tr key={ct.cylinderTypeId}>
+                    <td className="font-medium text-surface-900 dark:text-white">{ct.typeName}</td>
+                    <td>{ct.capacity} KG</td>
+                    <td><Badge variant={ct.isActive ? 'success' : 'danger'}>{ct.isActive ? 'Active' : 'Inactive'}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </Modal>
+        )}
+      </div>
+
+      {addedItems.length > 0 && (
+        <div className="card p-5 bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800">
+          <h3 className="text-sm font-semibold text-green-700 dark:text-green-300 mb-2">Already Imported from Catalog</h3>
+          <div className="flex flex-wrap gap-2">
+            {addedItems.map(item => (
+              <span key={item.id} className="text-xs px-2 py-1 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                {item.providerCode} {item.shortName}
+              </span>
+            ))}
+          </div>
+        </div>
       )}
+    </div>
+  );
+}
+
+// ─── Subscription Tab (Distributor Admin) ───────────────────────────────────
+
+function SubscriptionTab() {
+  const fmt = (n: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
+
+  const { data: billingData, isLoading } = useQuery({
+    queryKey: ['my-billing-cycles'],
+    queryFn: () => apiGet<{ cycles: Array<{
+      cycleId: string; periodType: string; periodStartDate: string; periodEndDate: string;
+      totalAmountExclGst: number; totalGstAmount: number; totalAmountInclGst: number;
+      billingStatus: string; dueDate: string | null;
+      items: Array<{ itemId: string; itemType: string; description: string; quantity: number; unitPriceExclGst: number; lineTotalInclGst: number }>;
+    }> }>('/billing/cycles'),
+  });
+
+  const { data: seatData } = useQuery({
+    queryKey: ['my-seat-limits'],
+    queryFn: () => apiGet<{ plan: string; limits: Record<string, { allowed: number; used: number; extraPrice: number }> | null; gstApi: { included: number; overagePrice: number }; customerPortalPrice: number }>('/pricing/seat-limits'),
+  });
+
+  const handleDownload = async (cycleId: string) => {
+    try {
+      const res = await api.get(`/pricing/billing-invoice/${cycleId}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url; a.download = `gaslink-invoice-${cycleId.slice(-6)}.pdf`; a.click();
+      window.URL.revokeObjectURL(url);
+    } catch { toast.error('Failed to download invoice'); }
+  };
+
+  if (isLoading) return <div className="flex justify-center py-10"><Loader size="lg" /></div>;
+
+  const cycles = billingData?.cycles || [];
+  const currentCycle = cycles[0]; // Most recent
+  const plan = seatData?.plan;
+  const limits = seatData?.limits || {};
+  const totalPaid = cycles.filter(c => c.billingStatus === 'paid_billing').reduce((s, c) => s + c.totalAmountInclGst, 0);
+  const totalPending = cycles.filter(c => c.billingStatus !== 'paid_billing').reduce((s, c) => s + c.totalAmountInclGst, 0);
+
+  return (
+    <div className="space-y-6">
+      {/* Plan Overview */}
+      <div className="card p-5">
+        <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-4">Your Subscription</h3>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div>
+            <p className="text-xs text-surface-500">Current Plan</p>
+            <p className="text-lg font-bold text-brand-600 dark:text-brand-400 capitalize">{plan || 'Not assigned'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-surface-500">Current Period</p>
+            <p className="text-sm font-medium text-surface-900 dark:text-white">
+              {currentCycle ? `${new Date(currentCycle.periodStartDate).toLocaleDateString('en-IN')} — ${new Date(currentCycle.periodEndDate).toLocaleDateString('en-IN')}` : 'No billing cycle'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-surface-500">Total Paid</p>
+            <p className="text-lg font-bold text-green-600">{fmt(totalPaid)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-surface-500">Pending Amount</p>
+            <p className={`text-lg font-bold ${totalPending > 0 ? 'text-red-500' : 'text-green-500'}`}>{fmt(totalPending)}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Seat Usage */}
+      {Object.keys(limits).length > 0 && (
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-3">Seat Usage</h3>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {Object.entries(limits).map(([role, data]) => (
+              <div key={role} className="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+                <p className="text-xs text-surface-500 capitalize">{role.replace('_', ' ')}</p>
+                <div className="flex items-end gap-1 mt-1">
+                  <span className="text-xl font-bold text-surface-900 dark:text-white">{data.used}</span>
+                  <span className="text-sm text-surface-400 mb-0.5">/ {data.allowed}</span>
+                </div>
+                <div className="mt-1 h-1.5 rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
+                  <div className={`h-full rounded-full ${data.used >= data.allowed ? 'bg-red-500' : 'bg-brand-500'}`}
+                    style={{ width: `${Math.min(100, data.allowed > 0 ? (data.used / data.allowed) * 100 : 0)}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* GST API Allocation */}
+      {seatData?.gstApi && (
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-3">GST API Allocation</h3>
+          <div className="grid grid-cols-3 gap-4">
+            <div><p className="text-xs text-surface-500">Included Calls/mo</p><p className="text-lg font-bold text-surface-900 dark:text-white">{seatData.gstApi.included.toLocaleString()}</p></div>
+            <div><p className="text-xs text-surface-500">Overage Price</p><p className="text-lg font-bold text-surface-900 dark:text-white">{fmt(seatData.gstApi.overagePrice)}/call</p></div>
+            <div><p className="text-xs text-surface-500">Customer Portal</p><p className="text-lg font-bold text-surface-900 dark:text-white">{fmt(seatData.customerPortalPrice)}/user/mo</p></div>
+          </div>
+        </div>
+      )}
+
+      {/* Billing History */}
+      <div className="card p-5">
+        <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-3">Billing History</h3>
+        {cycles.length === 0 ? (
+          <p className="text-sm text-surface-500">No billing history yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {cycles.map(cycle => (
+              <div key={cycle.cycleId} className="rounded-lg border border-surface-200 dark:border-surface-700 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="neutral">{cycle.periodType.replace('_', ' ')}</Badge>
+                    <span className="text-sm text-surface-700 dark:text-surface-300">
+                      {new Date(cycle.periodStartDate).toLocaleDateString('en-IN')} — {new Date(cycle.periodEndDate).toLocaleDateString('en-IN')}
+                    </span>
+                    <Badge variant={cycle.billingStatus === 'paid_billing' ? 'success' : cycle.billingStatus === 'overdue_billing' ? 'danger' : 'warning'}>
+                      {cycle.billingStatus.replace(/_/g, ' ')}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-surface-900 dark:text-white">{fmt(cycle.totalAmountInclGst)}</span>
+                    <button onClick={() => handleDownload(cycle.cycleId)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="Download Invoice">
+                      <HiOutlineDocumentArrowDown className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                {/* Line items */}
+                <div className="table-container">
+                  <table className="table text-xs">
+                    <thead><tr><th>Item</th><th>Qty</th><th>Unit Price</th><th className="text-right">Total (incl GST)</th></tr></thead>
+                    <tbody>
+                      {cycle.items.map(item => (
+                        <tr key={item.itemId}>
+                          <td className="text-surface-700 dark:text-surface-300">{item.description}</td>
+                          <td>{item.quantity}</td>
+                          <td>{fmt(item.unitPriceExclGst)}</td>
+                          <td className="text-right font-medium">{fmt(item.lineTotalInclGst)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-surface-200 dark:border-surface-700">
+                        <td colSpan={3} className="text-right font-medium text-surface-600 dark:text-surface-400">Subtotal (excl GST)</td>
+                        <td className="text-right font-medium">{fmt(cycle.totalAmountExclGst)}</td>
+                      </tr>
+                      <tr>
+                        <td colSpan={3} className="text-right text-surface-500">GST (18%)</td>
+                        <td className="text-right">{fmt(cycle.totalGstAmount)}</td>
+                      </tr>
+                      <tr>
+                        <td colSpan={3} className="text-right font-bold text-surface-900 dark:text-white">Total</td>
+                        <td className="text-right font-bold text-brand-600 dark:text-brand-400">{fmt(cycle.totalAmountInclGst)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                {cycle.dueDate && (
+                  <p className="text-xs text-surface-400 mt-2">Due: {new Date(cycle.dueDate).toLocaleDateString('en-IN')}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -105,6 +105,10 @@ export function resolveDistributor(req: Request, res: Response, next: NextFuncti
  * Require distributor context to be resolved (for distributor-scoped operations).
  */
 export function requireDistributor(req: Request, res: Response, next: NextFunction) {
+  // Super admin can access without distributor context (handles cross-distributor views)
+  if (req.user?.role === 'super_admin') {
+    return next();
+  }
   if (!req.user?.distributorId) {
     return sendError(res, 'Distributor context required. Please select a distributor.', 400);
   }

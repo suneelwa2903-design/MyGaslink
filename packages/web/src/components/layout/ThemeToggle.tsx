@@ -1,4 +1,4 @@
-import { HiSun, HiMoon, HiComputerDesktop } from 'react-icons/hi2';
+import { HiSun, HiMoon } from 'react-icons/hi2';
 import { useThemeStore } from '@/stores/themeStore';
 import { cn } from '@/lib/cn';
 
@@ -8,7 +8,6 @@ export function ThemeToggle() {
   const options = [
     { value: 'light' as const, icon: HiSun, label: 'Light' },
     { value: 'dark' as const, icon: HiMoon, label: 'Dark' },
-    { value: 'system' as const, icon: HiComputerDesktop, label: 'System' },
   ];
 
   return (

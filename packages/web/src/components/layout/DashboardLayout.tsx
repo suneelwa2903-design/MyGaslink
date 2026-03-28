@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   HiOutlineBell,
   HiBars3,
@@ -7,6 +8,7 @@ import {
   HiOutlineUserCircle,
 } from 'react-icons/hi2';
 import { useAuthStore } from '@/stores/authStore';
+import { apiGet } from '@/lib/api';
 import { UserRole } from '@gaslink/shared';
 import { cn } from '@/lib/cn';
 import { Sidebar } from './Sidebar';
@@ -15,18 +17,42 @@ import { DistributorSelector } from './DistributorSelector';
 
 export function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('sidebar-collapsed') === 'true';
+  });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const notifRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
 
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
 
-  // Close user menu on outside click
+  const toggleSidebar = () => {
+    const next = !sidebarCollapsed;
+    setSidebarCollapsed(next);
+    localStorage.setItem('sidebar-collapsed', String(next));
+  };
+
+  // Fetch pending actions for notification bell
+  const { data: pendingActionsData } = useQuery({
+    queryKey: ['pending-actions-notif'],
+    queryFn: () => apiGet<{ actions: Array<{ actionId: string; description: string; severity: string; module: string; createdAt: string; actionType: string }> }>('/pending-actions', { status: 'open' }),
+    refetchInterval: 60000, // refresh every minute
+  });
+
+  const pendingActions = pendingActionsData?.actions || [];
+  const pendingCount = pendingActions.length;
+
+  // Close menus on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false);
+      }
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -48,7 +74,12 @@ export function DashboardLayout() {
   return (
     <div className="flex h-screen overflow-hidden bg-surface-50 dark:bg-surface-950">
       {/* Sidebar */}
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
+      />
 
       {/* Main content area */}
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -57,9 +88,16 @@ export function DashboardLayout() {
           {/* Left: hamburger + page title area */}
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setSidebarOpen(true)}
-              className="rounded-lg p-2 text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-700 dark:hover:text-white transition-colors lg:hidden"
-              aria-label="Open sidebar"
+              onClick={() => {
+                // On mobile: open sidebar overlay; on desktop: toggle collapse
+                if (window.innerWidth >= 1024) {
+                  toggleSidebar();
+                } else {
+                  setSidebarOpen(true);
+                }
+              }}
+              className="rounded-lg p-2 text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-700 dark:hover:text-white transition-colors"
+              aria-label="Toggle sidebar"
             >
               <HiBars3 className="h-5 w-5" />
             </button>
@@ -73,14 +111,59 @@ export function DashboardLayout() {
             <ThemeToggle />
 
             {/* Notifications bell */}
-            <button
-              className="relative rounded-lg p-2 text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-700 dark:hover:text-white transition-colors"
-              aria-label="Notifications"
-            >
-              <HiOutlineBell className="h-5 w-5" />
-              {/* Notification dot */}
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" />
-            </button>
+            <div className="relative" ref={notifRef}>
+              <button
+                onClick={() => setNotifOpen(!notifOpen)}
+                className="relative rounded-lg p-2 text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-700 dark:hover:text-white transition-colors"
+                aria-label="Notifications"
+              >
+                <HiOutlineBell className="h-5 w-5" />
+                {pendingCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                    {pendingCount > 9 ? '9+' : pendingCount}
+                  </span>
+                )}
+              </button>
+              {notifOpen && (
+                <div className="absolute right-0 top-full mt-2 w-80 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 shadow-xl z-50 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-700">
+                    <h3 className="text-sm font-semibold text-surface-900 dark:text-white">Pending Actions ({pendingCount})</h3>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto">
+                    {pendingActions.length === 0 ? (
+                      <div className="p-4 text-center text-sm text-surface-400">No pending actions</div>
+                    ) : (
+                      pendingActions.slice(0, 10).map(action => (
+                        <div key={action.actionId} className="px-4 py-3 border-b border-surface-100 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors">
+                          <div className="flex items-start gap-2">
+                            <span className={`mt-1 h-2 w-2 rounded-full flex-shrink-0 ${
+                              action.severity === 'critical' ? 'bg-red-500' : action.severity === 'high' ? 'bg-amber-500' : 'bg-blue-500'
+                            }`} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-surface-900 dark:text-white leading-snug">{action.description}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-700 text-surface-500 capitalize">{action.module}</span>
+                                <span className="text-[10px] text-surface-400">{new Date(action.createdAt).toLocaleDateString('en-IN')}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  {pendingCount > 0 && (
+                    <div className="px-4 py-2 border-t border-surface-200 dark:border-surface-700">
+                      <button
+                        onClick={() => { setNotifOpen(false); navigate('/app/analytics'); }}
+                        className="text-xs text-brand-600 dark:text-brand-400 font-medium hover:underline"
+                      >
+                        View all pending actions
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* User avatar dropdown */}
             <div className="relative" ref={userMenuRef}>

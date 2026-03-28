@@ -54,9 +54,16 @@ router.post('/',
   async (req, res) => {
     try {
       const data = req.body;
-      // distributor_admin can only create users for their own distributor
       if (req.user!.role !== 'super_admin') {
+        // distributor_admin can only create users for their own distributor
         data.distributorId = req.user!.distributorId;
+      } else if (!data.distributorId) {
+        // super_admin: use resolved distributor context (from X-Distributor-Id header or selector)
+        data.distributorId = req.user!.distributorId || null;
+      }
+      // Prevent creating distributor-scoped roles without a distributorId
+      if (!data.distributorId && data.role !== 'super_admin') {
+        return sendError(res, 'A distributor must be selected before creating this user. Please select a distributor from the top bar.', 400);
       }
       const user = await userService.createUser(data);
       return sendCreated(res, mapUser(user));

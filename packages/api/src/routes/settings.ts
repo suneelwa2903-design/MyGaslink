@@ -14,7 +14,9 @@ const router = Router();
 
 router.get('/', async (req, res) => {
   try {
-    const settings = await settingsService.getSettings(req.user!.distributorId!);
+    const distributorId = req.user!.distributorId || (req.query.distributorId as string);
+    if (!distributorId) return sendSuccess(res, []); // super admin without distributor selected
+    const settings = await settingsService.getSettings(distributorId);
     return sendSuccess(res, settings);
   } catch (err) {
     return sendError(res, (err as Error).message);

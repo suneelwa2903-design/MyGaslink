@@ -4,11 +4,55 @@ import { requireRole } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
-import { createDistributorSchema, updateDistributorSchema } from '@gaslink/shared';
+import { createDistributorSchema, updateDistributorSchema, GSTIN_REGEX } from '@gaslink/shared';
 import * as distributorService from '../services/distributorService.js';
 import { mapDistributor, mapDistributors } from '../utils/mappers.js';
+import { lookupGstin, geocodeAddress } from '../services/gst/gstinLookup.js';
 
 const router = Router();
+
+// GET /api/distributors/gstin-lookup/:gstin — Look up GSTIN details via WhiteBooks
+router.get('/gstin-lookup/:gstin', requireRole('super_admin'), async (req, res) => {
+  try {
+    const gstin = (param(req.params.gstin) || '').toUpperCase();
+    // Basic validation: 15 alphanumeric chars starting with 2 digits
+    // WhiteBooks API will do full validation; we allow sandbox GSTINs here
+    if (!gstin || gstin.length !== 15 || !/^[0-9]{2}[A-Z0-9]{13}$/.test(gstin)) {
+      return sendError(res, 'Invalid GSTIN format. Must be 15 characters.', 400);
+    }
+    const details = await lookupGstin(gstin);
+
+    // Attempt geocoding for the registered address (non-blocking)
+    let coordinates: { latitude: number; longitude: number } | null = null;
+    try {
+      coordinates = await geocodeAddress(details.address, details.city, details.state, details.pincode);
+    } catch {
+      // Geocoding failure is non-critical
+    }
+
+    return sendSuccess(res, { ...details, coordinates });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'GSTIN lookup failed';
+    return sendError(res, message, 400);
+  }
+});
+
+// POST /api/distributors/geocode — Geocode an address
+router.post('/geocode', requireRole('super_admin'), async (req, res) => {
+  try {
+    const { address, city, state, pincode } = req.body;
+    if (!address && !pincode) {
+      return sendError(res, 'Address or pincode is required', 400);
+    }
+    const coordinates = await geocodeAddress(address || '', city || '', state || '', pincode || '');
+    if (!coordinates) {
+      return sendError(res, 'Could not geocode the address', 404);
+    }
+    return sendSuccess(res, coordinates);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
 
 // GET /api/distributors
 router.get('/', requireRole('super_admin'), async (_req, res) => {

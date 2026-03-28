@@ -26,6 +26,7 @@ export default function ForcePasswordResetPage() {
       apiPost('/auth/change-password', {
         currentPassword: data.currentPassword,
         newPassword: data.newPassword,
+        confirmPassword: data.confirmPassword,
       }),
     onSuccess: () => {
       toast.success('Password changed successfully. Please log in again.');

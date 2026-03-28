@@ -994,6 +994,87 @@ async function main() {
   console.log('  Inventory:      inventory@gasagency.com / Inventory@123');
   console.log('  Driver:         raju@gasagency.com / Driver@123');
   console.log('  Customer:       royal@kitchen.com / Customer@123');
+
+  // ─── 15. Pricing Tiers ──────────────────────────────────────────────────────
+  const tierDefaults = {
+    quarterlyDiscount: 5,
+    halfYearlyDiscount: 10,
+    yearlyDiscount: 15,
+    extraSeatPriceAdmin: 299,
+    extraSeatPriceDriver: 99,
+    customerPortalPrice: 49,
+    gstApiOveragePrice: 2,
+  };
+
+  await prisma.pricingTier.upsert({
+    where: { plan: 'starter' },
+    update: {},
+    create: {
+      plan: 'starter',
+      volumeMin: 0,
+      volumeMax: 10000,
+      monthlyPrice: 4999,
+      adminSeats: 1,
+      financeSeats: 1,
+      inventorySeats: 1,
+      driverSeats: 5,
+      gstApiCallsIncluded: 1500,
+      ...tierDefaults,
+    },
+  });
+
+  await prisma.pricingTier.upsert({
+    where: { plan: 'growth' },
+    update: {},
+    create: {
+      plan: 'growth',
+      volumeMin: 10001,
+      volumeMax: 30000,
+      monthlyPrice: 8999,
+      adminSeats: 2,
+      financeSeats: 2,
+      inventorySeats: 2,
+      driverSeats: 12,
+      gstApiCallsIncluded: 4000,
+      ...tierDefaults,
+    },
+  });
+
+  await prisma.pricingTier.upsert({
+    where: { plan: 'business' },
+    update: {},
+    create: {
+      plan: 'business',
+      volumeMin: 30001,
+      volumeMax: 70000,
+      monthlyPrice: 14999,
+      adminSeats: 3,
+      financeSeats: 3,
+      inventorySeats: 3,
+      driverSeats: 25,
+      gstApiCallsIncluded: 8000,
+      ...tierDefaults,
+    },
+  });
+
+  await prisma.pricingTier.upsert({
+    where: { plan: 'enterprise' },
+    update: {},
+    create: {
+      plan: 'enterprise',
+      volumeMin: 70001,
+      volumeMax: null,
+      monthlyPrice: 19999,
+      adminSeats: 5,
+      financeSeats: 4,
+      inventorySeats: 4,
+      driverSeats: 40,
+      gstApiCallsIncluded: 15000,
+      ...tierDefaults,
+    },
+  });
+
+  console.log('Pricing tiers seeded: starter, growth, business, enterprise');
 }
 
 main()

@@ -56,6 +56,19 @@ export async function createUser(data: {
   distributorId?: string;
   customerId?: string;
 }) {
+  // Seat limit enforcement
+  if (data.distributorId && data.role !== 'super_admin') {
+    const seatCheck = await checkSeatAvailability(data.distributorId, data.role);
+    if (!seatCheck.available) {
+      throw new SeatLimitError(
+        `Seat limit reached for ${data.role}. ${seatCheck.used}/${seatCheck.allowed} seats used. Request additional seats or upgrade your plan.`,
+        data.role,
+        seatCheck.allowed,
+        seatCheck.used
+      );
+    }
+  }
+
   const passwordHash = await hashPassword(data.password);
   return prisma.user.create({
     data: {
@@ -112,4 +125,53 @@ export async function softDeleteUser(id: string) {
     data: { deletedAt: new Date(), status: 'inactive', refreshToken: null },
     select: { id: true },
   });
+}
+
+// ─── Seat Limit Enforcement ──────────────────────────────────────────────────
+
+async function checkSeatAvailability(distributorId: string, role: string) {
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { subscriptionPlan: true },
+  });
+
+  if (!distributor?.subscriptionPlan) {
+    return { available: true, allowed: 999, used: 0 }; // No plan = no limits
+  }
+
+  const tier = await prisma.pricingTier.findUnique({
+    where: { plan: distributor.subscriptionPlan },
+  });
+
+  if (!tier) return { available: true, allowed: 999, used: 0 };
+
+  // Map role to seat category
+  const seatMap: Record<string, number> = {
+    distributor_admin: tier.adminSeats,
+    finance: tier.financeSeats,
+    inventory: tier.inventorySeats,
+    driver: tier.driverSeats,
+  };
+
+  const allowed = seatMap[role];
+  if (allowed === undefined) return { available: true, allowed: 999, used: 0 }; // Unknown role, no limit
+
+  const used = await prisma.user.count({
+    where: { distributorId, role: role as any, status: 'active', deletedAt: null },
+  });
+
+  return { available: used < allowed, allowed, used };
+}
+
+export class SeatLimitError extends Error {
+  constructor(
+    message: string,
+    public role: string,
+    public allowed: number,
+    public used: number,
+    public statusCode: number = 403
+  ) {
+    super(message);
+    this.name = 'SeatLimitError';
+  }
 }

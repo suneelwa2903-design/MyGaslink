@@ -15,8 +15,12 @@ router.get('/',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
+    const distributorId = req.user!.role === 'super_admin'
+      ? (req.query.distributorId as string) || undefined
+      : req.user!.distributorId!;
+
     const actions = await pendingActionsService.listPendingActions(
-      req.user!.distributorId!,
+      distributorId,
       {
         module: req.query.module as string,
         status: req.query.status as string,

@@ -24,6 +24,7 @@ const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'));
 const CollectionsPage = lazy(() => import('@/pages/CollectionsPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const DistributorsPage = lazy(() => import('@/pages/DistributorsPage'));
+const DistributorDetailPage = lazy(() => import('@/pages/DistributorDetailPage'));
 const BillingSuspendedPage = lazy(() => import('@/pages/BillingSuspendedPage'));
 const HealthMonitoringPage = lazy(() => import('@/pages/HealthMonitoringPage'));
 const ProviderCatalogPage = lazy(() => import('@/pages/ProviderCatalogPage'));
@@ -234,6 +235,7 @@ export function AppRoutes() {
             }
           >
             <Route index element={<DistributorsPage />} />
+            <Route path=":id" element={<DistributorDetailPage />} />
           </Route>
 
           {/* Billing now in Settings */}

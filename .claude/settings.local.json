@@ -59,7 +59,10 @@
       "Bash(OTP=890422)",
       "Bash(curl -s -X POST http://localhost:5000/api/auth/verify-reset-otp -H \"Content-Type: application/json\" -d \"{\"\"identifier\"\":\"\"admin@mygaslink.com\"\",\"\"otp\"\":\"\"$OTP\"\"}\")",
       "Bash(python3 -c \"import sys,json; t=json.load\\(sys.stdin\\)[''''data''''][''''resetToken'''']; print\\(t\\)\")",
-      "Bash(EXPO_PUBLIC_API_URL=\"http://192.168.1.2:5000/api\" npx expo start --clear)"
+      "Bash(EXPO_PUBLIC_API_URL=\"http://192.168.1.2:5000/api\" npx expo start --clear)",
+      "Bash(AUTH_TOKEN=\"1ENUMGMs8Fbn8oK7be4rDETlS\")",
+      "Bash(__NEW_LINE_a89986b96645d977__ curl:*)",
+      "Bash(xargs wc:*)"
     ]
   }
 }

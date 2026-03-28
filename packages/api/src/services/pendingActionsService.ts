@@ -3,10 +3,11 @@ import type { Prisma } from '@prisma/client';
 import { DEFAULT_SLA_HOURS } from '@gaslink/shared';
 
 export async function listPendingActions(
-  distributorId: string,
-  filters: { module?: string; status?: string; severity?: string }
+  distributorId?: string,
+  filters: { module?: string; status?: string; severity?: string } = {}
 ) {
-  const where: Prisma.PendingActionWhereInput = { distributorId };
+  const where: Prisma.PendingActionWhereInput = {};
+  if (distributorId) where.distributorId = distributorId;
   if (filters.module) where.module = filters.module as any;
   if (filters.status) where.status = filters.status as any;
   if (filters.severity) where.severity = filters.severity as any;

@@ -116,4 +116,94 @@ router.delete('/:id',
   }
 );
 
+// ─── For Distributor Admin: List catalog items for their providers ──────────
+
+router.get('/for-distributor',
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId || (req.query.distributorId as string);
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+
+      const distributor = await prisma.distributor.findUnique({
+        where: { id: distributorId },
+        select: { providerCodes: true },
+      });
+
+      if (!distributor) return sendNotFound(res, 'Distributor');
+
+      const items = await prisma.providerCatalogCylinderType.findMany({
+        where: {
+          providerCode: { in: distributor.providerCodes },
+          isActive: true,
+        },
+        orderBy: [{ providerCode: 'asc' }, { weight: 'asc' }],
+      });
+
+      // Also get existing cylinder types for this distributor to mark which are already added
+      const existing = await prisma.cylinderType.findMany({
+        where: { distributorId, isActive: true },
+        select: { typeName: true, capacity: true },
+      });
+
+      const existingSet = new Set(existing.map(e => `${e.typeName}-${e.capacity}`));
+
+      const itemsWithStatus = items.map(item => ({
+        ...item,
+        alreadyAdded: existingSet.has(`${item.shortName}-${item.weight}`),
+      }));
+
+      return sendSuccess(res, { items: itemsWithStatus, providers: distributor.providerCodes });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// ─── Import catalog items as distributor cylinder types ─────────────────────
+
+router.post('/import',
+  validate(z.object({
+    catalogItemIds: z.array(z.string().uuid()).min(1, 'Select at least one cylinder type'),
+  })),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId || (req.query.distributorId as string);
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+
+      const catalogItems = await prisma.providerCatalogCylinderType.findMany({
+        where: { id: { in: req.body.catalogItemIds }, isActive: true },
+      });
+
+      if (catalogItems.length === 0) return sendError(res, 'No valid catalog items found', 400);
+
+      // Check which ones already exist
+      const existing = await prisma.cylinderType.findMany({
+        where: { distributorId },
+        select: { typeName: true, capacity: true },
+      });
+      const existingSet = new Set(existing.map(e => `${e.typeName}-${e.capacity}`));
+
+      const toCreate = catalogItems.filter(c => !existingSet.has(`${c.shortName}-${c.weight}`));
+
+      if (toCreate.length === 0) return sendError(res, 'All selected cylinder types already exist for this distributor', 400);
+
+      const created = await prisma.$transaction(
+        toCreate.map(c => prisma.cylinderType.create({
+          data: {
+            distributorId,
+            typeName: c.shortName,
+            capacity: c.weight,
+            unit: 'KG',
+            hsnCode: c.hsnCode,
+          },
+        }))
+      );
+
+      return sendCreated(res, { imported: created.length, cylinderTypes: created });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
 export default router;

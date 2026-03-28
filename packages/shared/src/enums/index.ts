@@ -31,6 +31,13 @@ export enum DistributorStatus {
   INACTIVE = 'inactive',
 }
 
+export enum SubscriptionPlan {
+  STARTER = 'starter',
+  GROWTH = 'growth',
+  BUSINESS = 'business',
+  ENTERPRISE = 'enterprise',
+}
+
 export enum GstMode {
   DISABLED = 'disabled',
   SANDBOX = 'sandbox',
@@ -226,8 +233,12 @@ export enum BillingItemType {
   BASE_SUBSCRIPTION = 'base_subscription',
   DRIVER_LOGIN = 'driver_login',
   OTHER_LOGIN = 'other_login',
+  CUSTOMER_PORTAL = 'customer_portal',
+  GST_API_OVERAGE = 'gst_api_overage',
+  EXTRA_SEAT = 'extra_seat',
   CUSTOM_ADDON = 'custom_addon',
   DISCOUNT = 'discount',
+  PERIOD_DISCOUNT = 'period_discount',
 }
 
 // ─── Pending Actions ─────────────────────────────────────────────────────────
@@ -274,6 +285,12 @@ export enum AccountabilityStatus {
   RESOLVED_WRITTEN_OFF = 'resolved_written_off',
   RESOLVED_CHARGED = 'resolved_charged',
   CLOSED = 'closed',
+}
+
+export enum SeatRequestStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
 }
 
 // ─── Licenses ────────────────────────────────────────────────────────────────

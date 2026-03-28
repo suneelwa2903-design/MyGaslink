@@ -47,7 +47,7 @@ router.get('/cycles/:id', async (req, res) => {
 router.post('/generate',
   requireRole('super_admin'),
   validate(z.object({
-    distributorId: z.string().uuid(),
+    distributorId: z.string().min(1),
     periodType: z.enum(['monthly', 'quarterly', 'half_yearly', 'yearly']),
     periodStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     periodEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -98,6 +98,20 @@ router.post('/unsuspend/:distributorId',
   async (req, res) => {
     try {
       const result = await billingService.unsuspendDistributor(param(req.params.distributorId));
+      return sendSuccess(res, result);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// POST /api/billing/check-expiry
+router.post('/check-expiry',
+  requireRole('super_admin'),
+  auditLog('check_expiry', 'billing'),
+  async (_req, res) => {
+    try {
+      const result = await billingService.checkBillingExpiryAndCreatePendingActions();
       return sendSuccess(res, result);
     } catch (err) {
       return sendError(res, (err as Error).message);

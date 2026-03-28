@@ -324,11 +324,28 @@ export const createDistributorSchema = z.object({
   phone: phone.optional(),
   email: email.optional(),
   providerCodes: z.array(z.string()).optional(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  // Godown / Warehouse address
+  godownAddress: z.string().max(500).optional(),
+  godownCity: z.string().max(100).optional(),
+  godownState: z.string().max(100).optional(),
+  godownPincode: z.string().max(10).optional(),
+  godownLatitude: z.number().optional(),
+  godownLongitude: z.number().optional(),
+  // Office address
+  officeAddress: z.string().max(500).optional(),
+  officeCity: z.string().max(100).optional(),
+  officeState: z.string().max(100).optional(),
+  officePincode: z.string().max(10).optional(),
 });
 
 export const updateDistributorSchema = createDistributorSchema.partial().extend({
   gstMode: z.enum(['disabled', 'sandbox', 'live']).optional(),
   status: z.enum(['active', 'suspended', 'inactive']).optional(),
+  subscriptionPlan: z.enum(['starter', 'growth', 'business', 'enterprise']).nullable().optional(),
+  billingTier: z.enum(['tier_1', 'tier_2', 'tier_3', 'tier_4']).nullable().optional(),
+  gaslinkBillingEnabled: z.boolean().optional(),
 });
 
 // ─── Filter/Query Schemas ────────────────────────────────────────────────────

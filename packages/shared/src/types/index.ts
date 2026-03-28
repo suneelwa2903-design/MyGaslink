@@ -1,5 +1,5 @@
 import type {
-  UserRole, UserStatus, ProvisioningStatus, DistributorStatus, GstMode,
+  UserRole, UserStatus, ProvisioningStatus, DistributorStatus, GstMode, SubscriptionPlan,
   CustomerStatus, OrderStatus, InvoiceStatus, IrnStatus, EwbStatus,
   DriverStatus, VehicleStatus, AssignmentStatus, AdjustmentStatus,
   CancelledStockStatus, PaymentMethod, PaymentAllocationStatus,
@@ -116,12 +116,38 @@ export interface Distributor {
   status: DistributorStatus;
   gstMode: GstMode;
   providerCodes: string[];
-  subscriptionPlan: string | null;
+  subscriptionPlan: SubscriptionPlan | null;
   billingTier: BillingTier | null;
   billingSuspended: boolean;
   gaslinkBillingEnabled: boolean;
+  latitude: number | null;
+  longitude: number | null;
+  godownAddress: string | null;
+  godownCity: string | null;
+  godownState: string | null;
+  godownPincode: string | null;
+  godownLatitude: number | null;
+  godownLongitude: number | null;
+  officeAddress: string | null;
+  officeCity: string | null;
+  officeState: string | null;
+  officePincode: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface GstinLookupResult {
+  gstin: string;
+  legalName: string;
+  tradeName: string;
+  address: string;
+  city: string;
+  state: string;
+  stateCode: string;
+  pincode: string;
+  status: string;
+  registrationType: string;
+  businessType: string;
 }
 
 // ─── Customers ───────────────────────────────────────────────────────────────
@@ -600,6 +626,88 @@ export interface BillingItem {
   lineTotalExclGst: number;
   lineGstAmount: number;
   lineTotalInclGst: number;
+}
+
+export interface PricingTier {
+  tierId: string;
+  plan: SubscriptionPlan;
+  volumeMin: number;
+  volumeMax: number | null;
+  monthlyPrice: number;
+  quarterlyDiscount: number;
+  halfYearlyDiscount: number;
+  yearlyDiscount: number;
+  adminSeats: number;
+  financeSeats: number;
+  inventorySeats: number;
+  driverSeats: number;
+  gstApiCallsIncluded: number;
+  extraSeatPriceAdmin: number;
+  extraSeatPriceDriver: number;
+  customerPortalPrice: number;
+  gstApiOveragePrice: number;
+}
+
+export interface GstApiUsage {
+  usageId: string;
+  distributorId: string;
+  month: number;
+  year: number;
+  irnCallCount: number;
+  ewbCallCount: number;
+  totalCalls: number;
+  allocatedCalls: number;
+}
+
+export interface SeatRequest {
+  requestId: string;
+  distributorId: string;
+  requestedRole: string;
+  requestedBy: string;
+  reason: string | null;
+  status: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  pricePerMonth: number | null;
+  createdAt: string;
+}
+
+export interface DistributorConsumption {
+  distributorId: string;
+  businessName: string;
+  subscriptionPlan: SubscriptionPlan | null;
+  billingTier: string | null;
+  gstMode: string;
+  status: string;
+  userCounts: {
+    admin: number;
+    finance: number;
+    inventory: number;
+    driver: number;
+    customer: number;
+  };
+  seatLimits: {
+    admin: number;
+    finance: number;
+    inventory: number;
+    driver: number;
+  } | null;
+  gstApiUsage: {
+    month: number;
+    year: number;
+    irnCalls: number;
+    ewbCalls: number;
+    totalCalls: number;
+    allocated: number;
+  } | null;
+  billing: {
+    totalPaid: number;
+    totalPending: number;
+    lastBillingDate: string | null;
+    nextDueDate: string | null;
+    currentStatus: string | null;
+  };
+  customerPortalUsers: number;
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────

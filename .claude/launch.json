@@ -5,19 +5,22 @@
       "name": "api",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@gaslink/api", "run", "dev"],
-      "port": 5000
+      "port": 5000,
+      "autoPort": false
     },
     {
       "name": "web",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@gaslink/web", "run", "dev"],
-      "port": 5173
+      "port": 5173,
+      "autoPort": false
     },
     {
       "name": "mobile",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@gaslink/mobile", "run", "start"],
-      "port": 8081
+      "port": 8081,
+      "autoPort": false
     }
   ]
 }
