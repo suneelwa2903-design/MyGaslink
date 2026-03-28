@@ -1,0 +1,389 @@
+# Re-New GasLink — Testing Progress Tracker
+
+> **HOW TO USE THIS FILE**
+> - This is the single source of truth for testing progress across all sessions
+> - Update `Pass/Fail/Bug` and `Notes` after each test
+> - At the start of any Claude session, say: **"read docs/TESTING_PROGRESS.md and continue testing"**
+> - Detail is in `docs/E2E_Testing_Guide.xlsx` — this file is the running status summary
+
+**Last Updated:** 2026-03-28
+**Baseline Commit:** `a72b25e` (2026-03-28)
+**Git Branch:** master
+
+---
+
+## Legend
+- ✅ Pass
+- ❌ Fail (see Notes)
+- 🚧 Bug filed (fix pending)
+- ⏭ Skipped (reason in Notes)
+- ⬜ Not tested yet
+
+---
+
+## Overall Progress
+
+| Category | Total | ✅ Pass | ❌ Fail | 🚧 Bug | ⬜ Pending |
+|----------|-------|---------|---------|--------|-----------|
+| Navigation Smoke (7 roles) | 55 | 0 | 0 | 0 | 55 |
+| Role-Based Access | 52 | 0 | 0 | 0 | 52 |
+| Orders Tests | 22 | 0 | 0 | 0 | 22 |
+| Inventory Tests | 18 | 0 | 0 | 0 | 18 |
+| Customer Tests | 17 | 0 | 0 | 0 | 17 |
+| Billing Tests | 26 | 0 | 0 | 0 | 26 |
+| Fleet Tests | 11 | 0 | 0 | 0 | 11 |
+| Settings Tests | 17 | 0 | 0 | 0 | 17 |
+| Workflow: Order→Payment | 47 | 0 | 0 | 0 | 47 |
+| Workflow: Inventory Cycle | 14 | 0 | 0 | 0 | 14 |
+| Customer Portal | 18 | 0 | 0 | 0 | 18 |
+| Negative & Edge Cases | 30 | 0 | 0 | 0 | 30 |
+| **TOTAL** | **327** | **0** | **0** | **0** | **327** |
+
+---
+
+## Test Credentials
+
+| Role | Email | Password | Distributor |
+|------|-------|----------|-------------|
+| Super Admin | admin@mygaslink.com | Admin@123 | All (platform-level) |
+| Dist Admin (GST OFF) | bhargava@gasagency.com | Distadmin@123 | Bhargava Gas Agency |
+| Dist Admin (GST ON) | sharma@gasdist.com | Gstadmin@123 | Sharma Gas Distributors |
+| Finance | finance@gasagency.com | Finance@123 | Bhargava Gas Agency |
+| Inventory | inventory@gasagency.com | Inventory@123 | Bhargava Gas Agency |
+| Driver | raju@gasagency.com | Driver@123 | Bhargava Gas Agency |
+| Customer | royal@kitchen.com | Customer@123 | Bhargava Gas Agency |
+
+---
+
+## Phase 1 — Navigation Smoke Test (START HERE)
+_Goal: Verify every page loads for every role. ~30 min. No deep testing yet._
+
+### Step 1 — Super Admin (admin@mygaslink.com)
+
+| # | Screen | URL | Result | Notes |
+|---|--------|-----|--------|-------|
+| 1.1 | Login | /login | ⬜ | |
+| 1.2 | Analytics Dashboard | /app/analytics | ⬜ | |
+| 1.3 | Orders | /app/orders | ⬜ | |
+| 1.4 | Inventory | /app/inventory | ⬜ | |
+| 1.5 | Customers | /app/customers | ⬜ | |
+| 1.6 | Billing & Payments | /app/billing-payments | ⬜ | |
+| 1.7 | Fleet | /app/fleet | ⬜ | |
+| 1.8 | Collections | /app/collections | ⬜ | |
+| 1.9 | Settings | /app/settings | ⬜ | |
+| 1.10 | Distributors | /app/distributors | ⬜ | |
+| 1.11 | Provider Catalog | /app/provider-catalog | ⬜ | |
+| 1.12 | Health Monitoring | /app/health | ⬜ | |
+
+### Step 2 — Dist Admin GST OFF (bhargava@gasagency.com)
+
+| # | Screen | URL | Result | Notes |
+|---|--------|-----|--------|-------|
+| 2.1 | Login | /login | ⬜ | |
+| 2.2 | Analytics Dashboard | /app/analytics | ⬜ | |
+| 2.3 | Orders | /app/orders | ⬜ | |
+| 2.4 | Inventory | /app/inventory | ⬜ | |
+| 2.5 | Customers | /app/customers | ⬜ | |
+| 2.6 | Billing & Payments | /app/billing-payments | ⬜ | No GST columns expected |
+| 2.7 | Fleet | /app/fleet | ⬜ | |
+| 2.8 | Collections | /app/collections | ⬜ | |
+| 2.9 | Settings | /app/settings | ⬜ | GST tab shows "disabled" |
+| 2.10 | Distributors (BLOCKED) | /app/distributors | ⬜ | Should 403/redirect |
+| 2.11 | Provider Catalog (BLOCKED) | /app/provider-catalog | ⬜ | Should 403/redirect |
+| 2.12 | Health (BLOCKED) | /app/health | ⬜ | Should 403/redirect |
+
+### Step 3 — Dist Admin GST ON (sharma@gasdist.com)
+
+| # | Screen | URL | Result | Notes |
+|---|--------|-----|--------|-------|
+| 3.1 | Login | /login | ⬜ | |
+| 3.2 | Analytics Dashboard | /app/analytics | ⬜ | |
+| 3.3 | Orders | /app/orders | ⬜ | May be empty |
+| 3.4 | Inventory | /app/inventory | ⬜ | |
+| 3.5 | Customers | /app/customers | ⬜ | 3 GST customers |
+| 3.6 | Billing & Payments | /app/billing-payments | ⬜ | GST columns visible |
+| 3.7 | Fleet | /app/fleet | ⬜ | 1 driver, 1 vehicle |
+| 3.8 | Collections | /app/collections | ⬜ | |
+| 3.9 | Settings | /app/settings | ⬜ | GST tab shows sandbox config |
+
+### Step 4 — Finance (finance@gasagency.com)
+
+| # | Screen | URL | Result | Notes |
+|---|--------|-----|--------|-------|
+| 4.1 | Login | /login | ⬜ | |
+| 4.2 | Analytics Dashboard | /app/analytics | ⬜ | |
+| 4.3 | Billing & Payments | /app/billing-payments | ⬜ | |
+| 4.4 | Collections | /app/collections | ⬜ | |
+| 4.5 | Orders (BLOCKED) | /app/orders | ⬜ | Should 403/redirect |
+| 4.6 | Inventory (BLOCKED) | /app/inventory | ⬜ | Should 403/redirect |
+| 4.7 | Customers (BLOCKED) | /app/customers | ⬜ | Should 403/redirect |
+| 4.8 | Fleet (BLOCKED) | /app/fleet | ⬜ | Should 403/redirect |
+| 4.9 | Settings (BLOCKED) | /app/settings | ⬜ | Should 403/redirect |
+
+### Step 5 — Inventory (inventory@gasagency.com)
+
+| # | Screen | URL | Result | Notes |
+|---|--------|-----|--------|-------|
+| 5.1 | Login | /login | ⬜ | |
+| 5.2 | Analytics Dashboard | /app/analytics | ⬜ | |
+| 5.3 | Orders | /app/orders | ⬜ | |
+| 5.4 | Inventory | /app/inventory | ⬜ | Full access |
+| 5.5 | Fleet | /app/fleet | ⬜ | |
+| 5.6 | Customers (BLOCKED) | /app/customers | ⬜ | Should 403/redirect |
+| 5.7 | Billing (BLOCKED) | /app/billing-payments | ⬜ | Should 403/redirect |
+| 5.8 | Settings (BLOCKED) | /app/settings | ⬜ | Should 403/redirect |
+
+### Step 6 — Driver (raju@gasagency.com)
+
+| # | Screen | URL | Result | Notes |
+|---|--------|-----|--------|-------|
+| 6.1 | Login | /login | ⬜ | |
+| 6.2 | Analytics Dashboard | /app/analytics | ⬜ | Driver view |
+| 6.3 | Orders | /app/orders | ⬜ | Assigned orders only |
+| 6.4 | Inventory (BLOCKED) | /app/inventory | ⬜ | Should 403/redirect |
+| 6.5 | Customers (BLOCKED) | /app/customers | ⬜ | Should 403/redirect |
+| 6.6 | Billing (BLOCKED) | /app/billing-payments | ⬜ | Should 403/redirect |
+| 6.7 | Fleet (BLOCKED) | /app/fleet | ⬜ | Should 403/redirect |
+| 6.8 | Settings (BLOCKED) | /app/settings | ⬜ | Should 403/redirect |
+
+### Step 7 — Customer (royal@kitchen.com)
+
+| # | Screen | URL | Result | Notes |
+|---|--------|-----|--------|-------|
+| 7.1 | Login | /login | ⬜ | Should redirect to /app/customer/dashboard |
+| 7.2 | Customer Dashboard | /app/customer/dashboard | ⬜ | |
+| 7.3 | Customer Orders | /app/customer/orders | ⬜ | |
+| 7.4 | Customer Invoices | /app/customer/invoices | ⬜ | |
+| 7.5 | Customer Payments | /app/customer/payments | ⬜ | |
+| 7.6 | Customer Account | /app/customer/account | ⬜ | |
+| 7.7 | Admin Dashboard (BLOCKED) | /app/analytics | ⬜ | Should redirect to customer portal |
+| 7.8 | Admin Orders (BLOCKED) | /app/orders | ⬜ | Should 403/redirect |
+
+---
+
+## Phase 2 — E2E Tests by Module
+
+> Run these after Phase 1 smoke test passes. Refer to `docs/E2E_Testing_Guide.xlsx` for exact steps.
+
+### Role-Based Access (RA-001 to RA-052)
+_Status: 0/52 — ⬜ Not started_
+
+| Range | Role | Result | Notes |
+|-------|------|--------|-------|
+| RA-001 to RA-013 | Super Admin | ⬜ | |
+| RA-014 to RA-025 | Dist Admin | ⬜ | |
+| RA-026 to RA-034 | Finance | ⬜ | |
+| RA-035 to RA-041 | Inventory | ⬜ | |
+| RA-042 to RA-046 | Driver | ⬜ | |
+| RA-047 to RA-052 | Customer | ⬜ | |
+
+### Orders (FO-001 to FO-022)
+_Status: 0/22 — ⬜ Not started_
+
+| Test ID | Case | Result | Notes |
+|---------|------|--------|-------|
+| FO-001 | Create order - single item | ⬜ | |
+| FO-002 | Create order - multiple items | ⬜ | |
+| FO-003 | Create order - no customer | ⬜ | |
+| FO-004 | Create order - no items | ⬜ | |
+| FO-005 | Create order - past date | ⬜ | |
+| FO-006 | Create order - stopped customer | ⬜ | |
+| FO-007 | Edit order - change date | ⬜ | |
+| FO-008 | Edit order - modify items | ⬜ | |
+| FO-009 | Edit delivered order | ⬜ | |
+| FO-010 | Assign driver | ⬜ | |
+| FO-011 | Bulk assign driver | ⬜ | |
+| FO-012 | Cancel before dispatch | ⬜ | |
+| FO-013 | Cancel after dispatch | ⬜ | |
+| FO-014 | Delivery - full qty | ⬜ | |
+| FO-015 | Delivery - partial qty | ⬜ | |
+| FO-016 | Delivery - with empties | ⬜ | |
+| FO-017 | Returns-only order | ⬜ | |
+| FO-018 | Confirm returns | ⬜ | |
+| FO-019 | Filter by status | ⬜ | |
+| FO-020 | Filter by date range | ⬜ | |
+| FO-021 | Pagination | ⬜ | |
+| FO-022 | Search by keyword | ⬜ | |
+
+### Inventory (FI-001 to FI-018)
+_Status: 0/18 — ⬜ Not started_
+
+| Test ID | Case | Result | Notes |
+|---------|------|--------|-------|
+| FI-001 | View daily summary | ⬜ | |
+| FI-002 | Navigate dates | ⬜ | |
+| FI-003 | Record incoming fulls | ⬜ | |
+| FI-004 | Record outgoing empties | ⬜ | |
+| FI-005 | Manual adjustment | ⬜ | |
+| FI-006 | Lock day | ⬜ | |
+| FI-007 | Unlock day | ⬜ | |
+| FI-008 | Add on locked day | ⬜ | |
+| FI-009 | Depot history | ⬜ | |
+| FI-010 | View cancelled stock | ⬜ | |
+| FI-011 | Return cancelled stock | ⬜ | |
+| FI-012 | View forecast | ⬜ | |
+| FI-013 | Customer balances | ⬜ | |
+| FI-014 | Reconciliation pending | ⬜ | |
+| FI-015 | Reconcile - confirm | ⬜ | |
+| FI-016 | Reconcile - mismatch | ⬜ | |
+| FI-017 | Critical alert | ⬜ | |
+| FI-018 | Warning alert | ⬜ | |
+
+### Customers (FC-001 to FC-017)
+_Status: 0/17 — ⬜ Not started_
+
+| Test ID | Case | Result | Notes |
+|---------|------|--------|-------|
+| FC-001 | Create - all fields | ⬜ | |
+| FC-002 | Create - min fields | ⬜ | |
+| FC-003 | Create - duplicate phone | ⬜ | |
+| FC-004 | Edit customer | ⬜ | |
+| FC-005 | Stop supply | ⬜ | |
+| FC-006 | Resume supply | ⬜ | |
+| FC-007 | Detail - Orders tab | ⬜ | |
+| FC-008 | Detail - Invoices tab | ⬜ | |
+| FC-009 | Detail - Payments tab | ⬜ | |
+| FC-010 | Detail - Inventory tab | ⬜ | |
+| FC-011 | Detail - Ledger tab | ⬜ | |
+| FC-012 | Search by name | ⬜ | |
+| FC-013 | Filter by status | ⬜ | |
+| FC-014 | Provision portal | ⬜ | |
+| FC-015 | Modification request | ⬜ | |
+| FC-016 | Approve modification | ⬜ | |
+| FC-017 | Reject modification | ⬜ | |
+
+### Billing (FB-001 to FB-026)
+_Status: 0/26 — ⬜ Not started_
+
+| Test ID | Case | Result | Notes |
+|---------|------|--------|-------|
+| FB-001 | View invoices list | ⬜ | |
+| FB-002 | Filter by status | ⬜ | |
+| FB-003 | Filter by IRN status | ⬜ | |
+| FB-004 | Filter by date range | ⬜ | |
+| FB-005 | Invoice detail | ⬜ | |
+| FB-006 | Download PDF | ⬜ | |
+| FB-007 | Payment - cash | ⬜ | |
+| FB-008 | Payment - UPI | ⬜ | |
+| FB-009 | Payment - bank transfer | ⬜ | |
+| FB-010 | Payment - cheque | ⬜ | |
+| FB-011 | Partial payment | ⬜ | |
+| FB-012 | Auto-allocate | ⬜ | |
+| FB-013 | Manual allocate | ⬜ | |
+| FB-014 | Create credit note | ⬜ | |
+| FB-015 | Approve credit note | ⬜ | |
+| FB-016 | Reject credit note | ⬜ | |
+| FB-017 | Download CN PDF | ⬜ | |
+| FB-018 | Create debit note | ⬜ | |
+| FB-019 | Approve debit note | ⬜ | |
+| FB-020 | Reject debit note | ⬜ | |
+| FB-021 | Generate GST (IRN) | ⬜ | |
+| FB-022 | Cancel IRN | ⬜ | |
+| FB-023 | Generate EWB | ⬜ | |
+| FB-024 | Cancel EWB | ⬜ | |
+| FB-025 | Regenerate invoice | ⬜ | |
+| FB-026 | Mark overdue | ⬜ | |
+
+### Fleet (FF-001 to FF-011)
+_Status: 0/11 — ⬜ Not started_
+
+| Test ID | Case | Result | Notes |
+|---------|------|--------|-------|
+| FF-001 | Create driver | ⬜ | |
+| FF-002 | Edit driver | ⬜ | |
+| FF-003 | Delete driver | ⬜ | |
+| FF-004 | Toggle availability | ⬜ | |
+| FF-005 | Create vehicle | ⬜ | |
+| FF-006 | Edit vehicle | ⬜ | |
+| FF-007 | Delete vehicle | ⬜ | |
+| FF-008 | Create assignment | ⬜ | |
+| FF-009 | Update assignment | ⬜ | |
+| FF-010 | Driver performance | ⬜ | |
+| FF-011 | Vehicle inventory | ⬜ | |
+
+### Settings (FS-001 to FS-017)
+_Status: 1/17 — 1 Fixed_
+
+| Test ID | Case | Result | Notes |
+|---------|------|--------|-------|
+| FS-001 | General - SLA hours | ⬜ | |
+| FS-002 | GST - credentials | ⬜ | |
+| FS-003 | GST - enable | ⬜ | |
+| FS-004 | GST - disable | ⬜ | |
+| FS-005 | GST - mode change | ⬜ | |
+| FS-006 | Prices - add | ⬜ | |
+| FS-007 | Prices - edit | ⬜ | |
+| FS-008 | Thresholds - critical | ✅ | Bug fixed 2026-03-28: auto-populate from cylinder types |
+| FS-009 | Thresholds - warning | ✅ | Same fix |
+| FS-010 | Users - create Finance | ⬜ | |
+| FS-011 | Users - create Inventory | ⬜ | |
+| FS-012 | Users - create Driver | ⬜ | |
+| FS-013 | Users - edit | ⬜ | |
+| FS-014 | Users - delete | ⬜ | |
+| FS-015 | Users - reset password | ⬜ | |
+| FS-016 | Licenses - view | ⬜ | |
+| FS-017 | Billing - view | ⬜ | |
+
+### Workflow: Order → Payment (WF-001 to WF-047)
+_Status: 0/47 — ⬜ Not started_
+
+| Range | Scenario | Result | Notes |
+|-------|----------|--------|-------|
+| WF-001 to WF-008 | Happy Path (GST OFF) | ⬜ | Full order → invoice → payment |
+| WF-009 to WF-014 | GST ON B2B Inter-state | ⬜ | IRN generation included |
+| WF-015 to WF-018 | GST ON B2C Intra-state | ⬜ | |
+| WF-019 to WF-020 | Partial Delivery | ⬜ | |
+| WF-021+ | (remaining workflow tests) | ⬜ | |
+
+### Workflow: Inventory Cycle (WI-001 to WI-014)
+_Status: 0/14 — ⬜ Not started_
+
+### Customer Portal (CP-001 to CP-018)
+_Status: 0/18 — ⬜ Not started_
+
+### Negative & Edge Cases (NE-001 to NE-030)
+_Status: 0/30 — ⬜ Not started_
+
+---
+
+## Phase 3 — Mobile Testing (Expo Go)
+
+| Platform | Screen Group | Result | Notes |
+|----------|-------------|--------|-------|
+| Android/iOS | Auth (login, forgot password) | ⬜ | |
+| Android/iOS | Admin: dashboard, orders, inventory, finance, more | ⬜ | |
+| Android/iOS | Driver: orders, trip, inventory, analytics | ⬜ | |
+| Android/iOS | Finance: dashboard, invoices, payments, collections | ⬜ | |
+| Android/iOS | Inventory: all 9 screens | ⬜ | |
+| Android/iOS | Customer: dashboard, orders, invoices, payments, account | ⬜ | |
+| Android/iOS | Super Admin: all screens | ⬜ | |
+
+---
+
+## Phase 4 — API Integration Tests
+
+| Test File | Status | Notes |
+|-----------|--------|-------|
+| auth.test.ts | ⬜ | |
+| inventory.test.ts | ⬜ | |
+| gst-invoicing.test.ts | ⬜ | Needs WhiteBooks sandbox |
+| gst-toggle.test.ts | ⬜ | |
+| customer-portal.test.ts | ⬜ | |
+| workflow.test.ts | ⬜ | |
+
+---
+
+## Known Bugs
+
+| # | Found | Module | Description | Status |
+|---|-------|--------|-------------|--------|
+| 1 | 2026-03-28 | Settings > Thresholds | "No thresholds configured" shown even when cylinder types exist | ✅ Fixed |
+
+---
+
+## Session Log
+
+| Date | What Was Done | Next Step |
+|------|--------------|-----------|
+| 2026-03-28 | Baseline commit `a72b25e`. Created this tracker. 0 tests run. | Start Phase 1 Navigation Smoke Test |
+
