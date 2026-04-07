@@ -25,7 +25,7 @@ import {
   PendingActionStatus,
   PendingActionSeverity,
 } from '@gaslink/shared';
-import { apiGet, apiPut, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Badge, Loader, EmptyState, Modal } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -148,11 +148,11 @@ export default function AnalyticsPage() {
 
   const handleExportExcel = async (reportType: string) => {
     try {
-      const response = await fetch(`/api/analytics/export?type=${reportType}&dateFrom=${dateFrom}&dateTo=${dateTo}`, {
-        headers: { Authorization: `Bearer ${JSON.parse(localStorage.getItem('gaslink-auth') || '{}').state?.accessToken || ''}` },
+      const response = await api.get(`/analytics/export`, {
+        params: { type: reportType, dateFrom, dateTo },
+        responseType: 'blob',
       });
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const url = window.URL.createObjectURL(response.data);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${reportType}-report.xlsx`;

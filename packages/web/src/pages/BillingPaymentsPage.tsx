@@ -36,7 +36,7 @@ import {
   createPaymentSchema,
   type CreatePaymentInput,
 } from '@gaslink/shared';
-import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -203,11 +203,8 @@ function InvoicesTab() {
 
   const handleDownloadPdf = async (invoiceId: string) => {
     try {
-      const response = await fetch(`/api/invoices/${invoiceId}/pdf`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('gaslink-auth') ? JSON.parse(localStorage.getItem('gaslink-auth')!).state?.accessToken : ''}` },
-      });
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const response = await api.get(`/invoices/${invoiceId}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(response.data);
       const a = document.createElement('a');
       a.href = url;
       a.download = `invoice-${invoiceId}.pdf`;
