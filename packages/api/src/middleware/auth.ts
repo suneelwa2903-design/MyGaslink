@@ -15,6 +15,13 @@ declare global {
   }
 }
 
+// Safe ID format — alphanumeric, hyphens, underscores, max 128 chars (covers UUIDs and seed IDs like 'dist-001')
+const SAFE_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+
+function sendBadRequest(res: Response, message: string, code = 'BAD_REQUEST') {
+  return res.status(400).json({ success: false, data: null, error: message, code });
+}
+
 /**
  * Verify JWT access token and attach user to request.
  */
@@ -80,8 +87,12 @@ export function requireRole(...allowedRoles: (UserRole | string)[]) {
 
 /**
  * Resolve distributor context from request.
- * Super admin: uses X-Distributor-Id header
- * Others: uses their assigned distributor_id
+ *
+ * - Super admin: reads X-Distributor-Id header (validated as UUID), falls through as null if absent
+ * - All other roles: uses distributorId from JWT (set at login, never changes)
+ *
+ * This middleware never rejects — it only resolves. Use requireDistributor()
+ * after this to enforce that a distributorId is present.
  */
 export function resolveDistributor(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
@@ -89,11 +100,17 @@ export function resolveDistributor(req: Request, res: Response, next: NextFuncti
   }
 
   if (req.user.role === 'super_admin') {
-    const headerDistributorId = req.headers['x-distributor-id'] as string | undefined;
+    const raw = req.headers['x-distributor-id'];
+    const headerDistributorId = Array.isArray(raw) ? raw[0] : raw;
+
     if (headerDistributorId) {
+      // Validate format before trusting the value — reject garbage/injection attempts
+      if (!SAFE_ID_RE.test(headerDistributorId)) {
+        return sendBadRequest(res, 'Invalid X-Distributor-Id header format', 'INVALID_DISTRIBUTOR_ID');
+      }
       req.user.distributorId = headerDistributorId;
     }
-    // Super admin can operate without distributor context (for platform-level operations)
+    // distributorId remains null if header absent — requireDistributor() will enforce below
   } else if (!req.user.distributorId) {
     return sendForbidden(res, 'No distributor assigned to your account');
   }
@@ -102,19 +119,22 @@ export function resolveDistributor(req: Request, res: Response, next: NextFuncti
 }
 
 /**
- * Require distributor context to be resolved (for distributor-scoped operations).
+ * Require a resolved distributorId before proceeding.
+ *
+ * Must be used after resolveDistributor(). Applies to ALL roles including
+ * super_admin — super admin must select a distributor and send X-Distributor-Id
+ * header before accessing distributor-scoped endpoints.
+ *
+ * Routes that are genuinely platform-level (distributors list, health,
+ * provider catalog) should NOT use this middleware.
  */
 export function requireDistributor(req: Request, res: Response, next: NextFunction) {
-  // Super admin can access without distributor context (handles cross-distributor views)
-  if (req.user?.role === 'super_admin') {
-    return next();
-  }
   if (!req.user?.distributorId) {
-    return sendError(res, 'Distributor context required. Please select a distributor.', 400);
+    return sendBadRequest(
+      res,
+      'No distributor selected. Please select a distributor first.',
+      'NO_DISTRIBUTOR_SELECTED',
+    );
   }
   next();
-}
-
-function sendError(res: Response, message: string, status: number) {
-  return res.status(status).json({ success: false, data: null, error: message });
 }

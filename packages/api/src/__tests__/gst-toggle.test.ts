@@ -9,11 +9,13 @@ let adminToken: string;
 let financeToken: string;
 let inventoryToken: string;
 let superAdminToken: string;
+let distAdminDistributorId: string;
 
 beforeAll(async () => {
   app = createApp();
   const admin = await loginAsDistAdmin();
   adminToken = admin.token;
+  distAdminDistributorId = admin.distributorId;
   const finance = await loginAsFinance();
   financeToken = finance.token;
   const inventory = await loginAsInventory();
@@ -237,8 +239,8 @@ describe('Super Admin Settings Access', () => {
     const res = await request(app)
       .get('/api/settings')
       .set(auth(superAdminToken))
-      .set('X-Distributor-Id', 'dist-001');
+      .set('X-Distributor-Id', distAdminDistributorId);
 
-    expect([200, 403]).toContain(res.status);
+    expect(res.status).toBe(200);
   });
 });

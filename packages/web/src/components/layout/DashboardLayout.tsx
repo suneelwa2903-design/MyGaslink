@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   HiOutlineBell,
@@ -26,8 +26,16 @@ export function DashboardLayout() {
   const notifRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
+
+  // Super admin always sees the distributor selector — they need to pick one for any data page
+  // Hide only on purely platform-level pages (Distributors list, Provider Catalog, Health)
+  const platformOnlyPaths = ['/app/distributors', '/app/provider-catalog', '/app/health'];
+  const showDistributorSelector =
+    isSuperAdmin &&
+    !platformOnlyPaths.some((p) => location.pathname.startsWith(p));
 
   const toggleSidebar = () => {
     const next = !sidebarCollapsed;
@@ -102,8 +110,8 @@ export function DashboardLayout() {
               <HiBars3 className="h-5 w-5" />
             </button>
 
-            {/* Distributor selector for super admin */}
-            {isSuperAdmin && <DistributorSelector />}
+            {/* Distributor selector — only for super admin on distributor-scoped pages */}
+            {showDistributorSelector && <DistributorSelector />}
           </div>
 
           {/* Right: controls */}

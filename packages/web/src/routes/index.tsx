@@ -186,7 +186,6 @@ export function AppRoutes() {
                   UserRole.INVENTORY,
                   UserRole.DRIVER,
                 ]}
-                requireDistributor
               />
             }
           >

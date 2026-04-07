@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuthStore } from '@/stores/authStore';
+import { UserRole } from '@gaslink/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -53,6 +55,9 @@ const PA_STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'info' | 'dange
 export default function AnalyticsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user, selectedDistributorId } = useAuthStore();
+  const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
+
   const [tab, setTab] = useState<'dashboard' | 'overview' | 'collections' | 'reports'>('dashboard');
   const [resolveAction, setResolveAction] = useState<PendingAction | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState('');
@@ -61,21 +66,25 @@ export default function AnalyticsPage() {
   });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
 
+  // Super admin needs a distributor selected to view analytics data
+  const hasDistributor = isSuperAdmin ? !!selectedDistributorId : true;
+
   const { data: metrics, isLoading: metricsLoading } = useQuery({
     queryKey: ['analytics-metrics', dateFrom, dateTo],
     queryFn: () => apiGet<AnalyticsMetrics>('/analytics/header-metrics', { dateFrom, dateTo }),
+    enabled: hasDistributor,
   });
 
   const { data: dashboardStats, isLoading: dashboardLoading } = useQuery({
     queryKey: ['dashboard-stats-analytics', dateFrom, dateTo],
     queryFn: () => apiGet<DashboardStats>('/analytics/dashboard', { dateFrom, dateTo }),
-    enabled: tab === 'dashboard',
+    enabled: tab === 'dashboard' && hasDistributor,
   });
 
   const { data: collections, isLoading: collectionsLoading } = useQuery({
     queryKey: ['collections-dashboard'],
     queryFn: () => apiGet<CollectionsDashboard[]>('/analytics/collections'),
-    enabled: tab === 'collections',
+    enabled: tab === 'collections' && hasDistributor,
   });
 
   const { data: reports, isLoading: reportsLoading } = useQuery({
@@ -86,7 +95,7 @@ export default function AnalyticsPage() {
       driverPerformance: { driverName: string; deliveries: number; onTimeRate: number }[];
       customerLifetimeValue: { customerName: string; totalRevenue: number; totalOrders: number; firstOrderDate: string }[];
     }>('/analytics/reports', { dateFrom, dateTo }),
-    enabled: tab === 'reports',
+    enabled: tab === 'reports' && hasDistributor,
   });
 
   const { data: pendingActions, isLoading: pendingActionsLoading } = useQuery({
@@ -174,6 +183,31 @@ export default function AnalyticsPage() {
     { key: 'collections' as const, label: 'Collections' },
     { key: 'reports' as const, label: 'Reports' },
   ];
+
+  if (isSuperAdmin && !selectedDistributorId) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Analytics</h1>
+          <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Business insights and reports</p>
+        </div>
+        <div className="flex items-center justify-center min-h-[50vh]">
+          <div className="text-center">
+            <p className="text-lg font-medium text-surface-700 dark:text-surface-300">Select a distributor to view analytics</p>
+            <p className="mt-1 text-sm text-surface-500 dark:text-surface-400 mb-4">
+              Use the distributor selector in the top bar to choose a distributor.
+            </p>
+            <button
+              onClick={() => navigate('/app/distributors')}
+              className="text-sm font-medium text-brand-600 dark:text-brand-400 underline"
+            >
+              View all distributors →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
