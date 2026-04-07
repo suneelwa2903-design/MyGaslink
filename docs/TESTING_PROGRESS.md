@@ -6,8 +6,9 @@
 > - At the start of any Claude session, say: **"read docs/TESTING_PROGRESS.md and continue testing"**
 > - Detail is in `docs/E2E_Testing_Guide.xlsx` — this file is the running status summary
 
-**Last Updated:** 2026-03-28
+**Last Updated:** 2026-04-07
 **Baseline Commit:** `a72b25e` (2026-03-28)
+**Latest Commits:** `c9c6f3d` (P0 middleware fix), `7f2758f` (PDF download fix)
 **Git Branch:** master
 
 ---
@@ -262,7 +263,7 @@ _Status: 0/26 — ⬜ Not started_
 | FB-003 | Filter by IRN status | ⬜ | |
 | FB-004 | Filter by date range | ⬜ | |
 | FB-005 | Invoice detail | ⬜ | |
-| FB-006 | Download PDF | ⬜ | |
+| FB-006 | Download PDF | ✅ | Fixed 2026-04-07: was saving JSON error as .pdf (missing X-Distributor-Id header) |
 | FB-007 | Payment - cash | ⬜ | |
 | FB-008 | Payment - UPI | ⬜ | |
 | FB-009 | Payment - bank transfer | ⬜ | |
@@ -364,12 +365,14 @@ _Status: 0/30 — ⬜ Not started_
 
 | Test File | Status | Notes |
 |-----------|--------|-------|
-| auth.test.ts | ⬜ | |
-| inventory.test.ts | ⬜ | |
-| gst-invoicing.test.ts | ⬜ | Needs WhiteBooks sandbox |
-| gst-toggle.test.ts | ⬜ | |
-| customer-portal.test.ts | ⬜ | |
-| workflow.test.ts | ⬜ | |
+| auth.test.ts | ✅ | 94/94 pass (2026-04-07) |
+| inventory.test.ts | ✅ | 94/94 pass (2026-04-07) |
+| gst-invoicing.test.ts | ✅ | 94/94 pass (2026-04-07) — sandbox mode only |
+| gst-toggle.test.ts | ✅ | 94/94 pass (2026-04-07) — was 93/94, fixed super admin test |
+| customer-portal.test.ts | ✅ | 94/94 pass (2026-04-07) |
+| workflow.test.ts | ✅ | 94/94 pass (2026-04-07) |
+
+**Total: 94/94 tests passing as of 2026-04-07**
 
 ---
 
@@ -378,6 +381,10 @@ _Status: 0/30 — ⬜ Not started_
 | # | Found | Module | Description | Status |
 |---|-------|--------|-------------|--------|
 | 1 | 2026-03-28 | Settings > Thresholds | "No thresholds configured" shown even when cylinder types exist | ✅ Fixed |
+| 2 | 2026-04-07 | All API routes | Super admin null distributorId caused 500 crashes on all distributor-scoped endpoints | ✅ Fixed (c9c6f3d) |
+| 3 | 2026-04-07 | Invoices / Billing / Analytics | PDF/Excel downloads missing X-Distributor-Id header — file was a JSON error response | ✅ Fixed (7f2758f) |
+| 4 | 2026-04-07 | Billing > Invoices | Credit note button visible when GST mode = DISABLED (should be hidden) | 🚧 Pending |
+| 5 | 2026-04-07 | Orders | Vehicle field shown in assign-driver modal (should not be there) | 🚧 Pending |
 
 ---
 
@@ -386,4 +393,5 @@ _Status: 0/30 — ⬜ Not started_
 | Date | What Was Done | Next Step |
 |------|--------------|-----------|
 | 2026-03-28 | Baseline commit `a72b25e`. Created this tracker. 0 tests run. | Start Phase 1 Navigation Smoke Test |
+| 2026-04-07 | Fixed P0 null distributorId (c9c6f3d) + PDF download header bug (7f2758f). 94/94 API tests pass. Invoice PDF verified working. | Start Phase 1 Navigation Smoke Test (0/55 done) |
 
