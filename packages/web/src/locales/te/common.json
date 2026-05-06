@@ -54,17 +54,23 @@
   },
   "auth": {
     "login": "సైన్ ఇన్ చేయండి",
+    "welcomeBack": "మళ్ళీ స్వాగతం",
+    "dashboardSubtitle": "మీ డ్యాష్‌బోర్డ్‌కు సైన్ ఇన్ చేయండి",
+    "welcomeBackToast": "తిరిగి స్వాగతం, {{name}}!",
     "loginTitle": "GasLink కు స్వాగతం",
     "loginSubtitle": "మీ ఖాతాకు సైన్ ఇన్ చేయండి",
     "emailLabel": "ఇమెయిల్",
-    "emailPlaceholder": "you@company.com",
+    "emailPlaceholder": "you@example.com",
     "passwordLabel": "పాస్‌వర్డ్",
     "passwordPlaceholder": "మీ పాస్‌వర్డ్ నమోదు చేయండి",
     "rememberMe": "నన్ను గుర్తుంచుకో",
     "forgotPassword": "పాస్‌వర్డ్ మర్చిపోయారా?",
     "loginButton": "సైన్ ఇన్ చేయండి",
     "loginError": "చెల్లని ఇమెయిల్ లేదా పాస్‌వర్డ్",
-    "logoutSuccess": "విజయవంతంగా సైన్ అవుట్ అయ్యారు"
+    "logoutSuccess": "విజయవంతంగా సైన్ అవుట్ అయ్యారు",
+    "newToApp": "MyGasLink కు కొత్తవారా?",
+    "claim3MonthsFree": "3 నెలలు ఉచితంగా పొందండి →",
+    "copyright": "© {{year}} MyGasLink"
   },
   "errors": {
     "generic": "ఏదో తప్పు జరిగింది. దయచేసి మళ్ళీ ప్రయత్నించండి.",
@@ -80,5 +86,162 @@
     "overdueInvoices": "గడువు దాటిన ఇన్‌వాయిస్‌లు",
     "totalOutstanding": "మొత్తం బకాయి",
     "recentActivity": "ఇటీవలి కార్యకలాపాలు"
+  },
+  "customerPortal": {
+    "dashboard": {
+      "welcome": "స్వాగతం, {{name}}!",
+      "subtitle": "మీ ఖాతా అవలోకనం",
+      "totalOrders": "మొత్తం ఆర్డర్లు",
+      "pendingOrders": "పెండింగ్ ఆర్డర్లు",
+      "totalInvoices": "మొత్తం ఇన్‌వాయిస్‌లు",
+      "outstanding": "బకాయి",
+      "recentOrders": "ఇటీవలి ఆర్డర్లు",
+      "recentInvoices": "ఇటీవలి ఇన్‌వాయిస్‌లు",
+      "noRecentOrders": "ఇటీవలి ఆర్డర్లు లేవు",
+      "noRecentInvoices": "ఇటీవలి ఇన్‌వాయిస్‌లు లేవు",
+      "due": "గడువు:"
+    },
+    "payments": {
+      "title": "నా చెల్లింపులు",
+      "subtitle": "మీ చెల్లింపు చరిత్రను చూడండి",
+      "noPayments": "చెల్లింపులు లేవు",
+      "noPaymentsDesc": "మీ చెల్లింపు చరిత్ర ఇక్కడ కనిపిస్తుంది.",
+      "tableHeaders": {
+        "date": "తేదీ",
+        "amount": "మొత్తం",
+        "method": "పద్ధతి",
+        "reference": "రిఫరెన్స్",
+        "allocated": "కేటాయించబడింది",
+        "status": "స్థితి",
+        "view": "చూడండి"
+      },
+      "pageOf": "పేజీ {{page}} / {{total}}",
+      "previous": "మునుపటిది",
+      "next": "తదుపరిది",
+      "viewModal": {
+        "title": "చెల్లింపు వివరాలు",
+        "amount": "మొత్తం",
+        "method": "పద్ధతి",
+        "date": "తేదీ",
+        "reference": "రిఫరెన్స్",
+        "notAvailable": "—",
+        "invoiceAllocations": "ఇన్‌వాయిస్ కేటాయింపులు",
+        "invoiceHeader": "ఇన్‌వాయిస్",
+        "amountHeader": "మొత్తం"
+      }
+    },
+    "invoices": {
+      "title": "నా ఇన్‌వాయిస్‌లు",
+      "subtitle": "మీ ఇన్‌వాయిస్‌లు మరియు చెల్లింపు స్థితిని చూడండి",
+      "allStatuses": "అన్ని స్థితులు",
+      "noInvoices": "ఇన్‌వాయిస్‌లు లేవు",
+      "noInvoicesDesc": "మీ ఇన్‌వాయిస్‌లు ఇక్కడ కనిపిస్తాయి.",
+      "tableHeaders": {
+        "invoiceNumber": "ఇన్‌వాయిస్ #",
+        "issueDate": "జారీ తేదీ",
+        "dueDate": "గడువు తేదీ",
+        "total": "మొత్తం",
+        "paid": "చెల్లించింది",
+        "outstanding": "బకాయి",
+        "status": "స్థితి",
+        "view": "చూడండి"
+      },
+      "pageOf": "పేజీ {{page}} / {{total}}",
+      "previous": "మునుపటిది",
+      "next": "తదుపరిది",
+      "viewModal": {
+        "title": "ఇన్‌వాయిస్ {{invoiceNumber}}",
+        "issueDate": "జారీ తేదీ",
+        "dueDate": "గడువు తేదీ",
+        "status": "స్థితి",
+        "outstanding": "బకాయి",
+        "description": "వివరణ",
+        "qty": "పరిమాణం",
+        "unitPrice": "యూనిట్ ధర",
+        "gstPercent": "GST%",
+        "total": "మొత్తం",
+        "totalLabel": "మొత్తం: {{amount}}"
+      }
+    },
+    "orders": {
+      "title": "నా ఆర్డర్లు",
+      "subtitle": "ఆర్డర్లను చూడండి మరియు సృష్టించండి",
+      "newOrder": "కొత్త ఆర్డర్",
+      "noOrdersYet": "ఇంకా ఆర్డర్లు లేవు",
+      "noOrdersDesc": "ప్రారంభించడానికి మీ మొదటి ఆర్డర్‌ను ఇవ్వండి.",
+      "tableHeaders": {
+        "orderNumber": "ఆర్డర్ #",
+        "orderDate": "ఆర్డర్ తేదీ",
+        "deliveryDate": "డెలివరీ తేదీ",
+        "items": "వస్తువులు",
+        "amount": "మొత్తం",
+        "status": "స్థితి",
+        "actions": "చర్యలు"
+      },
+      "itemsCount": "{{count}} వస్తువులు",
+      "pageOf": "పేజీ {{page}} / {{total}}",
+      "previous": "మునుపటిది",
+      "next": "తదుపరిది",
+      "viewModal": {
+        "title": "ఆర్డర్ {{orderNumber}}",
+        "orderDate": "ఆర్డర్ తేదీ",
+        "deliveryDate": "డెలివరీ తేదీ",
+        "driver": "డ్రైవర్",
+        "notAssigned": "కేటాయించబడలేదు",
+        "status": "స్థితి",
+        "cylinder": "సిలిండర్",
+        "qty": "పరిమాణం",
+        "delivered": "డెలివరీ చేయబడింది",
+        "empties": "ఖాళీలు",
+        "unitPrice": "యూనిట్ ధర",
+        "total": "మొత్తం",
+        "totalLabel": "మొత్తం: {{amount}}",
+        "specialInstructions": "ప్రత్యేక సూచనలు"
+      },
+      "createModal": {
+        "title": "కొత్త ఆర్డర్ ఇవ్వండి",
+        "preferredDeliveryDate": "ప్రాధాన్య డెలివరీ తేదీ",
+        "orderItems": "ఆర్డర్ వస్తువులు",
+        "selectCylinder": "సిలిండర్‌ను ఎంచుకోండి",
+        "qtyPlaceholder": "పరిమాణం",
+        "addItem": "వస్తువును జోడించండి",
+        "specialInstructionsLabel": "ప్రత్యేక సూచనలు",
+        "deliveryNotesPlaceholder": "డెలివరీ గమనికలు...",
+        "placeOrder": "ఆర్డర్ ఇవ్వండి",
+        "orderPlacedSuccess": "ఆర్డర్ విజయవంతంగా ఇవ్వబడింది"
+      }
+    }
+  },
+  "enums": {
+    "orderStatus": {
+      "pending_driver_assignment": "డ్రైవర్ కేటాయింపు పెండింగ్",
+      "pending_dispatch": "డిస్‌పాచ్ పెండింగ్",
+      "pending_delivery": "డెలివరీ పెండింగ్",
+      "delivered": "డెలివరీ చేయబడింది",
+      "modified_delivered": "సవరించిన డెలివరీ",
+      "cancelled": "రద్దు చేయబడింది",
+      "returns_only": "తిరిగి తీసుకోవడం మాత్రమే"
+    },
+    "invoiceStatus": {
+      "draft": "డ్రాఫ్ట్",
+      "issued": "జారీ చేయబడింది",
+      "partially_paid": "పాక్షికంగా చెల్లించబడింది",
+      "paid": "చెల్లించబడింది",
+      "overdue": "గడువు దాటింది",
+      "cancelled": "రద్దు చేయబడింది"
+    },
+    "paymentMethod": {
+      "cash": "నగదు",
+      "cheque": "చెక్",
+      "online": "ఆన్‌లైన్",
+      "upi": "UPI",
+      "bank_transfer": "బ్యాంక్ ట్రాన్స్‌ఫర్",
+      "credit": "క్రెడిట్"
+    },
+    "paymentAllocationStatus": {
+      "unallocated": "కేటాయించబడలేదు",
+      "partially_allocated": "పాక్షికంగా కేటాయించబడింది",
+      "fully_allocated": "పూర్తిగా కేటాయించబడింది"
+    }
   }
 }

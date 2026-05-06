@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { HiOutlineEye } from 'react-icons/hi2';
 import type { Invoice, PaginationMeta } from '@gaslink/shared';
 import { InvoiceStatus } from '@gaslink/shared';
@@ -21,6 +22,7 @@ function formatCurrency(n: number) {
 }
 
 export default function CustomerInvoicesPage() {
+  const { t } = useTranslation();
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [viewInvoice, setViewInvoice] = useState<Invoice | null>(null);
@@ -36,29 +38,41 @@ export default function CustomerInvoicesPage() {
   const invoices = data?.invoices ?? [];
   const meta = data?.meta;
 
-  const statusOptions = Object.values(InvoiceStatus).map((s) => ({ value: s, label: s.replace(/_/g, ' ') }));
+  const statusOptions = Object.values(InvoiceStatus).map((s) => ({
+    value: s,
+    label: t(`enums.invoiceStatus.${s}`, s.replace(/_/g, ' ')),
+  }));
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-surface-900 dark:text-white">My Invoices</h1>
-        <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">View your invoices and payment status</p>
+        <h1 className="text-2xl font-bold text-surface-900 dark:text-white">{t('customerPortal.invoices.title')}</h1>
+        <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">{t('customerPortal.invoices.subtitle')}</p>
       </div>
 
       <div className="card p-4">
-        <Select options={statusOptions} placeholder="All Statuses" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} />
+        <Select options={statusOptions} placeholder={t('customerPortal.invoices.allStatuses')} value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} />
       </div>
 
       {isLoading ? (
         <div className="flex justify-center py-20"><Loader size="lg" /></div>
       ) : invoices.length === 0 ? (
-        <EmptyState title="No invoices" description="Your invoices will appear here." />
+        <EmptyState title={t('customerPortal.invoices.noInvoices')} description={t('customerPortal.invoices.noInvoicesDesc')} />
       ) : (
         <>
           <div className="table-container">
             <table className="table">
               <thead>
-                <tr><th>Invoice #</th><th>Issue Date</th><th>Due Date</th><th>Total</th><th>Paid</th><th>Outstanding</th><th>Status</th><th>View</th></tr>
+                <tr>
+                  <th>{t('customerPortal.invoices.tableHeaders.invoiceNumber')}</th>
+                  <th>{t('customerPortal.invoices.tableHeaders.issueDate')}</th>
+                  <th>{t('customerPortal.invoices.tableHeaders.dueDate')}</th>
+                  <th>{t('customerPortal.invoices.tableHeaders.total')}</th>
+                  <th>{t('customerPortal.invoices.tableHeaders.paid')}</th>
+                  <th>{t('customerPortal.invoices.tableHeaders.outstanding')}</th>
+                  <th>{t('customerPortal.invoices.tableHeaders.status')}</th>
+                  <th>{t('customerPortal.invoices.tableHeaders.view')}</th>
+                </tr>
               </thead>
               <tbody>
                 {invoices.map((inv) => (
@@ -71,7 +85,7 @@ export default function CustomerInvoicesPage() {
                     <td className={cn('font-medium', inv.outstandingAmount > 0 && 'text-red-500')}>
                       {formatCurrency(inv.outstandingAmount)}
                     </td>
-                    <td><Badge variant={STATUS_VARIANTS[inv.status] || 'neutral'}>{inv.status.replace(/_/g, ' ')}</Badge></td>
+                    <td><Badge variant={STATUS_VARIANTS[inv.status] || 'neutral'}>{t(`enums.invoiceStatus.${inv.status}`, inv.status.replace(/_/g, ' '))}</Badge></td>
                     <td>
                       <button onClick={() => setViewInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500">
                         <HiOutlineEye className="h-4 w-4" />
@@ -85,10 +99,10 @@ export default function CustomerInvoicesPage() {
 
           {meta && meta.totalPages > 1 && (
             <div className="flex items-center justify-between">
-              <p className="text-sm text-surface-500 dark:text-surface-400">Page {meta.page} of {meta.totalPages}</p>
+              <p className="text-sm text-surface-500 dark:text-surface-400">{t('customerPortal.invoices.pageOf', { page: meta.page, total: meta.totalPages })}</p>
               <div className="flex gap-2">
-                <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-                <Button variant="secondary" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+                <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('customerPortal.invoices.previous')}</Button>
+                <Button variant="secondary" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage(page + 1)}>{t('customerPortal.invoices.next')}</Button>
               </div>
             </div>
           )}
@@ -96,18 +110,24 @@ export default function CustomerInvoicesPage() {
       )}
 
       {viewInvoice && (
-        <Modal open={!!viewInvoice} onClose={() => setViewInvoice(null)} title={`Invoice ${viewInvoice.invoiceNumber}`} size="lg">
+        <Modal open={!!viewInvoice} onClose={() => setViewInvoice(null)} title={t('customerPortal.invoices.viewModal.title', { invoiceNumber: viewInvoice.invoiceNumber })} size="lg">
           <div className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div><p className="text-xs text-surface-400">Issue Date</p><p className="text-sm font-medium">{new Date(viewInvoice.issueDate).toLocaleDateString('en-IN')}</p></div>
-              <div><p className="text-xs text-surface-400">Due Date</p><p className="text-sm font-medium">{new Date(viewInvoice.dueDate).toLocaleDateString('en-IN')}</p></div>
-              <div><p className="text-xs text-surface-400">Status</p><Badge variant={STATUS_VARIANTS[viewInvoice.status] || 'neutral'}>{viewInvoice.status}</Badge></div>
-              <div><p className="text-xs text-surface-400">Outstanding</p><p className="text-sm font-bold text-red-500">{formatCurrency(viewInvoice.outstandingAmount)}</p></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.issueDate')}</p><p className="text-sm font-medium">{new Date(viewInvoice.issueDate).toLocaleDateString('en-IN')}</p></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.dueDate')}</p><p className="text-sm font-medium">{new Date(viewInvoice.dueDate).toLocaleDateString('en-IN')}</p></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.status')}</p><Badge variant={STATUS_VARIANTS[viewInvoice.status] || 'neutral'}>{t(`enums.invoiceStatus.${viewInvoice.status}`, viewInvoice.status)}</Badge></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.outstanding')}</p><p className="text-sm font-bold text-red-500">{formatCurrency(viewInvoice.outstandingAmount)}</p></div>
             </div>
 
             <div className="table-container">
               <table className="table">
-                <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>GST%</th><th>Total</th></tr></thead>
+                <thead><tr>
+                  <th>{t('customerPortal.invoices.viewModal.description')}</th>
+                  <th>{t('customerPortal.invoices.viewModal.qty')}</th>
+                  <th>{t('customerPortal.invoices.viewModal.unitPrice')}</th>
+                  <th>{t('customerPortal.invoices.viewModal.gstPercent')}</th>
+                  <th>{t('customerPortal.invoices.viewModal.total')}</th>
+                </tr></thead>
                 <tbody>
                   {viewInvoice.items.map((item) => (
                     <tr key={item.invoiceItemId}>
@@ -123,7 +143,7 @@ export default function CustomerInvoicesPage() {
             </div>
 
             <div className="text-right border-t border-surface-200 dark:border-surface-700 pt-4">
-              <p className="text-lg font-bold text-surface-900 dark:text-white">Total: {formatCurrency(viewInvoice.totalAmount)}</p>
+              <p className="text-lg font-bold text-surface-900 dark:text-white">{t('customerPortal.invoices.viewModal.totalLabel', { amount: formatCurrency(viewInvoice.totalAmount) })}</p>
             </div>
           </div>
         </Modal>

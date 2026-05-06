@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { HiOutlineEye, HiOutlineEyeSlash, HiOutlineArrowRight } from 'react-icons/hi2';
 import { loginSchema, type LoginInput, type LoginResponse, UserRole } from '@gaslink/shared';
 import { apiPost, getErrorMessage } from '@/lib/api';
@@ -219,6 +220,7 @@ export default function LoginPage() {
   const { setTokens, setUser } = useAuthStore();
   const [showPassword, setShowPassword] = useState(false);
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname;
+  const { t } = useTranslation();
 
   const { register, handleSubmit, formState: { errors } } = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
@@ -231,7 +233,7 @@ export default function LoginPage() {
       setTokens(data.tokens.accessToken, data.tokens.refreshToken);
       setUser(data.user);
       if (data.user.requiresPasswordReset) { navigate('/force-password-reset', { replace: true }); return; }
-      toast.success(`Welcome back, ${data.user.firstName}!`);
+      toast.success(t('auth.welcomeBackToast', { name: data.user.firstName }));
       if (from) { navigate(from, { replace: true }); return; }
       navigate(data.user.role === UserRole.CUSTOMER ? '/app/customer/dashboard' : '/app/dashboard', { replace: true });
     },
@@ -269,35 +271,35 @@ export default function LoginPage() {
             <span className="text-2xl font-extrabold text-[#1e3a5f] dark:text-white">MyGas<span className="text-flame-500">Link</span></span>
           </div>
 
-          <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-2">Welcome back</h1>
-          <p className="text-slate-500 mb-8">Sign in to your dashboard</p>
+          <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-2">{t('auth.welcomeBack')}</h1>
+          <p className="text-slate-500 mb-8">{t('auth.dashboardSubtitle')}</p>
 
           <form onSubmit={handleSubmit(d => loginMutation.mutate(d))} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">Email</label>
-              <input type="email" placeholder="you@example.com" autoComplete="email" className={ic} {...register('email')} />
+              <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">{t('auth.emailLabel')}</label>
+              <input type="email" placeholder={t('auth.emailPlaceholder')} autoComplete="email" className={ic} {...register('email')} />
               {errors.email && <p className="text-xs text-red-400 mt-1">{errors.email.message}</p>}
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">Password</label>
+              <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">{t('auth.passwordLabel')}</label>
               <div className="relative">
-                <input type={showPassword ? 'text' : 'password'} placeholder="Enter your password" autoComplete="current-password" className={`${ic} pr-12`} {...register('password')} />
+                <input type={showPassword ? 'text' : 'password'} placeholder={t('auth.passwordPlaceholder')} autoComplete="current-password" className={`${ic} pr-12`} {...register('password')} />
                 <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors">
                   {showPassword ? <HiOutlineEyeSlash className="h-5 w-5" /> : <HiOutlineEye className="h-5 w-5" />}
                 </button>
               </div>
               {errors.password && <p className="text-xs text-red-400 mt-1">{errors.password.message}</p>}
-              <div className="flex justify-end mt-2"><Link to="/forgot-password" className="text-xs text-flame-400 hover:text-flame-300 font-medium">Forgot password?</Link></div>
+              <div className="flex justify-end mt-2"><Link to="/forgot-password" className="text-xs text-flame-400 hover:text-flame-300 font-medium">{t('auth.forgotPassword')}</Link></div>
             </div>
             <button type="submit" disabled={loginMutation.isPending} className="w-full py-3.5 bg-flame-500 hover:bg-flame-600 text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
-              {loginMutation.isPending ? <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : <>Sign In <HiOutlineArrowRight className="h-4 w-4" /></>}
+              {loginMutation.isPending ? <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : <>{t('auth.loginButton')} <HiOutlineArrowRight className="h-4 w-4" /></>}
             </button>
           </form>
 
           <div className="mt-8 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
-            <p className="text-xs text-slate-500"><span className="font-semibold text-slate-700 dark:text-slate-300">New to MyGasLink?</span> <Link to="/#contact" className="text-flame-400 hover:text-flame-300 font-medium">Claim 3 months free →</Link></p>
+            <p className="text-xs text-slate-500"><span className="font-semibold text-slate-700 dark:text-slate-300">{t('auth.newToApp')}</span> <Link to="/#contact" className="text-flame-400 hover:text-flame-300 font-medium">{t('auth.claim3MonthsFree')}</Link></p>
           </div>
-          <p className="mt-6 text-center text-xs text-slate-700">&copy; {new Date().getFullYear()} MyGasLink</p>
+          <p className="mt-6 text-center text-xs text-slate-700">{t('auth.copyright', { year: new Date().getFullYear() })}</p>
         </motion.div>
       </div>
     </div>

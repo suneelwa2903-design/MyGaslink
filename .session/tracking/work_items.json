@@ -66,7 +66,7 @@
       "title": "Telugu i18n — build from scratch",
       "priority": "P0",
       "status": "in_progress",
-      "description": "Founder confirmed Telugu is launch-required. Branch claude/sharp-grothendieck has NO i18n work (it is an ancestor of master). Translation work must be built from scratch. Infrastructure setup + starter slice attempted in this session under Task 8 — see session-summary-06052026.md for what was completed and what remains. Estimate: 16-48h total depending on coverage scope.",
+      "description": "Founder confirmed Telugu is launch-required. Foundation done (i18next + en/te locale files + LanguageSwitcher in Sidebar) in commit a2dd97c. Per-page extraction in progress: LoginPage (e3b480d), customer/Dashboard (288d287), customer/Orders (4b50f18), customer/Invoices (97b64c2), customer/Payments (86ed73c) — 5 of 28 web pages done. Plus enum namespaces for orderStatus, invoiceStatus, paymentMethod, paymentAllocationStatus. Protocol + remaining priority order documented in .session/i18n-extraction-protocol.md. Remaining: 23 web pages + 5 components + all of mobile (55 routes + 7 components). Estimate: 36-47 hours of focused work + native-speaker translation review pass.",
       "blocksLaunch": true
     },
     {

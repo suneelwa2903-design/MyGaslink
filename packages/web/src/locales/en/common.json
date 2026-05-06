@@ -54,17 +54,23 @@
   },
   "auth": {
     "login": "Sign in",
+    "welcomeBack": "Welcome back",
+    "dashboardSubtitle": "Sign in to your dashboard",
+    "welcomeBackToast": "Welcome back, {{name}}!",
     "loginTitle": "Welcome to GasLink",
     "loginSubtitle": "Sign in to your account",
     "emailLabel": "Email",
-    "emailPlaceholder": "you@company.com",
+    "emailPlaceholder": "you@example.com",
     "passwordLabel": "Password",
     "passwordPlaceholder": "Enter your password",
     "rememberMe": "Remember me",
     "forgotPassword": "Forgot password?",
-    "loginButton": "Sign in",
+    "loginButton": "Sign In",
     "loginError": "Invalid email or password",
-    "logoutSuccess": "Signed out successfully"
+    "logoutSuccess": "Signed out successfully",
+    "newToApp": "New to MyGasLink?",
+    "claim3MonthsFree": "Claim 3 months free →",
+    "copyright": "© {{year}} MyGasLink"
   },
   "errors": {
     "generic": "Something went wrong. Please try again.",
@@ -80,5 +86,162 @@
     "overdueInvoices": "Overdue Invoices",
     "totalOutstanding": "Total Outstanding",
     "recentActivity": "Recent Activity"
+  },
+  "customerPortal": {
+    "dashboard": {
+      "welcome": "Welcome, {{name}}!",
+      "subtitle": "Your account overview",
+      "totalOrders": "Total Orders",
+      "pendingOrders": "Pending Orders",
+      "totalInvoices": "Total Invoices",
+      "outstanding": "Outstanding",
+      "recentOrders": "Recent Orders",
+      "recentInvoices": "Recent Invoices",
+      "noRecentOrders": "No recent orders",
+      "noRecentInvoices": "No recent invoices",
+      "due": "Due:"
+    },
+    "payments": {
+      "title": "My Payments",
+      "subtitle": "View your payment history",
+      "noPayments": "No payments",
+      "noPaymentsDesc": "Your payment history will appear here.",
+      "tableHeaders": {
+        "date": "Date",
+        "amount": "Amount",
+        "method": "Method",
+        "reference": "Reference",
+        "allocated": "Allocated",
+        "status": "Status",
+        "view": "View"
+      },
+      "pageOf": "Page {{page}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next",
+      "viewModal": {
+        "title": "Payment Details",
+        "amount": "Amount",
+        "method": "Method",
+        "date": "Date",
+        "reference": "Reference",
+        "notAvailable": "N/A",
+        "invoiceAllocations": "Invoice Allocations",
+        "invoiceHeader": "Invoice",
+        "amountHeader": "Amount"
+      }
+    },
+    "invoices": {
+      "title": "My Invoices",
+      "subtitle": "View your invoices and payment status",
+      "allStatuses": "All Statuses",
+      "noInvoices": "No invoices",
+      "noInvoicesDesc": "Your invoices will appear here.",
+      "tableHeaders": {
+        "invoiceNumber": "Invoice #",
+        "issueDate": "Issue Date",
+        "dueDate": "Due Date",
+        "total": "Total",
+        "paid": "Paid",
+        "outstanding": "Outstanding",
+        "status": "Status",
+        "view": "View"
+      },
+      "pageOf": "Page {{page}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next",
+      "viewModal": {
+        "title": "Invoice {{invoiceNumber}}",
+        "issueDate": "Issue Date",
+        "dueDate": "Due Date",
+        "status": "Status",
+        "outstanding": "Outstanding",
+        "description": "Description",
+        "qty": "Qty",
+        "unitPrice": "Unit Price",
+        "gstPercent": "GST%",
+        "total": "Total",
+        "totalLabel": "Total: {{amount}}"
+      }
+    },
+    "orders": {
+      "title": "My Orders",
+      "subtitle": "View and create orders",
+      "newOrder": "New Order",
+      "noOrdersYet": "No orders yet",
+      "noOrdersDesc": "Place your first order to get started.",
+      "tableHeaders": {
+        "orderNumber": "Order #",
+        "orderDate": "Order Date",
+        "deliveryDate": "Delivery Date",
+        "items": "Items",
+        "amount": "Amount",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "itemsCount": "{{count}} items",
+      "pageOf": "Page {{page}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next",
+      "viewModal": {
+        "title": "Order {{orderNumber}}",
+        "orderDate": "Order Date",
+        "deliveryDate": "Delivery Date",
+        "driver": "Driver",
+        "notAssigned": "Not assigned",
+        "status": "Status",
+        "cylinder": "Cylinder",
+        "qty": "Qty",
+        "delivered": "Delivered",
+        "empties": "Empties",
+        "unitPrice": "Unit Price",
+        "total": "Total",
+        "totalLabel": "Total: {{amount}}",
+        "specialInstructions": "Special Instructions"
+      },
+      "createModal": {
+        "title": "Place New Order",
+        "preferredDeliveryDate": "Preferred Delivery Date",
+        "orderItems": "Order Items",
+        "selectCylinder": "Select cylinder",
+        "qtyPlaceholder": "Qty",
+        "addItem": "Add Item",
+        "specialInstructionsLabel": "Special Instructions",
+        "deliveryNotesPlaceholder": "Any delivery notes...",
+        "placeOrder": "Place Order",
+        "orderPlacedSuccess": "Order placed successfully"
+      }
+    }
+  },
+  "enums": {
+    "orderStatus": {
+      "pending_driver_assignment": "Pending driver assignment",
+      "pending_dispatch": "Pending dispatch",
+      "pending_delivery": "Pending delivery",
+      "delivered": "Delivered",
+      "modified_delivered": "Modified delivered",
+      "cancelled": "Cancelled",
+      "returns_only": "Returns only"
+    },
+    "invoiceStatus": {
+      "draft": "Draft",
+      "issued": "Issued",
+      "partially_paid": "Partially paid",
+      "paid": "Paid",
+      "overdue": "Overdue",
+      "cancelled": "Cancelled"
+    },
+    "paymentMethod": {
+      "cash": "Cash",
+      "cheque": "Cheque",
+      "online": "Online",
+      "upi": "UPI",
+      "bank_transfer": "Bank transfer",
+      "credit": "Credit"
+    },
+    "paymentAllocationStatus": {
+      "unallocated": "Unallocated",
+      "partially_allocated": "Partially allocated",
+      "fully_allocated": "Fully allocated"
+    }
   }
 }
