@@ -102,7 +102,10 @@ export default function OrdersPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: vehicles } = useQuery({
+  // Vehicles list kept warm for the Order Detail / Delivery modals (those
+  // still surface the day's assigned vehicle); the assign-driver flow no
+  // longer needs it.
+  useQuery({
     queryKey: ['vehicles-list'],
     queryFn: () => apiGet<{ vehicles: Vehicle[] }>('/vehicles', { status: 'idle' }),
     staleTime: 5 * 60 * 1000,
@@ -324,7 +327,6 @@ export default function OrdersPage() {
           onClose={() => setAssignOrder(null)}
           order={assignOrder}
           drivers={drivers?.drivers ?? []}
-          vehicles={vehicles?.vehicles ?? []}
         />
       )}
 
@@ -335,7 +337,6 @@ export default function OrdersPage() {
           onClose={() => { setBulkAssignOpen(false); setSelectedOrders([]); }}
           orderIds={selectedOrders}
           drivers={drivers?.drivers ?? []}
-          vehicles={vehicles?.vehicles ?? []}
         />
       )}
 
@@ -607,19 +608,19 @@ function AssignDriverModal({
   onClose,
   order,
   drivers,
-  vehicles,
 }: {
   open: boolean;
   onClose: () => void;
   order: Order;
   drivers: Driver[];
-  vehicles: Vehicle[];
 }) {
   const queryClient = useQueryClient();
 
+  // Vehicle is auto-resolved server-side from the day's driver-vehicle
+  // assignment (orderService.assignDriver). The user only chooses the driver.
   const { register, handleSubmit, formState: { errors } } = useForm<AssignDriverInput>({
     resolver: zodResolver(assignDriverSchema),
-    defaultValues: { driverId: '', vehicleId: '' },
+    defaultValues: { driverId: '' },
   });
 
   const mutation = useMutation({
@@ -633,7 +634,6 @@ function AssignDriverModal({
   });
 
   const driverOptions = drivers.map((d) => ({ value: d.driverId, label: `${d.driverName} (${d.phone})` }));
-  const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: `${v.vehicleNumber} (${v.vehicleType || 'N/A'})` }));
 
   return (
     <Modal open={open} onClose={onClose} title={`Assign Driver - ${order.orderNumber}`}>
@@ -645,13 +645,6 @@ function AssignDriverModal({
           required
           error={errors.driverId?.message}
           {...register('driverId')}
-        />
-        <Select
-          label="Vehicle (Optional)"
-          options={vehicleOptions}
-          placeholder="Select vehicle"
-          error={errors.vehicleId?.message}
-          {...register('vehicleId')}
         />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
@@ -669,22 +662,21 @@ function BulkAssignDriverModal({
   onClose,
   orderIds,
   drivers,
-  vehicles,
 }: {
   open: boolean;
   onClose: () => void;
   orderIds: string[];
   drivers: Driver[];
-  vehicles: Vehicle[];
 }) {
   const queryClient = useQueryClient();
 
+  // See AssignDriverModal — vehicle is auto-resolved server-side.
   const { register, handleSubmit, formState: { errors } } = useForm({
-    defaultValues: { driverId: '', vehicleId: '' },
+    defaultValues: { driverId: '' },
   });
 
   const mutation = useMutation({
-    mutationFn: (data: { driverId: string; vehicleId?: string }) =>
+    mutationFn: (data: { driverId: string }) =>
       apiPost('/orders/bulk-assign-driver', { orderIds, ...data }),
     onSuccess: () => {
       toast.success(`Driver assigned to ${orderIds.length} orders`);
@@ -695,7 +687,6 @@ function BulkAssignDriverModal({
   });
 
   const driverOptions = drivers.map((d) => ({ value: d.driverId, label: `${d.driverName} (${d.phone})` }));
-  const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: `${v.vehicleNumber}` }));
 
   return (
     <Modal open={open} onClose={onClose} title={`Bulk Assign Driver (${orderIds.length} orders)`}>
@@ -707,12 +698,6 @@ function BulkAssignDriverModal({
           required
           error={errors.driverId?.message}
           {...register('driverId', { required: 'Driver is required' })}
-        />
-        <Select
-          label="Vehicle (Optional)"
-          options={vehicleOptions}
-          placeholder="Select vehicle"
-          {...register('vehicleId')}
         />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
