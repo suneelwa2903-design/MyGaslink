@@ -58,16 +58,17 @@
       "title": "Verify GST live mode against WhiteBooks production",
       "priority": "P1",
       "status": "pending",
-      "description": "API tests cover sandbox only. Run a real IRN issuance + cancellation + EWB workflow against WhiteBooks production with production credentials; document the result in TESTING_PROGRESS.md before live tenants are onboarded.",
-      "blocksLaunch": true
+      "description": "Founder must test against WhiteBooks production credentials — no code change needed. API tests cover sandbox only. Run a real IRN issuance + cancellation + EWB workflow against WhiteBooks production with production credentials; document the result in TESTING_PROGRESS.md before live tenants are onboarded.",
+      "blocksLaunch": true,
+      "blockedBy": "external"
     },
     {
       "id": "WI-008",
       "title": "Telugu i18n — build from scratch",
       "priority": "P0",
       "status": "in_progress",
-      "description": "Founder confirmed Telugu is launch-required. Foundation done (i18next + en/te locale files + LanguageSwitcher in Sidebar) in commit a2dd97c. Per-page extraction in progress: LoginPage (e3b480d), customer/Dashboard (288d287), customer/Orders (4b50f18), customer/Invoices (97b64c2), customer/Payments (86ed73c) — 5 of 28 web pages done. Plus enum namespaces for orderStatus, invoiceStatus, paymentMethod, paymentAllocationStatus. Protocol + remaining priority order documented in .session/i18n-extraction-protocol.md. Remaining: 23 web pages + 5 components + all of mobile (55 routes + 7 components). Estimate: 36-47 hours of focused work + native-speaker translation review pass.",
-      "blocksLaunch": true
+      "description": "5 of 28 web pages done, mobile not started, protocol at .session/i18n-extraction-protocol.md. Foundation (i18next + en/te locale files + LanguageSwitcher in Sidebar). Done: LoginPage (e3b480d), customer/Dashboard (288d287), customer/Orders (4b50f18 + customerPortal.orders.viewModal.yourDriver merged today), customer/Invoices (97b64c2), customer/Payments (86ed73c). Plus enum namespaces for orderStatus, invoiceStatus, paymentMethod, paymentAllocationStatus. Remaining: 23 web pages + 5 components + all of mobile (55 routes + 7 components). Estimate 36-47h + native-speaker review pass.",
+      "blocksLaunch": false
     },
     {
       "id": "WI-009",
@@ -190,16 +191,18 @@
       "title": "Create GitHub repo and push master",
       "priority": "P0",
       "status": "pending",
-      "description": "Create GitHub repo, add remote origin, push master branch. Required before CI/CD can run. Instructions: (1) github.com new private repo named Re-New_Gaslink, do NOT init with README/.gitignore. (2) cd into project; git remote add origin https://github.com/<user>/Re-New_Gaslink.git ; git branch -M master ; git push -u origin master. (3) Verify ci.yml triggers on push.",
-      "blocksLaunch": true
+      "description": "Founder must create GitHub repo and run: git remote add origin <url> && git push -u origin master. Steps: (1) github.com new private repo named Re-New_Gaslink, do NOT init with README/.gitignore. (2) git remote add origin https://github.com/<user>/Re-New_Gaslink.git ; git branch -M master ; git push -u origin master. (3) Verify ci.yml triggers on push.",
+      "blocksLaunch": true,
+      "blockedBy": "external"
     },
     {
       "id": "WI-024",
       "title": "Manual smoke tests Phase 1 (55 cases, 7 roles)",
       "priority": "P0",
       "status": "pending",
-      "description": "Founder runs navigation smoke tests across all 7 roles before production deploy. Per docs/Navigation_Smoke_Test.xlsx and docs/TESTING_PROGRESS.md.",
-      "blocksLaunch": true
+      "description": "Founder runs tomorrow using docs/MANUAL-TESTING-GUIDE.md. Replaces the older docs/Navigation_Smoke_Test.xlsx — the new guide is keyed to today's UI (role-aware dashboards, onboarding tab, offline delivery flow, customer portal driver contact).",
+      "blocksLaunch": true,
+      "blockedBy": "external"
     },
     {
       "id": "WI-025",
