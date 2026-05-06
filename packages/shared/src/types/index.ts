@@ -247,6 +247,7 @@ export interface Order {
   customerName: string;
   driverId: string | null;
   driverName: string | null;
+  driverPhone?: string | null;
   vehicleId: string | null;
   vehicleNumber: string | null;
   orderDate: string;
