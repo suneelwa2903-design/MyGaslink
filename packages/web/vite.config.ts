@@ -20,6 +20,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Source maps disabled in production to avoid leaking original TS source
+    // through S3/CloudFront. Re-enable as 'hidden' if Sentry uploads need them.
+    sourcemap: false,
   },
 });
