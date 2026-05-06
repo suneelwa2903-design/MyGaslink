@@ -6,8 +6,8 @@
 
 LPG distribution management SaaS. Multi-tenant (one tenant = one **Distributor**), with a public landing/contact site, an admin/operator web app, a customer self-service portal, and a mobile app for drivers, inventory staff, finance, and admins.
 
-**Monorepo (pnpm workspaces, Node ≥20):**
-- `packages/api` — Express 5 + TypeScript + Prisma 6 (PostgreSQL 17)
+**Monorepo (pnpm workspaces, Node ≥20) — 4 packages:**
+- `packages/api` — Express 5 + TypeScript + Prisma 6 (PostgreSQL 17). Listens on **port 5000** by default.
 - `packages/web` — React 19 + Vite 7 + Tailwind + Zustand + React Query + react-router 7
 - `packages/mobile` — Expo 54 + React Native 0.81 + expo-router + NativeWind + Zustand
 - `packages/shared` — Cross-cutting types and enums (consumed by all three)
@@ -192,18 +192,21 @@ Re-New_Gaslink/
 
 ## 11. Tests
 
-- **API integration tests** (Vitest, supertest): 6 files in [packages/api/src/__tests__/](packages/api/src/__tests__/) — auth, customer-portal, gst-invoicing, gst-toggle, inventory, workflow. **94/94 passing as of 2026-04-07.**
-- **Web tests:** Vitest configured; only smoke coverage today. ⚠️ [NEEDS_HUMAN_INPUT: confirm web test policy]
-- **Mobile tests:** Jest configured (`jest.config.js`). ⚠️ [NEEDS_HUMAN_INPUT: confirm coverage]
+- **API integration tests** (Vitest, supertest): 6 files in [packages/api/src/__tests__/](packages/api/src/__tests__/) — auth, customer-portal, gst-invoicing, gst-toggle, inventory, workflow. **94/94 passing.**
+- **Web tests:** Vitest configured; pre-launch policy is manual smoke (Phase 1 + critical Phase 2 workflows). Automated coverage to expand post-launch.
+- **Mobile tests:** Jest configured. Pre-launch policy is manual E2E via Expo Go.
 - **Manual E2E suite:** `docs/E2E_Testing_Guide.xlsx` (272 cases), `docs/Navigation_Smoke_Test.xlsx` (55 cases). Tracked in `docs/TESTING_PROGRESS.md`. Currently in Phase 1 (smoke, 0/55 done) → Phase 4 (API tests, ✅ done).
+- **Daily E2E monitor:** `.github/workflows/e2e-monitor.yml` runs `packages/api/scripts/e2e-monitor.ts` against an ephemeral Postgres at 02:30 IST every day; emails results, opens a GitHub issue on failure.
 
 ## 12. CI / Infra
 
-- **CI:** `.github/workflows/ci.yml` and `e2e-monitor.yml` ⚠️ [NEEDS_HUMAN_INPUT: confirm what each does]
-- **Local dev:** `pnpm docker:up` for postgres, then `pnpm dev` runs api+web in parallel
-- **Prod stack:** `docker-compose.prod.yml`
-- **Backup/restore:** `scripts/backup.sh`, `scripts/restore.sh`
-- **Production hosting target:** ⚠️ [NEEDS_HUMAN_INPUT — AWS based on env vars, but exact runtime (ECS/EC2/EKS) not declared]
+- **CI:** `.github/workflows/ci.yml` — 6 jobs on push/PR to `master` or `develop`: lint+typecheck → test (Postgres service, full migrate+seed+vitest) → build (uploads `web-dist` artifact) → deploy-staging (develop) → deploy-production (master) → backup.
+- **Daily monitor:** `.github/workflows/e2e-monitor.yml` (see §11).
+- **Local dev:** `pnpm docker:up` for Postgres (port 5433 → container 5432), then `pnpm dev` runs api+web in parallel. API on **port 5000**.
+- **Prod stack:** `docker-compose.prod.yml`.
+- **Backup/restore:** `scripts/backup.sh`, `scripts/restore.sh`. Daily `pg_dump` to S3 backup bucket on every production deploy.
+- **Production hosting:** EC2 + pm2 for the backend (`/opt/gaslink` on host, deployed via SSH + git pull + `pnpm install` + `db:migrate:prod`). S3 + CloudFront for the frontend (separate buckets/distributions for staging vs production). Region `ap-south-1`.
+- **E2E monitor script:** `packages/api/scripts/e2e-monitor.ts` is the live one used by the workflow. Root `scripts/e2e_test.js` is legacy and will be removed.
 
 ## 13. Key Domain Rules
 
@@ -220,6 +223,6 @@ Re-New_Gaslink/
 
 (See `gap-report.md` for the full list and `docs/TESTING_PROGRESS.md` for live bug list.)
 
-- Multi-tenant isolation is convention-based — every new query is a potential leak.
-- Single migration on disk → discipline needed going forward.
-- Ad-hoc test scripts (`packages/api/test-*.ts`) sit at the package root, are not part of the Vitest suite, and are not documented.
+- Multi-tenant isolation is convention-based — every new query is a potential leak. (Audit complete as of 2026-05-06; CRITICAL/HIGH/MEDIUM closed in commits b6f8c58, a0f855c, 8c758b2.)
+- Single migration on disk → discipline needed going forward (founder confirmed: every schema change = a new incremental migration, no resets on shared DBs).
+- Ad-hoc test scripts at `packages/api/` root removed 2026-05-06.
