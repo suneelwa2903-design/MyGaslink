@@ -57,3 +57,17 @@ __pycache__/
 
 # Original project (reference only, not part of build)
 New_GasLink/
+
+# ADLC Framework
+# NOTE: ARCHITECTURE.md and gap-report.md are durable cross-team docs and are
+# tracked (not ignored) — they were committed on the worktree branch and
+# remain useful for future onboarding sessions.
+# Per-item working files in .session/ are local-only; templates are committed.
+.session/specs/*
+!.session/specs/_templates/
+!.session/specs/_templates/**
+.session/learnings/*
+!.session/learnings/.gitkeep
+.env.monitor
+logs/
+security-review.md

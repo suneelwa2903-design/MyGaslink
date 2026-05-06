@@ -1,0 +1,158 @@
+# CLAUDE.md — Master Agent Instructions
+# Copy this to every project. Fill in the [PROJECT_*] placeholders.
+# This file is the single most important file for preventing hallucinations.
+
+---
+
+## PROJECT IDENTITY
+- **Name:** [PROJECT_NAME]
+- **Type:** [saas-multi-tenant | erp-standalone | trading | api-service | other]
+- **Stack:** [e.g. FastAPI + React + PostgreSQL + Redis + Docker]
+- **Auth:** [jwt | firebase | session | oauth — specify exact implementation]
+- **Multi-tenant:** [yes | no] — if yes, tenant isolation model: [row-level | schema-per-tenant | db-per-tenant]
+- **Deployment:** [local | aws-ec2 | aws-ecs | client-server]
+
+---
+
+## NON-NEGOTIABLE RULES — READ BEFORE ANY ACTION
+
+### Before Writing Any Code
+1. Read `ARCHITECTURE.md` — follow existing patterns, never invent new ones
+2. Read the spec file for this work item — build ONLY what it says
+3. Run `git status` and existing tests — know the baseline before touching anything
+
+### While Building
+4. Anything unclear → **STOP and ask** — never assume, never guess
+5. Never use a library not already in `requirements.txt` / `package.json` without asking first
+6. Never change DB schema without updating `ARCHITECTURE.md` first
+7. Never add features not in the spec — scope creep is a bug
+8. If any existing test breaks → **STOP immediately**, report, do not continue
+9. New function = new test. Always. No exceptions.
+
+### Never Do These
+- No `print()` / `console.log()` debug statements left in code
+- No hardcoded secrets, tokens, API keys, passwords anywhere
+- No raw SQL string concatenation — parameterised queries always
+- No `dangerouslySetInnerHTML` without explicit sanitisation
+- No disabling of ORM safety features
+- No TODO comments in shipped code — either do it now or create a work item
+
+---
+
+## SECURITY — NON-NEGOTIABLE
+
+### Input & Output
+- Validate and sanitise ALL user input before use — never trust the client
+- Parameterised queries for ALL database operations — zero exceptions
+- Escape all HTML output — use framework's built-in escaping
+- Validate file uploads: type whitelist, size limit, no execution permissions
+
+### Authentication
+- Every API endpoint checks authentication — no unauthenticated routes unless explicitly public
+- JWT: verify signature, expiry, and issuer on every request
+- Firebase: verify ID token server-side on every request — never trust client-decoded claims
+- Session: validate server-side session on every request
+- Rate limit ALL auth endpoints: login, register, password reset, OTP — 5 attempts/minute max
+
+### Multi-Tenant Data Isolation ⚠️ CRITICAL
+- **Every single database query must filter by `tenant_id`** — no global queries on tenant data
+- `tenant_id` comes ONLY from the authenticated session/JWT — never from request body or URL params
+- Before any data operation: verify the resource belongs to the authenticated tenant
+- Cross-tenant access = security incident. If uncertain, reject the request.
+- Index every tenant-scoped table on `tenant_id`
+- Log any attempt to access data outside authenticated tenant scope
+
+### Authorisation (multi-tenant projects)
+```
+Request → Auth Middleware → Extract tenant_id from JWT/session
+         → Query: SELECT * FROM table WHERE id = ? AND tenant_id = ?
+         → If result empty → 404 (not 403 — don't confirm existence)
+```
+
+### Secrets
+- All secrets via environment variables — no exceptions
+- No secrets in git history, logs, error messages, or API responses
+- Use `.env.example` with placeholder values for documentation
+
+### Financial Data (ERP/billing projects)
+- Monetary values = integers (paise not rupees, store `10050` not `100.50`)
+- GST records = append-only after generation, never silently edited
+- Every financial mutation = audit log entry (who, what, when, old value, new value)
+- Invoice/transaction IDs = sequential with no gaps (gaps indicate tampering)
+
+### Trading (Algo Trading project only)
+- Order placement = double validation (validate → confirm → execute)
+- Every trade action = immutable audit log with timestamp + user + IP + order details
+- Rate limit order endpoints aggressively (max 10 orders/second per user)
+- No market orders without explicit user confirmation
+- Kill switch: ability to halt all trading activity immediately
+
+---
+
+## ARCHITECTURE RULES
+*(These are filled by the /onboard agent from your actual codebase)*
+
+### API Patterns
+- [e.g. RESTful with FastAPI — all routes in /app/routers/ — one file per domain]
+- [e.g. All responses use standard envelope: {success, data, error, meta}]
+
+### Database Patterns
+- [e.g. SQLAlchemy ORM — no raw queries — migrations via Alembic]
+- [e.g. All models in /app/models/ — one file per domain]
+- [e.g. Soft deletes: deleted_at timestamp — never hard delete user/financial data]
+
+### Frontend Patterns
+- [e.g. React + Vite — all API calls via /src/api/ — no fetch() in components]
+- [e.g. State management: Zustand — no Redux]
+- [e.g. UI components: shadcn/ui — no installing other component libraries]
+
+### File Organisation
+- [e.g. Feature folders: /features/[domain]/{routes,models,schemas,services,tests}]
+- [e.g. Shared utilities in /core/ — domain-specific code in /features/]
+
+### Naming Conventions
+- [e.g. snake_case for Python, camelCase for JS/TS, kebab-case for files]
+- [e.g. API routes: /api/v1/[resource] — always versioned]
+
+---
+
+## STACK-SPECIFIC RULES
+*(Filled from actual project — examples below)*
+
+### Python / FastAPI
+- Pydantic schemas for all request/response validation — no raw dicts
+- Dependency injection for auth: `current_user: User = Depends(get_current_user)`
+- Async all the way — no blocking calls in async routes
+- Exception handlers registered globally — no bare `except:` blocks
+
+### React / TypeScript
+- TypeScript strict mode — no `any` types
+- All forms use react-hook-form with zod validation
+- API errors handled centrally — no `.catch()` scattered across components
+- No direct DOM manipulation — React state only
+
+### PostgreSQL
+- Foreign keys on all relationships — enforce at DB level not just ORM
+- Indexes on: all foreign keys, all tenant_id columns, all frequently-queried columns
+- Connection pooling configured (pgBouncer or SQLAlchemy pool)
+
+---
+
+## WHEN STUCK — EXACT PROTOCOL
+
+| Situation | Action |
+|---|---|
+| Failing tests | Run `/fix` agent — do not freestyle |
+| Unclear requirement | Re-read spec. Still unclear → STOP and ask |
+| Pattern conflict | Follow `ARCHITECTURE.md` over existing code |
+| Missing library | Ask before adding |
+| Security uncertainty | Default to DENY, ask |
+| Multi-tenant query unclear | Always add `tenant_id` filter, ask if unsure which |
+
+---
+
+## LEARNING LOG
+Every session end, append learnings to `.session/learnings/learnings.md` with category:
+`[architecture]` `[gotcha]` `[best-practice]` `[tech-debt]` `[performance]` `[security]`
+
+Format: `[YYYY-MM-DD] [category] — what was learned`

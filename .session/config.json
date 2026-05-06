@@ -1,0 +1,56 @@
+{
+  "_comment": "ADLC Framework — quality gate config + project-specific tooling. Adjust thresholds per project.",
+  "project": {
+    "name": "Re-New GasLink",
+    "slug": "gaslink",
+    "stack": "node-react",
+    "multi_tenant": true,
+    "tenancyModel": "shared-db-discriminator",
+    "tenantField": "distributorId",
+    "primaryLanguage": "typescript",
+    "packageManager": "pnpm",
+    "testRunner": "vitest",
+    "trackingFile": ".session/tracking/work_items.json",
+    "learningsFile": ".session/learnings/learnings.md",
+    "specsDir": ".session/specs",
+    "specTemplate": ".session/specs/_templates/feature-spec.md"
+  },
+  "quality_gates": {
+    "spec_completeness": { "enabled": true, "required": true },
+    "tests": {
+      "enabled": true,
+      "required": true,
+      "coverage_auth": 100,
+      "coverage_business": 80,
+      "coverage_overall": 70,
+      "coverage_instrumentation": false,
+      "_note": "Coverage thresholds are aspirational — vitest --coverage is NOT wired into CI yet. Enable instrumentation as a follow-up before enforcing."
+    },
+    "linting": { "enabled": true, "required": false, "auto_fix": true },
+    "security": {
+      "enabled": true,
+      "required": true,
+      "fail_on": "high",
+      "_note": "scripts/security/security-scan.sh exists but is NOT wired into CI yet."
+    },
+    "type_checking": {
+      "enabled": true,
+      "required": true,
+      "_note": "Stricter than ADLC default — pnpm typecheck must pass with zero errors before commit."
+    }
+  },
+  "git": {
+    "auto_commit": true,
+    "auto_push": false,
+    "branch_per_item": true,
+    "_note": "auto_push: false until a remote (e.g. github.com/<owner>/Re-New_Gaslink) is configured. See WI-023."
+  },
+  "alerts": {
+    "on_ship_success": true,
+    "on_gate_failure": true,
+    "on_sprint_complete": true,
+    "on_cron_failure": true,
+    "on_infra_alert": true,
+    "_note": "Telegram alerts via scripts/alerts/telegram.sh require .env.monitor with TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID."
+  }
+}
