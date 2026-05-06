@@ -101,6 +101,35 @@
       "noRecentInvoices": "No recent invoices",
       "due": "Due:"
     },
+    "payments": {
+      "title": "My Payments",
+      "subtitle": "View your payment history",
+      "noPayments": "No payments",
+      "noPaymentsDesc": "Your payment history will appear here.",
+      "tableHeaders": {
+        "date": "Date",
+        "amount": "Amount",
+        "method": "Method",
+        "reference": "Reference",
+        "allocated": "Allocated",
+        "status": "Status",
+        "view": "View"
+      },
+      "pageOf": "Page {{page}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next",
+      "viewModal": {
+        "title": "Payment Details",
+        "amount": "Amount",
+        "method": "Method",
+        "date": "Date",
+        "reference": "Reference",
+        "notAvailable": "N/A",
+        "invoiceAllocations": "Invoice Allocations",
+        "invoiceHeader": "Invoice",
+        "amountHeader": "Amount"
+      }
+    },
     "invoices": {
       "title": "My Invoices",
       "subtitle": "View your invoices and payment status",
@@ -200,6 +229,19 @@
       "paid": "Paid",
       "overdue": "Overdue",
       "cancelled": "Cancelled"
+    },
+    "paymentMethod": {
+      "cash": "Cash",
+      "cheque": "Cheque",
+      "online": "Online",
+      "upi": "UPI",
+      "bank_transfer": "Bank transfer",
+      "credit": "Credit"
+    },
+    "paymentAllocationStatus": {
+      "unallocated": "Unallocated",
+      "partially_allocated": "Partially allocated",
+      "fully_allocated": "Fully allocated"
     }
   }
 }

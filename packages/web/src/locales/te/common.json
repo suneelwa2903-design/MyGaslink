@@ -101,6 +101,35 @@
       "noRecentInvoices": "ఇటీవలి ఇన్‌వాయిస్‌లు లేవు",
       "due": "గడువు:"
     },
+    "payments": {
+      "title": "నా చెల్లింపులు",
+      "subtitle": "మీ చెల్లింపు చరిత్రను చూడండి",
+      "noPayments": "చెల్లింపులు లేవు",
+      "noPaymentsDesc": "మీ చెల్లింపు చరిత్ర ఇక్కడ కనిపిస్తుంది.",
+      "tableHeaders": {
+        "date": "తేదీ",
+        "amount": "మొత్తం",
+        "method": "పద్ధతి",
+        "reference": "రిఫరెన్స్",
+        "allocated": "కేటాయించబడింది",
+        "status": "స్థితి",
+        "view": "చూడండి"
+      },
+      "pageOf": "పేజీ {{page}} / {{total}}",
+      "previous": "మునుపటిది",
+      "next": "తదుపరిది",
+      "viewModal": {
+        "title": "చెల్లింపు వివరాలు",
+        "amount": "మొత్తం",
+        "method": "పద్ధతి",
+        "date": "తేదీ",
+        "reference": "రిఫరెన్స్",
+        "notAvailable": "—",
+        "invoiceAllocations": "ఇన్‌వాయిస్ కేటాయింపులు",
+        "invoiceHeader": "ఇన్‌వాయిస్",
+        "amountHeader": "మొత్తం"
+      }
+    },
     "invoices": {
       "title": "నా ఇన్‌వాయిస్‌లు",
       "subtitle": "మీ ఇన్‌వాయిస్‌లు మరియు చెల్లింపు స్థితిని చూడండి",
@@ -200,6 +229,19 @@
       "paid": "చెల్లించబడింది",
       "overdue": "గడువు దాటింది",
       "cancelled": "రద్దు చేయబడింది"
+    },
+    "paymentMethod": {
+      "cash": "నగదు",
+      "cheque": "చెక్",
+      "online": "ఆన్‌లైన్",
+      "upi": "UPI",
+      "bank_transfer": "బ్యాంక్ ట్రాన్స్‌ఫర్",
+      "credit": "క్రెడిట్"
+    },
+    "paymentAllocationStatus": {
+      "unallocated": "కేటాయించబడలేదు",
+      "partially_allocated": "పాక్షికంగా కేటాయించబడింది",
+      "fully_allocated": "పూర్తిగా కేటాయించబడింది"
     }
   }
 }
