@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { HiOutlineArrowDownTray } from 'react-icons/hi2';
-import type { CollectionsDashboard } from '@gaslink/shared';
+import { HiOutlineArrowDownTray, HiOutlinePhone } from 'react-icons/hi2';
+import type { CollectionsDashboard, OverdueCallListEntry } from '@gaslink/shared';
 import { apiGet } from '@/lib/api';
 import { Button, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -11,9 +12,17 @@ function formatCurrency(n: number) {
 }
 
 export default function CollectionsPage() {
+  const [view, setView] = useState<'call-list' | 'all'>('call-list');
+
   const { data: collections, isLoading } = useQuery({
     queryKey: ['collections-dashboard'],
     queryFn: () => apiGet<CollectionsDashboard[]>('/analytics/collections'),
+  });
+
+  // Reuses the same /analytics/overdue-call-list endpoint that the dashboard uses.
+  const { data: callList, isLoading: callListLoading } = useQuery({
+    queryKey: ['overdue-call-list'],
+    queryFn: () => apiGet<OverdueCallListEntry[]>('/analytics/overdue-call-list'),
   });
 
   const handleExport = async () => {
@@ -66,7 +75,105 @@ export default function CollectionsPage() {
         </div>
       </div>
 
-      {isLoading ? (
+      {/* View toggle */}
+      <div className="border-b border-surface-200 dark:border-surface-700">
+        <div className="flex gap-4">
+          <button
+            onClick={() => setView('call-list')}
+            className={cn(
+              'pb-2 text-sm font-medium border-b-2 transition-colors',
+              view === 'call-list' ? 'border-brand-500 text-brand-600 dark:text-brand-400' : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+            )}
+          >
+            Call list {callList?.length ? `(${callList.length})` : ''}
+          </button>
+          <button
+            onClick={() => setView('all')}
+            className={cn(
+              'pb-2 text-sm font-medium border-b-2 transition-colors',
+              view === 'all' ? 'border-brand-500 text-brand-600 dark:text-brand-400' : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+            )}
+          >
+            All collections
+          </button>
+        </div>
+      </div>
+
+      {/* CALL LIST view: customers past credit period, sorted by days overdue desc */}
+      {view === 'call-list' && (
+        callListLoading ? (
+          <div className="flex justify-center py-20"><Loader size="lg" /></div>
+        ) : !callList?.length ? (
+          <EmptyState title="No overdue customers" description="No customers are past their credit period right now." />
+        ) : (
+          <>
+            {/* Desktop table */}
+            <div className="hidden md:block table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>Outstanding</th>
+                    <th>Overdue invoices</th>
+                    <th>Days overdue</th>
+                    <th>Phone</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {callList.map((c) => (
+                    <tr key={c.customerId}>
+                      <td className="font-medium text-surface-900 dark:text-white">{c.customerName}</td>
+                      <td className="font-semibold text-red-500">{formatCurrency(c.totalOutstanding)}</td>
+                      <td>{c.overdueInvoiceCount}</td>
+                      <td><Badge variant="danger">{c.daysOverdue}d overdue</Badge></td>
+                      <td>
+                        <a href={`tel:${c.phone}`} className="inline-flex items-center gap-1 text-brand-600 dark:text-brand-400 hover:underline">
+                          <HiOutlinePhone className="h-3 w-3" />{c.phone}
+                        </a>
+                      </td>
+                      <td>
+                        <a href={`/app/customers?id=${c.customerId}`} className="text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline">View account →</a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards (finance walks the floor calling customers) */}
+            <div className="md:hidden space-y-3">
+              {callList.map((c) => (
+                <div key={c.customerId} className="card p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-semibold text-surface-900 dark:text-white">{c.customerName}</p>
+                    <Badge variant="danger">{c.daysOverdue}d</Badge>
+                  </div>
+                  <p className="text-lg font-bold text-red-500">{formatCurrency(c.totalOutstanding)}</p>
+                  <p className="text-xs text-surface-500">{c.overdueInvoiceCount} overdue invoice{c.overdueInvoiceCount === 1 ? '' : 's'}</p>
+                  <div className="flex gap-2 pt-1">
+                    <a
+                      href={`tel:${c.phone}`}
+                      className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg bg-brand-500 text-white text-sm font-medium"
+                    >
+                      <HiOutlinePhone className="h-4 w-4" />Call {c.phone}
+                    </a>
+                    <a
+                      href={`/app/customers?id=${c.customerId}`}
+                      className="px-3 py-2 rounded-lg border border-surface-200 dark:border-surface-700 text-sm font-medium text-surface-700 dark:text-surface-300"
+                    >
+                      Account
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )
+      )}
+
+      {view === 'all' && (
+        isLoading ? (
         <div className="flex justify-center py-20"><Loader size="lg" /></div>
       ) : !collections?.length ? (
         <EmptyState title="No collection data" description="Collection data will appear as invoices are generated." />
@@ -110,6 +217,7 @@ export default function CollectionsPage() {
             </tbody>
           </table>
         </div>
+      )
       )}
     </div>
   );
