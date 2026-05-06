@@ -18,6 +18,7 @@ import {
 
 interface BillingCycleForPdf {
   id: string;
+  distributorId: string;
   periodStartDate: Date;
   periodEndDate: Date;
   dueDate: Date | null;
@@ -384,7 +385,7 @@ function drawFooter(doc: PDFKit.PDFDocument, startY: number): number {
 
 // ─── Main Generator ─────────────────────────────────────────────────────────
 
-export async function generateBillingInvoicePdf(billingCycleId: string): Promise<Buffer> {
+export async function generateBillingInvoicePdf(billingCycleId: string, distributorId?: string): Promise<Buffer> {
   const cycle = await prisma.billingCycle.findUnique({
     where: { id: billingCycleId },
     include: {
@@ -394,6 +395,7 @@ export async function generateBillingInvoicePdf(billingCycleId: string): Promise
   }) as unknown as BillingCycleForPdf | null;
 
   if (!cycle) throw new Error('Billing cycle not found');
+  if (distributorId && cycle.distributorId !== distributorId) throw new Error('Billing cycle not found');
 
   const dist = cycle.distributor;
 

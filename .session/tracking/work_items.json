@@ -1,0 +1,180 @@
+{
+  "items": [
+    {
+      "id": "WI-001",
+      "title": "Tenant-isolation audit of all services",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Audit all 28 service files for missing distributorId filters; fix CRITICAL/HIGH/MEDIUM findings. Done in commits b6f8c58, a0f855c, 8c758b2.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-002",
+      "title": "Tighten requireDistributor exemptions on /api/users, /api/billing, /api/pricing",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Replaced req.query.distributorId fallback for super_admin with the validated X-Distributor-Id header pattern across billing, pricing, pendingActions, providerCatalog, and settings routes. Web client extended (apiGet { distributorIdOverride }) so super-admin views of other tenants still work via header. Commit aec783d.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-003",
+      "title": "Clean up ad-hoc test-*.ts scripts at packages/api/ root",
+      "priority": "P2",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Removed 10 scripts (check-users, test-debit-note, test-distance, test-e2e, test-e2e-v2/v3/v4, test-ewb, test-production-gst, test-whitebooks). All overlapped with the Vitest suite or were one-shot debug scripts.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-004",
+      "title": "Fix Bug #4 — credit-note button visible when gstMode=DISABLED",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Wrapped CN/DN buttons on BillingPaymentsPage and InvoicesPage in {gstEnabled && (...)}. Both pages already computed gstEnabled from settings.gstMode but rendered the buttons unconditionally. Commit d1bb216.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-005",
+      "title": "Fix Bug #5 — vehicle field shown in assign-driver modal",
+      "priority": "P2",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Removed Vehicle <Select> from AssignDriverModal and BulkAssignDriverModal in OrdersPage. Vehicle is auto-resolved server-side from the day's driver-vehicle assignment. Commit d1bb216.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-006",
+      "title": "Migrate monetary fields from Float to Decimal",
+      "priority": "P1",
+      "status": "planned",
+      "description": "Detailed plan + 35-field inventory in .session/float-to-decimal-plan.md (commit a6a196e). Execution deferred — 4-8h of careful surgery touching every monetary calculation; classified blocksLaunch: false. Plan is executable cold by a future session on a dedicated branch.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-007",
+      "title": "Verify GST live mode against WhiteBooks production",
+      "priority": "P1",
+      "status": "pending",
+      "description": "API tests cover sandbox only. Run a real IRN issuance + cancellation + EWB workflow against WhiteBooks production with production credentials; document the result in TESTING_PROGRESS.md before live tenants are onboarded.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-008",
+      "title": "Telugu i18n — build from scratch",
+      "priority": "P0",
+      "status": "in_progress",
+      "description": "Founder confirmed Telugu is launch-required. Branch claude/sharp-grothendieck has NO i18n work (it is an ancestor of master). Translation work must be built from scratch. Infrastructure setup + starter slice attempted in this session under Task 8 — see session-summary-06052026.md for what was completed and what remains. Estimate: 16-48h total depending on coverage scope.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-009",
+      "title": "Add graceful shutdown + unhandledRejection handlers to server.ts",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Added unhandledRejection (log + Sentry, no exit), uncaughtException (log + Sentry + flush + exit 1), SIGTERM/SIGINT graceful shutdown (server.close() → prisma.$disconnect() → exit, 30s hard timeout). Commit 1add950.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-010",
+      "title": "Add web ErrorBoundary component",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Class-based ErrorBoundary at packages/web/src/components/ErrorBoundary.tsx wraps the entire app inside StrictMode in main.tsx. Recoverable fallback UI styled with Tailwind/Button primitives, dark-mode aware. Sentry hook ready (uses globalThis.Sentry when present + VITE_SENTRY_DSN). Commit 6d7afd9.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-011",
+      "title": "Disable source maps in vite.config.ts production build",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "vite.config.ts: build.sourcemap true → false. Commit 6d7afd9.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-012",
+      "title": "Upgrade axios to >=1.15.0 (CVE-2025-27152, CVE-2024-39338)",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Bumped axios to ^1.15.0 in api, web, mobile. Lockfile regenerated, no peer-dependency conflicts. Commit 8c59594.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-013",
+      "title": "Verify distributor exists & is active in resolveDistributor middleware",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "middleware/auth.ts resolveDistributor is now async. After regex-validating the X-Distributor-Id header (or taking distributorId from JWT), looks up the distributor row and verifies status !== 'suspended'. Caches verified distributor on req.distributor. Commit aec783d.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-014",
+      "title": "Audit log super_admin tenant switches",
+      "priority": "P2",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Every successful super_admin X-Distributor-Id resolution emits a logBusinessEvent(super_admin_tenant_switch) with userId, distributorId, requestId, ip. Commit aec783d.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-015",
+      "title": "Fix PORT discrepancy in CLAUDE.md",
+      "priority": "P2",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "CLAUDE.md said API runs on port 3000; actual is 5000 (config/index.ts default + .env.example). Updated CLAUDE.md. Also added missing env docs (SENTRY_DSN, VITE_API_URL, VITE_SENTRY_DSN, EXPO_PUBLIC_API_URL) and created packages/web/.env.example and packages/mobile/.env.example. Commit 7a89001.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-016",
+      "title": "Integration test coverage expansion (Batch A: customers, payments, billing)",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "34 new tests across customers.test.ts (13), payments.test.ts (9), billing.test.ts (12). Caught 3 bugs alongside (BillingStatus enum mismatch in shared, /ledger error handler, soft-delete leakage in getSeedData). Commit 6c7527a.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-017",
+      "title": "Integration test coverage expansion (Batch B: settings, drivers/vehicles, assignments, analytics)",
+      "priority": "P2",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "75 new tests across settings.test.ts (19), driversVehicles.test.ts (20), assignments.test.ts (10), analytics.test.ts (26). Commits be29a17, 2c2544a, c505aae, c4e3f29.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-018",
+      "title": "Integration test coverage expansion (Batch C: cylinderTypes, pricing, users, pendingActions)",
+      "priority": "P2",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "51 new tests across cylinderTypes.test.ts (13), pricing.test.ts (14), users.test.ts (13), pendingActions.test.ts (11). Commits 0aedee4, 4b104e0, 518aedc, 5b04ea1.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-019",
+      "title": "Pre-existing typecheck bugs in DistributorDetailPage / DistributorsPage (fixed)",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "DistributorDetailPage compared BillingStatus enum against 'paid_billing' / 'overdue_billing' (Prisma TS-side names) instead of 'paid' / 'overdue' (the @map'd values the API actually emits). DistributorsPage form defaults used '' for subscriptionPlan/billingTier instead of null. Comparisons would silently never match in production. Fixed alongside ErrorBoundary commit 6d7afd9.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-020",
+      "title": "Wire up @sentry/browser for the web ErrorBoundary",
+      "priority": "P2",
+      "status": "pending",
+      "description": "ErrorBoundary currently uses globalThis.Sentry (script-tag style) so that we don't add a hard dependency before Sentry web is set up. Once a DSN is provisioned, install @sentry/browser, call Sentry.init() in main.tsx before render, and switch ErrorBoundary to direct dynamic import. Verify source-map upload pipeline before re-enabling source maps in vite.config.",
+      "blocksLaunch": false
+    }
+  ]
+}

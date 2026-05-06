@@ -4,6 +4,8 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import { App } from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import './lib/i18n'; // initialize i18next before first render
 import './index.css';
 
 // Initialize theme before first render to prevent flash
@@ -44,10 +46,11 @@ const root = createRoot(rootElement);
 
 root.render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-        <Toaster
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <App />
+          <Toaster
           position="top-right"
           toastOptions={{
             duration: 4000,
@@ -68,9 +71,10 @@ root.render(
                 secondary: '#ffffff',
               },
             },
-          }}
-        />
-      </BrowserRouter>
-    </QueryClientProvider>
+            }}
+          />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

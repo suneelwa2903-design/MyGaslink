@@ -15,9 +15,9 @@ router.get('/',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string) || undefined
-      : req.user!.distributorId!;
+    // Super_admin without an X-Distributor-Id header sees all distributors;
+    // every other role is locked to req.user.distributorId by middleware.
+    const distributorId = req.user!.distributorId ?? undefined;
 
     const actions = await pendingActionsService.listPendingActions(
       distributorId,
@@ -51,7 +51,7 @@ router.put('/:id/approve',
   auditLog('approve', 'pending_action'),
   async (req, res) => {
     try {
-      const action = await pendingActionsService.approvePendingAction(param(req.params.id), req.user!.userId);
+      const action = await pendingActionsService.approvePendingAction(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       if (!action) return sendNotFound(res, 'Pending action');
       return sendSuccess(res, mapPendingAction(action));
     } catch (err) {
@@ -68,7 +68,7 @@ router.put('/:id/resolve',
   async (req, res) => {
     try {
       const action = await pendingActionsService.resolvePendingAction(
-        param(req.params.id), req.user!.userId, req.body.notes
+        param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body.notes
       );
       if (!action) return sendNotFound(res, 'Pending action');
       return sendSuccess(res, mapPendingAction(action));
@@ -86,7 +86,7 @@ router.put('/:id/reject',
   async (req, res) => {
     try {
       const action = await pendingActionsService.rejectPendingAction(
-        param(req.params.id), req.user!.userId, req.body.notes
+        param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body.notes
       );
       if (!action) return sendNotFound(res, 'Pending action');
       return sendSuccess(res, mapPendingAction(action));

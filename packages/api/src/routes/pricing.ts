@@ -6,6 +6,7 @@ import * as gstApiTracker from '../services/gstApiTracker.js';
 import * as seatRequestService from '../services/seatRequestService.js';
 import { generateBillingInvoicePdf } from '../services/pdf/billingInvoicePdfService.js';
 import { validate } from '../middleware/validate.js';
+import { param } from '../utils/params.js';
 import { z } from 'zod';
 
 const router = Router();
@@ -23,11 +24,9 @@ router.get('/tiers', requireRole('super_admin'), async (_req, res) => {
 // GET /api/pricing/seat-limits - get seat limits for current distributor
 router.get('/seat-limits', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string)
-      : req.user!.distributorId!;
-
-    if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+    // Super_admin must select a tenant via X-Distributor-Id header.
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
 
     const limits = await pricingService.getSeatLimits(distributorId);
     if (!limits) return sendSuccess(res, { limits: null, message: 'No subscription plan assigned' });
@@ -40,11 +39,8 @@ router.get('/seat-limits', async (req, res) => {
 // GET /api/pricing/gst-usage - current month GST API usage
 router.get('/gst-usage', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string)
-      : req.user!.distributorId!;
-
-    if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
 
     const month = req.query.month ? parseInt(req.query.month as string, 10) : undefined;
     const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
@@ -59,11 +55,8 @@ router.get('/gst-usage', async (req, res) => {
 // GET /api/pricing/gst-usage/history - GST API usage history
 router.get('/gst-usage/history', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string)
-      : req.user!.distributorId!;
-
-    if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
 
     const history = await gstApiTracker.getGstApiUsageHistory(distributorId);
     return sendSuccess(res, { history });
@@ -108,9 +101,9 @@ router.post('/seat-requests',
 // GET /api/pricing/seat-requests - list seat requests
 router.get('/seat-requests', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string) || undefined
-      : req.user!.distributorId!;
+    // Super_admin without an X-Distributor-Id header sees all distributors;
+    // every other role is locked to their JWT distributorId by middleware.
+    const distributorId = req.user!.distributorId ?? undefined;
 
     const requests = await seatRequestService.listSeatRequests(distributorId, req.query.status as string);
     return sendSuccess(res, { requests });
@@ -122,7 +115,7 @@ router.get('/seat-requests', async (req, res) => {
 // PUT /api/pricing/seat-requests/:id/approve - approve seat request (super admin)
 router.put('/seat-requests/:id/approve', requireRole('super_admin'), async (req, res) => {
   try {
-    const result = await seatRequestService.approveSeatRequest(req.params.id, req.user!.userId);
+    const result = await seatRequestService.approveSeatRequest(param(req.params.id), req.user!.userId);
     return sendSuccess(res, result);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -132,7 +125,7 @@ router.put('/seat-requests/:id/approve', requireRole('super_admin'), async (req,
 // PUT /api/pricing/seat-requests/:id/reject - reject seat request (super admin)
 router.put('/seat-requests/:id/reject', requireRole('super_admin'), async (req, res) => {
   try {
-    const result = await seatRequestService.rejectSeatRequest(req.params.id, req.user!.userId);
+    const result = await seatRequestService.rejectSeatRequest(param(req.params.id), req.user!.userId);
     return sendSuccess(res, result);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -142,9 +135,10 @@ router.put('/seat-requests/:id/reject', requireRole('super_admin'), async (req, 
 // GET /api/pricing/billing-invoice/:cycleId - download billing invoice PDF
 router.get('/billing-invoice/:cycleId', requireRole('super_admin'), async (req, res) => {
   try {
-    const pdf = await generateBillingInvoicePdf(req.params.cycleId);
+    const cycleId = param(req.params.cycleId);
+    const pdf = await generateBillingInvoicePdf(cycleId);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="gaslink-invoice-${req.params.cycleId.slice(-6)}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="gaslink-invoice-${cycleId.slice(-6)}.pdf"`);
     res.send(pdf);
   } catch (err) {
     return sendError(res, (err as Error).message);

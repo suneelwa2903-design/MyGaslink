@@ -213,13 +213,16 @@ export enum BillingPeriodType {
   YEARLY = 'yearly',
 }
 
+// NOTE: values match the Prisma TS-side enum names in schema.prisma.
+// The schema uses `paid_billing @map("paid")` etc. so the DB stores the
+// short value but Prisma client returns / accepts the suffixed names.
 export enum BillingStatus {
   PENDING_GENERATION = 'pending_generation',
   INVOICE_GENERATED = 'invoice_generated',
   PENDING_PAYMENT = 'pending_payment',
-  PAID = 'paid',
-  OVERDUE = 'overdue',
-  SUSPENDED = 'suspended',
+  PAID = 'paid_billing',
+  OVERDUE = 'overdue_billing',
+  SUSPENDED = 'suspended_billing',
 }
 
 export enum BillingTier {

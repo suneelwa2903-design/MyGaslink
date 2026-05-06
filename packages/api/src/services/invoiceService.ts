@@ -330,8 +330,10 @@ export async function createCreditNote(
   });
 }
 
-export async function approveCreditNote(creditNoteId: string, userId: string) {
-  const cn = await prisma.creditNote.findUnique({ where: { id: creditNoteId } });
+export async function approveCreditNote(creditNoteId: string, distributorId: string, userId: string) {
+  const cn = await prisma.creditNote.findFirst({
+    where: { id: creditNoteId, invoice: { distributorId } },
+  });
   if (!cn) throw new InvoiceError('Credit note not found', 404);
   if (cn.status !== 'pending_cn') throw new InvoiceError('Credit note is not pending', 400);
 
@@ -391,8 +393,10 @@ export async function approveCreditNote(creditNoteId: string, userId: string) {
   return result;
 }
 
-export async function rejectCreditNote(creditNoteId: string, userId: string) {
-  const cn = await prisma.creditNote.findUnique({ where: { id: creditNoteId } });
+export async function rejectCreditNote(creditNoteId: string, distributorId: string, userId: string) {
+  const cn = await prisma.creditNote.findFirst({
+    where: { id: creditNoteId, invoice: { distributorId } },
+  });
   if (!cn) throw new InvoiceError('Credit note not found', 404);
   return prisma.creditNote.update({
     where: { id: creditNoteId },
@@ -435,8 +439,10 @@ export async function createDebitNote(
   });
 }
 
-export async function approveDebitNote(debitNoteId: string, userId: string) {
-  const dn = await prisma.debitNote.findUnique({ where: { id: debitNoteId } });
+export async function approveDebitNote(debitNoteId: string, distributorId: string, userId: string) {
+  const dn = await prisma.debitNote.findFirst({
+    where: { id: debitNoteId, invoice: { distributorId } },
+  });
   if (!dn) throw new InvoiceError('Debit note not found', 404);
   if (dn.status !== 'pending_dn') throw new InvoiceError('Debit note is not pending', 400);
 
@@ -494,8 +500,10 @@ export async function approveDebitNote(debitNoteId: string, userId: string) {
   return result;
 }
 
-export async function rejectDebitNote(debitNoteId: string, userId: string) {
-  const dn = await prisma.debitNote.findUnique({ where: { id: debitNoteId } });
+export async function rejectDebitNote(debitNoteId: string, distributorId: string, userId: string) {
+  const dn = await prisma.debitNote.findFirst({
+    where: { id: debitNoteId, invoice: { distributorId } },
+  });
   if (!dn) throw new InvoiceError('Debit note not found', 404);
   return prisma.debitNote.update({
     where: { id: debitNoteId },

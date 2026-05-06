@@ -224,8 +224,8 @@ function DistributorFormModal({
           officePincode: distributor.officePincode || '',
           gstMode: distributor.gstMode,
           status: distributor.status,
-          subscriptionPlan: distributor.subscriptionPlan || '',
-          billingTier: distributor.billingTier || '',
+          subscriptionPlan: distributor.subscriptionPlan ?? null,
+          billingTier: distributor.billingTier ?? null,
           gaslinkBillingEnabled: distributor.gaslinkBillingEnabled,
         }
       : { businessName: '', legalName: '' },

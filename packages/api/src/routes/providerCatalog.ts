@@ -121,8 +121,8 @@ router.delete('/:id',
 router.get('/for-distributor',
   async (req, res) => {
     try {
-      const distributorId = req.user!.distributorId || (req.query.distributorId as string);
-      if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
 
       const distributor = await prisma.distributor.findUnique({
         where: { id: distributorId },
@@ -167,8 +167,8 @@ router.post('/import',
   })),
   async (req, res) => {
     try {
-      const distributorId = req.user!.distributorId || (req.query.distributorId as string);
-      if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
 
       const catalogItems = await prisma.providerCatalogCylinderType.findMany({
         where: { id: { in: req.body.catalogItemIds }, isActive: true },

@@ -78,6 +78,7 @@ export async function generateBillingCycle(
   if (!distributor) throw new BillingError('Distributor not found', 404);
   if (!distributor.gaslinkBillingEnabled) throw new BillingError('GasLink billing is not enabled for this distributor', 400);
   if (!distributor.subscriptionPlan && !distributor.billingTier) throw new BillingError('No subscription plan or billing tier assigned', 400);
+  if (!distributor.billingTier) throw new BillingError('Cannot generate billing cycle without a billing tier assigned', 400);
 
   // Check for existing cycle in same period
   const existing = await prisma.billingCycle.findFirst({

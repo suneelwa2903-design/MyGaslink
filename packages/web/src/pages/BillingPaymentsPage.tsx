@@ -288,12 +288,16 @@ function InvoicesTab() {
                             <button onClick={() => setPayInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-accent-500" title="Record Payment">
                               <HiOutlineBanknotes className="h-4 w-4" />
                             </button>
-                            <button onClick={() => setCreditNoteInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-flame-500" title="Credit Note">
-                              <HiOutlineMinusCircle className="h-4 w-4" />
-                            </button>
-                            <button onClick={() => setDebitNoteInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-red-500" title="Debit Note">
-                              <HiOutlinePlusCircle className="h-4 w-4" />
-                            </button>
+                            {gstEnabled && (
+                              <>
+                                <button onClick={() => setCreditNoteInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-flame-500" title="Credit Note">
+                                  <HiOutlineMinusCircle className="h-4 w-4" />
+                                </button>
+                                <button onClick={() => setDebitNoteInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-red-500" title="Debit Note">
+                                  <HiOutlinePlusCircle className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
                           </>
                         )}
                       </div>

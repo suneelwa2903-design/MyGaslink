@@ -220,11 +220,9 @@ function drawFooter(doc: PDFKit.PDFDocument, startY: number): number {
 
 // ─── Main Generator ─────────────────────────────────────────────────────────
 
-export async function generateCreditNotePdf(creditNoteId: string, distributorId?: string): Promise<Buffer> {
-  const where: any = { id: creditNoteId };
-
+export async function generateCreditNotePdf(creditNoteId: string, distributorId: string): Promise<Buffer> {
   const creditNote = await prisma.creditNote.findFirst({
-    where,
+    where: { id: creditNoteId, invoice: { distributorId } },
     include: {
       invoice: {
         include: {
@@ -236,10 +234,6 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId?
   });
 
   if (!creditNote) throw new Error('Credit note not found');
-  // Verify distributor ownership if provided
-  if (distributorId && creditNote.invoice.distributorId !== distributorId) {
-    throw new Error('Credit note not found');
-  }
 
   const inv = creditNote.invoice;
   const dist = inv.distributor;

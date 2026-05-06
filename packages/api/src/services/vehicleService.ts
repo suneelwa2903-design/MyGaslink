@@ -81,7 +81,12 @@ export async function deleteVehicle(id: string, distributorId: string) {
   });
 }
 
-export async function getVehicleInventory(vehicleId: string) {
+export async function getVehicleInventory(vehicleId: string, distributorId: string) {
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: vehicleId, distributorId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!vehicle) return [];
   return prisma.vehicleInventory.findMany({
     where: { vehicleId },
   });
@@ -90,8 +95,14 @@ export async function getVehicleInventory(vehicleId: string) {
 export async function updateVehicleInventory(
   vehicleId: string,
   cylinderTypeId: string,
+  distributorId: string,
   data: { fullQuantity?: number; emptyQuantity?: number }
 ) {
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: vehicleId, distributorId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!vehicle) throw new Error('Vehicle not found');
   return prisma.vehicleInventory.upsert({
     where: { vehicleId_cylinderTypeId: { vehicleId, cylinderTypeId } },
     create: {

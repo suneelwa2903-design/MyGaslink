@@ -122,6 +122,7 @@ export async function createOrder(
     const assignment = await prisma.driverVehicleAssignment.findFirst({
       where: {
         driverId: customer.preferredDriverId,
+        distributorId,
         assignmentDate: deliveryDate,
         isReconciled: false,
         status: 'dispatch_ready',
@@ -217,6 +218,7 @@ export async function createReturnsOnlyOrder(
     const assignment = await prisma.driverVehicleAssignment.findFirst({
       where: {
         driverId: customer.preferredDriverId,
+        distributorId,
         assignmentDate: scheduledDate,
         isReconciled: false,
         status: 'dispatch_ready',
@@ -463,6 +465,7 @@ export async function assignDriver(
     const assignment = await prisma.driverVehicleAssignment.findFirst({
       where: {
         driverId: data.driverId,
+        distributorId,
         assignmentDate: order.deliveryDate,
         isReconciled: false,
       },

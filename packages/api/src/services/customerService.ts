@@ -46,11 +46,9 @@ export async function listCustomers(
   };
 }
 
-export async function getCustomerById(id: string, distributorId?: string) {
-  const where: Prisma.CustomerWhereInput = { id, deletedAt: null };
-  if (distributorId) where.distributorId = distributorId;
+export async function getCustomerById(id: string, distributorId: string) {
   return prisma.customer.findFirst({
-    where,
+    where: { id, distributorId, deletedAt: null },
     include: {
       ...customerInclude,
       inventoryBalances: {
@@ -267,9 +265,10 @@ export async function createModificationRequest(
   });
 }
 
-export async function approveModificationRequest(requestId: string, reviewedBy: string) {
+export async function approveModificationRequest(requestId: string, distributorId: string, reviewedBy: string) {
   const request = await prisma.customerModificationRequest.findUnique({ where: { id: requestId } });
   if (!request) throw new CustomerError('Modification request not found', 404);
+  if (request.distributorId !== distributorId) throw new CustomerError('Forbidden', 403);
   if (request.status !== 'pending') throw new CustomerError('Request is not pending', 400);
 
   return prisma.$transaction(async (tx) => {
@@ -300,9 +299,10 @@ export async function approveModificationRequest(requestId: string, reviewedBy: 
   });
 }
 
-export async function rejectModificationRequest(requestId: string, reviewedBy: string, reason?: string) {
+export async function rejectModificationRequest(requestId: string, distributorId: string, reviewedBy: string, reason?: string) {
   const request = await prisma.customerModificationRequest.findUnique({ where: { id: requestId } });
   if (!request) throw new CustomerError('Modification request not found', 404);
+  if (request.distributorId !== distributorId) throw new CustomerError('Forbidden', 403);
   if (request.status !== 'pending') throw new CustomerError('Request is not pending', 400);
 
   return prisma.customerModificationRequest.update({
@@ -311,9 +311,9 @@ export async function rejectModificationRequest(requestId: string, reviewedBy: s
   });
 }
 
-export async function getCustomerAuditTrail(customerId: string) {
+export async function getCustomerAuditTrail(customerId: string, distributorId: string) {
   return prisma.customerAuditTrail.findMany({
-    where: { customerId },
+    where: { customerId, distributorId },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });

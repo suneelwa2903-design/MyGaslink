@@ -70,29 +70,35 @@ export default function DistributorDetailPage() {
     enabled: !!id,
   });
 
+  // Super_admin viewing another distributor's detail page: pass the URL :id
+  // through the X-Distributor-Id header for these per-request fetches so the
+  // backend resolves to the right tenant. (The auth-store selectedDistributorId
+  // may differ from the URL id when navigating between distributors.)
+  const overrideForId = id ? { distributorIdOverride: id } : undefined;
+
   const { data: seatData } = useQuery({
     queryKey: ['seat-limits', id],
-    queryFn: () => apiGet<SeatLimits>(`/pricing/seat-limits`, { distributorId: id }),
+    queryFn: () => apiGet<SeatLimits>(`/pricing/seat-limits`, undefined, overrideForId),
     enabled: !!id,
   });
 
   const { data: gstUsageData } = useQuery({
     queryKey: ['gst-usage', id],
-    queryFn: () => apiGet<{ usage: GstUsage }>(`/pricing/gst-usage`, { distributorId: id }),
+    queryFn: () => apiGet<{ usage: GstUsage }>(`/pricing/gst-usage`, undefined, overrideForId),
     select: (d) => d.usage,
     enabled: !!id,
   });
 
   const { data: gstHistory } = useQuery({
     queryKey: ['gst-history', id],
-    queryFn: () => apiGet<{ history: GstUsageHistory[] }>(`/pricing/gst-usage/history`, { distributorId: id }),
+    queryFn: () => apiGet<{ history: GstUsageHistory[] }>(`/pricing/gst-usage/history`, undefined, overrideForId),
     select: (d) => d.history,
     enabled: !!id,
   });
 
   const { data: billingCycles } = useQuery({
     queryKey: ['billing-cycles-dist', id],
-    queryFn: () => apiGet<{ cycles: BillingCycle[] }>('/billing/cycles', { distributorId: id }),
+    queryFn: () => apiGet<{ cycles: BillingCycle[] }>('/billing/cycles', undefined, overrideForId),
     select: (d) => d.cycles,
     enabled: !!id,
   });
@@ -350,8 +356,9 @@ function GenerateInvoiceModal({ distributorId, distributor, lastCycleEndDate, on
     queryFn: () => apiGet<{ tiers: PricingTier[] }>('/pricing/tiers'),
   });
 
-  // Fetch current seat usage
-  const { data: seatData } = useQuery({
+  // Fetch current seat usage (kept warm in the cache for quick render in
+  // future revisions of this page; not consumed in render right now).
+  useQuery({
     queryKey: ['seat-limits', distributorId],
     queryFn: () => apiGet<SeatLimits>(`/pricing/seat-limits`, { distributorId }),
   });
