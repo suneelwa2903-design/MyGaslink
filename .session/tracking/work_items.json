@@ -225,7 +225,7 @@
       "priority": "P1",
       "status": "done",
       "completedAt": "2026-05-06",
-      "description": "API: orderService.confirmDelivery is idempotent — duplicate confirm with same quantities returns 200 (no-op), mismatching quantities returns 409. Mobile: SecureStore-backed pending-deliveries queue, AppState 'active' auto-sync, network-vs-validation error discrimination, pending-sync badge on tab icon, per-order 'pending sync' state. Commit f05c6ba.",
+      "description": "API: orderService.confirmDelivery is idempotent — duplicate confirm with same quantities returns 200 (no-op), mismatching quantities returns 409. Mobile: SecureStore-backed pending-deliveries queue, AppState 'active' auto-sync, network-vs-validation error discrimination, pending-sync badge on tab icon, per-order 'pending sync' state. Commit f05c6ba. Follow-up a1c6100: added @react-native-community/netinfo and startNetworkListener so the queue flushes the moment connectivity is restored, not just on app foreground.",
       "blocksLaunch": false
     },
     {
@@ -243,7 +243,7 @@
       "priority": "P1",
       "status": "done",
       "completedAt": "2026-05-06",
-      "description": "Settings → Onboarding tab with 6-step progress, CSV upload modals (template download, preview, per-row failure breakdown). New endpoints: POST /api/customers/import-csv, POST /api/customers/import-opening-balances, GET /api/customers/onboarding/progress, POST /api/customers/onboarding/dismiss. AnalyticsPage 'Get started' banner for incomplete setup. KNOWN GAP: opening balances stored as credit-method PaymentTransaction + ledger adjustment, but Collections page reads Invoice.outstandingAmount, so imported balances will not appear in Collections without follow-up work — flagged for founder verification. Commit 5ffdeac.",
+      "description": "Settings → Onboarding tab with 6-step progress, CSV upload modals (template download, preview, per-row failure breakdown). New endpoints: POST /api/customers/import-csv, POST /api/customers/import-opening-balances, GET /api/customers/onboarding/progress, POST /api/customers/onboarding/dismiss. AnalyticsPage 'Get started' banner for incomplete setup. Initial commit 5ffdeac. Follow-ups: ed6516d switched opening-balance storage from PaymentTransaction to a synthetic overdue Invoice (isOpeningBalance flag, new migration 20260506000000_opening_balance_invoice_flag) so imported balances now appear in Collections, overdue-call-list, and customer portal automatically. 2e2278a added a dedicated 'Enter Opening Stock' modal driving a new POST /api/inventory/initial-balance endpoint so onboarding step 4 has a single-purpose UI rather than redirecting to the general inventory page.",
       "blocksLaunch": false
     },
     {
