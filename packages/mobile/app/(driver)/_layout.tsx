@@ -4,7 +4,7 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
-import { attachAutoSync, subscribePendingDeliveries } from '../../src/services/deliveryQueue';
+import { attachAutoSync, startNetworkListener, subscribePendingDeliveries } from '../../src/services/deliveryQueue';
 
 function PendingBadge({ count }: { count: number }) {
   if (count === 0) return null;
@@ -27,8 +27,9 @@ export default function DriverLayout() {
 
   useEffect(() => {
     attachAutoSync();
-    const unsub = subscribePendingDeliveries((q) => setPendingCount(q.length));
-    return () => { unsub(); };
+    const unsubQueue = subscribePendingDeliveries((q) => setPendingCount(q.length));
+    const unsubNet = startNetworkListener();
+    return () => { unsubQueue(); unsubNet(); };
   }, []);
 
   return (

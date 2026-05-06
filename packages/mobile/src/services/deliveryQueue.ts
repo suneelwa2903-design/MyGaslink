@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
 import { AppState, type AppStateStatus } from 'react-native';
+import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { api } from '../lib/api';
 
 // Stored under SecureStore — not strictly sensitive, but it's the only storage
@@ -138,4 +139,24 @@ export function attachAutoSync(): void {
     }
   };
   appStateListener = AppState.addEventListener('change', handler);
+}
+
+/**
+ * Subscribe to network-connectivity changes — fires syncPendingDeliveries
+ * the moment connectivity is restored. Returns an unsubscribe function so
+ * callers (typically the driver layout) can detach on unmount.
+ *
+ * Tracks the previous connected state so we only sync on the false→true
+ * transition, not on every state change.
+ */
+export function startNetworkListener(): () => void {
+  let wasConnected: boolean | null = null;
+  const unsub = NetInfo.addEventListener((state: NetInfoState) => {
+    const isConnected = !!state.isConnected;
+    if (wasConnected === false && isConnected) {
+      syncPendingDeliveries().catch(() => {});
+    }
+    wasConnected = isConnected;
+  });
+  return unsub;
 }
