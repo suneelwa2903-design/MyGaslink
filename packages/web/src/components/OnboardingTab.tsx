@@ -63,6 +63,7 @@ export function OnboardingTab() {
   });
 
   const [importer, setImporter] = useState<'customers' | 'opening-balances' | null>(null);
+  const [openingStockOpen, setOpeningStockOpen] = useState(false);
 
   if (isLoading) return <div className="flex justify-center py-10"><Loader /></div>;
   if (!progress) return null;
@@ -83,17 +84,26 @@ export function OnboardingTab() {
           <div className="h-full bg-brand-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
         </div>
         <div className="space-y-2">
-          {progress.steps.map((s, i) => (
-            <a key={s.key} href={s.link} className="flex items-center gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 hover:bg-surface-100 dark:hover:bg-surface-700/50 transition-colors">
-              <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${s.done ? 'bg-accent-500 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-500'}`}>
-                {s.done ? '✓' : i + 1}
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-surface-900 dark:text-white">{s.label} {s.optional && <span className="text-xs text-surface-400">(optional)</span>}</p>
-              </div>
-              <span className="text-xs text-brand-600 dark:text-brand-400">→</span>
-            </a>
-          ))}
+          {progress.steps.map((s, i) => {
+            const isStock = s.key === 'opening_stock';
+            const inner = (
+              <>
+                <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${s.done ? 'bg-accent-500 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-500'}`}>
+                  {s.done ? '✓' : i + 1}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-surface-900 dark:text-white">{s.label} {s.optional && <span className="text-xs text-surface-400">(optional)</span>}</p>
+                </div>
+                <span className="text-xs text-brand-600 dark:text-brand-400">→</span>
+              </>
+            );
+            const className = 'flex items-center gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 hover:bg-surface-100 dark:hover:bg-surface-700/50 transition-colors text-left w-full';
+            return isStock ? (
+              <button key={s.key} type="button" onClick={() => setOpeningStockOpen(true)} className={className}>{inner}</button>
+            ) : (
+              <a key={s.key} href={s.link} className={className}>{inner}</a>
+            );
+          })}
         </div>
       </div>
 
@@ -121,7 +131,92 @@ export function OnboardingTab() {
 
       {importer === 'customers' && <CustomerImportModal onClose={() => { setImporter(null); qc.invalidateQueries({ queryKey: ['onboarding-progress'] }); }} />}
       {importer === 'opening-balances' && <OpeningBalanceImportModal onClose={() => { setImporter(null); qc.invalidateQueries({ queryKey: ['onboarding-progress'] }); }} />}
+      {openingStockOpen && <OpeningStockModal onClose={() => { setOpeningStockOpen(false); qc.invalidateQueries({ queryKey: ['onboarding-progress'] }); }} />}
     </div>
+  );
+}
+
+type CylinderTypeRow = { cylinderTypeId: string; typeName: string; capacity: number; unit: string };
+
+function OpeningStockModal({ onClose }: { onClose: () => void }) {
+  const { data: types, isLoading } = useQuery<CylinderTypeRow[]>({
+    queryKey: ['cylinder-types-active'],
+    queryFn: async () => {
+      const r = await apiGet<{ cylinderTypes: CylinderTypeRow[] }>('/cylinder-types');
+      return r.cylinderTypes;
+    },
+  });
+
+  const [entries, setEntries] = useState<Record<string, { fulls: string; empties: string }>>({});
+
+  const setVal = (id: string, field: 'fulls' | 'empties', v: string) => {
+    setEntries((prev) => ({ ...prev, [id]: { fulls: prev[id]?.fulls ?? '', empties: prev[id]?.empties ?? '', [field]: v } }));
+  };
+
+  const submit = useMutation({
+    mutationFn: () => {
+      const payload = (types ?? [])
+        .map((t) => {
+          const e = entries[t.cylinderTypeId];
+          const fulls = Number(e?.fulls ?? '0') || 0;
+          const empties = Number(e?.empties ?? '0') || 0;
+          return { cylinderTypeId: t.cylinderTypeId, openingFulls: fulls, openingEmpties: empties };
+        })
+        .filter((e) => e.openingFulls > 0 || e.openingEmpties > 0);
+      if (payload.length === 0) throw new Error('Enter at least one opening balance');
+      return apiPost<{ created: number }>('/inventory/initial-balance', { entries: payload });
+    },
+    onSuccess: (r) => {
+      toast.success(`Opening stock saved (${r.created} cylinder type${r.created === 1 ? '' : 's'})`);
+      onClose();
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  return (
+    <Modal open onClose={onClose} title="Enter Opening Stock" size="lg">
+      <div className="space-y-4">
+        <p className="text-sm text-surface-500">Enter your stock count as of yesterday. Leave a row at zero to skip it.</p>
+        {isLoading ? (
+          <div className="flex justify-center py-6"><Loader /></div>
+        ) : !types?.length ? (
+          <div className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 text-sm">
+            No cylinder types yet — add them in <a href="/app/settings?tab=cylinders" className="text-brand-600 dark:text-brand-400 underline">Settings → Cylinder Types</a> first.
+          </div>
+        ) : (
+          <div className="table-container">
+            <table className="table">
+              <thead><tr><th>Cylinder type</th><th>Opening fulls</th><th>Opening empties</th></tr></thead>
+              <tbody>
+                {types.map((t) => (
+                  <tr key={t.cylinderTypeId}>
+                    <td className="font-medium">{t.typeName} <span className="text-xs text-surface-400">({t.capacity}{t.unit})</span></td>
+                    <td>
+                      <input
+                        type="number" min={0} className="input py-1 w-28"
+                        value={entries[t.cylinderTypeId]?.fulls ?? ''}
+                        onChange={(e) => setVal(t.cylinderTypeId, 'fulls', e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number" min={0} className="input py-1 w-28"
+                        value={entries[t.cylinderTypeId]?.empties ?? ''}
+                        onChange={(e) => setVal(t.cylinderTypeId, 'empties', e.target.value)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="flex justify-end gap-3">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => submit.mutate()} loading={submit.isPending} disabled={!types?.length}>Save</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

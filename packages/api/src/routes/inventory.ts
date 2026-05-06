@@ -73,6 +73,30 @@ router.post('/outgoing-empties',
   }
 );
 
+// POST /api/inventory/initial-balance — onboarding-time opening-stock entry
+router.post('/initial-balance',
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  validate(z.object({
+    entries: z.array(z.object({
+      cylinderTypeId: z.string().uuid(),
+      openingFulls: z.number().int().min(0),
+      openingEmpties: z.number().int().min(0),
+    })).min(1).max(50),
+    eventDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })),
+  auditLog('initial_balance', 'inventory'),
+  async (req, res) => {
+    try {
+      const result = await inventoryService.recordInitialBalance(
+        req.user!.distributorId!, req.user!.userId, req.body,
+      );
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
 // POST /api/inventory/manual-adjustment
 router.post('/manual-adjustment',
   requireRole('super_admin', 'distributor_admin', 'inventory'),
