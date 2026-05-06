@@ -49,8 +49,8 @@
       "id": "WI-006",
       "title": "Migrate monetary fields from Float to Decimal",
       "priority": "P1",
-      "status": "pending",
-      "description": "Schema has 49 monetary fields stored as Float — risks rounding errors on sum/aggregate. Convert to Prisma Decimal (Postgres NUMERIC). Will need a migration plus updates to every service that reads/writes amounts.",
+      "status": "planned",
+      "description": "Detailed plan + 35-field inventory in .session/float-to-decimal-plan.md (commit a6a196e). Execution deferred — 4-8h of careful surgery touching every monetary calculation; classified blocksLaunch: false. Plan is executable cold by a future session on a dedicated branch.",
       "blocksLaunch": false
     },
     {
@@ -136,24 +136,27 @@
       "id": "WI-016",
       "title": "Integration test coverage expansion (Batch A: customers, payments, billing)",
       "priority": "P1",
-      "status": "pending",
-      "description": "Add integration tests for the 16 untested routes in packages/api/src/routes/. Batch A — revenue critical: customers (CRUD + search + modification requests), payments (record, allocation, paid status), billing (cycles, mark paid, suspend/unsuspend, suspended-distributor blocks orders). Each test must cover happy path, auth (401), tenant isolation (403/404), validation (400). Follow existing helpers.ts setup pattern.",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "34 new tests across customers.test.ts (13), payments.test.ts (9), billing.test.ts (12). Caught 3 bugs alongside (BillingStatus enum mismatch in shared, /ledger error handler, soft-delete leakage in getSeedData). Commit 6c7527a.",
       "blocksLaunch": false
     },
     {
       "id": "WI-017",
       "title": "Integration test coverage expansion (Batch B: settings, drivers/vehicles, assignments, analytics)",
       "priority": "P2",
-      "status": "pending",
-      "description": "Operations-critical routes. Same pattern as WI-016.",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "75 new tests across settings.test.ts (19), driversVehicles.test.ts (20), assignments.test.ts (10), analytics.test.ts (26). Commits be29a17, 2c2544a, c505aae, c4e3f29.",
       "blocksLaunch": false
     },
     {
       "id": "WI-018",
       "title": "Integration test coverage expansion (Batch C: cylinderTypes, pricing, users, pendingActions)",
       "priority": "P2",
-      "status": "pending",
-      "description": "Supporting routes. Same pattern as WI-016.",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "51 new tests across cylinderTypes.test.ts (13), pricing.test.ts (14), users.test.ts (13), pendingActions.test.ts (11). Commits 0aedee4, 4b104e0, 518aedc, 5b04ea1.",
       "blocksLaunch": false
     },
     {
