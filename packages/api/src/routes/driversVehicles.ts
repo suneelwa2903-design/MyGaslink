@@ -233,7 +233,7 @@ driverRouter.get('/me/vehicle-inventory',
       });
       if (!assignment) return sendSuccess(res, []);
 
-      const inv = await vehicleService.getVehicleInventory(assignment.vehicleId);
+      const inv = await vehicleService.getVehicleInventory(assignment.vehicleId, req.user!.distributorId!);
       return sendSuccess(res, inv);
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -351,7 +351,7 @@ vehicleRouter.delete('/:id',
 // GET /api/vehicles/:id/inventory
 vehicleRouter.get('/:id/inventory', async (req, res) => {
   try {
-    const inv = await vehicleService.getVehicleInventory(param(req.params.id));
+    const inv = await vehicleService.getVehicleInventory(param(req.params.id), req.user!.distributorId!);
     return sendSuccess(res, inv);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -370,7 +370,7 @@ vehicleRouter.put('/:id/inventory',
   async (req, res) => {
     try {
       const result = await vehicleService.updateVehicleInventory(
-        param(req.params.id), req.body.cylinderTypeId, req.body
+        param(req.params.id), req.body.cylinderTypeId, req.user!.distributorId!, req.body
       );
       return sendSuccess(res, result);
     } catch (err) {

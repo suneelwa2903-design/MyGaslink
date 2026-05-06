@@ -107,6 +107,7 @@ export async function createDriverVehicleAssignment(
   const existing = await prisma.driverVehicleAssignment.findFirst({
     where: {
       driverId: data.driverId,
+      distributorId,
       assignmentDate: new Date(data.assignmentDate),
       isReconciled: false,
       status: { notIn: ['cancelled', 'reconciled'] },

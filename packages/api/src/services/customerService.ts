@@ -46,11 +46,9 @@ export async function listCustomers(
   };
 }
 
-export async function getCustomerById(id: string, distributorId?: string) {
-  const where: Prisma.CustomerWhereInput = { id, deletedAt: null };
-  if (distributorId) where.distributorId = distributorId;
+export async function getCustomerById(id: string, distributorId: string) {
   return prisma.customer.findFirst({
-    where,
+    where: { id, distributorId, deletedAt: null },
     include: {
       ...customerInclude,
       inventoryBalances: {
