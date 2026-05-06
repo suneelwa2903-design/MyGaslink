@@ -291,7 +291,7 @@ router.put('/credit-notes/:id/approve',
   auditLog('approve', 'credit_note'),
   async (req, res) => {
     try {
-      const cn = await invoiceService.approveCreditNote(param(req.params.id), req.user!.userId);
+      const cn = await invoiceService.approveCreditNote(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, mapCreditNote(cn));
     } catch (err: any) {
       return sendError(res, err.message, err.statusCode || 500);
@@ -304,7 +304,7 @@ router.put('/credit-notes/:id/reject',
   auditLog('reject', 'credit_note'),
   async (req, res) => {
     try {
-      const cn = await invoiceService.rejectCreditNote(param(req.params.id), req.user!.userId);
+      const cn = await invoiceService.rejectCreditNote(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, mapCreditNote(cn));
     } catch (err: any) {
       return sendError(res, err.message, err.statusCode || 500);
@@ -354,7 +354,7 @@ router.put('/debit-notes/:id/approve',
   auditLog('approve', 'debit_note'),
   async (req, res) => {
     try {
-      const dn = await invoiceService.approveDebitNote(param(req.params.id), req.user!.userId);
+      const dn = await invoiceService.approveDebitNote(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, mapDebitNote(dn));
     } catch (err: any) {
       return sendError(res, err.message, err.statusCode || 500);
@@ -367,7 +367,7 @@ router.put('/debit-notes/:id/reject',
   auditLog('reject', 'debit_note'),
   async (req, res) => {
     try {
-      const dn = await invoiceService.rejectDebitNote(param(req.params.id), req.user!.userId);
+      const dn = await invoiceService.rejectDebitNote(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, mapDebitNote(dn));
     } catch (err: any) {
       return sendError(res, err.message, err.statusCode || 500);

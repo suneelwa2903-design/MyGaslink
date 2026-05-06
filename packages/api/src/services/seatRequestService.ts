@@ -31,9 +31,10 @@ export async function listSeatRequests(distributorId?: string, status?: string) 
   });
 }
 
-export async function approveSeatRequest(requestId: string, approvedBy: string) {
+export async function approveSeatRequest(requestId: string, approvedBy: string, distributorId?: string) {
   const request = await prisma.seatRequest.findUnique({ where: { id: requestId } });
   if (!request) throw new Error('Seat request not found');
+  if (distributorId && request.distributorId !== distributorId) throw new Error('Forbidden');
   if (request.status !== 'pending_seat') throw new Error('Request is not pending');
 
   // Get pricing for the extra seat
@@ -63,7 +64,10 @@ export async function approveSeatRequest(requestId: string, approvedBy: string) 
   });
 }
 
-export async function rejectSeatRequest(requestId: string, approvedBy: string) {
+export async function rejectSeatRequest(requestId: string, approvedBy: string, distributorId?: string) {
+  const request = await prisma.seatRequest.findUnique({ where: { id: requestId } });
+  if (!request) throw new Error('Seat request not found');
+  if (distributorId && request.distributorId !== distributorId) throw new Error('Forbidden');
   return prisma.seatRequest.update({
     where: { id: requestId },
     data: {

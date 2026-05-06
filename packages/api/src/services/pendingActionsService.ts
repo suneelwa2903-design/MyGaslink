@@ -49,8 +49,8 @@ export async function createPendingAction(
   });
 }
 
-export async function approvePendingAction(actionId: string, userId: string) {
-  const action = await prisma.pendingAction.findUnique({ where: { id: actionId } });
+export async function approvePendingAction(actionId: string, distributorId: string, userId: string) {
+  const action = await prisma.pendingAction.findFirst({ where: { id: actionId, distributorId } });
   if (!action) return null;
   return prisma.pendingAction.update({
     where: { id: actionId },
@@ -58,8 +58,8 @@ export async function approvePendingAction(actionId: string, userId: string) {
   });
 }
 
-export async function resolvePendingAction(actionId: string, userId: string, notes?: string) {
-  const action = await prisma.pendingAction.findUnique({ where: { id: actionId } });
+export async function resolvePendingAction(actionId: string, distributorId: string, userId: string, notes?: string) {
+  const action = await prisma.pendingAction.findFirst({ where: { id: actionId, distributorId } });
   if (!action) return null;
   return prisma.pendingAction.update({
     where: { id: actionId },
@@ -70,8 +70,8 @@ export async function resolvePendingAction(actionId: string, userId: string, not
   });
 }
 
-export async function rejectPendingAction(actionId: string, userId: string, notes?: string) {
-  const action = await prisma.pendingAction.findUnique({ where: { id: actionId } });
+export async function rejectPendingAction(actionId: string, distributorId: string, userId: string, notes?: string) {
+  const action = await prisma.pendingAction.findFirst({ where: { id: actionId, distributorId } });
   if (!action) return null;
   return prisma.pendingAction.update({
     where: { id: actionId },

@@ -27,9 +27,11 @@ export async function listUsers(distributorId: string | null, role: string) {
   return prisma.user.findMany({ where, select: userSelect, orderBy: { createdAt: 'desc' } });
 }
 
-export async function getUserById(id: string) {
+export async function getUserById(id: string, distributorId?: string) {
+  const where: Prisma.UserWhereInput = { id, deletedAt: null };
+  if (distributorId) where.distributorId = distributorId;
   return prisma.user.findFirst({
-    where: { id, deletedAt: null },
+    where,
     select: userSelect,
   });
 }
@@ -94,7 +96,15 @@ export async function updateUser(id: string, data: {
   role?: string;
   distributorId?: string;
   customerId?: string;
-}) {
+}, callerDistributorId?: string) {
+  if (callerDistributorId) {
+    const existing = await prisma.user.findFirst({
+      where: { id, deletedAt: null },
+      select: { distributorId: true },
+    });
+    if (!existing) throw new Error('User not found');
+    if (existing.distributorId !== callerDistributorId) throw new Error('Forbidden');
+  }
   const updateData: Prisma.UserUpdateInput = {};
   if (data.email !== undefined) updateData.email = data.email.toLowerCase();
   if (data.firstName !== undefined) updateData.firstName = data.firstName;
@@ -119,7 +129,15 @@ export async function updateUser(id: string, data: {
   });
 }
 
-export async function softDeleteUser(id: string) {
+export async function softDeleteUser(id: string, callerDistributorId?: string) {
+  if (callerDistributorId) {
+    const existing = await prisma.user.findFirst({
+      where: { id, deletedAt: null },
+      select: { distributorId: true },
+    });
+    if (!existing) throw new Error('User not found');
+    if (existing.distributorId !== callerDistributorId) throw new Error('Forbidden');
+  }
   return prisma.user.update({
     where: { id },
     data: { deletedAt: new Date(), status: 'inactive', refreshToken: null },
