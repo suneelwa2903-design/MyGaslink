@@ -1,1 +1,124 @@
-{"items":[]}
+{
+  "items": [
+    {
+      "id": "WI-001",
+      "title": "Tenant-isolation audit of all services",
+      "priority": "P0",
+      "status": "done",
+      "description": "Audit all 28 service files for missing distributorId filters; fix CRITICAL/HIGH/MEDIUM findings. Done in commits b6f8c58, a0f855c, 8c758b2.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-002",
+      "title": "Tighten requireDistributor exemptions on /api/users, /api/billing, /api/pricing",
+      "priority": "P1",
+      "status": "pending",
+      "description": "Replace req.query.distributorId fallback for super_admin with the validated X-Distributor-Id header pattern; either add requireDistributor or split super_admin endpoints.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-003",
+      "title": "Clean up ad-hoc test-*.ts scripts at packages/api/ root",
+      "priority": "P2",
+      "status": "pending",
+      "description": "Migrate the still-useful ones (test-debit-note, test-distance, test-e2e v2/v3/v4, test-ewb, test-production-gst, test-whitebooks, check-users) into src/__tests__/ as integration tests or scripts/ with a clear purpose. Delete the rest.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-004",
+      "title": "Fix Bug #4 — credit-note button visible when gstMode=DISABLED",
+      "priority": "P1",
+      "status": "pending",
+      "description": "Hide CN/DN buttons and gate the endpoints when distributor.gstMode === 'disabled'. Add an integration test covering both gst-on and gst-off tenants.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-005",
+      "title": "Fix Bug #5 — vehicle field shown in assign-driver modal",
+      "priority": "P2",
+      "status": "pending",
+      "description": "Remove the vehicle field from the assign-driver modal in the orders UI; assignments are driver-only at that step (vehicle comes from the day's driver-vehicle assignment).",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-006",
+      "title": "Migrate monetary fields from Float to Decimal",
+      "priority": "P1",
+      "status": "pending",
+      "description": "Schema has 49 monetary fields stored as Float — risks rounding errors on sum/aggregate. Convert to Prisma Decimal (Postgres NUMERIC). Will need a migration plus updates to every service that reads/writes amounts.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-007",
+      "title": "Verify GST live mode against WhiteBooks production",
+      "priority": "P1",
+      "status": "pending",
+      "description": "API tests cover sandbox only. Run a real IRN issuance + cancellation + EWB workflow against WhiteBooks production with production credentials; document the result in TESTING_PROGRESS.md before live tenants are onboarded.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-008",
+      "title": "Telugu i18n — build from scratch (no existing branch found)",
+      "priority": "P0",
+      "status": "pending",
+      "description": "Founder confirmed Telugu is launch-required. Branch claude/sharp-grothendieck has NO i18n work — it is an ancestor of master with only the initial commit. Translation work must be built from scratch (estimate: 16-48h depending on coverage scope). See .session/i18n-status.md.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-009",
+      "title": "Add graceful shutdown + unhandledRejection handlers to server.ts",
+      "priority": "P1",
+      "status": "pending",
+      "description": "On SIGTERM/SIGINT, close HTTP server then prisma.$disconnect; add process-level handlers for unhandledRejection and uncaughtException that log via Winston + Sentry before exiting. Required for safe pm2 restarts on EC2.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-010",
+      "title": "Add web ErrorBoundary component",
+      "priority": "P1",
+      "status": "pending",
+      "description": "React 19 web app has no top-level ErrorBoundary — any uncaught render error crashes the whole app to a blank screen. Add an ErrorBoundary at the layout root with a recoverable error UI and Sentry capture.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-011",
+      "title": "Disable source maps in vite.config.ts production build",
+      "priority": "P1",
+      "status": "pending",
+      "description": "Production bundle currently ships source maps to S3/CloudFront — leaks original TypeScript source. Set build.sourcemap = false (or 'hidden' if needed for Sentry uploads with sourcemap deletion post-upload).",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-012",
+      "title": "Upgrade axios to >=1.15.0 (2 critical CVEs)",
+      "priority": "P1",
+      "status": "pending",
+      "description": "Root + packages/api + packages/web + packages/mobile all on axios ^1.10. Two critical CVEs since 1.10. Bump to ^1.15.0 (or current stable), run pnpm install + tests, redeploy.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-013",
+      "title": "Verify distributor exists & is active in resolveDistributor middleware",
+      "priority": "P1",
+      "status": "pending",
+      "description": "Currently the X-Distributor-Id header is regex-validated but not checked against the database. A super_admin can set it to any well-formed string and queries return empty rather than failing fast. Add a prisma.distributor.findFirst({ where: { id, status: 'active', deletedAt: null } }) in middleware/auth.ts:resolveDistributor.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-014",
+      "title": "Audit log super_admin tenant switches",
+      "priority": "P2",
+      "status": "pending",
+      "description": "Super admin can hop between tenants every request with no record. Emit an AuditLog entry whenever resolveDistributor sets req.user.distributorId from the header for a super_admin. High forensic/support value.",
+      "blocksLaunch": false
+    },
+    {
+      "id": "WI-015",
+      "title": "Fix PORT discrepancy in CLAUDE.md",
+      "priority": "P2",
+      "status": "pending",
+      "description": "CLAUDE.md says API runs on port 3000; .env.example and config/index.ts default to 5000; actual is 5000. Update CLAUDE.md to reflect 5000.",
+      "blocksLaunch": false
+    }
+  ]
+}
