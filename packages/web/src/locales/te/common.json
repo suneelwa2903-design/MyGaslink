@@ -101,6 +101,39 @@
       "noRecentInvoices": "ఇటీవలి ఇన్‌వాయిస్‌లు లేవు",
       "due": "గడువు:"
     },
+    "invoices": {
+      "title": "నా ఇన్‌వాయిస్‌లు",
+      "subtitle": "మీ ఇన్‌వాయిస్‌లు మరియు చెల్లింపు స్థితిని చూడండి",
+      "allStatuses": "అన్ని స్థితులు",
+      "noInvoices": "ఇన్‌వాయిస్‌లు లేవు",
+      "noInvoicesDesc": "మీ ఇన్‌వాయిస్‌లు ఇక్కడ కనిపిస్తాయి.",
+      "tableHeaders": {
+        "invoiceNumber": "ఇన్‌వాయిస్ #",
+        "issueDate": "జారీ తేదీ",
+        "dueDate": "గడువు తేదీ",
+        "total": "మొత్తం",
+        "paid": "చెల్లించింది",
+        "outstanding": "బకాయి",
+        "status": "స్థితి",
+        "view": "చూడండి"
+      },
+      "pageOf": "పేజీ {{page}} / {{total}}",
+      "previous": "మునుపటిది",
+      "next": "తదుపరిది",
+      "viewModal": {
+        "title": "ఇన్‌వాయిస్ {{invoiceNumber}}",
+        "issueDate": "జారీ తేదీ",
+        "dueDate": "గడువు తేదీ",
+        "status": "స్థితి",
+        "outstanding": "బకాయి",
+        "description": "వివరణ",
+        "qty": "పరిమాణం",
+        "unitPrice": "యూనిట్ ధర",
+        "gstPercent": "GST%",
+        "total": "మొత్తం",
+        "totalLabel": "మొత్తం: {{amount}}"
+      }
+    },
     "orders": {
       "title": "నా ఆర్డర్లు",
       "subtitle": "ఆర్డర్లను చూడండి మరియు సృష్టించండి",

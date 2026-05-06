@@ -101,6 +101,39 @@
       "noRecentInvoices": "No recent invoices",
       "due": "Due:"
     },
+    "invoices": {
+      "title": "My Invoices",
+      "subtitle": "View your invoices and payment status",
+      "allStatuses": "All Statuses",
+      "noInvoices": "No invoices",
+      "noInvoicesDesc": "Your invoices will appear here.",
+      "tableHeaders": {
+        "invoiceNumber": "Invoice #",
+        "issueDate": "Issue Date",
+        "dueDate": "Due Date",
+        "total": "Total",
+        "paid": "Paid",
+        "outstanding": "Outstanding",
+        "status": "Status",
+        "view": "View"
+      },
+      "pageOf": "Page {{page}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next",
+      "viewModal": {
+        "title": "Invoice {{invoiceNumber}}",
+        "issueDate": "Issue Date",
+        "dueDate": "Due Date",
+        "status": "Status",
+        "outstanding": "Outstanding",
+        "description": "Description",
+        "qty": "Qty",
+        "unitPrice": "Unit Price",
+        "gstPercent": "GST%",
+        "total": "Total",
+        "totalLabel": "Total: {{amount}}"
+      }
+    },
     "orders": {
       "title": "My Orders",
       "subtitle": "View and create orders",
