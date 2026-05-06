@@ -37,7 +37,7 @@ Re-New GasLink is an LPG distribution management SaaS — monorepo with 3 packag
 pnpm dev
 
 # Or individually
-pnpm dev:api        # API on port 3000
+pnpm dev:api        # API on port 5000
 pnpm dev:web        # Web on port 5173
 
 # Database
