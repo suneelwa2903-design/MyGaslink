@@ -132,6 +132,7 @@ router.get('/invoices/with-gst',
       return sendError(res, 'No customer linked to this account', 400);
     }
     const invoices = await portalService.getCustomerInvoices(
+      req.user!.distributorId!,
       req.user!.customerId,
       {
         dateFrom: req.query.dateFrom as string,
@@ -156,7 +157,7 @@ router.get('/invoices/download-summary',
     const { dateFrom, dateTo } = req.query as { dateFrom: string; dateTo: string };
     if (!dateFrom || !dateTo) return sendError(res, 'dateFrom and dateTo required', 400);
     const summary = await portalService.getInvoiceSummaryForDownload(
-      req.user!.customerId, dateFrom, dateTo
+      req.user!.distributorId!, req.user!.customerId, dateFrom, dateTo
     );
     return sendSuccess(res, summary);
   } catch (err: any) {

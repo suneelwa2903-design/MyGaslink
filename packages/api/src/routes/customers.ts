@@ -118,7 +118,7 @@ router.put('/modification-requests/:requestId/approve',
   auditLog('approve', 'customer_modification_request'),
   async (req, res) => {
     try {
-      const result = await customerService.approveModificationRequest(param(req.params.requestId), req.user!.userId);
+      const result = await customerService.approveModificationRequest(param(req.params.requestId), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, err.message, err.statusCode || 500);
@@ -134,7 +134,7 @@ router.put('/modification-requests/:requestId/reject',
   async (req, res) => {
     try {
       const result = await customerService.rejectModificationRequest(
-        param(req.params.requestId), req.user!.userId, req.body.reason
+        param(req.params.requestId), req.user!.distributorId!, req.user!.userId, req.body.reason
       );
       return sendSuccess(res, result);
     } catch (err: any) {
@@ -148,7 +148,7 @@ router.get('/:id/audit-trail',
   requireRole('super_admin', 'distributor_admin'),
   async (req, res) => {
     try {
-      const trail = await customerService.getCustomerAuditTrail(param(req.params.id));
+      const trail = await customerService.getCustomerAuditTrail(param(req.params.id), req.user!.distributorId!);
       return sendSuccess(res, trail);
     } catch (err) {
       return sendError(res, (err as Error).message);

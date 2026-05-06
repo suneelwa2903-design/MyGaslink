@@ -44,7 +44,7 @@ export async function getCustomerDashboard(distributorId: string, customerId: st
       _sum: { outstandingAmount: true },
     }),
     prisma.customerInventoryBalance.findMany({
-      where: { customerId },
+      where: { customerId, customer: { distributorId, deletedAt: null } },
       include: { cylinderType: { select: { typeName: true, capacity: true } } },
     }),
     prisma.paymentTransaction.aggregate({
@@ -243,7 +243,7 @@ export async function getMyPaymentById(distributorId: string, customerId: string
  */
 export async function getMyBalance(distributorId: string, customerId: string) {
   return prisma.customerInventoryBalance.findMany({
-    where: { customerId },
+    where: { customerId, customer: { distributorId, deletedAt: null } },
     include: { cylinderType: { select: { typeName: true, capacity: true } } },
   });
 }
@@ -331,10 +331,11 @@ export async function getMyDistributorInfo(distributorId: string) {
  * Get all invoices for a customer (for customer app) with GST document details.
  */
 export async function getCustomerInvoices(
+  distributorId: string,
   customerId: string,
   filters?: { dateFrom?: string; dateTo?: string; status?: string }
 ) {
-  const where: any = { customerId, deletedAt: null, isGaslinkBilling: false };
+  const where: any = { distributorId, customerId, deletedAt: null, isGaslinkBilling: false };
   if (filters?.status) where.status = filters.status;
   if (filters?.dateFrom || filters?.dateTo) {
     where.issueDate = {};
@@ -359,12 +360,14 @@ export async function getCustomerInvoices(
  * Get invoice summary for bulk download metadata.
  */
 export async function getInvoiceSummaryForDownload(
+  distributorId: string,
   customerId: string,
   dateFrom: string,
   dateTo: string
 ) {
   const invoices = await prisma.invoice.findMany({
     where: {
+      distributorId,
       customerId,
       deletedAt: null,
       isGaslinkBilling: false,
