@@ -6,6 +6,7 @@ import * as gstApiTracker from '../services/gstApiTracker.js';
 import * as seatRequestService from '../services/seatRequestService.js';
 import { generateBillingInvoicePdf } from '../services/pdf/billingInvoicePdfService.js';
 import { validate } from '../middleware/validate.js';
+import { param } from '../utils/params.js';
 import { z } from 'zod';
 
 const router = Router();
@@ -122,7 +123,7 @@ router.get('/seat-requests', async (req, res) => {
 // PUT /api/pricing/seat-requests/:id/approve - approve seat request (super admin)
 router.put('/seat-requests/:id/approve', requireRole('super_admin'), async (req, res) => {
   try {
-    const result = await seatRequestService.approveSeatRequest(req.params.id, req.user!.userId);
+    const result = await seatRequestService.approveSeatRequest(param(req.params.id), req.user!.userId);
     return sendSuccess(res, result);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -132,7 +133,7 @@ router.put('/seat-requests/:id/approve', requireRole('super_admin'), async (req,
 // PUT /api/pricing/seat-requests/:id/reject - reject seat request (super admin)
 router.put('/seat-requests/:id/reject', requireRole('super_admin'), async (req, res) => {
   try {
-    const result = await seatRequestService.rejectSeatRequest(req.params.id, req.user!.userId);
+    const result = await seatRequestService.rejectSeatRequest(param(req.params.id), req.user!.userId);
     return sendSuccess(res, result);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -142,9 +143,10 @@ router.put('/seat-requests/:id/reject', requireRole('super_admin'), async (req, 
 // GET /api/pricing/billing-invoice/:cycleId - download billing invoice PDF
 router.get('/billing-invoice/:cycleId', requireRole('super_admin'), async (req, res) => {
   try {
-    const pdf = await generateBillingInvoicePdf(req.params.cycleId);
+    const cycleId = param(req.params.cycleId);
+    const pdf = await generateBillingInvoicePdf(cycleId);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="gaslink-invoice-${req.params.cycleId.slice(-6)}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="gaslink-invoice-${cycleId.slice(-6)}.pdf"`);
     res.send(pdf);
   } catch (err) {
     return sendError(res, (err as Error).message);
