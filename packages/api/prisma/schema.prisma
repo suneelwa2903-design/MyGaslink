@@ -480,7 +480,7 @@ model CustomerCylinderDiscount {
   id              String @id @default(uuid()) @map("discount_id")
   customerId      String @map("customer_id")
   cylinderTypeId  String @map("cylinder_type_id")
-  discountPerUnit Float  @default(0) @map("discount_per_unit")
+  discountPerUnit Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
 
   customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
@@ -548,7 +548,7 @@ model CustomerLedgerEntry {
   entryType     LedgerEntryType @map("entry_type")
   referenceId   String          @map("reference_id")
   invoiceId     String?         @map("invoice_id")
-  amountDelta   Float           @map("amount_delta")
+  amountDelta   Decimal         @map("amount_delta") @db.Decimal(18, 4)
   narration     String?
   entryDate     DateTime        @map("entry_date") @db.Date
   createdBy     String?         @map("created_by")
@@ -595,7 +595,7 @@ model CylinderPrice {
   id             String   @id @default(uuid()) @map("price_id")
   distributorId  String   @map("distributor_id")
   cylinderTypeId String   @map("cylinder_type_id")
-  price          Float
+  price          Decimal  @db.Decimal(18, 4)
   effectiveDate  DateTime @map("effective_date") @db.Date
   createdAt      DateTime @default(now()) @map("created_at")
 
@@ -610,7 +610,7 @@ model EmptyCylinderPrice {
   id                String   @id @default(uuid()) @map("empty_price_id")
   distributorId     String   @map("distributor_id")
   cylinderTypeId    String   @map("cylinder_type_id")
-  emptyCylinderPrice Float   @map("empty_cylinder_price")
+  emptyCylinderPrice Decimal @map("empty_cylinder_price") @db.Decimal(18, 4)
   createdAt         DateTime @default(now()) @map("created_at")
 
   distributor  Distributor  @relation(fields: [distributorId], references: [id])
@@ -647,7 +647,7 @@ model Order {
   deliveryDate        DateTime    @map("delivery_date") @db.Date
   status              OrderStatus @default(pending_driver_assignment)
   orderType           OrderType   @default(delivery) @map("order_type")
-  totalAmount         Float       @default(0) @map("total_amount")
+  totalAmount         Decimal     @default(0) @map("total_amount") @db.Decimal(18, 4)
   specialInstructions String?     @map("special_instructions")
   deliveryLatitude    Float?      @map("delivery_latitude")
   deliveryLongitude   Float?      @map("delivery_longitude")
@@ -689,9 +689,9 @@ model OrderItem {
   quantity          Int
   deliveredQuantity Int?    @map("delivered_quantity")
   emptiesCollected  Int?    @map("empties_collected")
-  unitPrice         Float   @map("unit_price")
-  discountPerUnit   Float   @default(0) @map("discount_per_unit")
-  totalPrice        Float   @map("total_price")
+  unitPrice         Decimal @map("unit_price") @db.Decimal(18, 4)
+  discountPerUnit   Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
+  totalPrice        Decimal @map("total_price") @db.Decimal(18, 4)
 
   order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
   cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
@@ -831,18 +831,18 @@ model Invoice {
   orderId           String?       @unique @map("order_id")
   issueDate         DateTime      @map("issue_date") @db.Date
   dueDate           DateTime      @map("due_date") @db.Date
-  totalAmount       Float         @default(0) @map("total_amount")
-  amountPaid        Float         @default(0) @map("amount_paid")
-  outstandingAmount Float         @default(0) @map("outstanding_amount")
+  totalAmount       Decimal       @default(0) @map("total_amount") @db.Decimal(18, 4)
+  amountPaid        Decimal       @default(0) @map("amount_paid") @db.Decimal(18, 4)
+  outstandingAmount Decimal       @default(0) @map("outstanding_amount") @db.Decimal(18, 4)
   status            InvoiceStatus @default(draft)
   irnStatus         IrnStatus     @default(not_attempted) @map("irn_status")
   ewbStatus         EwbStatus     @default(not_attempted) @map("ewb_status")
   irn               String?
   ackNo             String?       @map("ack_no")
   ackDate           DateTime?     @map("ack_date")
-  cgstValue         Float         @default(0) @map("cgst_value")
-  sgstValue         Float         @default(0) @map("sgst_value")
-  igstValue         Float         @default(0) @map("igst_value")
+  cgstValue         Decimal       @default(0) @map("cgst_value") @db.Decimal(18, 4)
+  sgstValue         Decimal       @default(0) @map("sgst_value") @db.Decimal(18, 4)
+  igstValue         Decimal       @default(0) @map("igst_value") @db.Decimal(18, 4)
   isGaslinkBilling  Boolean       @default(false) @map("is_gaslink_billing")
   isOpeningBalance  Boolean       @default(false) @map("is_opening_balance")
   notes             String?
@@ -875,10 +875,10 @@ model InvoiceItem {
   description    String
   hsnCode        String  @default("27111900") @map("hsn_code")
   quantity       Int
-  unitPrice      Float   @map("unit_price")
-  discountPerUnit Float  @default(0) @map("discount_per_unit")
+  unitPrice      Decimal @map("unit_price") @db.Decimal(18, 4)
+  discountPerUnit Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
   gstRate        Float   @default(18) @map("gst_rate")
-  totalPrice     Float   @map("total_price")
+  totalPrice     Decimal @map("total_price") @db.Decimal(18, 4)
 
   invoice      Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id])
@@ -890,7 +890,7 @@ model CreditNote {
   id          String           @id @default(uuid()) @map("credit_note_id")
   invoiceId   String           @map("invoice_id")
   creditNoteNumber String?     @unique @map("credit_note_number")
-  totalAmount Float            @map("total_amount")
+  totalAmount Decimal          @map("total_amount") @db.Decimal(18, 4)
   reason      String
   status      CreditNoteStatus @default(pending_cn)
   issueDate   DateTime?        @map("issue_date") @db.Date
@@ -909,7 +909,7 @@ model DebitNote {
   id             String          @id @default(uuid()) @map("debit_note_id")
   invoiceId      String          @map("invoice_id")
   debitNoteNumber String?        @unique @map("debit_note_number")
-  totalAmount    Float           @map("total_amount")
+  totalAmount    Decimal         @map("total_amount") @db.Decimal(18, 4)
   reason         String
   status         DebitNoteStatus @default(pending_dn)
   issueDate      DateTime?       @map("issue_date") @db.Date
@@ -930,7 +930,7 @@ model PaymentTransaction {
   id              String               @id @default(uuid()) @map("payment_id")
   distributorId   String               @map("distributor_id")
   customerId      String               @map("customer_id")
-  amount          Float
+  amount          Decimal              @db.Decimal(18, 4)
   paymentMethod   PaymentMethod        @map("payment_method")
   referenceNumber String?              @map("reference_number")
   transactionDate DateTime             @map("transaction_date") @db.Date
@@ -954,7 +954,7 @@ model PaymentAllocation {
   id              String   @id @default(uuid()) @map("allocation_id")
   paymentId       String   @map("payment_id")
   invoiceId       String   @map("invoice_id")
-  allocatedAmount Float    @map("allocated_amount")
+  allocatedAmount Decimal  @map("allocated_amount") @db.Decimal(18, 4)
   createdAt       DateTime @default(now()) @map("created_at")
 
   payment PaymentTransaction @relation(fields: [paymentId], references: [id])
@@ -1121,9 +1121,9 @@ model BillingCycle {
   periodEndDate       DateTime          @map("period_end_date") @db.Date
   billingStatus       BillingStatus     @default(pending_generation) @map("billing_status")
   billingTier         BillingTier       @map("billing_tier")
-  totalAmountExclGst  Float             @default(0) @map("total_amount_excl_gst")
-  totalGstAmount      Float             @default(0) @map("total_gst_amount")
-  totalAmountInclGst  Float             @default(0) @map("total_amount_incl_gst")
+  totalAmountExclGst  Decimal           @default(0) @map("total_amount_excl_gst") @db.Decimal(18, 4)
+  totalGstAmount      Decimal           @default(0) @map("total_gst_amount") @db.Decimal(18, 4)
+  totalAmountInclGst  Decimal           @default(0) @map("total_amount_incl_gst") @db.Decimal(18, 4)
   invoiceId           String?           @map("invoice_id")
   dueDate             DateTime?         @map("due_date") @db.Date
   suspendDate         DateTime?         @map("suspend_date") @db.Date
@@ -1146,12 +1146,12 @@ model BillingItem {
   hsnCode           String          @default("998314") @map("hsn_code")
   uom               String          @default("NOS")
   quantity           Int
-  unitPriceExclGst  Float           @map("unit_price_excl_gst")
+  unitPriceExclGst  Decimal         @map("unit_price_excl_gst") @db.Decimal(18, 4)
   gstRate           Float           @default(18) @map("gst_rate")
-  discountAmount    Float           @default(0) @map("discount_amount")
-  lineTotalExclGst  Float           @map("line_total_excl_gst")
-  lineGstAmount     Float           @map("line_gst_amount")
-  lineTotalInclGst  Float           @map("line_total_incl_gst")
+  discountAmount    Decimal         @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  lineTotalExclGst  Decimal         @map("line_total_excl_gst") @db.Decimal(18, 4)
+  lineGstAmount     Decimal         @map("line_gst_amount") @db.Decimal(18, 4)
+  lineTotalInclGst  Decimal         @map("line_total_incl_gst") @db.Decimal(18, 4)
   metadata          Json?
   createdAt         DateTime        @default(now()) @map("created_at")
   updatedAt         DateTime        @updatedAt @map("updated_at")
@@ -1168,7 +1168,7 @@ model PricingTier {
   plan                SubscriptionPlan
   volumeMin           Int              @map("volume_min")
   volumeMax           Int?             @map("volume_max")
-  monthlyPrice        Float            @map("monthly_price")
+  monthlyPrice        Decimal          @map("monthly_price") @db.Decimal(18, 4)
   quarterlyDiscount   Float            @default(5) @map("quarterly_discount")
   halfYearlyDiscount  Float            @default(10) @map("half_yearly_discount")
   yearlyDiscount      Float            @default(15) @map("yearly_discount")
@@ -1177,10 +1177,10 @@ model PricingTier {
   inventorySeats      Int              @default(1) @map("inventory_seats")
   driverSeats         Int              @default(5) @map("driver_seats")
   gstApiCallsIncluded Int              @default(1500) @map("gst_api_calls_included")
-  extraSeatPriceAdmin Float            @default(299) @map("extra_seat_price_admin")
-  extraSeatPriceDriver Float           @default(99) @map("extra_seat_price_driver")
-  customerPortalPrice Float            @default(49) @map("customer_portal_price")
-  gstApiOveragePrice  Float            @default(2) @map("gst_api_overage_price")
+  extraSeatPriceAdmin Decimal          @default(299) @map("extra_seat_price_admin") @db.Decimal(18, 4)
+  extraSeatPriceDriver Decimal         @default(99) @map("extra_seat_price_driver") @db.Decimal(18, 4)
+  customerPortalPrice Decimal          @default(49) @map("customer_portal_price") @db.Decimal(18, 4)
+  gstApiOveragePrice  Decimal          @default(2) @map("gst_api_overage_price") @db.Decimal(18, 4)
   isActive            Boolean          @default(true) @map("is_active")
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
@@ -1220,7 +1220,7 @@ model SeatRequest {
   status          SeatRequestStatus @default(pending_seat)
   approvedBy      String?           @map("approved_by")
   approvedAt      DateTime?         @map("approved_at")
-  pricePerMonth   Float?            @map("price_per_month")
+  pricePerMonth   Decimal?          @map("price_per_month") @db.Decimal(18, 4)
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
@@ -1275,7 +1275,7 @@ model AccountabilityLog {
   incidentType     AccountabilityType   @map("incident_type")
   incidentDate     DateTime             @map("incident_date") @db.Date
   quantity         Int
-  costAmount       Float                @default(0) @map("cost_amount")
+  costAmount       Decimal              @default(0) @map("cost_amount") @db.Decimal(18, 4)
   description      String
   status           AccountabilityStatus @default(open_accountability)
   resolvedBy       String?              @map("resolved_by")

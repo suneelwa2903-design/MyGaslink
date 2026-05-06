@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
+import { toNum } from '../utils/decimal.js';
 
 export async function createSeatRequest(data: {
   distributorId: string;
@@ -49,7 +50,7 @@ export async function approveSeatRequest(requestId: string, approvedBy: string, 
       where: { plan: distributor.subscriptionPlan },
     });
     if (tier) {
-      pricePerMonth = request.requestedRole === 'driver' ? tier.extraSeatPriceDriver : tier.extraSeatPriceAdmin;
+      pricePerMonth = request.requestedRole === 'driver' ? toNum(tier.extraSeatPriceDriver) : toNum(tier.extraSeatPriceAdmin);
     }
   }
 

@@ -8,6 +8,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { prisma } from '../../lib/prisma.js';
+import { toNum } from '../../utils/decimal.js';
 import {
   formatMoney, formatDate, formatIrnForDisplay,
   drawBox, drawTextBlock,
@@ -281,7 +282,7 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId:
 
   // Amount
   doc.fontSize(LAYOUT.TYPO.H2).fillColor(LAYOUT.THEME.PRIMARY).font('Helvetica-Bold');
-  doc.text(`Amount: ${formatMoney(creditNote.totalAmount)}`, LAYOUT.MARGIN.left, y); y += 24;
+  doc.text(`Amount: ${formatMoney(toNum(creditNote.totalAmount))}`, LAYOUT.MARGIN.left, y); y += 24;
 
   // CRN Details box (IRN/QR) — credit notes do not have gstDocuments directly,
   // but we check for future expansion; for now, skip if no IRN data.

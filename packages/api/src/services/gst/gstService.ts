@@ -12,6 +12,7 @@
 
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
+import { toNum } from '../../utils/decimal.js';
 import { apiCall, getCredentials, GstError } from './whitebooksClient.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 // Distance: minimum 1km (0 causes EWB error 721)
@@ -95,8 +96,8 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
       hsnCode: item.hsnCode || '27111900',
       quantity: item.quantity,
       unit: 'NOS',
-      unitPrice: item.unitPrice + item.discountPerUnit, // Original price before discount (GST-inclusive)
-      discountPerUnit: item.discountPerUnit,
+      unitPrice: toNum(item.unitPrice) + toNum(item.discountPerUnit), // Original price before discount (GST-inclusive)
+      discountPerUnit: toNum(item.discountPerUnit),
       gstRate: item.gstRate || 18,
     })),
     isInterState,
@@ -402,8 +403,8 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
       hsnCode: item.cylinderType?.hsnCode || '27111900',
       quantity: item.quantity,
       unit: 'NOS',
-      unitPrice: item.unitPrice,
-      discountPerUnit: item.discountPerUnit,
+      unitPrice: toNum(item.unitPrice),
+      discountPerUnit: toNum(item.discountPerUnit),
       gstRate: 18,
     })),
     isInterState,
@@ -598,15 +599,15 @@ export async function processCreditNoteGst(creditNoteId: string, distributorId: 
   const isInterState = sellerStateCode !== buyerStateCode;
 
   // Build CRN payload - use proportional allocation of credit against invoice items
-  const proportion = cn.totalAmount / cn.invoice.totalAmount;
+  const proportion = toNum(cn.totalAmount) / toNum(cn.invoice.totalAmount);
   const items = cn.invoice.items.map((item, idx) => ({
     slNo: idx + 1,
     description: item.description || item.cylinderType?.typeName || 'LPG Cylinder',
     hsnCode: item.hsnCode || '27111900',
     quantity: Math.max(1, Math.round(item.quantity * proportion)),
     unit: 'NOS',
-    unitPrice: item.unitPrice + item.discountPerUnit,
-    discountPerUnit: item.discountPerUnit,
+    unitPrice: toNum(item.unitPrice) + toNum(item.discountPerUnit),
+    discountPerUnit: toNum(item.discountPerUnit),
     gstRate: item.gstRate || 18,
   }));
 
@@ -695,15 +696,15 @@ export async function processDebitNoteGst(debitNoteId: string, distributorId: st
   const buyerStateCode = extractStateCode(dn.invoice.customer.gstin);
   const isInterState = sellerStateCode !== buyerStateCode;
 
-  const proportion = dn.totalAmount / dn.invoice.totalAmount;
+  const proportion = toNum(dn.totalAmount) / toNum(dn.invoice.totalAmount);
   const items = dn.invoice.items.map((item, idx) => ({
     slNo: idx + 1,
     description: item.description || item.cylinderType?.typeName || 'LPG Cylinder',
     hsnCode: item.hsnCode || '27111900',
     quantity: Math.max(1, Math.round(item.quantity * proportion)),
     unit: 'NOS',
-    unitPrice: item.unitPrice + item.discountPerUnit,
-    discountPerUnit: item.discountPerUnit,
+    unitPrice: toNum(item.unitPrice) + toNum(item.discountPerUnit),
+    discountPerUnit: toNum(item.discountPerUnit),
     gstRate: item.gstRate || 18,
   }));
 

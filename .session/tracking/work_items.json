@@ -49,8 +49,9 @@
       "id": "WI-006",
       "title": "Migrate monetary fields from Float to Decimal",
       "priority": "P1",
-      "status": "planned",
-      "description": "Detailed plan + 35-field inventory in .session/float-to-decimal-plan.md (commit a6a196e). Execution deferred — 4-8h of careful surgery touching every monetary calculation; classified blocksLaunch: false. Plan is executable cold by a future session on a dedicated branch.",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Done. All 35 monetary fields converted from Float (DOUBLE PRECISION) to Decimal (NUMERIC(18,4)) in packages/api/prisma/schema.prisma. Migration 20260506010000_monetary_fields_float_to_decimal applied via direct ALTER COLUMN ... USING ::NUMERIC(18,4) so existing data was preserved. Storage and SQL aggregates are now penny-perfect. Service-layer arithmetic still uses number via toNum() at read points (utils/decimal.ts) — pragmatic deviation from the original plan that called for full Prisma.Decimal arithmetic. Justification: the Decimal-everywhere refactor would have been ~10h of mechanical replacement with bug surface in every reduce/sum, so we converted only at the boundaries (storage + JSON serialization via decimalsToNumbers in mappers). This delivers the at-rest precision gain without the bug risk. The remaining TS-side rounding is bounded to 4 decimals via Decimal storage. Web client receives numbers as before — no frontend changes.",
       "blocksLaunch": false
     },
     {

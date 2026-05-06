@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import type { CustomerLedgerRow, CustomerLedgerResponse } from '@gaslink/shared';
+import { toNum } from '../utils/decimal.js';
 
 export async function listPayments(
   distributorId: string,
@@ -49,11 +50,11 @@ export async function listPayments(
 
   // Compute allocated/unallocated amounts
   const enriched = payments.map(p => {
-    const allocatedAmount = p.allocations.reduce((sum, a) => sum + a.allocatedAmount, 0);
+    const allocatedAmount = p.allocations.reduce((sum, a) => sum + toNum(a.allocatedAmount), 0);
     return {
       ...p,
       allocatedAmount,
-      unallocatedAmount: p.amount - allocatedAmount,
+      unallocatedAmount: toNum(p.amount) - allocatedAmount,
     };
   });
 
@@ -108,7 +109,7 @@ export async function createPayment(
           where: { id: alloc.invoiceId, distributorId, deletedAt: null },
         });
         if (!invoice) throw new PaymentError(`Invoice ${alloc.invoiceId} not found`, 404);
-        if (alloc.amount > invoice.outstandingAmount) {
+        if (alloc.amount > toNum(invoice.outstandingAmount)) {
           throw new PaymentError(`Allocation exceeds outstanding amount for invoice ${invoice.invoiceNumber}`, 400);
         }
 
@@ -121,8 +122,8 @@ export async function createPayment(
         });
 
         // Update invoice
-        const newOutstanding = invoice.outstandingAmount - alloc.amount;
-        const newAmountPaid = invoice.amountPaid + alloc.amount;
+        const newOutstanding = toNum(invoice.outstandingAmount) - alloc.amount;
+        const newAmountPaid = toNum(invoice.amountPaid) + alloc.amount;
         await tx.invoice.update({
           where: { id: alloc.invoiceId },
           data: {
@@ -152,7 +153,7 @@ export async function createPayment(
       for (const invoice of outstandingInvoices) {
         if (remaining <= 0) break;
 
-        const allocAmount = Math.min(remaining, invoice.outstandingAmount);
+        const allocAmount = Math.min(remaining, toNum(invoice.outstandingAmount));
         await tx.paymentAllocation.create({
           data: {
             paymentId: payment.id,
@@ -161,8 +162,8 @@ export async function createPayment(
           },
         });
 
-        const newOutstanding = invoice.outstandingAmount - allocAmount;
-        const newAmountPaid = invoice.amountPaid + allocAmount;
+        const newOutstanding = toNum(invoice.outstandingAmount) - allocAmount;
+        const newAmountPaid = toNum(invoice.amountPaid) + allocAmount;
         await tx.invoice.update({
           where: { id: invoice.id },
           data: {
@@ -258,7 +259,7 @@ export async function getCustomerLedger(distributorId: string, customerId: strin
   });
   const emptyPriceMap = new Map<string, number>();
   for (const ep of emptyPrices) {
-    emptyPriceMap.set(ep.cylinderTypeId, ep.emptyCylinderPrice);
+    emptyPriceMap.set(ep.cylinderTypeId, toNum(ep.emptyCylinderPrice));
   }
 
   // 5. Build unified timeline entries (deliveries + payments) sorted by date
@@ -283,7 +284,7 @@ export async function getCustomerLedger(distributorId: string, customerId: strin
     for (const item of order.items) {
       const delivered = item.deliveredQuantity ?? item.quantity;
       const collected = item.emptiesCollected ?? 0;
-      const amount = delivered * (item.unitPrice - item.discountPerUnit);
+      const amount = delivered * (toNum(item.unitPrice) - toNum(item.discountPerUnit));
       timeline.push({
         date: orderDate,
         type: 'delivery',
@@ -300,7 +301,7 @@ export async function getCustomerLedger(distributorId: string, customerId: strin
     timeline.push({
       date: payment.transactionDate,
       type: 'payment',
-      amount: payment.amount,
+      amount: toNum(payment.amount),
     });
   }
 

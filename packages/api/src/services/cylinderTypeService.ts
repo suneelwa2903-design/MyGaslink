@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { toNum } from '../utils/decimal.js';
 
 export async function listCylinderTypes(distributorId: string) {
   return prisma.cylinderType.findMany({
@@ -104,7 +105,7 @@ export async function getEffectivePrice(
     },
     orderBy: { effectiveDate: 'desc' },
   });
-  return price?.price ?? 0;
+  return toNum(price?.price);
 }
 
 // Empty Cylinder Prices

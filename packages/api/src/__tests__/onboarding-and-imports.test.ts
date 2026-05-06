@@ -168,9 +168,9 @@ describe('POST /api/customers/import-opening-balances', () => {
       where: { distributorId: dist1Id, customerId: cust.id, isOpeningBalance: true },
     });
     expect(invoices.length).toBe(1);
-    expect(invoices[0].outstandingAmount).toBe(12500);
-    expect(invoices[0].totalAmount).toBe(12500);
-    expect(invoices[0].amountPaid).toBe(0);
+    expect(Number(invoices[0].outstandingAmount)).toBe(12500);
+    expect(Number(invoices[0].totalAmount)).toBe(12500);
+    expect(Number(invoices[0].amountPaid)).toBe(0);
     expect(invoices[0].status).toBe('overdue');
     expect(invoices[0].invoiceNumber.startsWith('OB-')).toBe(true);
 

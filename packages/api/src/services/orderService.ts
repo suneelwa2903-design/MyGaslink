@@ -4,6 +4,7 @@ import { getEffectivePrice } from './cylinderTypeService.js';
 import { createInventoryEvent, recalculateSummariesFromDate } from './inventoryService.js';
 import { createInvoiceFromOrder } from './invoiceService.js';
 import { logger } from '../utils/logger.js';
+import { toNum } from '../utils/decimal.js';
 
 const orderInclude = {
   customer: { select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true } },
@@ -98,7 +99,7 @@ export async function createOrder(
     const discount = await prisma.customerCylinderDiscount.findUnique({
       where: { customerId_cylinderTypeId: { customerId: data.customerId, cylinderTypeId: item.cylinderTypeId } },
     });
-    const discountPerUnit = discount?.discountPerUnit ?? 0;
+    const discountPerUnit = toNum(discount?.discountPerUnit);
     const effectivePrice = Math.max(unitPrice - discountPerUnit, 0);
     const totalPrice = effectivePrice * item.quantity;
 
@@ -307,7 +308,7 @@ export async function createOrderFromCancelledStock(
   const discount = await prisma.customerCylinderDiscount.findUnique({
     where: { customerId_cylinderTypeId: { customerId: data.customerId, cylinderTypeId: cancelledStock.cylinderTypeId } },
   });
-  const discountPerUnit = discount?.discountPerUnit ?? 0;
+  const discountPerUnit = toNum(discount?.discountPerUnit);
   const effectivePrice = Math.max(unitPrice - discountPerUnit, 0);
   const totalPrice = effectivePrice * cancelledStock.quantity;
 
@@ -392,7 +393,7 @@ export async function updateOrder(
         const discount = await prisma.customerCylinderDiscount.findUnique({
           where: { customerId_cylinderTypeId: { customerId: order.customerId, cylinderTypeId: item.cylinderTypeId } },
         });
-        const discountPerUnit = discount?.discountPerUnit ?? 0;
+        const discountPerUnit = toNum(discount?.discountPerUnit);
         const totalPrice = Math.max(unitPrice - discountPerUnit, 0) * item.quantity;
         return { cylinderTypeId: item.cylinderTypeId, quantity: item.quantity, unitPrice, discountPerUnit, totalPrice };
       }));
@@ -676,7 +677,7 @@ export async function confirmDelivery(
     for (const item of data.items) {
       const orderItem = order.items.find(i => i.cylinderTypeId === item.cylinderTypeId);
       if (orderItem) {
-        const effectivePrice = Math.max(orderItem.unitPrice - orderItem.discountPerUnit, 0);
+        const effectivePrice = Math.max(toNum(orderItem.unitPrice) - toNum(orderItem.discountPerUnit), 0);
         newTotal += effectivePrice * item.deliveredQuantity;
       }
     }

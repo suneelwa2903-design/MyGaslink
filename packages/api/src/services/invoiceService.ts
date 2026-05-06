@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { GST_RATES } from '@gaslink/shared';
+import { toNum } from '../utils/decimal.js';
 
 type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
@@ -110,7 +111,7 @@ export async function createInvoiceFromOrder(
 
   for (const oi of order.items) {
     const qty = oi.deliveredQuantity ?? oi.quantity;
-    const effectivePrice = Math.max(oi.unitPrice - oi.discountPerUnit, 0);
+    const effectivePrice = Math.max(toNum(oi.unitPrice) - toNum(oi.discountPerUnit), 0);
     const lineTotal = effectivePrice * qty;
     totalAmount += lineTotal;
 
@@ -351,7 +352,7 @@ export async function approveCreditNote(creditNoteId: string, distributorId: str
     // Reduce invoice outstanding
     const invoice = await tx.invoice.findUnique({ where: { id: cn.invoiceId } });
     if (invoice) {
-      const newOutstanding = Math.max(invoice.outstandingAmount - cn.totalAmount, 0);
+      const newOutstanding = Math.max(toNum(invoice.outstandingAmount) - toNum(cn.totalAmount), 0);
       await tx.invoice.update({
         where: { id: cn.invoiceId },
         data: {
@@ -594,7 +595,7 @@ export async function generateRetroactiveGstInvoices(
       // Update each item with GST breakup
       for (const item of invoice.items) {
         if (item.gstRate === 0) {
-          const effectivePrice = Math.max(item.unitPrice - item.discountPerUnit, 0);
+          const effectivePrice = Math.max(toNum(item.unitPrice) - toNum(item.discountPerUnit), 0);
           const lineTotal = effectivePrice * item.quantity;
           const basePrice = effectivePrice / 1.18;
           totalBaseAmount += basePrice * item.quantity;

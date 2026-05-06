@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import { BILLING_GRACE_PERIOD_DAYS, BILLING_OVERDUE_SUSPEND_DAYS, GST_RATES } from '@gaslink/shared';
+import { toNum } from '../utils/decimal.js';
 import * as pendingActionsService from './pendingActionsService.js';
 
 const billingCycleInclude = {
@@ -104,11 +105,11 @@ export async function generateBillingCycle(
       where: { plan: distributor.subscriptionPlan },
     });
     if (tier) {
-      basePriceMonthly = tier.monthlyPrice;
-      driverLoginPrice = tier.extraSeatPriceDriver;
-      otherLoginPrice = tier.extraSeatPriceAdmin;
-      customerPortalPrice = tier.customerPortalPrice;
-      gstApiOveragePrice = tier.gstApiOveragePrice;
+      basePriceMonthly = toNum(tier.monthlyPrice);
+      driverLoginPrice = toNum(tier.extraSeatPriceDriver);
+      otherLoginPrice = toNum(tier.extraSeatPriceAdmin);
+      customerPortalPrice = toNum(tier.customerPortalPrice);
+      gstApiOveragePrice = toNum(tier.gstApiOveragePrice);
       gstApiIncluded = tier.gstApiCallsIncluded;
       // Period discount
       const discountMap: Record<string, number> = {
@@ -272,7 +273,7 @@ export async function generateBillingCycle(
     where: { distributorId, status: 'approved_seat', pricePerMonth: { not: null } },
   });
   if (approvedSeats.length > 0) {
-    const seatTotal = approvedSeats.reduce((sum, s) => sum + (s.pricePerMonth || 0), 0) * multiplier;
+    const seatTotal = approvedSeats.reduce((sum, s) => sum + toNum(s.pricePerMonth), 0) * multiplier;
     const seatGst = seatTotal * gstRate / 100;
     items.push({
       itemType: 'extra_seat',
@@ -287,7 +288,7 @@ export async function generateBillingCycle(
   }
 
   // Period discount (quarterly/half-yearly/yearly)
-  const subtotalExclGst = items.reduce((sum, i) => sum + i.lineTotalExclGst, 0);
+  const subtotalExclGst = items.reduce((sum, i) => sum + toNum(i.lineTotalExclGst), 0);
   if (periodDiscount > 0) {
     const discountAmount = subtotalExclGst * periodDiscount / 100;
     const discountGst = discountAmount * gstRate / 100;
@@ -303,8 +304,8 @@ export async function generateBillingCycle(
     });
   }
 
-  const totalExclGst = items.reduce((sum, i) => sum + i.lineTotalExclGst, 0);
-  const totalGst = items.reduce((sum, i) => sum + i.lineGstAmount, 0);
+  const totalExclGst = items.reduce((sum, i) => sum + toNum(i.lineTotalExclGst), 0);
+  const totalGst = items.reduce((sum, i) => sum + toNum(i.lineGstAmount), 0);
   const totalInclGst = totalExclGst + totalGst;
 
   const dueDate = new Date(data.periodEndDate);
@@ -369,8 +370,8 @@ export async function addBillingItem(
 
     // Recalculate cycle totals
     const allItems = await tx.billingItem.findMany({ where: { billingCycleId: cycleId } });
-    const totalExclGst = allItems.reduce((sum, i) => sum + i.lineTotalExclGst, 0);
-    const totalGst = allItems.reduce((sum, i) => sum + i.lineGstAmount, 0);
+    const totalExclGst = allItems.reduce((sum, i) => sum + toNum(i.lineTotalExclGst), 0);
+    const totalGst = allItems.reduce((sum, i) => sum + toNum(i.lineGstAmount), 0);
 
     await tx.billingCycle.update({
       where: { id: cycleId },

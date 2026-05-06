@@ -13,6 +13,7 @@
 
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../utils/logger.js';
+import { toNum } from '../utils/decimal.js';
 
 // ─── Customer Delivery Confirmation ─────────────────────────────────────────
 
@@ -113,7 +114,7 @@ export async function customerConfirmDelivery(
               emptiesCollected: ci.confirmedEmpties,
             },
           });
-          const effectivePrice = Math.max(orderItem.unitPrice - orderItem.discountPerUnit, 0);
+          const effectivePrice = Math.max(toNum(orderItem.unitPrice) - toNum(orderItem.discountPerUnit), 0);
           newTotal += effectivePrice * ci.confirmedDelivered;
         }
       }

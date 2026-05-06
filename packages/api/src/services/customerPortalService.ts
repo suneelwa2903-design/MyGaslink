@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
+import { toNum } from '../utils/decimal.js';
 
 /**
  * Get customer dashboard stats.
@@ -419,9 +420,9 @@ export async function getInvoiceSummaryForDownload(
     orderBy: { issueDate: 'desc' },
   });
 
-  const totalAmount = invoices.reduce((s, i) => s + i.totalAmount, 0);
-  const totalOutstanding = invoices.reduce((s, i) => s + i.outstandingAmount, 0);
-  const totalGst = invoices.reduce((s, i) => s + i.cgstValue + i.sgstValue + i.igstValue, 0);
+  const totalAmount = invoices.reduce((s, i) => s + toNum(i.totalAmount), 0);
+  const totalOutstanding = invoices.reduce((s, i) => s + toNum(i.outstandingAmount), 0);
+  const totalGst = invoices.reduce((s, i) => s + toNum(i.cgstValue) + toNum(i.sgstValue) + toNum(i.igstValue), 0);
 
   return {
     dateRange: { from: dateFrom, to: dateTo },

@@ -51,7 +51,7 @@ beforeAll(async () => {
   });
   testInvoiceId = invoice.id;
   testInvoiceCustomerId = customer.id;
-  testInvoiceTotal = invoice.totalAmount;
+  testInvoiceTotal = Number(invoice.totalAmount);
 });
 
 afterAll(async () => {
@@ -124,7 +124,7 @@ describe('Payments — Partial payment', () => {
     // Invoice should now be partially_paid
     const updated = await prisma.invoice.findUniqueOrThrow({ where: { id: testInvoiceId } });
     expect(updated.status).toBe('partially_paid');
-    expect(updated.outstandingAmount).toBe(testInvoiceTotal - partial);
+    expect(Number(updated.outstandingAmount)).toBe(testInvoiceTotal - partial);
   });
 });
 
@@ -133,7 +133,7 @@ describe('Payments — Full payment marks invoice paid', () => {
     const remainingInvoice = await prisma.invoice.findUniqueOrThrow({
       where: { id: testInvoiceId },
     });
-    const remaining = remainingInvoice.outstandingAmount;
+    const remaining = Number(remainingInvoice.outstandingAmount);
 
     const res = await request(app)
       .post('/api/payments')
@@ -151,7 +151,7 @@ describe('Payments — Full payment marks invoice paid', () => {
 
     const updated = await prisma.invoice.findUniqueOrThrow({ where: { id: testInvoiceId } });
     expect(updated.status).toBe('paid');
-    expect(updated.outstandingAmount).toBe(0);
+    expect(Number(updated.outstandingAmount)).toBe(0);
   });
 });
 

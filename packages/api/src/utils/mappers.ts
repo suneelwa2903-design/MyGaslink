@@ -3,14 +3,18 @@
  * Prisma uses `id` for all primary keys, but the frontend shared types
  * expect entity-specific IDs like `customerId`, `orderId`, etc.
  *
- * These mappers handle the renaming + nested child mapping.
+ * These mappers handle the renaming + nested child mapping. They also
+ * convert every Prisma Decimal in the tree to a plain JS number so the
+ * web client receives the same shape as before the Float→Decimal
+ * migration (WI-006).
  */
+import { decimalsToNumbers } from './decimal.js';
 
 // Generic helper: rename `id` → `entityId` and recursively map known nested arrays
 function renameId<T extends Record<string, any>>(obj: T, idField: string): any {
   if (!obj) return obj;
   const { id, ...rest } = obj as any;
-  return { [idField]: id, ...rest };
+  return decimalsToNumbers({ [idField]: id, ...rest });
 }
 
 // ─── Customer ────────────────────────────────────────────────────────────────

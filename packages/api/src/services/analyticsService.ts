@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { toNum } from '../utils/decimal.js';
 
 /**
  * Dashboard statistics for the distributor.
@@ -56,10 +57,10 @@ export async function getDashboardStats(distributorId: string) {
   return {
     ordersToday,
     deliveredToday,
-    revenueToday: revenueTodayResult._sum.totalAmount || 0,
+    revenueToday: toNum(revenueTodayResult._sum.totalAmount),
     pendingOrders,
     overdueInvoices,
-    totalOutstanding: outstandingResult._sum.outstandingAmount || 0,
+    totalOutstanding: toNum(outstandingResult._sum.outstandingAmount),
     inventoryAlerts,
     pendingActions,
   };
@@ -94,13 +95,13 @@ export async function getHeaderMetrics(distributorId: string) {
     }),
   ]);
 
-  const totalCapital = totalOutstanding._sum.totalAmount || 0;
-  const collectedAmount = paidResult._sum.amount || 0;
-  const dueAmount = totalOutstanding._sum.outstandingAmount || 0;
-  const overdueAmount = overdueResult._sum.outstandingAmount || 0;
+  const totalCapital = toNum(totalOutstanding._sum.totalAmount);
+  const collectedAmount = toNum(paidResult._sum.amount);
+  const dueAmount = toNum(totalOutstanding._sum.outstandingAmount);
+  const overdueAmount = toNum(overdueResult._sum.outstandingAmount);
 
   // Calculate amount in market (cylinder value with customers)
-  const emptyPriceMap = new Map(emptyPrices.map(p => [p.cylinderTypeId, p.emptyCylinderPrice]));
+  const emptyPriceMap = new Map(emptyPrices.map(p => [p.cylinderTypeId, toNum(p.emptyCylinderPrice)]));
   let amountInMarket = 0;
   let unrecoveredAmount = 0;
   for (const bal of customerBalances) {
@@ -157,9 +158,9 @@ export async function getDueAmountsReport(distributorId: string) {
   return customers
     .filter(c => c.invoices.length > 0)
     .map(c => {
-      const totalDue = c.invoices.reduce((sum, inv) => sum + inv.outstandingAmount, 0);
+      const totalDue = c.invoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
       const overdueInvoices = c.invoices.filter(inv => inv.status === 'overdue');
-      const overdueDue = overdueInvoices.reduce((sum, inv) => sum + inv.outstandingAmount, 0);
+      const overdueDue = overdueInvoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
       const oldestOverdue = overdueInvoices.reduce((oldest, inv) => {
         const days = Math.floor((Date.now() - new Date(inv.dueDate).getTime()) / 86400000);
         return Math.max(oldest, days);
@@ -207,7 +208,7 @@ export async function getTopSales(distributorId: string, dateFrom: string, dateT
       totalAmount: 0,
       orderCount: 0,
     };
-    existing.totalAmount += order.totalAmount;
+    existing.totalAmount += toNum(order.totalAmount);
     existing.orderCount += 1;
     salesByCustomer.set(key, existing);
   }
@@ -278,7 +279,7 @@ export async function getRevenueTrends(distributorId: string, months: number = 1
   const monthlyRevenue = new Map<string, number>();
   for (const inv of invoices) {
     const key = `${inv.issueDate.getFullYear()}-${String(inv.issueDate.getMonth() + 1).padStart(2, '0')}`;
-    monthlyRevenue.set(key, (monthlyRevenue.get(key) || 0) + inv.totalAmount);
+    monthlyRevenue.set(key, (monthlyRevenue.get(key) || 0) + toNum(inv.totalAmount));
   }
 
   return Array.from(monthlyRevenue.entries())
@@ -308,8 +309,8 @@ export async function getCustomerLifetimeValue(distributorId: string) {
   });
 
   return customers.map(c => {
-    const totalRevenue = c.invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-    const totalPayments = c.payments.reduce((sum, p) => sum + p.amount, 0);
+    const totalRevenue = c.invoices.reduce((sum, inv) => sum + toNum(inv.totalAmount), 0);
+    const totalPayments = c.payments.reduce((sum, p) => sum + toNum(p.amount), 0);
     const monthsActive = Math.max(
       1,
       Math.ceil((Date.now() - c.createdAt.getTime()) / (30 * 86400000))
@@ -355,12 +356,12 @@ export async function getCollectionsDashboard(distributorId: string) {
   const emptyPrices = await prisma.emptyCylinderPrice.findMany({
     where: { distributorId },
   });
-  const priceMap = new Map(emptyPrices.map(p => [p.cylinderTypeId, p.emptyCylinderPrice]));
+  const priceMap = new Map(emptyPrices.map(p => [p.cylinderTypeId, toNum(p.emptyCylinderPrice)]));
 
   return customers.map(c => {
-    const totalDue = c.invoices.reduce((sum, inv) => sum + inv.outstandingAmount, 0);
+    const totalDue = c.invoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
     const overdueInvoices = c.invoices.filter(inv => inv.status === 'overdue');
-    const overdueDue = overdueInvoices.reduce((sum, inv) => sum + inv.outstandingAmount, 0);
+    const overdueDue = overdueInvoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
     const overdueDays = overdueInvoices.reduce((max, inv) => {
       return Math.max(max, Math.floor((Date.now() - new Date(inv.dueDate).getTime()) / 86400000));
     }, 0);
@@ -383,7 +384,7 @@ export async function getCollectionsDashboard(distributorId: string) {
       missingCylinderValue: Math.round(missingCylinderValue * 100) / 100,
       excessEmptyCylinders,
       lastPaymentDate: lastPayment?.transactionDate?.toISOString() || null,
-      lastPaymentAmount: lastPayment?.amount || null,
+      lastPaymentAmount: lastPayment?.amount != null ? toNum(lastPayment.amount) : null,
       creditPeriodDays: c.creditPeriodDays,
     };
   }).sort((a, b) => b.totalDue - a.totalDue);
@@ -428,7 +429,7 @@ export async function getOverdueCallList(distributorId: string) {
 
   return customers
     .map((c) => {
-      const totalOutstanding = c.invoices.reduce((s, i) => s + i.outstandingAmount, 0);
+      const totalOutstanding = c.invoices.reduce((s, i) => s + toNum(i.outstandingAmount), 0);
       const oldestDue = c.invoices.reduce((oldest, i) => {
         const d = new Date(i.dueDate).getTime();
         return d < oldest ? d : oldest;
