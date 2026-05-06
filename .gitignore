@@ -71,3 +71,9 @@ New_GasLink/
 .env.monitor
 logs/
 security-review.md
+
+# Per-package TS incremental build info
+*.tsbuildinfo
+
+# Local Claude Code worktrees (not part of the project)
+.claude/worktrees/
