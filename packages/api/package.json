@@ -23,7 +23,7 @@
     "@gaslink/shared": "workspace:*",
     "@prisma/client": "^6.19.2",
     "@sentry/node": "^10.45.0",
-    "axios": "^1.10.0",
+    "axios": "^1.15.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
