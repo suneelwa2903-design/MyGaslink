@@ -86,5 +86,39 @@
     "overdueInvoices": "Overdue Invoices",
     "totalOutstanding": "Total Outstanding",
     "recentActivity": "Recent Activity"
+  },
+  "customerPortal": {
+    "dashboard": {
+      "welcome": "Welcome, {{name}}!",
+      "subtitle": "Your account overview",
+      "totalOrders": "Total Orders",
+      "pendingOrders": "Pending Orders",
+      "totalInvoices": "Total Invoices",
+      "outstanding": "Outstanding",
+      "recentOrders": "Recent Orders",
+      "recentInvoices": "Recent Invoices",
+      "noRecentOrders": "No recent orders",
+      "noRecentInvoices": "No recent invoices",
+      "due": "Due:"
+    }
+  },
+  "enums": {
+    "orderStatus": {
+      "pending_driver_assignment": "Pending driver assignment",
+      "pending_dispatch": "Pending dispatch",
+      "pending_delivery": "Pending delivery",
+      "delivered": "Delivered",
+      "modified_delivered": "Modified delivered",
+      "cancelled": "Cancelled",
+      "returns_only": "Returns only"
+    },
+    "invoiceStatus": {
+      "draft": "Draft",
+      "issued": "Issued",
+      "partially_paid": "Partially paid",
+      "paid": "Paid",
+      "overdue": "Overdue",
+      "cancelled": "Cancelled"
+    }
   }
 }

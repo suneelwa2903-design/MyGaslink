@@ -86,5 +86,39 @@
     "overdueInvoices": "గడువు దాటిన ఇన్‌వాయిస్‌లు",
     "totalOutstanding": "మొత్తం బకాయి",
     "recentActivity": "ఇటీవలి కార్యకలాపాలు"
+  },
+  "customerPortal": {
+    "dashboard": {
+      "welcome": "స్వాగతం, {{name}}!",
+      "subtitle": "మీ ఖాతా అవలోకనం",
+      "totalOrders": "మొత్తం ఆర్డర్లు",
+      "pendingOrders": "పెండింగ్ ఆర్డర్లు",
+      "totalInvoices": "మొత్తం ఇన్‌వాయిస్‌లు",
+      "outstanding": "బకాయి",
+      "recentOrders": "ఇటీవలి ఆర్డర్లు",
+      "recentInvoices": "ఇటీవలి ఇన్‌వాయిస్‌లు",
+      "noRecentOrders": "ఇటీవలి ఆర్డర్లు లేవు",
+      "noRecentInvoices": "ఇటీవలి ఇన్‌వాయిస్‌లు లేవు",
+      "due": "గడువు:"
+    }
+  },
+  "enums": {
+    "orderStatus": {
+      "pending_driver_assignment": "డ్రైవర్ కేటాయింపు పెండింగ్",
+      "pending_dispatch": "డిస్‌పాచ్ పెండింగ్",
+      "pending_delivery": "డెలివరీ పెండింగ్",
+      "delivered": "డెలివరీ చేయబడింది",
+      "modified_delivered": "సవరించిన డెలివరీ",
+      "cancelled": "రద్దు చేయబడింది",
+      "returns_only": "తిరిగి తీసుకోవడం మాత్రమే"
+    },
+    "invoiceStatus": {
+      "draft": "డ్రాఫ్ట్",
+      "issued": "జారీ చేయబడింది",
+      "partially_paid": "పాక్షికంగా చెల్లించబడింది",
+      "paid": "చెల్లించబడింది",
+      "overdue": "గడువు దాటింది",
+      "cancelled": "రద్దు చేయబడింది"
+    }
   }
 }
