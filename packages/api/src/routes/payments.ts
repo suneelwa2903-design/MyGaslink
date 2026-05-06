@@ -50,8 +50,8 @@ router.get('/ledger/:customerId',
       req.user!.distributorId!, param(req.params.customerId)
     );
     return sendSuccess(res, ledger);
-  } catch (err) {
-    return sendError(res, (err as Error).message);
+  } catch (err: any) {
+    return sendError(res, err.message, err.statusCode || 500);
   }
 });
 

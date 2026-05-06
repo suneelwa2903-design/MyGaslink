@@ -126,8 +126,8 @@ export default function DistributorDetailPage() {
   }
 
   const seatLimits = seatData?.limits || {};
-  const totalPaid = billingCycles?.filter(c => c.billingStatus === 'paid').reduce((s, c) => s + c.totalAmountInclGst, 0) || 0;
-  const totalPending = billingCycles?.filter(c => c.billingStatus !== 'paid').reduce((s, c) => s + c.totalAmountInclGst, 0) || 0;
+  const totalPaid = billingCycles?.filter(c => c.billingStatus === 'paid_billing').reduce((s, c) => s + c.totalAmountInclGst, 0) || 0;
+  const totalPending = billingCycles?.filter(c => c.billingStatus !== 'paid_billing').reduce((s, c) => s + c.totalAmountInclGst, 0) || 0;
   const totalUsers = Object.values(seatLimits).reduce((s, l) => s + l.used, 0);
 
   return (
@@ -251,7 +251,7 @@ export default function DistributorDetailPage() {
                     <td>{formatCurrency(cycle.totalGstAmount)}</td>
                     <td className="font-medium">{formatCurrency(cycle.totalAmountInclGst)}</td>
                     <td>{cycle.dueDate ? new Date(cycle.dueDate).toLocaleDateString('en-IN') : '-'}</td>
-                    <td><Badge variant={cycle.billingStatus === 'paid' ? 'success' : cycle.billingStatus === 'overdue' ? 'danger' : 'warning'}>{cycle.billingStatus.replace(/_/g, ' ')}</Badge></td>
+                    <td><Badge variant={cycle.billingStatus === 'paid_billing' ? 'success' : cycle.billingStatus === 'overdue_billing' ? 'danger' : 'warning'}>{cycle.billingStatus.replace(/_/g, ' ')}</Badge></td>
                     <td>
                       <button onClick={() => handleDownloadInvoice(cycle.cycleId)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="Download Invoice PDF">
                         <HiOutlineDocumentArrowDown className="h-4 w-4" />
