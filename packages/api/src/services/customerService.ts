@@ -504,13 +504,11 @@ export type OpeningBalanceImportResult = {
  * Bulk-import customer opening balances. For each row:
  *   - Resolve customer by name (case-insensitive) or fall back to phone.
  *   - Skip if balance ≤ 0.
- *   - Create a credit-method PaymentTransaction marked unallocated +
- *     a CustomerLedgerEntry adjustment so the debt shows up in the ledger.
- *
- * NOTE for founder: this stores the opening debt as a ledger entry, but the
- * Collections page reads from Invoice.outstandingAmount today, so opening
- * balances will not appear in Collections until either (a) the dashboard is
- * extended to read the ledger or (b) opening balances are stored as Invoices.
+ *   - Create a synthetic overdue Invoice (isOpeningBalance=true, no items,
+ *     no GST, due today) so the balance appears in Collections,
+ *     overdue-call-list, and customer portal invoices automatically.
+ *   - Record a CustomerLedgerEntry debit referencing the invoice for the
+ *     account ledger.
  */
 export async function importOpeningBalances(
   distributorId: string,
@@ -519,6 +517,8 @@ export async function importOpeningBalances(
 ): Promise<OpeningBalanceImportResult> {
   const failures: OpeningBalanceImportResult['failures'] = [];
   let imported = 0;
+  const today = new Date();
+  const todayIso = today.toISOString().split('T')[0];
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -555,28 +555,35 @@ export async function importOpeningBalances(
 
     try {
       await prisma.$transaction(async (tx) => {
-        const payment = await tx.paymentTransaction.create({
+        // Use a per-call random suffix so the per-customer slug stays unique
+        // even if a customer is imported more than once across batches.
+        const invoiceNumber = `OB-${customer!.id.slice(0, 8)}-${todayIso}-${Math.random().toString(36).slice(2, 6)}`;
+        const invoice = await tx.invoice.create({
           data: {
+            invoiceNumber,
             distributorId,
             customerId: customer!.id,
-            amount,
-            paymentMethod: 'credit',
-            referenceNumber: 'opening_balance_import',
-            transactionDate: new Date(),
-            allocationStatus: 'unallocated',
-            receivedBy: userId,
-            notes: r.notes?.trim() || 'Opening balance as of import date',
+            issueDate: today,
+            dueDate: today, // overdue from day 1 by design
+            totalAmount: amount,
+            outstandingAmount: amount,
+            amountPaid: 0,
+            status: 'overdue',
+            isOpeningBalance: true,
+            notes: r.notes?.trim() || `Opening balance imported on ${todayIso}`,
+            issuedBy: userId,
           },
         });
         await tx.customerLedgerEntry.create({
           data: {
             distributorId,
             customerId: customer!.id,
-            entryType: 'adjustment',
-            referenceId: payment.id,
+            entryType: 'invoice_entry',
+            referenceId: invoice.id,
+            invoiceId: invoice.id,
             amountDelta: amount,
             narration: `Opening balance import — ${r.notes?.trim() || 'imported'}`,
-            entryDate: new Date(),
+            entryDate: today,
             createdBy: userId,
           },
         });
@@ -608,8 +615,8 @@ export async function getOnboardingProgress(distributorId: string) {
     prisma.driver.count({ where: { distributorId, deletedAt: null } }),
     prisma.customer.count({ where: { distributorId, deletedAt: null } }),
     prisma.inventoryEvent.count({ where: { distributorId, eventType: 'initial_balance' } }),
-    prisma.paymentTransaction.count({
-      where: { distributorId, deletedAt: null, referenceNumber: 'opening_balance_import' },
+    prisma.invoice.count({
+      where: { distributorId, deletedAt: null, isOpeningBalance: true },
     }),
     prisma.gstCredential.count({ where: { distributorId } }),
     prisma.order.count({ where: { distributorId, deletedAt: null } }),

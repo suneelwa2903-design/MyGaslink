@@ -23,7 +23,7 @@ async function ensureSecondDistributor(): Promise<string> {
       data: {
         id: 'dist-002',
         businessName: 'Test Tenant 2',
-        ownerName: 'T2 Owner',
+        legalName: 'Test Tenant 2 Pvt Ltd',
         phone: '0000000002',
         email: 't2@test.local',
         gstMode: 'disabled',
@@ -45,7 +45,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   // Wipe anything our tests create so each scenario starts clean. Order
-  // matters: ledger / payments → customers.
+  // matters: ledger → invoices → customers.
   await prisma.customerLedgerEntry.deleteMany({
     where: {
       OR: [
@@ -54,11 +54,11 @@ beforeEach(async () => {
       ],
     },
   });
-  await prisma.paymentTransaction.deleteMany({
+  await prisma.invoice.deleteMany({
     where: {
       OR: [
-        { distributorId: dist1Id, referenceNumber: 'opening_balance_import' },
-        { distributorId: dist2Id ?? '__none__', referenceNumber: 'opening_balance_import' },
+        { distributorId: dist1Id, isOpeningBalance: true },
+        { distributorId: dist2Id ?? '__none__', isOpeningBalance: true },
       ],
     },
   });
@@ -71,8 +71,8 @@ afterAll(async () => {
   await prisma.customerLedgerEntry.deleteMany({
     where: { narration: { contains: 'Opening balance import' } },
   });
-  await prisma.paymentTransaction.deleteMany({
-    where: { referenceNumber: 'opening_balance_import' },
+  await prisma.invoice.deleteMany({
+    where: { isOpeningBalance: true, customer: { customerName: { in: TRACK_NAMES } } },
   });
   await prisma.customer.deleteMany({ where: { customerName: { in: TRACK_NAMES } } });
 });
@@ -146,9 +146,9 @@ describe('POST /api/customers/import-csv', () => {
 // ─── /api/customers/import-opening-balances ─────────────────────────────────
 
 describe('POST /api/customers/import-opening-balances', () => {
-  it('imports balances for a known customer', async () => {
+  it('creates an overdue Invoice (not a Payment) for a known customer', async () => {
     // Seed a customer first
-    await prisma.customer.create({
+    const cust = await prisma.customer.create({
       data: { distributorId: dist1Id, customerName: 'OB Test Customer', phone: '9000000010' },
     });
 
@@ -163,17 +163,28 @@ describe('POST /api/customers/import-opening-balances', () => {
     expect(res.body.data.imported).toBe(1);
     expect(res.body.data.failures).toEqual([]);
 
-    const payments = await prisma.paymentTransaction.findMany({
-      where: { distributorId: dist1Id, referenceNumber: 'opening_balance_import' },
+    // Stored as an overdue, opening-balance Invoice — not a Payment
+    const invoices = await prisma.invoice.findMany({
+      where: { distributorId: dist1Id, customerId: cust.id, isOpeningBalance: true },
     });
-    expect(payments.length).toBe(1);
-    expect(payments[0].amount).toBe(12500);
-    expect(payments[0].paymentMethod).toBe('credit');
+    expect(invoices.length).toBe(1);
+    expect(invoices[0].outstandingAmount).toBe(12500);
+    expect(invoices[0].totalAmount).toBe(12500);
+    expect(invoices[0].amountPaid).toBe(0);
+    expect(invoices[0].status).toBe('overdue');
+    expect(invoices[0].invoiceNumber.startsWith('OB-')).toBe(true);
+
+    // Old-style payment row should NOT exist for opening balances
+    const payments = await prisma.paymentTransaction.findMany({
+      where: { distributorId: dist1Id, customerId: cust.id, referenceNumber: 'opening_balance_import' },
+    });
+    expect(payments.length).toBe(0);
 
     const ledger = await prisma.customerLedgerEntry.findMany({
-      where: { distributorId: dist1Id, customerId: payments[0].customerId },
+      where: { distributorId: dist1Id, customerId: cust.id, invoiceId: invoices[0].id },
     });
     expect(ledger.length).toBeGreaterThanOrEqual(1);
+    expect(ledger[0].entryType).toBe('invoice_entry');
   });
 
   it('returns a row failure (not 500) for an unknown customer name', async () => {
@@ -205,11 +216,11 @@ describe('POST /api/customers/import-opening-balances', () => {
     expect(res.body.data.imported).toBe(0);
     expect(res.body.data.failures.length).toBe(1);
 
-    // No payment was created against the dist-002 customer
-    const payments = await prisma.paymentTransaction.findMany({
-      where: { distributorId: dist2Id!, referenceNumber: 'opening_balance_import' },
+    // No opening-balance invoice was created against the dist-002 customer
+    const invoices = await prisma.invoice.findMany({
+      where: { distributorId: dist2Id!, isOpeningBalance: true },
     });
-    expect(payments.length).toBe(0);
+    expect(invoices.length).toBe(0);
   });
 });
 

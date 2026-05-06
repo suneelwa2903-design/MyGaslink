@@ -844,6 +844,8 @@ model Invoice {
   sgstValue         Float         @default(0) @map("sgst_value")
   igstValue         Float         @default(0) @map("igst_value")
   isGaslinkBilling  Boolean       @default(false) @map("is_gaslink_billing")
+  isOpeningBalance  Boolean       @default(false) @map("is_opening_balance")
+  notes             String?
   issuedBy          String?       @map("issued_by")
   closedAt          DateTime?     @map("closed_at")
   createdAt         DateTime      @default(now()) @map("created_at")
