@@ -1,3 +1,8 @@
+import { initSentry } from './lib/sentry';
+// Initialize Sentry as the very first thing so it captures errors thrown
+// during React mount / dependency setup.
+initSentry();
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';

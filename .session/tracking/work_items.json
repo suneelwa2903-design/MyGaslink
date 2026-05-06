@@ -173,8 +173,9 @@
       "id": "WI-020",
       "title": "Wire up @sentry/browser for the web ErrorBoundary",
       "priority": "P2",
-      "status": "pending",
-      "description": "ErrorBoundary currently uses globalThis.Sentry (script-tag style) so that we don't add a hard dependency before Sentry web is set up. Once a DSN is provisioned, install @sentry/browser, call Sentry.init() in main.tsx before render, and switch ErrorBoundary to direct dynamic import. Verify source-map upload pipeline before re-enabling source maps in vite.config.",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Installed @sentry/browser in packages/web. New packages/web/src/lib/sentry.ts exports initSentry() + the Sentry namespace. main.tsx calls initSentry() as the very first import (before React mount). ErrorBoundary now imports Sentry directly (no more globalThis pattern) and calls Sentry.captureException with React componentStack context. .env.example documents VITE_SENTRY_DSN + VITE_APP_VERSION. beforeSend drops events in dev so DSN can be set locally without sending noise. Source-map upload via @sentry/vite-plugin still pending (deferred until DSN is provisioned).",
       "blocksLaunch": false
     },
     {

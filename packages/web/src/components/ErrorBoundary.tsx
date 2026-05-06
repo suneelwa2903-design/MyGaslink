@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import i18n from '@/lib/i18n';
+import { Sentry } from '@/lib/sentry';
 import { Button } from './ui/Button';
 
 interface Props {
@@ -33,23 +34,12 @@ export class ErrorBoundary extends Component<Props, State> {
     // eslint-disable-next-line no-console
     console.error('[ErrorBoundary] Uncaught render error:', error, info.componentStack);
 
-    // Report to Sentry when (a) DSN is configured at build time, (b) we're
-    // in a production build, and (c) the @sentry/browser package was loaded
-    // via a separate <script> tag or globalThis.Sentry. The web bundle does
-    // not depend on @sentry/browser today; once it does, swap this for a
-    // direct dynamic import('@sentry/browser').
-    if (import.meta.env.PROD && import.meta.env.VITE_SENTRY_DSN) {
-      const sentry = (globalThis as { Sentry?: { captureException: (e: Error, ctx?: unknown) => void } }).Sentry;
-      if (sentry?.captureException) {
-        try {
-          sentry.captureException(error, {
-            contexts: { react: { componentStack: info.componentStack } },
-          });
-        } catch {
-          // Reporting failed — already logged to console above.
-        }
-      }
-    }
+    // Sentry.init() is a no-op when VITE_SENTRY_DSN is unset, and the dev
+    // beforeSend hook drops events locally — so this is safe to call
+    // unconditionally.
+    Sentry.captureException(error, {
+      contexts: { react: { componentStack: info.componentStack ?? '' } },
+    });
   }
 
   private handleRetry = () => {
