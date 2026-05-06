@@ -15,9 +15,9 @@ router.get('/',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string) || undefined
-      : req.user!.distributorId!;
+    // Super_admin without an X-Distributor-Id header sees all distributors;
+    // every other role is locked to req.user.distributorId by middleware.
+    const distributorId = req.user!.distributorId ?? undefined;
 
     const actions = await pendingActionsService.listPendingActions(
       distributorId,

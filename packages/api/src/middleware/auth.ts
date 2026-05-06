@@ -3,7 +3,18 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config/index.js';
 import { prisma } from '../lib/prisma.js';
 import { sendUnauthorized, sendForbidden } from '../utils/apiResponse.js';
+import { logBusinessEvent } from '../utils/logger.js';
 import type { UserRole, JwtPayload } from '@gaslink/shared';
+
+// Minimal shape of the distributor record cached on the request after
+// resolveDistributor passes. Downstream services can read this instead of
+// re-querying for tenant config (gstMode, billingSuspended, etc.).
+export interface ResolvedDistributor {
+  id: string;
+  status: string;
+  gstMode: string;
+  billingSuspended: boolean;
+}
 
 // Extend Express Request to include user
 declare global {
@@ -11,6 +22,7 @@ declare global {
     interface Request {
       user?: JwtPayload;
       requestId?: string;
+      distributor?: ResolvedDistributor;
     }
   }
 }
@@ -88,16 +100,25 @@ export function requireRole(...allowedRoles: (UserRole | string)[]) {
 /**
  * Resolve distributor context from request.
  *
- * - Super admin: reads X-Distributor-Id header (validated as UUID), falls through as null if absent
+ * - Super admin: reads X-Distributor-Id header (regex-validated), then verifies
+ *   the distributor row exists and is active. Falls through with no distributor
+ *   if header is absent (super_admin can hit platform-level routes without one).
  * - All other roles: uses distributorId from JWT (set at login, never changes)
+ *   and verifies the distributor is active on every request.
  *
- * This middleware never rejects — it only resolves. Use requireDistributor()
- * after this to enforce that a distributorId is present.
+ * On success, attaches the verified distributor to `req.distributor` so
+ * downstream services can read tenant config without re-querying.
+ *
+ * Use requireDistributor() after this to enforce that a distributorId is
+ * present (for tenant-scoped routes).
  */
-export function resolveDistributor(req: Request, res: Response, next: NextFunction) {
+export async function resolveDistributor(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     return sendUnauthorized(res);
   }
+
+  let candidateId: string | null = null;
+  let isSuperAdminSwitch = false;
 
   if (req.user.role === 'super_admin') {
     const raw = req.headers['x-distributor-id'];
@@ -108,11 +129,56 @@ export function resolveDistributor(req: Request, res: Response, next: NextFuncti
       if (!SAFE_ID_RE.test(headerDistributorId)) {
         return sendBadRequest(res, 'Invalid X-Distributor-Id header format', 'INVALID_DISTRIBUTOR_ID');
       }
-      req.user.distributorId = headerDistributorId;
+      candidateId = headerDistributorId;
+      isSuperAdminSwitch = true;
     }
-    // distributorId remains null if header absent — requireDistributor() will enforce below
-  } else if (!req.user.distributorId) {
-    return sendForbidden(res, 'No distributor assigned to your account');
+    // candidateId remains null if header absent — requireDistributor() will reject
+    // for tenant-scoped routes; platform-level routes pass through.
+  } else {
+    if (!req.user.distributorId) {
+      return sendForbidden(res, 'No distributor assigned to your account');
+    }
+    candidateId = req.user.distributorId;
+  }
+
+  if (candidateId) {
+    const distributor = await prisma.distributor.findFirst({
+      where: { id: candidateId, deletedAt: null },
+      select: { id: true, status: true, gstMode: true, billingSuspended: true },
+    });
+
+    if (!distributor) {
+      return sendBadRequest(res, 'Invalid distributor context', 'INVALID_DISTRIBUTOR');
+    }
+    if (distributor.status === 'suspended') {
+      return res.status(403).json({
+        success: false,
+        data: null,
+        error: 'Distributor account suspended',
+        code: 'DISTRIBUTOR_SUSPENDED',
+      });
+    }
+
+    req.user.distributorId = distributor.id;
+    req.distributor = distributor;
+
+    // Forensic audit: log every super_admin tenant switch (header-driven).
+    // Non-blocking — never raise if logging fails.
+    if (isSuperAdminSwitch) {
+      try {
+        logBusinessEvent({
+          action: 'super_admin_tenant_switch',
+          entityType: 'distributor',
+          entityId: distributor.id,
+          userId: req.user.userId,
+          distributorId: distributor.id,
+          requestId: req.requestId,
+          details: { ip: req.ip },
+        });
+      } catch {
+        // best-effort — already covered by global error handler if anything else fails
+      }
+    }
   }
 
   next();

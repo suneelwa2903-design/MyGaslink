@@ -24,11 +24,9 @@ router.get('/tiers', requireRole('super_admin'), async (_req, res) => {
 // GET /api/pricing/seat-limits - get seat limits for current distributor
 router.get('/seat-limits', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string)
-      : req.user!.distributorId!;
-
-    if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+    // Super_admin must select a tenant via X-Distributor-Id header.
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
 
     const limits = await pricingService.getSeatLimits(distributorId);
     if (!limits) return sendSuccess(res, { limits: null, message: 'No subscription plan assigned' });
@@ -41,11 +39,8 @@ router.get('/seat-limits', async (req, res) => {
 // GET /api/pricing/gst-usage - current month GST API usage
 router.get('/gst-usage', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string)
-      : req.user!.distributorId!;
-
-    if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
 
     const month = req.query.month ? parseInt(req.query.month as string, 10) : undefined;
     const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
@@ -60,11 +55,8 @@ router.get('/gst-usage', async (req, res) => {
 // GET /api/pricing/gst-usage/history - GST API usage history
 router.get('/gst-usage/history', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string)
-      : req.user!.distributorId!;
-
-    if (!distributorId) return sendError(res, 'Distributor ID required', 400);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
 
     const history = await gstApiTracker.getGstApiUsageHistory(distributorId);
     return sendSuccess(res, { history });
@@ -109,9 +101,9 @@ router.post('/seat-requests',
 // GET /api/pricing/seat-requests - list seat requests
 router.get('/seat-requests', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string) || undefined
-      : req.user!.distributorId!;
+    // Super_admin without an X-Distributor-Id header sees all distributors;
+    // every other role is locked to their JWT distributorId by middleware.
+    const distributorId = req.user!.distributorId ?? undefined;
 
     const requests = await seatRequestService.listSeatRequests(distributorId, req.query.status as string);
     return sendSuccess(res, { requests });

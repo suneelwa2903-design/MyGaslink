@@ -106,8 +106,12 @@ api.interceptors.response.use(
 
 // ─── Typed API helpers ───────────────────────────────────────────────────────
 
-export async function apiGet<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-  const res = await api.get<ApiResponse<T>>(url, { params });
+export async function apiGet<T>(url: string, params?: Record<string, unknown>, options?: { distributorIdOverride?: string }): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (options?.distributorIdOverride) {
+    headers['X-Distributor-Id'] = options.distributorIdOverride;
+  }
+  const res = await api.get<ApiResponse<T>>(url, { params, headers });
   return res.data.data;
 }
 

@@ -13,9 +13,9 @@ const router = Router();
 // GET /api/billing/cycles
 router.get('/cycles', async (req, res) => {
   try {
-    const distributorId = req.user!.role === 'super_admin'
-      ? (req.query.distributorId as string) || undefined
-      : req.user!.distributorId!;
+    // Super_admin without an X-Distributor-Id header sees all distributors;
+    // every other role is locked to req.user.distributorId by middleware.
+    const distributorId = req.user!.distributorId ?? undefined;
 
     const result = await billingService.listBillingCycles(distributorId, {
       status: req.query.status as string,
