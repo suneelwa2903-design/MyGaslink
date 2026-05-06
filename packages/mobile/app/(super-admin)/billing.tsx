@@ -41,13 +41,13 @@ export default function BillingScreen() {
     .reduce((s, c) => s + (c.totalAmountInclGst ?? 0), 0);
 
   const totalOverdue = sorted
-    .filter((c) => c.billingStatus === 'overdue')
+    .filter((c) => c.billingStatus === 'overdue_billing')
     .reduce((s, c) => s + (c.totalAmountInclGst ?? 0), 0);
 
   const statusVariant = (s: string) => {
     switch (s) {
-      case 'paid': return 'success' as const;
-      case 'overdue': case 'suspended': return 'danger' as const;
+      case 'paid_billing': return 'success' as const;
+      case 'overdue_billing': case 'suspended_billing': return 'danger' as const;
       case 'pending_payment': case 'invoice_generated': return 'warning' as const;
       default: return 'neutral' as const;
     }
@@ -180,14 +180,14 @@ export default function BillingScreen() {
               {cycle.dueDate && (
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
                   <Text style={{ fontSize: 12, color: colors.textSecondary }}>Due Date</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: cycle.billingStatus === 'overdue' ? accent.red : colors.text }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: cycle.billingStatus === 'overdue_billing' ? accent.red : colors.text }}>
                     {cycle.dueDate}
                   </Text>
                 </View>
               )}
 
               {/* Mark Paid Action */}
-              {(cycle.billingStatus === 'pending_payment' || cycle.billingStatus === 'invoice_generated' || cycle.billingStatus === 'overdue') && (
+              {(cycle.billingStatus === 'pending_payment' || cycle.billingStatus === 'invoice_generated' || cycle.billingStatus === 'overdue_billing') && (
                 <Button
                   title="Mark as Paid"
                   variant="accent"

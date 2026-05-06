@@ -6,13 +6,14 @@ import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Card, Badge, Button, EmptyState } from '../../src/components/ui';
 import { useTheme, ACCENT } from '../../src/theme';
-import type { User, UserRole } from '@gaslink/shared';
+import type { User } from '@gaslink/shared';
+import { UserRole } from '@gaslink/shared';
 
 const ROLE_OPTIONS: { label: string; value: UserRole }[] = [
-  { label: 'Distributor Admin', value: 'distributor_admin' },
-  { label: 'Finance', value: 'finance' },
-  { label: 'Inventory', value: 'inventory' },
-  { label: 'Driver', value: 'driver' },
+  { label: 'Distributor Admin', value: UserRole.DISTRIBUTOR_ADMIN },
+  { label: 'Finance', value: UserRole.FINANCE },
+  { label: 'Inventory', value: UserRole.INVENTORY },
+  { label: 'Driver', value: UserRole.DRIVER },
 ];
 
 const roleVariant = (role: string) => {
@@ -167,7 +168,7 @@ function CreateUserModal({ visible, onClose, dark, colors, accent }: {
   accent: any;
 }) {
   const [form, setForm] = useState({
-    firstName: '', lastName: '', email: '', phone: '', role: 'distributor_admin' as UserRole, password: '',
+    firstName: '', lastName: '', email: '', phone: '', role: UserRole.DISTRIBUTOR_ADMIN, password: '',
   });
 
   const mutation = useApiMutation<User, typeof form>(
@@ -178,7 +179,7 @@ function CreateUserModal({ visible, onClose, dark, colors, accent }: {
       successMessage: 'User created successfully',
       onSuccess: () => {
         onClose();
-        setForm({ firstName: '', lastName: '', email: '', phone: '', role: 'distributor_admin', password: '' });
+        setForm({ firstName: '', lastName: '', email: '', phone: '', role: UserRole.DISTRIBUTOR_ADMIN, password: '' });
       },
     },
   );

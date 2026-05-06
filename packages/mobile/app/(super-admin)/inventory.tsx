@@ -111,8 +111,8 @@ export default function InventoryScreen() {
   }, [tab, refetchSummary, refetchForecast, refetchAlerts]);
 
   // Aggregate totals for the summary
-  const totalFull = summary.reduce((s, r) => s + (r.fullCylinders ?? 0), 0);
-  const totalEmpty = summary.reduce((s, r) => s + (r.emptyCylinders ?? 0), 0);
+  const totalFull = summary.reduce((s, r) => s + (r.closingFulls ?? 0), 0);
+  const totalEmpty = summary.reduce((s, r) => s + (r.closingEmpties ?? 0), 0);
   const totalInTransit = summary.reduce((s, r) => s + ((r as any).inTransit ?? 0), 0);
 
   return (
@@ -175,8 +175,8 @@ export default function InventoryScreen() {
                       {(item as any).weightKg ? ` (${(item as any).weightKg}kg)` : ''}
                     </Text>
                     <View style={{ backgroundColor: dark ? colors.inputBg : colors.cardBg, borderRadius: 10, padding: 10, gap: 6 }}>
-                      <Row label="Full" value={String(item.fullCylinders ?? 0)} color={accent.green} colors={colors} />
-                      <Row label="Empty" value={String(item.emptyCylinders ?? 0)} color={accent.orange} colors={colors} />
+                      <Row label="Full" value={String(item.closingFulls ?? 0)} color={accent.green} colors={colors} />
+                      <Row label="Empty" value={String(item.closingEmpties ?? 0)} color={accent.orange} colors={colors} />
                       {(item as any).inTransit != null && (
                         <Row label="In Transit" value={String((item as any).inTransit)} color={accent.blue} colors={colors} />
                       )}

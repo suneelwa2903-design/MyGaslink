@@ -141,13 +141,16 @@ export default function CustomersScreen() {
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <View style={{ flex: 1, marginRight: 8 }}>
                       <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }} numberOfLines={1}>
-                        {customer.businessName}
+                        {customer.businessName ?? customer.customerName}
                       </Text>
-                      {customer.contactPerson && (
-                        <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>
-                          {customer.contactPerson}
-                        </Text>
-                      )}
+                      {(() => {
+                        const primary = customer.contacts?.find((c) => c.isPrimary)?.name ?? customer.customerName;
+                        return primary ? (
+                          <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>
+                            {primary}
+                          </Text>
+                        ) : null;
+                      })()}
                     </View>
                     <Badge label={status.label} variant={status.variant} />
                   </View>
@@ -187,13 +190,18 @@ export default function CustomersScreen() {
                     )}
                   </View>
 
-                  {customer.address && (
-                    <View style={{ marginTop: 8 }}>
-                      <Text style={{ fontSize: 12, color: colors.textMuted }} numberOfLines={2}>
-                        {customer.address}
-                      </Text>
-                    </View>
-                  )}
+                  {(() => {
+                    const address = [customer.billingAddressLine1, customer.billingCity, customer.billingState]
+                      .filter(Boolean)
+                      .join(', ');
+                    return address ? (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={{ fontSize: 12, color: colors.textMuted }} numberOfLines={2}>
+                          {address}
+                        </Text>
+                      </View>
+                    ) : null;
+                  })()}
                 </Card>
               );
             })}
