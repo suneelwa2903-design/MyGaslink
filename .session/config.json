@@ -1,0 +1,12 @@
+{
+  "project": "Re-New GasLink",
+  "tenancyModel": "shared-db-discriminator",
+  "tenantField": "distributorId",
+  "primaryLanguage": "typescript",
+  "packageManager": "pnpm",
+  "testRunner": "vitest",
+  "trackingFile": ".session/tracking/work_items.json",
+  "learningsFile": ".session/learnings/learnings.md",
+  "specsDir": ".session/specs",
+  "specTemplate": ".session/specs/_templates/spec.md"
+}

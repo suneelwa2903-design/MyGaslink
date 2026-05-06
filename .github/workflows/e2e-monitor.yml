@@ -50,7 +50,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://gaslink:gaslink_test@localhost:5432/gaslink_e2e
-      JWT_SECRET: e2e-test-jwt-secret-not-for-production
+      JWT_ACCESS_SECRET: e2e-test-jwt-secret-not-for-production
       JWT_REFRESH_SECRET: e2e-test-refresh-secret-not-for-production
       NODE_ENV: test
       PORT: 5000
