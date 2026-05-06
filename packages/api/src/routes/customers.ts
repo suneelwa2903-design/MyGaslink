@@ -28,6 +28,83 @@ router.get('/',
   }
 );
 
+// POST /api/customers/import-csv  (must come before /:id)
+const customerImportRowSchema = z.object({
+  name: z.string().min(1),
+  phone: z.string().min(1),
+  address: z.string().optional(),
+  gstin: z.string().optional(),
+  creditPeriodDays: z.number().int().min(0).optional(),
+  customerType: z.string().optional(),
+});
+
+router.post('/import-csv',
+  requireRole('super_admin', 'distributor_admin'),
+  validate(z.object({ rows: z.array(customerImportRowSchema).min(1).max(1000) })),
+  auditLog('import', 'customer'),
+  async (req, res) => {
+    try {
+      const result = await customerService.importCustomers(req.user!.distributorId!, req.body.rows);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// POST /api/customers/import-opening-balances
+const openingBalanceRowSchema = z.object({
+  customerName: z.string().optional(),
+  phone: z.string().optional(),
+  openingBalance: z.number(),
+  notes: z.string().optional(),
+}).refine((r) => !!(r.customerName?.trim() || r.phone?.trim()), {
+  message: 'either customerName or phone is required',
+});
+
+router.post('/import-opening-balances',
+  requireRole('super_admin', 'distributor_admin'),
+  validate(z.object({ rows: z.array(openingBalanceRowSchema).min(1).max(2000) })),
+  auditLog('import_opening_balances', 'customer'),
+  async (req, res) => {
+    try {
+      const result = await customerService.importOpeningBalances(
+        req.user!.distributorId!, req.user!.userId, req.body.rows,
+      );
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// GET /api/customers/onboarding/progress
+router.get('/onboarding/progress',
+  requireRole('super_admin', 'distributor_admin'),
+  async (req, res) => {
+    try {
+      const data = await customerService.getOnboardingProgress(req.user!.distributorId!);
+      return sendSuccess(res, data);
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// POST /api/customers/onboarding/dismiss
+router.post('/onboarding/dismiss',
+  requireRole('super_admin', 'distributor_admin'),
+  auditLog('dismiss_onboarding', 'distributor'),
+  async (req, res) => {
+    try {
+      await customerService.dismissOnboarding(req.user!.distributorId!);
+      return sendSuccess(res, { ok: true });
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
 // GET /api/customers/:id
 router.get('/:id',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),

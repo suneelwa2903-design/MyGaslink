@@ -619,6 +619,33 @@ export async function confirmDelivery(
   if (order.orderType === 'returns_only') {
     throw new OrderError('Use confirm-returns endpoint for returns-only orders', 400);
   }
+
+  // Idempotency: a duplicate confirmation (e.g. driver retries after uncertain
+  // network) must not create a second delivery record. If the order is already
+  // delivered/modified_delivered, compare submitted quantities to the stored
+  // delivered quantities.
+  //   - exact match → return the existing order (200, no-op)
+  //   - mismatch    → 409 conflict
+  if (['delivered', 'modified_delivered'].includes(order.status)) {
+    const mismatch = data.items.some((di) => {
+      const oi = order.items.find((i) => i.cylinderTypeId === di.cylinderTypeId);
+      if (!oi) return true;
+      return (oi.deliveredQuantity ?? 0) !== di.deliveredQuantity
+        || (oi.emptiesCollected ?? 0) !== di.emptiesCollected;
+    });
+    if (mismatch) {
+      throw new OrderError(
+        'Order already delivered with different quantities. Cannot reconcile a duplicate confirmation.',
+        409,
+      );
+    }
+    // Exact duplicate — return current order without side effects
+    return prisma.order.findFirstOrThrow({
+      where: { id: orderId, distributorId },
+      include: orderInclude,
+    });
+  }
+
   if (!['pending_delivery', 'pending_dispatch'].includes(order.status)) {
     throw new OrderError('Order is not in a deliverable state', 400);
   }

@@ -247,6 +247,7 @@ export interface Order {
   customerName: string;
   driverId: string | null;
   driverName: string | null;
+  driverPhone?: string | null;
   vehicleId: string | null;
   vehicleNumber: string | null;
   orderDate: string;
@@ -556,6 +557,15 @@ export interface AnalyticsMetrics {
   averageTurnaroundDays: number;
   inventoryShrinkage: number;
   deliveryEfficiency: number;
+}
+
+export interface OverdueCallListEntry {
+  customerId: string;
+  customerName: string;
+  phone: string;
+  totalOutstanding: number;
+  overdueInvoiceCount: number;
+  daysOverdue: number;
 }
 
 export interface CollectionsDashboard {

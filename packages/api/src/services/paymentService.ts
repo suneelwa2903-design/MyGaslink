@@ -6,13 +6,20 @@ export async function listPayments(
   distributorId: string,
   filters: {
     customerId?: string; paymentMethod?: string;
+    allocationStatus?: string | string[];
     dateFrom?: string; dateTo?: string;
     page?: number; pageSize?: number;
+    sortBy?: 'createdAt' | 'amount' | 'transactionDate';
+    sortOrder?: 'asc' | 'desc';
   }
 ) {
   const where: Prisma.PaymentTransactionWhereInput = { distributorId, deletedAt: null };
   if (filters.customerId) where.customerId = filters.customerId;
   if (filters.paymentMethod) where.paymentMethod = filters.paymentMethod as any;
+  if (filters.allocationStatus) {
+    const list = Array.isArray(filters.allocationStatus) ? filters.allocationStatus : [filters.allocationStatus];
+    where.allocationStatus = { in: list as any };
+  }
   if (filters.dateFrom || filters.dateTo) {
     where.transactionDate = {};
     if (filters.dateFrom) where.transactionDate.gte = new Date(filters.dateFrom);
@@ -21,6 +28,8 @@ export async function listPayments(
 
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 25;
+  const sortBy = filters.sortBy ?? 'createdAt';
+  const sortOrder = filters.sortOrder ?? 'desc';
 
   const [payments, total] = await Promise.all([
     prisma.paymentTransaction.findMany({
@@ -31,7 +40,7 @@ export async function listPayments(
           include: { invoice: { select: { id: true, invoiceNumber: true } } },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { [sortBy]: sortOrder } as Prisma.PaymentTransactionOrderByWithRelationInput,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),

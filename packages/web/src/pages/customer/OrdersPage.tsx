@@ -133,6 +133,15 @@ export default function CustomerOrdersPage() {
               <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.deliveryDate')}</p><p className="text-sm font-medium">{new Date(viewOrder.deliveryDate).toLocaleDateString('en-IN')}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.driver')}</p><p className="text-sm font-medium">{viewOrder.driverName || t('customerPortal.orders.viewModal.notAssigned')}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.status')}</p><Badge variant={STATUS_VARIANTS[viewOrder.status] || 'neutral'}>{t(`enums.orderStatus.${viewOrder.status}`, viewOrder.status.replace(/_/g, ' '))}</Badge></div>
+              {viewOrder.driverPhone && (
+                <div className="col-span-2 sm:col-span-4 p-3 rounded-xl bg-brand-50 dark:bg-brand-500/10">
+                  <p className="text-xs font-medium text-brand-700 dark:text-brand-300 mb-1">{t('customerPortal.orders.viewModal.yourDriver', 'Your delivery driver')}</p>
+                  <p className="text-sm font-semibold text-surface-900 dark:text-white">{viewOrder.driverName}</p>
+                  <a href={`tel:${viewOrder.driverPhone}`} className="text-sm font-medium text-brand-600 dark:text-brand-400 hover:underline">
+                    📞 {viewOrder.driverPhone}
+                  </a>
+                </div>
+              )}
             </div>
             <div className="table-container">
               <table className="table">

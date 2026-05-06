@@ -298,6 +298,51 @@ export async function recordOutgoingEmpties(
 }
 
 /**
+ * Record opening-stock balances (one InventoryEvent per cylinder type) as
+ * the distributor's starting fulls/empties counts. Used by the onboarding
+ * "Enter opening stock" flow. Skips entries where both fulls and empties are 0.
+ */
+export async function recordInitialBalance(
+  distributorId: string,
+  userId: string,
+  data: {
+    entries: { cylinderTypeId: string; openingFulls: number; openingEmpties: number }[];
+    eventDate?: string;
+  },
+) {
+  const eventDate = data.eventDate ? new Date(data.eventDate) : new Date();
+  const created: { cylinderTypeId: string; eventId: string }[] = [];
+
+  await prisma.$transaction(async (tx) => {
+    for (const entry of data.entries) {
+      const fulls = Math.max(0, Math.floor(entry.openingFulls));
+      const empties = Math.max(0, Math.floor(entry.openingEmpties));
+      if (fulls === 0 && empties === 0) continue;
+
+      const event = await createInventoryEvent(tx, {
+        distributorId,
+        cylinderTypeId: entry.cylinderTypeId,
+        eventType: 'initial_balance',
+        fullsChange: fulls,
+        emptiesChange: empties,
+        eventDate,
+        createdBy: userId,
+        notes: 'Opening balance entry',
+      });
+      created.push({ cylinderTypeId: entry.cylinderTypeId, eventId: event.id });
+    }
+  });
+
+  // Summaries are recalculated outside the transaction (they themselves use
+  // their own transaction internally).
+  for (const c of created) {
+    await recalculateSummariesFromDate(distributorId, c.cylinderTypeId, eventDate);
+  }
+
+  return { created: created.length };
+}
+
+/**
  * Manual adjustment (add or subtract).
  */
 export async function recordManualAdjustment(

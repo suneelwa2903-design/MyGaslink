@@ -35,13 +35,17 @@ import { api, apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/
 import { useAuthStore } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
+import { OnboardingTab } from '@/components/OnboardingTab';
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
   const showPrices = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DISTRIBUTOR_ADMIN;
-  const [tab, setTab] = useState<'general' | 'subscription' | 'gst' | 'cylinders' | 'prices' | 'thresholds' | 'approvals' | 'users' | 'licenses'>('general');
+  const showOnboarding = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DISTRIBUTOR_ADMIN;
+  const initialTab = (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab')) as any;
+  const [tab, setTab] = useState<'onboarding' | 'general' | 'subscription' | 'gst' | 'cylinders' | 'prices' | 'thresholds' | 'approvals' | 'users' | 'licenses'>(initialTab && ['onboarding','general','subscription','gst','cylinders','prices','thresholds','approvals','users','licenses'].includes(initialTab) ? initialTab : 'general');
 
   const tabs = [
+    ...(showOnboarding ? [{ key: 'onboarding' as const, label: 'Onboarding', icon: HiOutlineCheckCircle }] : []),
     { key: 'general' as const, label: 'General', icon: HiOutlineCog6Tooth },
     ...(showPrices ? [{ key: 'subscription' as const, label: 'Subscription', icon: HiOutlineCurrencyRupee }] : []),
     { key: 'gst' as const, label: 'GST', icon: HiOutlineShieldCheck },
@@ -80,6 +84,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab Content */}
+      {tab === 'onboarding' && <OnboardingTab />}
       {tab === 'general' && <GeneralTab />}
       {tab === 'subscription' && <SubscriptionTab />}
       {tab === 'gst' && <GstTab />}

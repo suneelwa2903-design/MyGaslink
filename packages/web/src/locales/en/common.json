@@ -188,6 +188,7 @@
         "deliveryDate": "Delivery Date",
         "driver": "Driver",
         "notAssigned": "Not assigned",
+        "yourDriver": "Your delivery driver",
         "status": "Status",
         "cylinder": "Cylinder",
         "qty": "Qty",

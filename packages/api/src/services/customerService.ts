@@ -411,6 +411,256 @@ export async function provisionPortalAccess(
   });
 }
 
+// ─── CSV import: customers ──────────────────────────────────────────────────
+
+export type CustomerImportRow = {
+  name: string;
+  phone: string;
+  address?: string;
+  gstin?: string;
+  creditPeriodDays?: number;
+  customerType?: string;
+};
+
+export type CustomerImportResult = {
+  imported: number;
+  failures: Array<{ row: number; name?: string; phone?: string; reason: string }>;
+};
+
+/**
+ * Bulk-create customers from CSV-parsed rows. Each row succeeds or fails
+ * independently so a single bad line never aborts the batch. Returns counts +
+ * per-row failures the UI can render.
+ */
+export async function importCustomers(
+  distributorId: string,
+  rows: CustomerImportRow[],
+): Promise<CustomerImportResult> {
+  const failures: CustomerImportResult['failures'] = [];
+  let imported = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rowNum = i + 1;
+
+    if (!r.name || !r.name.trim()) {
+      failures.push({ row: rowNum, reason: 'name is required' });
+      continue;
+    }
+    if (!r.phone || !r.phone.trim()) {
+      failures.push({ row: rowNum, name: r.name, reason: 'phone is required' });
+      continue;
+    }
+    if (r.gstin && r.gstin.trim() && !GSTIN_REGEX.test(r.gstin.trim())) {
+      failures.push({ row: rowNum, name: r.name, phone: r.phone, reason: 'invalid GSTIN format' });
+      continue;
+    }
+
+    try {
+      const dupPhone = await prisma.customer.findFirst({
+        where: { distributorId, phone: r.phone.trim(), deletedAt: null },
+        select: { id: true },
+      });
+      if (dupPhone) {
+        failures.push({ row: rowNum, name: r.name, phone: r.phone, reason: 'duplicate phone — customer already exists' });
+        continue;
+      }
+
+      await prisma.customer.create({
+        data: {
+          distributorId,
+          customerName: r.name.trim(),
+          phone: r.phone.trim(),
+          gstin: r.gstin?.trim() || null,
+          customerType: r.gstin && r.gstin.trim() ? 'B2B' : (r.customerType?.trim() || 'B2C'),
+          billingAddressLine1: r.address?.trim() || null,
+          creditPeriodDays: typeof r.creditPeriodDays === 'number' ? r.creditPeriodDays : 0,
+        },
+      });
+      imported += 1;
+    } catch (err: any) {
+      failures.push({ row: rowNum, name: r.name, phone: r.phone, reason: err?.message ?? 'unknown error' });
+    }
+  }
+
+  return { imported, failures };
+}
+
+// ─── CSV import: opening balances ──────────────────────────────────────────
+
+export type OpeningBalanceImportRow = {
+  customerName?: string;
+  phone?: string;
+  openingBalance: number;
+  notes?: string;
+};
+
+export type OpeningBalanceImportResult = {
+  imported: number;
+  failures: Array<{ row: number; name?: string; reason: string }>;
+};
+
+/**
+ * Bulk-import customer opening balances. For each row:
+ *   - Resolve customer by name (case-insensitive) or fall back to phone.
+ *   - Skip if balance ≤ 0.
+ *   - Create a synthetic overdue Invoice (isOpeningBalance=true, no items,
+ *     no GST, due today) so the balance appears in Collections,
+ *     overdue-call-list, and customer portal invoices automatically.
+ *   - Record a CustomerLedgerEntry debit referencing the invoice for the
+ *     account ledger.
+ */
+export async function importOpeningBalances(
+  distributorId: string,
+  userId: string,
+  rows: OpeningBalanceImportRow[],
+): Promise<OpeningBalanceImportResult> {
+  const failures: OpeningBalanceImportResult['failures'] = [];
+  let imported = 0;
+  const today = new Date();
+  const todayIso = today.toISOString().split('T')[0];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rowNum = i + 1;
+    const amount = Number(r.openingBalance);
+
+    if (!Number.isFinite(amount) || amount < 0) {
+      failures.push({ row: rowNum, name: r.customerName, reason: 'opening_balance must be a non-negative number' });
+      continue;
+    }
+    if (amount === 0) continue; // nothing to import
+
+    let customer: { id: string } | null = null;
+    if (r.customerName && r.customerName.trim()) {
+      customer = await prisma.customer.findFirst({
+        where: {
+          distributorId,
+          deletedAt: null,
+          customerName: { equals: r.customerName.trim(), mode: 'insensitive' },
+        },
+        select: { id: true },
+      });
+    }
+    if (!customer && r.phone && r.phone.trim()) {
+      customer = await prisma.customer.findFirst({
+        where: { distributorId, deletedAt: null, phone: r.phone.trim() },
+        select: { id: true },
+      });
+    }
+    if (!customer) {
+      failures.push({ row: rowNum, name: r.customerName, reason: 'customer not found by name or phone' });
+      continue;
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Use a per-call random suffix so the per-customer slug stays unique
+        // even if a customer is imported more than once across batches.
+        const invoiceNumber = `OB-${customer!.id.slice(0, 8)}-${todayIso}-${Math.random().toString(36).slice(2, 6)}`;
+        const invoice = await tx.invoice.create({
+          data: {
+            invoiceNumber,
+            distributorId,
+            customerId: customer!.id,
+            issueDate: today,
+            dueDate: today, // overdue from day 1 by design
+            totalAmount: amount,
+            outstandingAmount: amount,
+            amountPaid: 0,
+            status: 'overdue',
+            isOpeningBalance: true,
+            notes: r.notes?.trim() || `Opening balance imported on ${todayIso}`,
+            issuedBy: userId,
+          },
+        });
+        await tx.customerLedgerEntry.create({
+          data: {
+            distributorId,
+            customerId: customer!.id,
+            entryType: 'invoice_entry',
+            referenceId: invoice.id,
+            invoiceId: invoice.id,
+            amountDelta: amount,
+            narration: `Opening balance import — ${r.notes?.trim() || 'imported'}`,
+            entryDate: today,
+            createdBy: userId,
+          },
+        });
+      });
+      imported += 1;
+    } catch (err: any) {
+      failures.push({ row: rowNum, name: r.customerName, reason: err?.message ?? 'unknown error' });
+    }
+  }
+
+  return { imported, failures };
+}
+
+// ─── Onboarding progress ───────────────────────────────────────────────────
+
+export async function getOnboardingProgress(distributorId: string) {
+  const [
+    cylinderTypeCount,
+    driverCount,
+    customerCount,
+    initialBalanceCount,
+    openingBalanceImportCount,
+    gstCredentialCount,
+    orderCount,
+    inventoryEventCount,
+    dismissedSetting,
+  ] = await Promise.all([
+    prisma.cylinderType.count({ where: { distributorId, isActive: true } }),
+    prisma.driver.count({ where: { distributorId, deletedAt: null } }),
+    prisma.customer.count({ where: { distributorId, deletedAt: null } }),
+    prisma.inventoryEvent.count({ where: { distributorId, eventType: 'initial_balance' } }),
+    prisma.invoice.count({
+      where: { distributorId, deletedAt: null, isOpeningBalance: true },
+    }),
+    prisma.gstCredential.count({ where: { distributorId } }),
+    prisma.order.count({ where: { distributorId, deletedAt: null } }),
+    prisma.inventoryEvent.count({ where: { distributorId } }),
+    prisma.distributorSetting.findUnique({
+      where: { distributorId_settingKey: { distributorId, settingKey: 'dismissedOnboarding' } },
+    }),
+  ]);
+
+  const dismissed = dismissedSetting?.settingValue === true;
+
+  const steps = [
+    { key: 'cylinder_types', label: 'Add cylinder types and prices', done: cylinderTypeCount > 0, link: '/app/settings?tab=cylinders' },
+    { key: 'drivers', label: 'Add your drivers and vehicles', done: driverCount > 0, link: '/app/fleet' },
+    { key: 'customers', label: 'Add your customers', done: customerCount > 0, link: '/app/customers' },
+    { key: 'opening_stock', label: 'Enter opening stock balance', done: initialBalanceCount > 0, link: '/app/inventory' },
+    { key: 'opening_balances', label: 'Import customer opening balances (CSV)', done: openingBalanceImportCount > 0, link: '/app/settings?tab=onboarding' },
+    { key: 'gst', label: 'Configure GST (optional)', done: gstCredentialCount > 0, optional: true, link: '/app/settings?tab=gst' },
+  ];
+
+  // "newly created" heuristic from the spec
+  const isNewlyCreated = orderCount === 0 && customerCount < 5 && inventoryEventCount === 0;
+  const requiredSteps = steps.filter((s) => !s.optional);
+  const requiredDoneCount = requiredSteps.filter((s) => s.done).length;
+  const completedRequired = requiredDoneCount === requiredSteps.length;
+
+  return {
+    steps,
+    completedRequired,
+    requiredDoneCount,
+    requiredTotal: requiredSteps.length,
+    dismissed,
+    show: !dismissed && (isNewlyCreated || !completedRequired),
+  };
+}
+
+export async function dismissOnboarding(distributorId: string) {
+  return prisma.distributorSetting.upsert({
+    where: { distributorId_settingKey: { distributorId, settingKey: 'dismissedOnboarding' } },
+    create: { distributorId, settingKey: 'dismissedOnboarding', settingValue: true },
+    update: { settingValue: true },
+  });
+}
+
 export class CustomerError extends Error {
   constructor(message: string, public statusCode: number) {
     super(message);

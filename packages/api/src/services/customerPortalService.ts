@@ -87,7 +87,7 @@ export async function getMyOrders(
       where,
       include: {
         items: { include: { cylinderType: { select: { typeName: true } } } },
-        driver: { select: { driverName: true } },
+        driver: { select: { driverName: true, phone: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * pageSize,
@@ -96,24 +96,53 @@ export async function getMyOrders(
     prisma.order.count({ where }),
   ]);
 
+  // Flatten driver fields onto the order — see getMyOrderById for the
+  // driver-phone disclosure rule (only shown while the order is in flight).
+  const flattened = orders.map((o) => {
+    const showDriverContact = !!o.driver
+      && ['pending_dispatch', 'pending_delivery'].includes(o.status);
+    return {
+      ...o,
+      driverName: o.driver?.driverName ?? null,
+      driverPhone: showDriverContact ? o.driver?.phone ?? null : null,
+    };
+  });
+
   return {
-    data: orders,
+    data: flattened,
     meta: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
   };
 }
 
 /**
  * Get a specific order for the customer.
+ *
+ * Flattens driver name + phone onto the order so the portal UI can render a
+ * "Your delivery driver" section without traversing the nested driver relation.
+ * Phone is exposed only to the customer who actually owns this order
+ * (filter by customerId + distributorId above guarantees tenant isolation).
+ * Driver phone is hidden once the order reaches a terminal state — the customer
+ * has no reason to call the driver about a delivered or cancelled order.
  */
 export async function getMyOrderById(distributorId: string, customerId: string, orderId: string) {
-  return prisma.order.findFirst({
+  const order = await prisma.order.findFirst({
     where: { id: orderId, customerId, distributorId, deletedAt: null },
     include: {
       items: { include: { cylinderType: { select: { typeName: true } } } },
-      driver: { select: { driverName: true } },
+      driver: { select: { driverName: true, phone: true } },
       statusLogs: { orderBy: { changedAt: 'desc' } },
     },
   });
+  if (!order) return null;
+
+  const showDriverContact = !!order.driver
+    && ['pending_dispatch', 'pending_delivery'].includes(order.status);
+
+  return {
+    ...order,
+    driverName: order.driver?.driverName ?? null,
+    driverPhone: showDriverContact ? order.driver?.phone ?? null : null,
+  };
 }
 
 /**

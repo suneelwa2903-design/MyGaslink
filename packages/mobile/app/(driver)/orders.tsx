@@ -1,18 +1,37 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, TouchableOpacity, Alert, Modal, TextInput, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
+import { useQueryClient } from '@tanstack/react-query';
+import { useApiQuery } from '../../src/hooks/useApi';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
 import { DeliveryProofCamera } from '../../src/components/DeliveryProofCamera';
 import { useTheme, ACCENT, formatINR } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
+import { apiPost, getErrorMessage } from '../../src/lib/api';
+import {
+  enqueueDelivery,
+  isNetworkError,
+  subscribePendingDeliveries,
+  syncPendingDeliveries,
+  type QueuedDelivery,
+} from '../../src/services/deliveryQueue';
 
 export default function DriverOrdersScreen() {
   const { dark, colors } = useTheme();
+  const queryClient = useQueryClient();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [showCamera, setShowCamera] = useState(false);
   const [proofPhoto, setProofPhoto] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [pendingQueue, setPendingQueue] = useState<QueuedDelivery[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribePendingDeliveries(setPendingQueue);
+    return () => { unsub(); };
+  }, []);
+
+  const pendingOrderIds = new Set(pendingQueue.map((p) => p.orderId));
 
   const { data: orders, isLoading, refetch } = useApiQuery<Order[]>(
     ['driver-orders'],
@@ -20,14 +39,38 @@ export default function DriverOrdersScreen() {
     { status: 'pending_delivery' },
   );
 
-  const confirmDelivery = useApiMutation<Order, { orderId: string; items: unknown[] }>('post',
-    (vars) => `/orders/${vars.orderId}/deliver`,
-    {
-      invalidateKeys: [['driver-orders']],
-      successMessage: 'Delivery confirmed!',
-      onSuccess: () => setSelectedOrder(null),
-    },
-  );
+  const submitDelivery = async (orderId: string, items: { cylinderTypeId: string; deliveredQuantity: number; emptiesCollected: number }[]) => {
+    setConfirming(true);
+    try {
+      await apiPost(`/orders/${orderId}/confirm-delivery`, { items, notes: deliveryNotes || undefined });
+      Alert.alert('Success', 'Delivery confirmed!');
+      queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+      setSelectedOrder(null);
+      setDeliveryNotes('');
+      setProofPhoto(null);
+    } catch (err) {
+      if (isNetworkError(err)) {
+        await enqueueDelivery({ orderId, items, notes: deliveryNotes || undefined });
+        Alert.alert('Saved offline', 'No network. Delivery will sync automatically when you\'re back online.');
+        setSelectedOrder(null);
+        setDeliveryNotes('');
+        setProofPhoto(null);
+      } else {
+        Alert.alert('Error', getErrorMessage(err));
+      }
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const handleManualSync = async () => {
+    const r = await syncPendingDeliveries();
+    queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+    Alert.alert(
+      r.synced > 0 ? 'Synced' : 'Sync attempted',
+      `${r.synced} delivery${r.synced === 1 ? '' : 'ies'} synced. ${r.remaining} still pending.`,
+    );
+  };
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -46,14 +89,12 @@ export default function DriverOrdersScreen() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm', onPress: () => {
-            confirmDelivery.mutate({
-              orderId: order.orderId,
-              items: (order.items ?? []).map((item) => ({
-                cylinderTypeId: item.cylinderTypeId,
-                deliveredQuantity: item.quantity,
-                emptiesCollected: 0,
-              })),
-            });
+            const items = (order.items ?? []).map((item) => ({
+              cylinderTypeId: item.cylinderTypeId,
+              deliveredQuantity: item.quantity,
+              emptiesCollected: 0,
+            }));
+            submitDelivery(order.orderId, items);
           },
         },
       ],
@@ -70,6 +111,17 @@ export default function DriverOrdersScreen() {
           <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
             {orders?.length ?? 0} deliveries pending
           </Text>
+          {pendingQueue.length > 0 && (
+            <TouchableOpacity onPress={handleManualSync} style={{
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              backgroundColor: dark ? 'rgba(245,158,11,0.15)' : '#fffbeb',
+              paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+            }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: dark ? '#fbbf24' : '#92400e' }}>
+                {pendingQueue.length} pending sync · tap to retry
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {(!orders || orders.length === 0) ? (
@@ -90,7 +142,9 @@ export default function DriverOrdersScreen() {
                     {order.customerName}
                   </Text>
                 </View>
-                <Badge label={(order.status || '').replace(/_/g, ' ')} variant={statusColor(order.status || '')} />
+                {pendingOrderIds.has(order.orderId)
+                  ? <Badge label="pending sync" variant="warning" />
+                  : <Badge label={(order.status || '').replace(/_/g, ' ')} variant={statusColor(order.status || '')} />}
               </View>
 
               <View style={{ marginTop: 10, gap: 4 }}>
@@ -119,7 +173,7 @@ export default function DriverOrdersScreen() {
                 <View style={{ flex: 1 }}>
                   <Button title="View Details" variant="secondary" size="sm" onPress={() => setSelectedOrder(order)} />
                 </View>
-                {order.status === 'pending_delivery' && (
+                {order.status === 'pending_delivery' && !pendingOrderIds.has(order.orderId) && (
                   <View style={{ flex: 1 }}>
                     <Button title="Deliver" variant="accent" size="sm" onPress={() => handleDelivery(order)} />
                   </View>

@@ -390,6 +390,63 @@ export async function getCollectionsDashboard(distributorId: string) {
 }
 
 /**
+ * Overdue call list — customers whose oldest unpaid invoice has passed its due date.
+ * One row per customer, sorted by days overdue desc. Used by the morning dashboard
+ * (Section C — "Call these customers today") and by the Collections page tab.
+ */
+export async function getOverdueCallList(distributorId: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const customers = await prisma.customer.findMany({
+    where: {
+      distributorId,
+      deletedAt: null,
+      invoices: {
+        some: {
+          deletedAt: null,
+          outstandingAmount: { gt: 0 },
+          dueDate: { lt: today },
+        },
+      },
+    },
+    select: {
+      id: true,
+      customerName: true,
+      phone: true,
+      contacts: { where: { isPrimary: true }, select: { phone: true }, take: 1 },
+      invoices: {
+        where: {
+          deletedAt: null,
+          outstandingAmount: { gt: 0 },
+          dueDate: { lt: today },
+        },
+        select: { outstandingAmount: true, dueDate: true },
+      },
+    },
+  });
+
+  return customers
+    .map((c) => {
+      const totalOutstanding = c.invoices.reduce((s, i) => s + i.outstandingAmount, 0);
+      const oldestDue = c.invoices.reduce((oldest, i) => {
+        const d = new Date(i.dueDate).getTime();
+        return d < oldest ? d : oldest;
+      }, Number.POSITIVE_INFINITY);
+      const daysOverdue = Math.floor((today.getTime() - oldestDue) / 86400000);
+      return {
+        customerId: c.id,
+        customerName: c.customerName,
+        phone: c.contacts[0]?.phone || c.phone,
+        totalOutstanding: Math.round(totalOutstanding * 100) / 100,
+        overdueInvoiceCount: c.invoices.length,
+        daysOverdue,
+      };
+    })
+    .sort((a, b) => b.daysOverdue - a.daysOverdue);
+}
+
+/**
  * Cylinder utilization and shrinkage metrics.
  */
 export async function getAdvancedMetrics(distributorId: string) {
