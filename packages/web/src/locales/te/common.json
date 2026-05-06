@@ -100,6 +100,54 @@
       "noRecentOrders": "ఇటీవలి ఆర్డర్లు లేవు",
       "noRecentInvoices": "ఇటీవలి ఇన్‌వాయిస్‌లు లేవు",
       "due": "గడువు:"
+    },
+    "orders": {
+      "title": "నా ఆర్డర్లు",
+      "subtitle": "ఆర్డర్లను చూడండి మరియు సృష్టించండి",
+      "newOrder": "కొత్త ఆర్డర్",
+      "noOrdersYet": "ఇంకా ఆర్డర్లు లేవు",
+      "noOrdersDesc": "ప్రారంభించడానికి మీ మొదటి ఆర్డర్‌ను ఇవ్వండి.",
+      "tableHeaders": {
+        "orderNumber": "ఆర్డర్ #",
+        "orderDate": "ఆర్డర్ తేదీ",
+        "deliveryDate": "డెలివరీ తేదీ",
+        "items": "వస్తువులు",
+        "amount": "మొత్తం",
+        "status": "స్థితి",
+        "actions": "చర్యలు"
+      },
+      "itemsCount": "{{count}} వస్తువులు",
+      "pageOf": "పేజీ {{page}} / {{total}}",
+      "previous": "మునుపటిది",
+      "next": "తదుపరిది",
+      "viewModal": {
+        "title": "ఆర్డర్ {{orderNumber}}",
+        "orderDate": "ఆర్డర్ తేదీ",
+        "deliveryDate": "డెలివరీ తేదీ",
+        "driver": "డ్రైవర్",
+        "notAssigned": "కేటాయించబడలేదు",
+        "status": "స్థితి",
+        "cylinder": "సిలిండర్",
+        "qty": "పరిమాణం",
+        "delivered": "డెలివరీ చేయబడింది",
+        "empties": "ఖాళీలు",
+        "unitPrice": "యూనిట్ ధర",
+        "total": "మొత్తం",
+        "totalLabel": "మొత్తం: {{amount}}",
+        "specialInstructions": "ప్రత్యేక సూచనలు"
+      },
+      "createModal": {
+        "title": "కొత్త ఆర్డర్ ఇవ్వండి",
+        "preferredDeliveryDate": "ప్రాధాన్య డెలివరీ తేదీ",
+        "orderItems": "ఆర్డర్ వస్తువులు",
+        "selectCylinder": "సిలిండర్‌ను ఎంచుకోండి",
+        "qtyPlaceholder": "పరిమాణం",
+        "addItem": "వస్తువును జోడించండి",
+        "specialInstructionsLabel": "ప్రత్యేక సూచనలు",
+        "deliveryNotesPlaceholder": "డెలివరీ గమనికలు...",
+        "placeOrder": "ఆర్డర్ ఇవ్వండి",
+        "orderPlacedSuccess": "ఆర్డర్ విజయవంతంగా ఇవ్వబడింది"
+      }
     }
   },
   "enums": {

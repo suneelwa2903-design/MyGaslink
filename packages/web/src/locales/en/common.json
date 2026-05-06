@@ -100,6 +100,54 @@
       "noRecentOrders": "No recent orders",
       "noRecentInvoices": "No recent invoices",
       "due": "Due:"
+    },
+    "orders": {
+      "title": "My Orders",
+      "subtitle": "View and create orders",
+      "newOrder": "New Order",
+      "noOrdersYet": "No orders yet",
+      "noOrdersDesc": "Place your first order to get started.",
+      "tableHeaders": {
+        "orderNumber": "Order #",
+        "orderDate": "Order Date",
+        "deliveryDate": "Delivery Date",
+        "items": "Items",
+        "amount": "Amount",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "itemsCount": "{{count}} items",
+      "pageOf": "Page {{page}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next",
+      "viewModal": {
+        "title": "Order {{orderNumber}}",
+        "orderDate": "Order Date",
+        "deliveryDate": "Delivery Date",
+        "driver": "Driver",
+        "notAssigned": "Not assigned",
+        "status": "Status",
+        "cylinder": "Cylinder",
+        "qty": "Qty",
+        "delivered": "Delivered",
+        "empties": "Empties",
+        "unitPrice": "Unit Price",
+        "total": "Total",
+        "totalLabel": "Total: {{amount}}",
+        "specialInstructions": "Special Instructions"
+      },
+      "createModal": {
+        "title": "Place New Order",
+        "preferredDeliveryDate": "Preferred Delivery Date",
+        "orderItems": "Order Items",
+        "selectCylinder": "Select cylinder",
+        "qtyPlaceholder": "Qty",
+        "addItem": "Add Item",
+        "specialInstructionsLabel": "Special Instructions",
+        "deliveryNotesPlaceholder": "Any delivery notes...",
+        "placeOrder": "Place Order",
+        "orderPlacedSuccess": "Order placed successfully"
+      }
     }
   },
   "enums": {
