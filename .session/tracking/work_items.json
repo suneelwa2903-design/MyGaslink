@@ -175,6 +175,31 @@
       "status": "pending",
       "description": "ErrorBoundary currently uses globalThis.Sentry (script-tag style) so that we don't add a hard dependency before Sentry web is set up. Once a DSN is provisioned, install @sentry/browser, call Sentry.init() in main.tsx before render, and switch ErrorBoundary to direct dynamic import. Verify source-map upload pipeline before re-enabling source maps in vite.config.",
       "blocksLaunch": false
+    },
+    {
+      "id": "WI-022",
+      "title": "Merge worktree branch claude/peaceful-bartik-21e3d2 into master",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-06",
+      "description": "Local merge with --no-ff, 30 commits brought into master. Resolved CLAUDE.md conflict by combining branch's web/api conventions + primary's mobile section. Merged .session/config.json schemas. Removed branch's generic spec.md in favour of primary's 7 specialized templates. ADLC v3 framework also installed via primary worktree commit b1ab3ad. Final master SHA: 32c943a. Tests still 254/254 passing on master.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-023",
+      "title": "Create GitHub repo and push master",
+      "priority": "P0",
+      "status": "pending",
+      "description": "Create GitHub repo, add remote origin, push master branch. Required before CI/CD can run. Instructions: (1) github.com new private repo named Re-New_Gaslink, do NOT init with README/.gitignore. (2) cd into project; git remote add origin https://github.com/<user>/Re-New_Gaslink.git ; git branch -M master ; git push -u origin master. (3) Verify ci.yml triggers on push.",
+      "blocksLaunch": true
+    },
+    {
+      "id": "WI-024",
+      "title": "Manual smoke tests Phase 1 (55 cases, 7 roles)",
+      "priority": "P0",
+      "status": "pending",
+      "description": "Founder runs navigation smoke tests across all 7 roles before production deploy. Per docs/Navigation_Smoke_Test.xlsx and docs/TESTING_PROGRESS.md.",
+      "blocksLaunch": true
     }
   ]
 }
