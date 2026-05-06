@@ -127,6 +127,18 @@ router.get('/collections',
   }
 });
 
+// GET /api/analytics/overdue-call-list — customers past credit period, sorted by days overdue
+router.get('/overdue-call-list',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  async (req, res) => {
+    try {
+      const list = await analyticsService.getOverdueCallList(req.user!.distributorId!);
+      return sendSuccess(res, list);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  });
+
 // GET /api/analytics/advanced-metrics
 router.get('/advanced-metrics',
   requireRole('super_admin', 'distributor_admin', 'finance'),

@@ -21,6 +21,7 @@ import {
   type AnalyticsMetrics,
   type CollectionsDashboard,
   type DashboardStats,
+  type OverdueCallListEntry,
   type PendingAction,
   PendingActionStatus,
   PendingActionSeverity,
@@ -57,6 +58,11 @@ export default function AnalyticsPage() {
   const queryClient = useQueryClient();
   const { user, selectedDistributorId } = useAuthStore();
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
+  const role = user?.role;
+  const isFinance = role === UserRole.FINANCE;
+  const isInventory = role === UserRole.INVENTORY;
+  const isDriver = role === UserRole.DRIVER;
+  const isAdminLike = role === UserRole.DISTRIBUTOR_ADMIN || (isSuperAdmin && !!selectedDistributorId);
 
   const [tab, setTab] = useState<'dashboard' | 'overview' | 'collections' | 'reports'>('dashboard');
   const [resolveAction, setResolveAction] = useState<PendingAction | null>(null);
@@ -103,6 +109,61 @@ export default function AnalyticsPage() {
     queryFn: () => apiGet<{ actions: PendingAction[] }>('/pending-actions', { status: 'open' }),
     select: (data) => data.actions,
     enabled: tab === 'dashboard',
+  });
+
+  // ─── Role-aware morning briefing data ────────────────────────────────────────
+  // Section A — stock summary (admin-like + inventory)
+  const wantStock = tab === 'dashboard' && hasDistributor && (isAdminLike || isInventory);
+  const { data: stockSummary } = useQuery({
+    queryKey: ['inventory-summary-today'],
+    queryFn: () => apiGet<Array<{
+      cylinderTypeId: string; cylinderTypeName: string;
+      closingFulls: number; closingEmpties: number;
+      thresholdWarning: number | null; thresholdCritical: number | null;
+    }>>('/inventory/summary'),
+    enabled: wantStock,
+  });
+
+  // Section C — overdue call list (admin-like + finance)
+  const wantCallList = tab === 'dashboard' && hasDistributor && (isAdminLike || isFinance);
+  const { data: callList } = useQuery({
+    queryKey: ['overdue-call-list'],
+    queryFn: () => apiGet<OverdueCallListEntry[]>('/analytics/overdue-call-list'),
+    enabled: wantCallList,
+  });
+
+  // Threshold alerts for Inventory role (already-low stock)
+  const { data: thresholdAlerts } = useQuery({
+    queryKey: ['inventory-threshold-alerts'],
+    queryFn: () => apiGet<Array<{ cylinderTypeId: string; cylinderTypeName: string; currentStock: number; level: 'warning' | 'critical'; threshold: number }>>('/inventory/threshold-alerts'),
+    enabled: tab === 'dashboard' && hasDistributor && isInventory,
+  });
+
+  // Unallocated/partially-allocated payments for Finance (filter client-side from recent)
+  const { data: unallocatedPayments } = useQuery({
+    queryKey: ['payments-recent-finance'],
+    queryFn: () => apiGet<{ payments: Array<{ paymentId: string; amount: number; allocationStatus: string; transactionDate: string; unallocatedAmount: number; customer?: { customerName?: string } }> }>('/payments', { pageSize: 50 }),
+    select: (d) =>
+      d.payments
+        .filter((p) => p.allocationStatus === 'unallocated' || p.allocationStatus === 'partially_allocated')
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 5),
+    enabled: tab === 'dashboard' && hasDistributor && isFinance,
+  });
+
+  // GST failures for Finance
+  const { data: gstFailures } = useQuery({
+    queryKey: ['invoices-irn-failed'],
+    queryFn: () => apiGet<{ invoices: Array<{ invoiceId: string; invoiceNumber: string; totalAmount: number; irnStatus: string }> }>('/invoices', { irnStatus: 'failed', pageSize: 5 }),
+    select: (d) => d.invoices.slice(0, 5),
+    enabled: tab === 'dashboard' && hasDistributor && isFinance,
+  });
+
+  // Today's reconciliation pending for Inventory
+  const { data: pendingReconciliation } = useQuery({
+    queryKey: ['inventory-reconciliation-today'],
+    queryFn: () => apiGet<Array<{ assignmentId: string; tripNumber: string; vehicleNumber: string; driverName: string; status: string }>>('/inventory/reconciliation'),
+    enabled: tab === 'dashboard' && hasDistributor && isInventory,
   });
 
   const approveMutation = useMutation({
@@ -242,9 +303,204 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Dashboard Tab */}
-      {tab === 'dashboard' && (
+      {tab === 'dashboard' && isDriver && (
+        <div className="card p-8 text-center">
+          <h2 className="text-lg font-semibold text-surface-900 dark:text-white mb-2">Please use the mobile app</h2>
+          <p className="text-sm text-surface-500 dark:text-surface-400">
+            Driver workflows (trips, deliveries, reconciliation) are designed for the mobile app. Open Re-New GasLink on your phone to continue.
+          </p>
+        </div>
+      )}
+
+      {tab === 'dashboard' && !isDriver && (
         dashboardLoading ? <div className="flex justify-center py-20"><Loader size="lg" /></div> : (
           <div className="space-y-6">
+            {/* ─── Section A — STOCK POSITION (admin / inventory) ──────────── */}
+            {(isAdminLike || isInventory) && (
+              <div className="card p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-surface-900 dark:text-white">Stock position</h3>
+                  <button onClick={() => navigate('/app/inventory')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View Inventory →</button>
+                </div>
+                {!stockSummary?.length ? (
+                  <p className="text-sm text-surface-500">No cylinder types configured.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {stockSummary.map((s) => {
+                      const status = s.thresholdCritical != null && s.closingFulls <= s.thresholdCritical
+                        ? { label: 'CRITICAL', variant: 'danger' as const }
+                        : s.thresholdWarning != null && s.closingFulls <= s.thresholdWarning
+                        ? { label: 'WARNING', variant: 'warning' as const }
+                        : { label: 'OK', variant: 'success' as const };
+                      return (
+                        <div key={s.cylinderTypeId} className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-sm font-semibold text-surface-900 dark:text-white">{s.cylinderTypeName}</p>
+                            <Badge variant={status.variant}>{status.label}</Badge>
+                          </div>
+                          <p className="text-xs text-surface-500">Fulls: <span className="font-semibold text-surface-900 dark:text-white">{s.closingFulls}</span> · Empties: <span className="font-semibold text-surface-900 dark:text-white">{s.closingEmpties}</span></p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ─── Section B — TODAY'S DISPATCH (admin only) ──────────────── */}
+            {isAdminLike && dashboardStats && (
+              <div className="card p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-surface-900 dark:text-white">Today's dispatch</h3>
+                  <button onClick={() => navigate('/app/orders?status=pending_driver_assignment')} className="text-xs font-medium text-brand-600 dark:text-brand-400">Assign drivers →</button>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-500/10 cursor-pointer" onClick={() => navigate('/app/orders?status=pending_driver_assignment')}>
+                    <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{dashboardStats.pendingOrders}</p>
+                    <p className="text-xs text-surface-600 dark:text-surface-400">Pending dispatch</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-brand-50 dark:bg-brand-500/10">
+                    <p className="text-2xl font-bold text-brand-600 dark:text-brand-400">{dashboardStats.ordersToday}</p>
+                    <p className="text-xs text-surface-600 dark:text-surface-400">Orders today</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-accent-50 dark:bg-accent-500/10">
+                    <p className="text-2xl font-bold text-accent-600 dark:text-accent-400">{dashboardStats.deliveredToday}</p>
+                    <p className="text-xs text-surface-600 dark:text-surface-400">Delivered today</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ─── Section C — COLLECTIONS DUE TODAY (admin / finance) ─────── */}
+            {(isAdminLike || isFinance) && (
+              <div className="card p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-surface-900 dark:text-white">Call these customers today</h3>
+                  <button onClick={() => navigate('/app/collections')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View all →</button>
+                </div>
+                {!callList?.length ? (
+                  <p className="text-sm text-surface-500">No customers past their credit period. 🎉</p>
+                ) : (
+                  <div className="space-y-2">
+                    {callList.slice(0, 8).map((c) => (
+                      <div key={c.customerId} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-surface-900 dark:text-white truncate">{c.customerName}</p>
+                          <p className="text-xs text-surface-500">
+                            <a href={`tel:${c.phone}`} className="text-brand-600 dark:text-brand-400 hover:underline">{c.phone}</a> · {c.overdueInvoiceCount} invoice{c.overdueInvoiceCount === 1 ? '' : 's'}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-semibold text-red-500">{formatCurrency(c.totalOutstanding)}</p>
+                          <Badge variant="danger">{c.daysOverdue}d overdue</Badge>
+                        </div>
+                      </div>
+                    ))}
+                    {callList.length > 8 && (
+                      <p className="text-xs text-surface-400 text-center pt-2">Showing 8 of {callList.length} customers</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ─── Finance-only: Unallocated payments + GST failures ────────── */}
+            {isFinance && (
+              <>
+                <div className="card p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-surface-900 dark:text-white">Unallocated payments</h3>
+                    <button onClick={() => navigate('/app/billing-payments')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View payments →</button>
+                  </div>
+                  {!unallocatedPayments?.length ? (
+                    <p className="text-sm text-surface-500">All payments fully allocated.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {unallocatedPayments.map((p) => (
+                        <div key={p.paymentId} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-surface-900 dark:text-white truncate">{p.customer?.customerName ?? 'Unknown customer'}</p>
+                            <p className="text-xs text-surface-500">{new Date(p.transactionDate).toLocaleDateString('en-IN')} · {p.allocationStatus.replace(/_/g, ' ')}</p>
+                          </div>
+                          <p className="text-sm font-semibold text-amber-500">{formatCurrency(p.unallocatedAmount ?? p.amount)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="card p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-surface-900 dark:text-white">GST failures</h3>
+                    <button onClick={() => navigate('/app/billing-payments?irnStatus=failed')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View invoices →</button>
+                  </div>
+                  {!gstFailures?.length ? (
+                    <p className="text-sm text-surface-500">No failed IRNs.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {gstFailures.map((inv) => (
+                        <div key={inv.invoiceId} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-red-50 dark:bg-red-500/10">
+                          <p className="text-sm font-medium text-surface-900 dark:text-white">{inv.invoiceNumber}</p>
+                          <p className="text-sm font-semibold text-red-500">{formatCurrency(inv.totalAmount)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* ─── Inventory-only: Pending reconciliation + threshold alerts ── */}
+            {isInventory && (
+              <>
+                <div className="card p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-surface-900 dark:text-white">Vehicles pending reconciliation</h3>
+                    <button onClick={() => navigate('/app/reconciliation')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View →</button>
+                  </div>
+                  {!pendingReconciliation?.length ? (
+                    <p className="text-sm text-surface-500">No vehicles awaiting reconciliation.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {pendingReconciliation.slice(0, 8).map((a) => (
+                        <div key={a.assignmentId} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-surface-900 dark:text-white">Trip {a.tripNumber} · {a.vehicleNumber}</p>
+                            <p className="text-xs text-surface-500">{a.driverName}</p>
+                          </div>
+                          <Badge variant="warning">{a.status.replace(/_/g, ' ')}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="card p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-surface-900 dark:text-white">Threshold alerts</h3>
+                    <button onClick={() => navigate('/app/inventory')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View inventory →</button>
+                  </div>
+                  {!thresholdAlerts?.length ? (
+                    <p className="text-sm text-surface-500">All cylinder types above warning threshold.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {thresholdAlerts.map((a) => (
+                        <div key={a.cylinderTypeId} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
+                          <p className="text-sm font-medium text-surface-900 dark:text-white">{a.cylinderTypeName}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-surface-500">{a.currentStock} fulls (≤ {a.threshold})</span>
+                            <Badge variant={a.level === 'critical' ? 'danger' : 'warning'}>{a.level.toUpperCase()}</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* ─── Existing dashboard metrics (admin only) ─────────────────── */}
+            {isAdminLike && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {dashboardMetrics.map((metric) => (
                 <div
@@ -262,6 +518,7 @@ export default function AnalyticsPage() {
                 </div>
               ))}
             </div>
+            )}
 
             {/* Pending Actions Section */}
             <div className="card p-5">

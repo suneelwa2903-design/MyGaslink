@@ -558,6 +558,15 @@ export interface AnalyticsMetrics {
   deliveryEfficiency: number;
 }
 
+export interface OverdueCallListEntry {
+  customerId: string;
+  customerName: string;
+  phone: string;
+  totalOutstanding: number;
+  overdueInvoiceCount: number;
+  daysOverdue: number;
+}
+
 export interface CollectionsDashboard {
   customerId: string;
   customerName: string;
