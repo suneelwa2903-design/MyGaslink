@@ -378,6 +378,12 @@ export const invoiceFilterSchema = paginationSchema.merge(dateRangeSchema).exten
 export const paymentFilterSchema = paginationSchema.merge(dateRangeSchema).extend({
   customerId: uuid.optional(),
   paymentMethod: z.nativeEnum(PaymentMethod).optional(),
+  // Comma-separated for "in" semantics, e.g. ?allocationStatus=unallocated,partially_allocated
+  allocationStatus: z.string().optional().transform((v) =>
+    v ? v.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+  ),
+  sortBy: z.enum(['createdAt', 'amount', 'transactionDate']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
 });
 
 export const customerFilterSchema = paginationSchema.extend({

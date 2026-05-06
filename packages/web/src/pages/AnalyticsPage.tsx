@@ -139,15 +139,17 @@ export default function AnalyticsPage() {
     enabled: tab === 'dashboard' && hasDistributor && isInventory,
   });
 
-  // Unallocated/partially-allocated payments for Finance (filter client-side from recent)
+  // Unallocated / partially-allocated payments for Finance — explicit
+  // server-side filter, sorted by amount desc, top 20 (display caps at 5).
   const { data: unallocatedPayments } = useQuery({
-    queryKey: ['payments-recent-finance'],
-    queryFn: () => apiGet<{ payments: Array<{ paymentId: string; amount: number; allocationStatus: string; transactionDate: string; unallocatedAmount: number; customer?: { customerName?: string } }> }>('/payments', { pageSize: 50 }),
-    select: (d) =>
-      d.payments
-        .filter((p) => p.allocationStatus === 'unallocated' || p.allocationStatus === 'partially_allocated')
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 5),
+    queryKey: ['payments-unallocated-finance'],
+    queryFn: () => apiGet<{ payments: Array<{ paymentId: string; amount: number; allocationStatus: string; transactionDate: string; unallocatedAmount: number; customer?: { customerName?: string } }> }>('/payments', {
+      allocationStatus: 'unallocated,partially_allocated',
+      sortBy: 'amount',
+      sortOrder: 'desc',
+      pageSize: 20,
+    }),
+    select: (d) => d.payments,
     enabled: tab === 'dashboard' && hasDistributor && isFinance,
   });
 
