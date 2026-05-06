@@ -166,6 +166,13 @@ export default function AnalyticsPage() {
     enabled: tab === 'dashboard' && hasDistributor && isInventory,
   });
 
+  // Onboarding banner (admin-like only)
+  const { data: onboarding } = useQuery({
+    queryKey: ['onboarding-progress'],
+    queryFn: () => apiGet<{ show: boolean; requiredDoneCount: number; requiredTotal: number }>('/customers/onboarding/progress'),
+    enabled: tab === 'dashboard' && hasDistributor && isAdminLike,
+  });
+
   const approveMutation = useMutation({
     mutationFn: (actionId: string) => apiPut(`/pending-actions/${actionId}/approve`),
     onSuccess: () => {
@@ -315,6 +322,18 @@ export default function AnalyticsPage() {
       {tab === 'dashboard' && !isDriver && (
         dashboardLoading ? <div className="flex justify-center py-20"><Loader size="lg" /></div> : (
           <div className="space-y-6">
+            {isAdminLike && onboarding?.show && (
+              <div
+                onClick={() => navigate('/app/settings?tab=onboarding')}
+                className="cursor-pointer p-4 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 flex items-center justify-between gap-4"
+              >
+                <div>
+                  <p className="font-semibold text-amber-800 dark:text-amber-300">Get started — finish setup</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{onboarding.requiredDoneCount} of {onboarding.requiredTotal} steps complete · open Settings → Onboarding</p>
+                </div>
+                <span className="text-amber-600 dark:text-amber-400 font-medium">→</span>
+              </div>
+            )}
             {/* ─── Section A — STOCK POSITION (admin / inventory) ──────────── */}
             {(isAdminLike || isInventory) && (
               <div className="card p-5">
