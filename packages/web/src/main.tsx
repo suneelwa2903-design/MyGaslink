@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import './lib/i18n'; // initialize i18next before first render
 import './index.css';
 
 // Initialize theme before first render to prevent flash

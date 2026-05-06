@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import i18n from '@/lib/i18n';
 import { Button } from './ui/Button';
 
 interface Props {
@@ -81,11 +82,13 @@ export class ErrorBoundary extends Component<Props, State> {
           </div>
 
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
-            Something went wrong
+            {i18n.t('common.somethingWentWrong', 'Something went wrong')}
           </h1>
           <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
-            An unexpected error occurred while rendering this page. You can try
-            again, or reload the app if the problem persists.
+            {i18n.t(
+              'errors.generic',
+              'An unexpected error occurred. You can try again, or reload the app if the problem persists.',
+            )}
           </p>
 
           {import.meta.env.DEV && this.state.error && (
@@ -96,10 +99,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
           <div className="flex gap-3 justify-center">
             <Button variant="primary" onClick={this.handleRetry}>
-              Try again
+              {i18n.t('common.tryAgain', 'Try again')}
             </Button>
             <Button variant="secondary" onClick={this.handleReload}>
-              Refresh page
+              {i18n.t('common.refreshPage', 'Refresh page')}
             </Button>
           </div>
         </div>
