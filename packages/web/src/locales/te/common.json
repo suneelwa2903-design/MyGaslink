@@ -54,17 +54,23 @@
   },
   "auth": {
     "login": "సైన్ ఇన్ చేయండి",
+    "welcomeBack": "మళ్ళీ స్వాగతం",
+    "dashboardSubtitle": "మీ డ్యాష్‌బోర్డ్‌కు సైన్ ఇన్ చేయండి",
+    "welcomeBackToast": "తిరిగి స్వాగతం, {{name}}!",
     "loginTitle": "GasLink కు స్వాగతం",
     "loginSubtitle": "మీ ఖాతాకు సైన్ ఇన్ చేయండి",
     "emailLabel": "ఇమెయిల్",
-    "emailPlaceholder": "you@company.com",
+    "emailPlaceholder": "you@example.com",
     "passwordLabel": "పాస్‌వర్డ్",
     "passwordPlaceholder": "మీ పాస్‌వర్డ్ నమోదు చేయండి",
     "rememberMe": "నన్ను గుర్తుంచుకో",
     "forgotPassword": "పాస్‌వర్డ్ మర్చిపోయారా?",
     "loginButton": "సైన్ ఇన్ చేయండి",
     "loginError": "చెల్లని ఇమెయిల్ లేదా పాస్‌వర్డ్",
-    "logoutSuccess": "విజయవంతంగా సైన్ అవుట్ అయ్యారు"
+    "logoutSuccess": "విజయవంతంగా సైన్ అవుట్ అయ్యారు",
+    "newToApp": "MyGasLink కు కొత్తవారా?",
+    "claim3MonthsFree": "3 నెలలు ఉచితంగా పొందండి →",
+    "copyright": "© {{year}} MyGasLink"
   },
   "errors": {
     "generic": "ఏదో తప్పు జరిగింది. దయచేసి మళ్ళీ ప్రయత్నించండి.",

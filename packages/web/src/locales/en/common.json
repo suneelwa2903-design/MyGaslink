@@ -54,17 +54,23 @@
   },
   "auth": {
     "login": "Sign in",
+    "welcomeBack": "Welcome back",
+    "dashboardSubtitle": "Sign in to your dashboard",
+    "welcomeBackToast": "Welcome back, {{name}}!",
     "loginTitle": "Welcome to GasLink",
     "loginSubtitle": "Sign in to your account",
     "emailLabel": "Email",
-    "emailPlaceholder": "you@company.com",
+    "emailPlaceholder": "you@example.com",
     "passwordLabel": "Password",
     "passwordPlaceholder": "Enter your password",
     "rememberMe": "Remember me",
     "forgotPassword": "Forgot password?",
-    "loginButton": "Sign in",
+    "loginButton": "Sign In",
     "loginError": "Invalid email or password",
-    "logoutSuccess": "Signed out successfully"
+    "logoutSuccess": "Signed out successfully",
+    "newToApp": "New to MyGasLink?",
+    "claim3MonthsFree": "Claim 3 months free →",
+    "copyright": "© {{year}} MyGasLink"
   },
   "errors": {
     "generic": "Something went wrong. Please try again.",
