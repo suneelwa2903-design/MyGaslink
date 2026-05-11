@@ -34,6 +34,7 @@ import deliveryWorkflowRouter from './routes/deliveryWorkflow.js';
 import assignmentsRouter from './routes/assignments.js';
 import providerCatalogRoutes from './routes/providerCatalog.js';
 import pricingRoutes from './routes/pricing.js';
+import licensesRoutes from './routes/licenses.js';
 
 export function createApp() {
   const app = express();
@@ -102,6 +103,7 @@ export function createApp() {
   app.use('/api/assignments', authenticate, resolveDistributor, requireDistributor, assignmentsRouter);
   app.use('/api/provider-catalog', authenticate, providerCatalogRoutes);
   app.use('/api/pricing', authenticate, resolveDistributor, pricingRoutes);
+  app.use('/api/licenses', authenticate, resolveDistributor, requireDistributor, licensesRoutes);
 
   // ─── API Documentation (super_admin only) ─────────────────────────────────
 

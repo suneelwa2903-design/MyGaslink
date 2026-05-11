@@ -244,6 +244,7 @@ interface EmptyPriceRecord {
 
 function PricesTab() {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
 
   // Month/year selector state - default to current month
   const now = new Date();
@@ -259,21 +260,24 @@ function PricesTab() {
 
   // Fetch cylinder types
   const { data: cylinderTypes, isLoading: typesLoading } = useQuery({
-    queryKey: ['cylinder-types'],
+    queryKey: ['cylinder-types', distributorId],
     queryFn: () => apiGet<{ cylinderTypes: CylinderTypeItem[] }>('/cylinder-types'),
     select: (data) => data.cylinderTypes,
+    enabled: !!distributorId,
   });
 
   // Fetch current prices
   const { data: prices, isLoading: pricesLoading } = useQuery({
-    queryKey: ['cylinder-prices'],
+    queryKey: ['cylinder-prices', distributorId],
     queryFn: () => apiGet<PriceRecord[]>('/cylinder-types/prices/list'),
+    enabled: !!distributorId,
   });
 
   // Fetch empty prices
   const { data: emptyPrices, isLoading: emptyLoading } = useQuery({
-    queryKey: ['cylinder-empty-prices'],
+    queryKey: ['cylinder-empty-prices', distributorId],
     queryFn: () => apiGet<EmptyPriceRecord[]>('/cylinder-types/empty-prices/list'),
+    enabled: !!distributorId,
   });
 
   // Save price mutation (one per cylinder type)
@@ -532,8 +536,9 @@ function ThresholdsTab() {
 
   // Also fetch cylinder types to pre-populate thresholds
   const { data: cylinderTypesData, isLoading: ctLoading } = useQuery({
-    queryKey: ['cylinder-types'],
+    queryKey: ['cylinder-types', distributorId],
     queryFn: () => apiGet<{ cylinderTypes: Array<{ cylinderTypeId: string; typeName: string; capacity: number; isActive: boolean }> }>('/cylinder-types'),
+    enabled: !!distributorId,
   });
 
   const mutation = useMutation({
@@ -816,11 +821,13 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
 
 function LicensesTab() {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
   const [formOpen, setFormOpen] = useState(false);
 
   const { data: licenses, isLoading } = useQuery({
-    queryKey: ['licenses'],
+    queryKey: ['licenses', distributorId],
     queryFn: () => apiGet<License[]>('/licenses'),
+    enabled: !!distributorId,
   });
 
   const deleteMutation = useMutation({
@@ -920,16 +927,19 @@ interface CatalogItem {
 
 function CylinderConfigTab() {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const { data: catalogData, isLoading } = useQuery({
-    queryKey: ['provider-catalog-for-distributor'],
+    queryKey: ['provider-catalog-for-distributor', distributorId],
     queryFn: () => apiGet<{ items: CatalogItem[]; providers: string[] }>('/provider-catalog/for-distributor'),
+    enabled: !!distributorId,
   });
 
   const { data: existingTypes } = useQuery({
-    queryKey: ['cylinder-types'],
+    queryKey: ['cylinder-types', distributorId],
     queryFn: () => apiGet<{ cylinderTypes: Array<{ cylinderTypeId: string; typeName: string; capacity: number; isActive: boolean }> }>('/cylinder-types'),
+    enabled: !!distributorId,
   });
 
   const importMutation = useMutation({
@@ -1066,21 +1076,24 @@ function CylinderConfigTab() {
 // ─── Subscription Tab (Distributor Admin) ───────────────────────────────────
 
 function SubscriptionTab() {
+  const distributorId = useAuthStore((s) => s.distributorId);
   const fmt = (n: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
   const { data: billingData, isLoading } = useQuery({
-    queryKey: ['my-billing-cycles'],
+    queryKey: ['my-billing-cycles', distributorId],
     queryFn: () => apiGet<{ cycles: Array<{
       cycleId: string; periodType: string; periodStartDate: string; periodEndDate: string;
       totalAmountExclGst: number; totalGstAmount: number; totalAmountInclGst: number;
       billingStatus: string; dueDate: string | null;
       items: Array<{ itemId: string; itemType: string; description: string; quantity: number; unitPriceExclGst: number; lineTotalInclGst: number }>;
     }> }>('/billing/cycles'),
+    enabled: !!distributorId,
   });
 
   const { data: seatData } = useQuery({
-    queryKey: ['my-seat-limits'],
+    queryKey: ['my-seat-limits', distributorId],
     queryFn: () => apiGet<{ plan: string; limits: Record<string, { allowed: number; used: number; extraPrice: number }> | null; gstApi: { included: number; overagePrice: number }; customerPortalPrice: number }>('/pricing/seat-limits'),
+    enabled: !!distributorId,
   });
 
   const handleDownload = async (cycleId: string) => {

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Button, Loader, Modal } from '@/components/ui';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 
 type Step = { key: string; label: string; done: boolean; optional?: boolean; link: string };
 type Progress = { steps: Step[]; requiredDoneCount: number; requiredTotal: number; show: boolean };
@@ -51,9 +52,11 @@ function downloadCsv(filename: string, text: string) {
 
 export function OnboardingTab() {
   const qc = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
   const { data: progress, isLoading } = useQuery<Progress>({
-    queryKey: ['onboarding-progress'],
+    queryKey: ['onboarding-progress', distributorId],
     queryFn: () => apiGet<Progress>('/customers/onboarding/progress'),
+    enabled: !!distributorId,
   });
 
   const dismiss = useMutation({
@@ -139,12 +142,14 @@ export function OnboardingTab() {
 type CylinderTypeRow = { cylinderTypeId: string; typeName: string; capacity: number; unit: string };
 
 function OpeningStockModal({ onClose }: { onClose: () => void }) {
+  const distributorId = useAuthStore((s) => s.distributorId);
   const { data: types, isLoading } = useQuery<CylinderTypeRow[]>({
-    queryKey: ['cylinder-types-active'],
+    queryKey: ['cylinder-types-active', distributorId],
     queryFn: async () => {
       const r = await apiGet<{ cylinderTypes: CylinderTypeRow[] }>('/cylinder-types');
       return r.cylinderTypes;
     },
+    enabled: !!distributorId,
   });
 
   const [entries, setEntries] = useState<Record<string, { fulls: string; empties: string }>>({});
