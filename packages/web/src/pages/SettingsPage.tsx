@@ -32,7 +32,7 @@ import {
   type CreateUserInput,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
-import { useAuthStore } from '@/stores/authStore';
+import { useAuthStore, selectDistributorId } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { OnboardingTab } from '@/components/OnboardingTab';
@@ -102,7 +102,7 @@ export default function SettingsPage() {
 
 function GeneralTab() {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
@@ -141,7 +141,7 @@ function GeneralTab() {
 
 function GstTab() {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
@@ -244,7 +244,7 @@ interface EmptyPriceRecord {
 
 function PricesTab() {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
 
   // Month/year selector state - default to current month
   const now = new Date();
@@ -527,7 +527,7 @@ function PricesTab() {
 
 function ThresholdsTab() {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
   const { data: settings, isLoading: settingsLoading } = useQuery({
     queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
@@ -645,7 +645,7 @@ function ThresholdsTab() {
 
 function ApprovalsTab() {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
@@ -821,7 +821,7 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
 
 function LicensesTab() {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
   const [formOpen, setFormOpen] = useState(false);
 
   const { data: licenses, isLoading } = useQuery({
@@ -927,7 +927,7 @@ interface CatalogItem {
 
 function CylinderConfigTab() {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const { data: catalogData, isLoading } = useQuery({
@@ -1076,7 +1076,7 @@ function CylinderConfigTab() {
 // ─── Subscription Tab (Distributor Admin) ───────────────────────────────────
 
 function SubscriptionTab() {
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
   const fmt = (n: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
   const { data: billingData, isLoading } = useQuery({

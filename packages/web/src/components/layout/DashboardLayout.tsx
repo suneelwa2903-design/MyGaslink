@@ -7,7 +7,7 @@ import {
   HiOutlineArrowRightOnRectangle,
   HiOutlineUserCircle,
 } from 'react-icons/hi2';
-import { useAuthStore } from '@/stores/authStore';
+import { useAuthStore, selectDistributorId } from '@/stores/authStore';
 import { apiGet } from '@/lib/api';
 import { UserRole } from '@gaslink/shared';
 import { cn } from '@/lib/cn';
@@ -24,7 +24,8 @@ export function DashboardLayout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
-  const { user, distributorId, logout } = useAuthStore();
+  const { user, logout } = useAuthStore();
+  const distributorId = useAuthStore(selectDistributorId);
   const navigate = useNavigate();
   const location = useLocation();
 
