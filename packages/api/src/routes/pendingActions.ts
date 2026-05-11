@@ -15,9 +15,10 @@ router.get('/',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
-    // Super_admin without an X-Distributor-Id header sees all distributors;
-    // every other role is locked to req.user.distributorId by middleware.
-    const distributorId = req.user!.distributorId ?? undefined;
+    const distributorId = req.user!.distributorId;
+    // Super_admin without a selected distributor: return empty list rather
+    // than 400 — the notification bell polls this on every page load.
+    if (!distributorId) return sendSuccess(res, { actions: [] });
 
     const actions = await pendingActionsService.listPendingActions(
       distributorId,
@@ -38,7 +39,9 @@ router.get('/overdue',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
-    const actions = await pendingActionsService.getOverdueSlaActions(req.user!.distributorId!);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+    const actions = await pendingActionsService.getOverdueSlaActions(distributorId);
     return sendSuccess(res, mapPendingActions(actions));
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -51,7 +54,9 @@ router.put('/:id/approve',
   auditLog('approve', 'pending_action'),
   async (req, res) => {
     try {
-      const action = await pendingActionsService.approvePendingAction(param(req.params.id), req.user!.distributorId!, req.user!.userId);
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      const action = await pendingActionsService.approvePendingAction(param(req.params.id), distributorId, req.user!.userId);
       if (!action) return sendNotFound(res, 'Pending action');
       return sendSuccess(res, mapPendingAction(action));
     } catch (err) {
@@ -67,8 +72,10 @@ router.put('/:id/resolve',
   auditLog('resolve', 'pending_action'),
   async (req, res) => {
     try {
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
       const action = await pendingActionsService.resolvePendingAction(
-        param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body.notes
+        param(req.params.id), distributorId, req.user!.userId, req.body.notes
       );
       if (!action) return sendNotFound(res, 'Pending action');
       return sendSuccess(res, mapPendingAction(action));
@@ -85,8 +92,10 @@ router.put('/:id/reject',
   auditLog('reject', 'pending_action'),
   async (req, res) => {
     try {
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
       const action = await pendingActionsService.rejectPendingAction(
-        param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body.notes
+        param(req.params.id), distributorId, req.user!.userId, req.body.notes
       );
       if (!action) return sendNotFound(res, 'Pending action');
       return sendSuccess(res, mapPendingAction(action));
