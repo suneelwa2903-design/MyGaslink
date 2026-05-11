@@ -264,9 +264,10 @@
       "id": "WI-032",
       "title": "Fix seed idempotency — convert creates to upserts",
       "priority": "P2",
-      "status": "pending",
+      "status": "done",
+      "completedAt": "2026-05-11",
       "blocksLaunch": false,
-      "description": "Re-running pnpm db:seed against a populated DB crashes on duplicate vehicle/driver/customer creates (P2002 on (distributor_id, vehicle_number) etc.). Convert all .create() in seed.ts to .upsert() — or guard each section with a 'skip if dist exists' check — so seed can be re-run safely at any time. Surfaced 2026-05-11 while re-seeding to verify the provider-catalog linkage in WI-031."
+      "description": "Re-running pnpm db:seed against a populated DB crashed on duplicate vehicle/driver/customer creates (P2002 on (distributor_id, vehicle_number) etc.). Approach taken: added bhargavaSeeded / sharmaSeeded gates that short-circuit each distributor's transactional block (customers, drivers, vehicles, orders, invoices, payments, inventory) when a cylinderPrice row already exists. Provider catalog, distributors, users, GST reference data, and pricing tiers already use upserts so they re-run idempotently. Sharma cylinder types upgraded to upsert too. Verified 2026-05-11: pnpm db:seed completed cleanly on an already-populated DB."
     },
     {
       "id": "WI-033",

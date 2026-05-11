@@ -79,6 +79,10 @@ async function main() {
     { providerCode: 'IOCL', shortName: '19KG',   longName: 'IOCL 19 KG Commercial Cylinder', weight: 19,    hsnCode: '27111900' },
     { providerCode: 'IOCL', shortName: '47.5KG', longName: 'IOCL 47.5 KG Commercial Cylinder', weight: 47.5, hsnCode: '27111900' },
     { providerCode: 'IOCL', shortName: '425KG',  longName: 'IOCL 425 KG Bulk Cylinder',       weight: 425,   hsnCode: '27111900' },
+    { providerCode: 'HPCL', shortName: '5KG',    longName: 'HPCL 5 KG Domestic Cylinder',    weight: 5,     hsnCode: '27111900' },
+    { providerCode: 'HPCL', shortName: '19KG',   longName: 'HPCL 19 KG Commercial Cylinder', weight: 19,    hsnCode: '27111900' },
+    { providerCode: 'HPCL', shortName: '47.5KG', longName: 'HPCL 47.5 KG Commercial Cylinder', weight: 47.5, hsnCode: '27111900' },
+    { providerCode: 'HPCL', shortName: '425KG',  longName: 'HPCL 425 KG Bulk Cylinder',       weight: 425,   hsnCode: '27111900' },
   ] as const;
 
   const catalog = await Promise.all(catalogEntries.map((c) =>
@@ -90,7 +94,12 @@ async function main() {
   ));
   console.log('Provider catalog seeded:', catalog.map(c => `${c.providerCode} ${c.shortName}`).join(', '));
 
-  const catalogByWeight = new Map(catalog.map(c => [c.weight, c]));
+  // Lookup helpers — catalog is keyed by (provider, weight) so we can pick the
+  // right row for each distributor's cylinder types.
+  const iocl = new Map(catalog.filter(c => c.providerCode === 'IOCL').map(c => [c.weight, c]));
+  const hpcl = new Map(catalog.filter(c => c.providerCode === 'HPCL').map(c => [c.weight, c]));
+  // Back-compat for any callers below that still expect catalogByWeight (IOCL).
+  const catalogByWeight = iocl;
 
   // ─── 4b. Create Distributor Cylinder Types (linked to catalog) ────────────
   const cylinderTypeSpecs = [
@@ -117,6 +126,17 @@ async function main() {
   }));
   console.log('Cylinder types created:', cylinderTypes.map(ct => ct.typeName).join(', '));
 
+  // ─── Idempotency gate for Bhargava transactional data ─────────────────────
+  // The rest of the per-distributor block (prices, customers, drivers,
+  // vehicles, orders, invoices, payments) uses .create() without unique
+  // constraints we can upsert on, so we short-circuit if a previous seed run
+  // already populated this distributor. (WI-032)
+  const bhargavaExistingPrices = await prisma.cylinderPrice.count({ where: { distributorId: distributor.id } });
+  const bhargavaSeeded = bhargavaExistingPrices > 0;
+  if (bhargavaSeeded) {
+    console.log('Bhargava transactional data already seeded — skipping prices/customers/drivers/vehicles/orders/invoices/payments');
+  }
+
   // ─── 5. Create Cylinder Prices ────────────────────────────────────────────
   // Use a date well in the past so prices are effective for any order date
   const priceEffectiveDate = '2024-01-01';
@@ -127,17 +147,19 @@ async function main() {
     { cylinderTypeId: cylinderTypes[3].id, price: 38000 },  // 425 KG
   ];
 
-  for (const p of prices) {
-    await prisma.cylinderPrice.create({
-      data: {
-        distributorId: distributor.id,
-        cylinderTypeId: p.cylinderTypeId,
-        price: p.price,
-        effectiveDate: new Date(priceEffectiveDate),
-      },
-    });
+  if (!bhargavaSeeded) {
+    for (const p of prices) {
+      await prisma.cylinderPrice.create({
+        data: {
+          distributorId: distributor.id,
+          cylinderTypeId: p.cylinderTypeId,
+          price: p.price,
+          effectiveDate: new Date(priceEffectiveDate),
+        },
+      });
+    }
+    console.log('Cylinder prices set');
   }
-  console.log('Cylinder prices set');
 
   // ─── 6. Create Empty Cylinder Prices ──────────────────────────────────────
   const emptyPrices = [
@@ -167,7 +189,13 @@ async function main() {
   console.log('Inventory thresholds set');
 
   // ─── 8. Create Customers (5 customers) ────────────────────────────────────
-  const customers = await Promise.all([
+  // Bhargava transactional block — guarded by bhargavaSeeded so re-runs skip.
+  // customers/drivers/vehicles are hoisted so the transactional section
+  // (orders/invoices/payments) further down can also reference them when
+  // gated by the same flag.
+  let customers: Awaited<ReturnType<typeof prisma.customer.create>>[] = [];
+  if (!bhargavaSeeded) {
+  customers = await Promise.all([
     prisma.customer.create({
       data: {
         distributorId: distributor.id, customerName: 'Royal Kitchen Restaurant', businessName: 'Royal Kitchen Pvt Ltd',
@@ -293,6 +321,7 @@ async function main() {
     },
   });
   console.log('Customer user created: royal@kitchen.com / Customer@123');
+  } // end if (!bhargavaSeeded)
 
   // ─── 13. GST Reference Data ───────────────────────────────────────────────
   const states = [
@@ -338,10 +367,12 @@ async function main() {
   });
   console.log('GST-enabled distributor created:', gstDist.businessName);
 
-  // GST distributor admin
+  // GST distributor admin — upsert by email (User.email is @unique).
   const gstAdminPassword = await bcrypt.hash('Gstadmin@123', 12);
-  await prisma.user.create({
-    data: {
+  await prisma.user.upsert({
+    where: { email: 'sharma@gasdist.com' },
+    update: {},
+    create: {
       email: 'sharma@gasdist.com', passwordHash: gstAdminPassword,
       firstName: 'Amit', lastName: 'Sharma', phone: '9876500000',
       role: 'distributor_admin', status: 'active', provisioningStatus: 'active',
@@ -349,21 +380,50 @@ async function main() {
     },
   });
 
-  // GST distributor cylinder types and prices (GST-inclusive prices) — also
-  // linked back to the IOCL provider catalog seeded above.
-  const gstCylTypes = await Promise.all([
-    prisma.cylinderType.create({ data: { distributorId: gstDist.id, typeName: '19 KG', capacity: 19, unit: 'KG', hsnCode: '27111900', providerCatalogId: catalogByWeight.get(19)?.id ?? null } }),
-    prisma.cylinderType.create({ data: { distributorId: gstDist.id, typeName: '47.5 KG', capacity: 47.5, unit: 'KG', hsnCode: '27111900', providerCatalogId: catalogByWeight.get(47.5)?.id ?? null } }),
-  ]);
-  for (const ct of gstCylTypes) {
-    await prisma.cylinderPrice.create({
-      data: { distributorId: gstDist.id, cylinderTypeId: ct.id, price: ct.capacity === 19 ? 2000 : 5000, effectiveDate: new Date('2024-01-01') },
-    });
-    await prisma.cylinderThreshold.create({
-      data: { distributorId: gstDist.id, cylinderTypeId: ct.id, warningLevel: 15, criticalLevel: 3 },
-    });
+  // GST distributor cylinder types and prices — all 4 types linked to the
+  // HPCL provider catalog (Sharma is an HPCL distributor).
+  const gstCylinderTypeSpecs = [
+    { typeName: '5 KG',    capacity: 5,    price: 600,   warning: 10, critical: 3 },
+    { typeName: '19 KG',   capacity: 19,   price: 2000,  warning: 15, critical: 3 },
+    { typeName: '47.5 KG', capacity: 47.5, price: 5000,  warning: 10, critical: 2 },
+    { typeName: '425 KG',  capacity: 425,  price: 42000, warning: 5,  critical: 1 },
+  ];
+
+  const gstCylTypes = await Promise.all(gstCylinderTypeSpecs.map((spec) =>
+    prisma.cylinderType.upsert({
+      where: { distributorId_typeName: { distributorId: gstDist.id, typeName: spec.typeName } },
+      update: { providerCatalogId: hpcl.get(spec.capacity)?.id ?? null },
+      create: {
+        distributorId: gstDist.id, typeName: spec.typeName, capacity: spec.capacity,
+        unit: 'KG', hsnCode: '27111900',
+        providerCatalogId: hpcl.get(spec.capacity)?.id ?? null,
+      },
+    }),
+  ));
+
+  // Idempotency gate for Sharma transactional data — same pattern as Bhargava.
+  const sharmaExistingPrices = await prisma.cylinderPrice.count({ where: { distributorId: gstDist.id } });
+  const sharmaSeeded = sharmaExistingPrices > 0;
+  if (sharmaSeeded) {
+    console.log('Sharma transactional data already seeded — skipping prices/customers/drivers/vehicles/orders/invoices');
   }
 
+  if (!sharmaSeeded) {
+    for (let i = 0; i < gstCylTypes.length; i++) {
+      const ct = gstCylTypes[i];
+      const spec = gstCylinderTypeSpecs[i];
+      await prisma.cylinderPrice.create({
+        data: { distributorId: gstDist.id, cylinderTypeId: ct.id, price: spec.price, effectiveDate: new Date('2024-01-01') },
+      });
+      await prisma.cylinderThreshold.upsert({
+        where: { distributorId_cylinderTypeId: { distributorId: gstDist.id, cylinderTypeId: ct.id } },
+        update: {},
+        create: { distributorId: gstDist.id, cylinderTypeId: ct.id, warningLevel: spec.warning, criticalLevel: spec.critical },
+      });
+    }
+  }
+
+  if (!sharmaSeeded) {
   // GST distributor customers - one same-state (Karnataka), one inter-state (Telangana)
   const gstCustomers = await Promise.all([
     prisma.customer.create({
@@ -431,10 +491,15 @@ async function main() {
     },
   });
   console.log('WhiteBooks sandbox credentials seeded for GST distributor (einvoice + ewaybill)');
+  } // end if (!sharmaSeeded) — Sharma customers + drivers + vehicles + credentials
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TRANSACTIONAL TEST DATA FOR BHARGAVA GAS AGENCY (dist-001)
   // ═══════════════════════════════════════════════════════════════════════════
+  // Whole block gated on bhargavaSeeded — re-runs skip this entirely, since
+  // none of the .create() calls below have a unique constraint we could
+  // upsert on, and we'd otherwise duplicate orders/invoices/payments. (WI-032)
+  if (!bhargavaSeeded) {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -1017,6 +1082,7 @@ async function main() {
   console.log('  Inventory:      inventory@gasagency.com / Inventory@123');
   console.log('  Driver:         raju@gasagency.com / Driver@123');
   console.log('  Customer:       royal@kitchen.com / Customer@123');
+  } // end if (!bhargavaSeeded) — TRANSACTIONAL TEST DATA FOR BHARGAVA
 
   // ─── 15. Pricing Tiers ──────────────────────────────────────────────────────
   const tierDefaults = {
