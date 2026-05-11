@@ -39,8 +39,12 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-const CUSTOMER_TEMPLATE = 'name,phone,address,gstin,credit_period_days,customer_type\nRoyal Kitchen,9876543210,123 MG Road Bangalore,29ABCDE1234F1Z5,30,B2B\n';
-const OPENING_BAL_TEMPLATE = 'customer_name,phone,opening_balance,notes\nRoyal Kitchen,9876543210,12500,Carried forward from old system\n';
+const CUSTOMER_TEMPLATE = 'name,phone,address,gstin,credit_period_days,customer_type\n' +
+  'Royal Kitchen Restaurant,9876543210,"123 Main Street, Hyderabad",36AABCU9603R1ZX,30,commercial\n' +
+  'Green Valley Home,9876543211,"456 Colony Road, Hyderabad",,0,domestic\n';
+const OPENING_BAL_TEMPLATE = 'customer_name,opening_balance,notes\n' +
+  'Royal Kitchen Restaurant,15000,Outstanding as of today\n' +
+  'Green Valley Home,2500,\n';
 
 function downloadCsv(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
@@ -269,7 +273,20 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
   return (
     <Modal open onClose={onClose} title="Import customers from CSV" size="lg">
       <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => downloadCsv('customers-template.csv', CUSTOMER_TEMPLATE)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline"
+        >
+          <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+          </svg>
+          Download CSV template
+        </button>
         <input type="file" accept=".csv,text/csv" onChange={(e) => csv.setFile(e.target.files?.[0] ?? null)} className="text-sm" />
+        <p className="text-xs text-surface-500 dark:text-surface-400">
+          Required columns: name, phone. Optional: address, gstin, credit_period_days, customer_type
+        </p>
         {csv.fileName && (
           <p className="text-xs text-surface-500">{csv.fileName} · {csv.rows.length} valid row{csv.rows.length === 1 ? '' : 's'} of {csv.rawCount}</p>
         )}
@@ -328,7 +345,20 @@ function OpeningBalanceImportModal({ onClose }: { onClose: () => void }) {
   return (
     <Modal open onClose={onClose} title="Import opening balances from CSV" size="lg">
       <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => downloadCsv('opening-balances-template.csv', OPENING_BAL_TEMPLATE)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline"
+        >
+          <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+          </svg>
+          Download CSV template
+        </button>
         <input type="file" accept=".csv,text/csv" onChange={(e) => csv.setFile(e.target.files?.[0] ?? null)} className="text-sm" />
+        <p className="text-xs text-surface-500 dark:text-surface-400">
+          Required columns: customer_name, opening_balance. Customer name must match exactly as entered in system.
+        </p>
         {csv.fileName && (
           <p className="text-xs text-surface-500">{csv.fileName} · {csv.rows.length} valid row{csv.rows.length === 1 ? '' : 's'} of {csv.rawCount}</p>
         )}
