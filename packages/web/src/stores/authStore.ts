@@ -9,6 +9,11 @@ interface AuthState {
   user: UserProfile | null;
   selectedDistributorId: string | null;
   isAuthenticated: boolean;
+  // True once zustand/persist has finished reading localStorage. Routes
+  // must wait for this before deciding to redirect to /login — otherwise
+  // the first synchronous render sees the initial (unauthenticated) state
+  // and ProtectedRoute bounces the user before persist rehydrates.
+  _hasHydrated: boolean;
 
   // Computed
   role: UserRole | null;
@@ -21,6 +26,7 @@ interface AuthState {
   setTokens: (accessToken: string, refreshToken: string) => void;
   setUser: (user: UserProfile) => void;
   setSelectedDistributorId: (id: string | null) => void;
+  setHasHydrated: (v: boolean) => void;
   logout: () => void;
 }
 
@@ -32,6 +38,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       selectedDistributorId: null,
       isAuthenticated: false,
+      _hasHydrated: false,
 
       get role() { return get().user?.role as UserRole ?? null; },
       get isSuperAdmin() { return get().user?.role === 'super_admin'; },
@@ -50,6 +57,8 @@ export const useAuthStore = create<AuthState>()(
 
       setSelectedDistributorId: (id) => set({ selectedDistributorId: id }),
 
+      setHasHydrated: (v) => set({ _hasHydrated: v }),
+
       logout: () => set({
         accessToken: null,
         refreshToken: null,
@@ -67,6 +76,12 @@ export const useAuthStore = create<AuthState>()(
         selectedDistributorId: state.selectedDistributorId,
         isAuthenticated: state.isAuthenticated,
       }),
+      // Flip _hasHydrated once persist has read localStorage so route
+      // guards can wait for it before deciding to redirect. Runs once on
+      // app boot, even when localStorage is empty.
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+      },
     },
   ),
 );
