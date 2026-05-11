@@ -37,6 +37,7 @@ import {
   type CreatePaymentInput,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -144,6 +145,7 @@ export default function BillingPaymentsPage() {
 
 function InvoicesTab() {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [irnFilter, setIrnFilter] = useState('');
@@ -159,11 +161,13 @@ function InvoicesTab() {
   const [cancelIrnInvoice, setCancelIrnInvoice] = useState<Invoice | null>(null);
   const [cancelEwbInvoice, setCancelEwbInvoice] = useState<Invoice | null>(null);
 
-  // Check if distributor has GST enabled
+  // Check if distributor has GST enabled — skip when super admin has no
+  // distributor selected.
   const { data: settings } = useQuery({
-    queryKey: ['settings'],
+    queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
     staleTime: 5 * 60 * 1000,
+    enabled: !!distributorId,
   });
   const gstEnabled = settings?.gstMode !== undefined && settings.gstMode !== GstMode.DISABLED;
 

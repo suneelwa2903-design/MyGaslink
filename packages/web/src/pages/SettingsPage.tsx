@@ -102,9 +102,11 @@ export default function SettingsPage() {
 
 function GeneralTab() {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
   const { data: settings, isLoading } = useQuery({
-    queryKey: ['settings'],
+    queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
+    enabled: !!distributorId,
   });
 
   const { register, handleSubmit } = useForm({
@@ -139,9 +141,11 @@ function GeneralTab() {
 
 function GstTab() {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
   const { data: settings, isLoading } = useQuery({
-    queryKey: ['settings'],
+    queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
+    enabled: !!distributorId,
   });
 
   const { register, handleSubmit, formState: { errors } } = useForm<GstCredentialsInput>({
@@ -519,9 +523,11 @@ function PricesTab() {
 
 function ThresholdsTab() {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
   const { data: settings, isLoading: settingsLoading } = useQuery({
-    queryKey: ['settings'],
+    queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
+    enabled: !!distributorId,
   });
 
   // Also fetch cylinder types to pre-populate thresholds
@@ -634,9 +640,11 @@ function ThresholdsTab() {
 
 function ApprovalsTab() {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore((s) => s.distributorId);
   const { data: settings, isLoading } = useQuery({
-    queryKey: ['settings'],
+    queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
+    enabled: !!distributorId,
   });
 
   const mutation = useMutation({

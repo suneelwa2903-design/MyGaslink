@@ -24,7 +24,7 @@ export function DashboardLayout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
-  const { user, logout } = useAuthStore();
+  const { user, distributorId, logout } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -43,11 +43,14 @@ export function DashboardLayout() {
     localStorage.setItem('sidebar-collapsed', String(next));
   };
 
-  // Fetch pending actions for notification bell
+  // Fetch pending actions for notification bell — skip when super admin has
+  // no distributor selected (server returns empty list, but we avoid the
+  // round-trip and any per-tenant noise).
   const { data: pendingActionsData } = useQuery({
-    queryKey: ['pending-actions-notif'],
+    queryKey: ['pending-actions-notif', distributorId],
     queryFn: () => apiGet<{ actions: Array<{ actionId: string; description: string; severity: string; module: string; createdAt: string; actionType: string }> }>('/pending-actions', { status: 'open' }),
     refetchInterval: 60000, // refresh every minute
+    enabled: !!distributorId,
   });
 
   const pendingActions = pendingActionsData?.actions || [];

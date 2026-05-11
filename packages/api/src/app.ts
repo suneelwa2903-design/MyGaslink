@@ -90,8 +90,11 @@ export function createApp() {
   app.use('/api/drivers', authenticate, resolveDistributor, requireDistributor, driverRouter);
   app.use('/api/vehicles', authenticate, resolveDistributor, requireDistributor, vehicleRouter);
   app.use('/api/analytics', authenticate, resolveDistributor, requireDistributor, analyticsRoutes);
-  app.use('/api/settings', authenticate, resolveDistributor, requireDistributor, settingsRoutes);
-  app.use('/api/pending-actions', authenticate, resolveDistributor, requireDistributor, pendingActionsRoutes);
+  // settings + pending-actions GET / handlers gracefully return an empty
+  // response when super_admin has no distributor selected; other handlers in
+  // these routers guard distributorId inline. See WI-002 pattern.
+  app.use('/api/settings', authenticate, resolveDistributor, settingsRoutes);
+  app.use('/api/pending-actions', authenticate, resolveDistributor, pendingActionsRoutes);
   app.use('/api/accountability', authenticate, resolveDistributor, requireDistributor, accountabilityRoutes);
   app.use('/api/billing', authenticate, resolveDistributor, billingRoutes);
   app.use('/api/customer-portal', authenticate, resolveDistributor, requireDistributor, customerPortalRoutes);

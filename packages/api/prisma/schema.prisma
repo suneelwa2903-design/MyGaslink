@@ -564,17 +564,22 @@ model CustomerLedgerEntry {
 // ─── Products ────────────────────────────────────────────────────────────────
 
 model CylinderType {
-  id              String   @id @default(uuid()) @map("cylinder_type_id")
-  distributorId   String   @map("distributor_id")
-  typeName        String   @map("type_name")
-  capacity        Float
-  unit            String   @default("KG")
-  hsnCode         String   @default("27111900") @map("hsn_code")
-  isActive        Boolean  @default(true) @map("is_active")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id                 String   @id @default(uuid()) @map("cylinder_type_id")
+  distributorId      String   @map("distributor_id")
+  typeName           String   @map("type_name")
+  capacity           Float
+  unit               String   @default("KG")
+  hsnCode            String   @default("27111900") @map("hsn_code")
+  // Optional pointer back to the provider catalog row this type was imported
+  // from. Lets us trace tenant cylinder types back to the global IOCL/HPCL/etc.
+  // catalog (nullable for legacy rows and for fully bespoke types).
+  providerCatalogId  String?  @map("provider_catalog_id")
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   distributor        Distributor                @relation(fields: [distributorId], references: [id])
+  providerCatalog    ProviderCatalogCylinderType? @relation(fields: [providerCatalogId], references: [id])
   prices             CylinderPrice[]
   emptyPrices        EmptyCylinderPrice[]
   discounts          CustomerCylinderDiscount[]
@@ -588,6 +593,7 @@ model CylinderType {
   accountabilityLogs AccountabilityLog[]
 
   @@unique([distributorId, typeName])
+  @@index([providerCatalogId])
   @@map("cylinder_types")
 }
 
@@ -1401,6 +1407,8 @@ model ProviderCatalogCylinderType {
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
+
+  cylinderTypes CylinderType[]
 
   @@unique([providerCode, shortName])
   @@unique([providerCode, weight])

@@ -53,6 +53,23 @@ router.post('/',
   auditLog('create', 'provider_catalog_cylinder_type'),
   async (req, res) => {
     try {
+      // Case-insensitive global short-name check. The DB has a
+      // (providerCode, shortName) unique constraint, but the product rule
+      // is stricter: a shortName must be unique across the whole catalog
+      // regardless of provider, ignoring case ("19KG" == "19kg").
+      const existing = await prisma.providerCatalogCylinderType.findFirst({
+        where: { shortName: { equals: req.body.shortName, mode: 'insensitive' } },
+        select: { id: true, providerCode: true, shortName: true },
+      });
+      if (existing) {
+        return sendError(
+          res,
+          'Cylinder type already exists in provider catalog',
+          409,
+          'CATALOG_DUPLICATE_SHORT_NAME',
+        );
+      }
+
       const item = await prisma.providerCatalogCylinderType.create({
         data: req.body,
       });
@@ -195,6 +212,7 @@ router.post('/import',
             capacity: c.weight,
             unit: 'KG',
             hsnCode: c.hsnCode,
+            providerCatalogId: c.id,
           },
         }))
       );

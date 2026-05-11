@@ -70,29 +70,51 @@ async function main() {
   });
   console.log('Distributor admin created:', distAdmin.email);
 
-  // ─── 4. Create Cylinder Types ─────────────────────────────────────────────
-  const cylinderTypes = await Promise.all([
-    prisma.cylinderType.upsert({
-      where: { distributorId_typeName: { distributorId: distributor.id, typeName: '5 KG' } },
-      update: {},
-      create: { distributorId: distributor.id, typeName: '5 KG', capacity: 5, unit: 'KG', hsnCode: '27111900' },
+  // ─── 4a. Seed Provider Catalog (IOCL standard cylinders) ──────────────────
+  // Provider catalog is global (platform-level). Each distributor's
+  // CylinderType rows now point back to a catalog entry so we can trace
+  // tenant cylinder types back to the provider that supplies them.
+  const catalogEntries = [
+    { providerCode: 'IOCL', shortName: '5KG',    longName: 'IOCL 5 KG Domestic Cylinder',    weight: 5,     hsnCode: '27111900' },
+    { providerCode: 'IOCL', shortName: '19KG',   longName: 'IOCL 19 KG Commercial Cylinder', weight: 19,    hsnCode: '27111900' },
+    { providerCode: 'IOCL', shortName: '47.5KG', longName: 'IOCL 47.5 KG Commercial Cylinder', weight: 47.5, hsnCode: '27111900' },
+    { providerCode: 'IOCL', shortName: '425KG',  longName: 'IOCL 425 KG Bulk Cylinder',       weight: 425,   hsnCode: '27111900' },
+  ] as const;
+
+  const catalog = await Promise.all(catalogEntries.map((c) =>
+    prisma.providerCatalogCylinderType.upsert({
+      where: { providerCode_shortName: { providerCode: c.providerCode, shortName: c.shortName } },
+      update: { longName: c.longName, weight: c.weight, hsnCode: c.hsnCode, isActive: true },
+      create: { providerCode: c.providerCode, shortName: c.shortName, longName: c.longName, weight: c.weight, hsnCode: c.hsnCode },
     }),
-    prisma.cylinderType.upsert({
-      where: { distributorId_typeName: { distributorId: distributor.id, typeName: '19 KG' } },
-      update: {},
-      create: { distributorId: distributor.id, typeName: '19 KG', capacity: 19, unit: 'KG', hsnCode: '27111900' },
-    }),
-    prisma.cylinderType.upsert({
-      where: { distributorId_typeName: { distributorId: distributor.id, typeName: '47.5 KG' } },
-      update: {},
-      create: { distributorId: distributor.id, typeName: '47.5 KG', capacity: 47.5, unit: 'KG', hsnCode: '27111900' },
-    }),
-    prisma.cylinderType.upsert({
-      where: { distributorId_typeName: { distributorId: distributor.id, typeName: '425 KG' } },
-      update: {},
-      create: { distributorId: distributor.id, typeName: '425 KG', capacity: 425, unit: 'KG', hsnCode: '27111900' },
-    }),
-  ]);
+  ));
+  console.log('Provider catalog seeded:', catalog.map(c => `${c.providerCode} ${c.shortName}`).join(', '));
+
+  const catalogByWeight = new Map(catalog.map(c => [c.weight, c]));
+
+  // ─── 4b. Create Distributor Cylinder Types (linked to catalog) ────────────
+  const cylinderTypeSpecs = [
+    { typeName: '5 KG',    capacity: 5 },
+    { typeName: '19 KG',   capacity: 19 },
+    { typeName: '47.5 KG', capacity: 47.5 },
+    { typeName: '425 KG',  capacity: 425 },
+  ];
+
+  const cylinderTypes = await Promise.all(cylinderTypeSpecs.map((spec) => {
+    const catalogEntry = catalogByWeight.get(spec.capacity);
+    return prisma.cylinderType.upsert({
+      where: { distributorId_typeName: { distributorId: distributor.id, typeName: spec.typeName } },
+      update: { providerCatalogId: catalogEntry?.id ?? null },
+      create: {
+        distributorId: distributor.id,
+        typeName: spec.typeName,
+        capacity: spec.capacity,
+        unit: 'KG',
+        hsnCode: '27111900',
+        providerCatalogId: catalogEntry?.id ?? null,
+      },
+    });
+  }));
   console.log('Cylinder types created:', cylinderTypes.map(ct => ct.typeName).join(', '));
 
   // ─── 5. Create Cylinder Prices ────────────────────────────────────────────
@@ -327,10 +349,11 @@ async function main() {
     },
   });
 
-  // GST distributor cylinder types and prices (GST-inclusive prices)
+  // GST distributor cylinder types and prices (GST-inclusive prices) — also
+  // linked back to the IOCL provider catalog seeded above.
   const gstCylTypes = await Promise.all([
-    prisma.cylinderType.create({ data: { distributorId: gstDist.id, typeName: '19 KG', capacity: 19, unit: 'KG', hsnCode: '27111900' } }),
-    prisma.cylinderType.create({ data: { distributorId: gstDist.id, typeName: '47.5 KG', capacity: 47.5, unit: 'KG', hsnCode: '27111900' } }),
+    prisma.cylinderType.create({ data: { distributorId: gstDist.id, typeName: '19 KG', capacity: 19, unit: 'KG', hsnCode: '27111900', providerCatalogId: catalogByWeight.get(19)?.id ?? null } }),
+    prisma.cylinderType.create({ data: { distributorId: gstDist.id, typeName: '47.5 KG', capacity: 47.5, unit: 'KG', hsnCode: '27111900', providerCatalogId: catalogByWeight.get(47.5)?.id ?? null } }),
   ]);
   for (const ct of gstCylTypes) {
     await prisma.cylinderPrice.create({

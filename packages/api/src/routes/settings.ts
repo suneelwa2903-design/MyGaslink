@@ -25,7 +25,9 @@ router.get('/', async (req, res) => {
 
 router.get('/:key', async (req, res) => {
   try {
-    const setting = await settingsService.getSetting(req.user!.distributorId!, param(req.params.key));
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+    const setting = await settingsService.getSetting(distributorId, param(req.params.key));
     if (!setting) return sendNotFound(res, 'Setting');
     return sendSuccess(res, setting);
   } catch (err) {
@@ -39,8 +41,10 @@ router.put('/:key',
   auditLog('upsert', 'setting'),
   async (req, res) => {
     try {
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
       const setting = await settingsService.upsertSetting(
-        req.user!.distributorId!, param(req.params.key), req.body.value
+        distributorId, param(req.params.key), req.body.value
       );
       return sendSuccess(res, setting);
     } catch (err) {
@@ -54,7 +58,9 @@ router.delete('/:key',
   auditLog('delete', 'setting'),
   async (req, res) => {
     try {
-      await settingsService.deleteSetting(req.user!.distributorId!, param(req.params.key));
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      await settingsService.deleteSetting(distributorId, param(req.params.key));
       return sendSuccess(res, { message: 'Setting deleted' });
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -66,7 +72,9 @@ router.delete('/:key',
 
 router.get('/gst/credentials', async (req, res) => {
   try {
-    const creds = await settingsService.getGstCredentials(req.user!.distributorId!);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+    const creds = await settingsService.getGstCredentials(distributorId);
     return sendSuccess(res, creds);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -79,7 +87,9 @@ router.put('/gst/credentials',
   auditLog('upsert', 'gst_credentials'),
   async (req, res) => {
     try {
-      const creds = await settingsService.upsertGstCredentials(req.user!.distributorId!, req.body);
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      const creds = await settingsService.upsertGstCredentials(distributorId, req.body);
       return sendSuccess(res, { message: 'GST credentials saved' });
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -93,7 +103,9 @@ router.put('/gst/mode',
   auditLog('update', 'gst_mode'),
   async (req, res) => {
     try {
-      const result = await settingsService.updateGstMode(req.user!.distributorId!, req.body.mode);
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      const result = await settingsService.updateGstMode(distributorId, req.body.mode);
       return sendSuccess(res, result);
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -105,7 +117,9 @@ router.put('/gst/mode',
 
 router.get('/cylinder-thresholds/list', async (req, res) => {
   try {
-    const thresholds = await settingsService.getThresholds(req.user!.distributorId!);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+    const thresholds = await settingsService.getThresholds(distributorId);
     return sendSuccess(res, thresholds);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -116,7 +130,9 @@ router.get('/cylinder-thresholds/list', async (req, res) => {
 
 router.get('/approval-workflows/list', async (req, res) => {
   try {
-    const workflows = await settingsService.getApprovalWorkflows(req.user!.distributorId!);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+    const workflows = await settingsService.getApprovalWorkflows(distributorId);
     return sendSuccess(res, workflows);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -129,8 +145,10 @@ router.put('/approval-workflows',
   auditLog('update', 'approval_workflows'),
   async (req, res) => {
     try {
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
       const result = await settingsService.updateApprovalWorkflows(
-        req.user!.distributorId!, req.body.workflows
+        distributorId, req.body.workflows
       );
       return sendSuccess(res, result);
     } catch (err) {
@@ -143,7 +161,9 @@ router.put('/approval-workflows',
 
 router.get('/licenses/list', async (req, res) => {
   try {
-    const licenses = await settingsService.listLicenses(req.user!.distributorId!);
+    const distributorId = req.user!.distributorId;
+    if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+    const licenses = await settingsService.listLicenses(distributorId);
     return sendSuccess(res, licenses);
   } catch (err) {
     return sendError(res, (err as Error).message);
@@ -162,7 +182,9 @@ router.post('/licenses',
   auditLog('create', 'license'),
   async (req, res) => {
     try {
-      const license = await settingsService.createLicense(req.user!.distributorId!, req.body);
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      const license = await settingsService.createLicense(distributorId, req.body);
       return sendCreated(res, license);
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -181,7 +203,9 @@ router.put('/licenses/:id',
   auditLog('update', 'license'),
   async (req, res) => {
     try {
-      const license = await settingsService.updateLicense(param(req.params.id), req.user!.distributorId!, req.body);
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      const license = await settingsService.updateLicense(param(req.params.id), distributorId, req.body);
       if (!license) return sendNotFound(res, 'License');
       return sendSuccess(res, license);
     } catch (err) {
@@ -195,7 +219,9 @@ router.delete('/licenses/:id',
   auditLog('delete', 'license'),
   async (req, res) => {
     try {
-      const result = await settingsService.deleteLicense(param(req.params.id), req.user!.distributorId!);
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      const result = await settingsService.deleteLicense(param(req.params.id), distributorId);
       if (!result) return sendNotFound(res, 'License');
       return sendSuccess(res, { message: 'License deleted' });
     } catch (err) {
