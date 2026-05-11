@@ -52,6 +52,12 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // IMPORTANT: only 401 triggers the refresh-then-maybe-logout flow.
+    // Every other status (400 validation, 403, 404, 409, 5xx) is rejected
+    // as-is so the calling mutation/useQuery handles it inline. Never log
+    // the user out on a plain 4xx — CSV imports, form validation, and
+    // tenant-not-selected errors should toast or surface to the UI, not
+    // bounce to /login.
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
 
