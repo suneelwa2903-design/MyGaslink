@@ -259,6 +259,22 @@
       "completedAt": "2026-05-06",
       "description": "11 new tests in src/__tests__/onboarding-and-imports.test.ts covering /import-csv (happy path, duplicate phone, tenant isolation), /import-opening-balances (happy path, unknown name failure, tenant isolation), /analytics/overdue-call-list (sort order, credit-period exclusion, tenant isolation), and /confirm-delivery idempotency (duplicate same-qty → 200, duplicate diff-qty → 409). Total suite: 265 tests passing.",
       "blocksLaunch": false
+    },
+    {
+      "id": "WI-032",
+      "title": "Fix seed idempotency — convert creates to upserts",
+      "priority": "P2",
+      "status": "pending",
+      "blocksLaunch": false,
+      "description": "Re-running pnpm db:seed against a populated DB crashes on duplicate vehicle/driver/customer creates (P2002 on (distributor_id, vehicle_number) etc.). Convert all .create() in seed.ts to .upsert() — or guard each section with a 'skip if dist exists' check — so seed can be re-run safely at any time. Surfaced 2026-05-11 while re-seeding to verify the provider-catalog linkage in WI-031."
+    },
+    {
+      "id": "WI-033",
+      "title": "Fix Prisma migrate dev shadow DB failure",
+      "priority": "P1",
+      "status": "pending",
+      "blocksLaunch": false,
+      "description": "prisma migrate dev fails with P3006 — migration 20260506010000_monetary_fields_float_to_decimal does not replay cleanly against the shadow DB (references pricing_tiers which prior migration creates inline). Blocks all future schema changes from using migrate dev; the add_provider_catalog_linkage migration (2026-05-11) had to be hand-written and applied via migrate deploy. Fix before next schema change."
     }
   ]
 }
