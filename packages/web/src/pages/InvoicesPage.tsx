@@ -32,7 +32,7 @@ import {
   PaymentMethod,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
-import { useAuthStore } from '@/stores/authStore';
+import { useAuthStore, selectDistributorId } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -89,7 +89,7 @@ function formatCurrency(n: number) {
 
 export default function InvoicesPage() {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore((s) => s.distributorId);
+  const distributorId = useAuthStore(selectDistributorId);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [irnFilter, setIrnFilter] = useState('');
