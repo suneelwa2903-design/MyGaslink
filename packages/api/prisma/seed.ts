@@ -1076,6 +1076,34 @@ async function main() {
   }
   console.log('Customer inventory balances created:', customerBalances.length);
 
+  // ─── Pending Actions ──────────────────────────────────────────────────────
+  // The notification bell in the header polls /pending-actions?status=open.
+  // Without seed rows the bell always reads empty and looks non-functional,
+  // so seed a few realistic open actions across modules/severities.
+  const pendingActionSeed = [
+    {
+      module: 'inventory' as const, entityType: 'cylinder_type', entityId: cylinderTypes[1].id,
+      actionType: 'low_stock_alert', severity: 'high' as const,
+      description: '19 KG cylinders below warning threshold — 8 full remaining',
+    },
+    {
+      module: 'payment' as const, entityType: 'customer', entityId: customers[2].id,
+      actionType: 'overdue_followup', severity: 'critical' as const,
+      description: 'Metropolis Industries invoice overdue 12 days — follow up for payment',
+    },
+    {
+      module: 'order' as const, entityType: 'customer', entityId: customers[3].id,
+      actionType: 'delivery_discrepancy', severity: 'medium' as const,
+      description: 'Lakshmi Mess delivery returned 2 fewer empties than expected',
+    },
+  ];
+  for (const pa of pendingActionSeed) {
+    await prisma.pendingAction.create({
+      data: { distributorId: distributor.id, status: 'open', ...pa },
+    });
+  }
+  console.log('Pending actions created:', pendingActionSeed.length);
+
   console.log('\n✅ Seed complete! Login credentials:');
   console.log('  Super Admin:    admin@mygaslink.com / Admin@123');
   console.log('  Dist Admin:     bhargava@gasagency.com / Distadmin@123 (GST OFF)');
