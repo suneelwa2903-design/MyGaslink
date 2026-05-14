@@ -273,9 +273,19 @@
       "id": "WI-033",
       "title": "Fix Prisma migrate dev shadow DB failure",
       "priority": "P1",
-      "status": "pending",
+      "status": "done",
+      "completedAt": "2026-05-14",
       "blocksLaunch": false,
-      "description": "prisma migrate dev fails with P3006 — migration 20260506010000_monetary_fields_float_to_decimal does not replay cleanly against the shadow DB (references pricing_tiers which prior migration creates inline). Blocks all future schema changes from using migrate dev; the add_provider_catalog_linkage migration (2026-05-11) had to be hand-written and applied via migrate deploy. Fix before next schema change."
+      "description": "Root cause was worse than first thought: pricing_tiers, seat_requests, gst_api_usage, provider_catalog_cylinder_types and several enums (subscription_plan, seat_request_status) were added to schema.prisma but never captured in a migration — they only existed in dev DBs via `prisma db push`. There was also a BillingItemType vs billing_item_type naming drift. The migration history could not replay from empty at all (migrate reset failed on P3018). Fix: squashed the 5 drifted migration folders into a single regenerated baseline `20260323000000_init`, produced via `prisma migrate diff --from-empty --to-schema-datamodel`. Safe because no production DB exists yet (pre-launch) and CI builds fresh each run. Verified 2026-05-14: `prisma migrate reset --force` applies the single baseline cleanly, 265/265 API tests pass."
+    },
+    {
+      "id": "WI-034",
+      "title": "Fix seed.ts drivers/vehicles scoping after WI-032 refactor",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-14",
+      "blocksLaunch": false,
+      "description": "The WI-032 idempotency refactor hoisted `customers` to outer scope but left `drivers` and `vehicles` as `const` inside the `if (!bhargavaSeeded)` block, while the Bhargava transactional section (orders/assignments) references them from its own separate `if` block. A full `pnpm db:seed` on an empty DB crashed at seed.ts:677 with `ReferenceError: drivers is not defined` — only surfaced now because pre-WI-032 the seed never re-ran on a clean DB. Fix: hoisted `drivers` and `vehicles` to outer-scope `let` declarations alongside `customers`. Verified 2026-05-14: full seed completes (11 orders, 4 invoices, 4 payments, 8 customer balances)."
     }
   ]
 }

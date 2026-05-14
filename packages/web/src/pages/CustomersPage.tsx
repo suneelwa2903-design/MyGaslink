@@ -312,7 +312,14 @@ function CustomerFormModal({
         : apiPost('/customers', data),
     onSuccess: () => {
       toast.success(isEdit ? 'Customer updated' : 'Customer created');
+      // ['customers'] = the Customers page table.
+      // ['customers-list'] = the customer dropdown the Record Payment form
+      //   uses (BillingPaymentsPage) — without this, a renamed customer
+      //   shows the stale name in the payment dropdown.
+      // ['payments'] = payment rows embed the customer name.
       queryClient.invalidateQueries({ queryKey: ['customers'] });
+      queryClient.invalidateQueries({ queryKey: ['customers-list'] });
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
       onClose();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
