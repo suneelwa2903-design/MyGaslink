@@ -92,7 +92,12 @@ export function OnboardingTab() {
         </div>
         <div className="space-y-2">
           {progress.steps.map((s, i) => {
+            // Steps that have a dedicated modal on this very tab open it
+            // directly instead of navigating — otherwise the step's link
+            // ('/app/settings?tab=onboarding') just reloads this same page
+            // and the click feels dead.
             const isStock = s.key === 'opening_stock';
+            const isOpeningBalances = s.key === 'opening_balances';
             const inner = (
               <>
                 <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${s.done ? 'bg-accent-500 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-500'}`}>
@@ -105,11 +110,13 @@ export function OnboardingTab() {
               </>
             );
             const className = 'flex items-center gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 hover:bg-surface-100 dark:hover:bg-surface-700/50 transition-colors text-left w-full';
-            return isStock ? (
-              <button key={s.key} type="button" onClick={() => setOpeningStockOpen(true)} className={className}>{inner}</button>
-            ) : (
-              <a key={s.key} href={s.link} className={className}>{inner}</a>
-            );
+            if (isStock) {
+              return <button key={s.key} type="button" onClick={() => setOpeningStockOpen(true)} className={className}>{inner}</button>;
+            }
+            if (isOpeningBalances) {
+              return <button key={s.key} type="button" onClick={() => setImporter('opening-balances')} className={className}>{inner}</button>;
+            }
+            return <a key={s.key} href={s.link} className={className}>{inner}</a>;
           })}
         </div>
       </div>
