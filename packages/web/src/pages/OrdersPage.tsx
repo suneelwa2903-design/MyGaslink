@@ -504,7 +504,12 @@ function EditOrderModal({
 
   const { register, handleSubmit, control, formState: { errors } } = useForm({
     defaultValues: {
-      deliveryDate: order.deliveryDate,
+      // order.deliveryDate comes back as a full ISO datetime
+      // ("2026-05-14T00:00:00.000Z"), but updateOrderSchema.deliveryDate
+      // (and the <input type="date">) expect a bare YYYY-MM-DD. Without
+      // this trim, an unedited date field submits the ISO string and the
+      // PUT /orders/:id fails zod validation with a 400.
+      deliveryDate: order.deliveryDate?.split('T')[0] ?? order.deliveryDate,
       specialInstructions: order.specialInstructions || '',
       items: order.items.map((i) => ({
         cylinderTypeId: i.cylinderTypeId,
