@@ -80,10 +80,10 @@ CREATE TYPE "BillingStatus" AS ENUM ('pending_generation', 'invoice_generated', 
 CREATE TYPE "BillingTier" AS ENUM ('tier_1', 'tier_2', 'tier_3', 'tier_4');
 
 -- CreateEnum
-CREATE TYPE "BillingItemType" AS ENUM ('base_subscription', 'driver_login', 'other_login', 'custom_addon', 'discount');
+CREATE TYPE "billing_item_type" AS ENUM ('base_subscription', 'driver_login', 'other_login', 'customer_portal', 'gst_api_overage', 'extra_seat', 'custom_addon', 'discount', 'period_discount');
 
 -- CreateEnum
-CREATE TYPE "PendingActionModule" AS ENUM ('inventory', 'invoice', 'gst_compliance', 'payment', 'customer', 'order', 'driver');
+CREATE TYPE "PendingActionModule" AS ENUM ('inventory', 'invoice', 'gst_compliance', 'payment', 'customer', 'order', 'driver', 'billing');
 
 -- CreateEnum
 CREATE TYPE "PendingActionStatus" AS ENUM ('open', 'in_progress', 'resolved', 'failed', 'skipped');
@@ -104,6 +104,12 @@ CREATE TYPE "LedgerEntryType" AS ENUM ('invoice', 'credit_note', 'debit_note', '
 CREATE TYPE "ModificationType" AS ENUM ('update_info', 'credit_limit_change', 'stop_supply', 'resume_supply');
 
 -- CreateEnum
+CREATE TYPE "subscription_plan" AS ENUM ('starter', 'growth', 'business', 'enterprise');
+
+-- CreateEnum
+CREATE TYPE "seat_request_status" AS ENUM ('pending', 'approved', 'rejected');
+
+-- CreateEnum
 CREATE TYPE "LicenseType" AS ENUM ('peso', 'gst', 'date_of_incorporation', 'partnership_deed', 'pan', 'bank_account_details', 'cancellation_cheque', 'custom');
 
 -- CreateTable
@@ -121,13 +127,23 @@ CREATE TABLE "distributors" (
     "status" "DistributorStatus" NOT NULL DEFAULT 'active',
     "gst_mode" "GstMode" NOT NULL DEFAULT 'disabled',
     "provider_codes" TEXT[] DEFAULT ARRAY[]::TEXT[],
-    "subscription_plan" TEXT,
+    "subscription_plan" "subscription_plan",
     "billing_tier" "BillingTier",
     "billing_suspended" BOOLEAN NOT NULL DEFAULT false,
     "gaslink_billing_enabled" BOOLEAN NOT NULL DEFAULT false,
     "gaslink_billing_start_date" DATE,
     "latitude" DOUBLE PRECISION,
     "longitude" DOUBLE PRECISION,
+    "godown_address" TEXT,
+    "godown_city" TEXT,
+    "godown_state" TEXT,
+    "godown_pincode" TEXT,
+    "godown_latitude" DOUBLE PRECISION,
+    "godown_longitude" DOUBLE PRECISION,
+    "office_address" TEXT,
+    "office_city" TEXT,
+    "office_state" TEXT,
+    "office_pincode" TEXT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
     "deleted_at" TIMESTAMP(3),
@@ -153,6 +169,8 @@ CREATE TABLE "users" (
     "last_login_at" TIMESTAMP(3),
     "login_attempts" INTEGER NOT NULL DEFAULT 0,
     "locked_until" TIMESTAMP(3),
+    "reset_otp" TEXT,
+    "reset_otp_expires_at" TIMESTAMP(3),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
     "deleted_at" TIMESTAMP(3),
@@ -208,7 +226,7 @@ CREATE TABLE "customer_cylinder_discounts" (
     "discount_id" TEXT NOT NULL,
     "customer_id" TEXT NOT NULL,
     "cylinder_type_id" TEXT NOT NULL,
-    "discount_per_unit" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "discount_per_unit" DECIMAL(18,4) NOT NULL DEFAULT 0,
 
     CONSTRAINT "customer_cylinder_discounts_pkey" PRIMARY KEY ("discount_id")
 );
@@ -266,7 +284,7 @@ CREATE TABLE "customer_ledger_entries" (
     "entry_type" "LedgerEntryType" NOT NULL,
     "reference_id" TEXT NOT NULL,
     "invoice_id" TEXT,
-    "amount_delta" DOUBLE PRECISION NOT NULL,
+    "amount_delta" DECIMAL(18,4) NOT NULL,
     "narration" TEXT,
     "entry_date" DATE NOT NULL,
     "created_by" TEXT,
@@ -283,6 +301,7 @@ CREATE TABLE "cylinder_types" (
     "capacity" DOUBLE PRECISION NOT NULL,
     "unit" TEXT NOT NULL DEFAULT 'KG',
     "hsn_code" TEXT NOT NULL DEFAULT '27111900',
+    "provider_catalog_id" TEXT,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
@@ -295,7 +314,7 @@ CREATE TABLE "cylinder_prices" (
     "price_id" TEXT NOT NULL,
     "distributor_id" TEXT NOT NULL,
     "cylinder_type_id" TEXT NOT NULL,
-    "price" DOUBLE PRECISION NOT NULL,
+    "price" DECIMAL(18,4) NOT NULL,
     "effective_date" DATE NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -307,7 +326,7 @@ CREATE TABLE "empty_cylinder_prices" (
     "empty_price_id" TEXT NOT NULL,
     "distributor_id" TEXT NOT NULL,
     "cylinder_type_id" TEXT NOT NULL,
-    "empty_cylinder_price" DOUBLE PRECISION NOT NULL,
+    "empty_cylinder_price" DECIMAL(18,4) NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "empty_cylinder_prices_pkey" PRIMARY KEY ("empty_price_id")
@@ -337,7 +356,7 @@ CREATE TABLE "orders" (
     "delivery_date" DATE NOT NULL,
     "status" "OrderStatus" NOT NULL DEFAULT 'pending_driver_assignment',
     "order_type" "OrderType" NOT NULL DEFAULT 'delivery',
-    "total_amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "total_amount" DECIMAL(18,4) NOT NULL DEFAULT 0,
     "special_instructions" TEXT,
     "delivery_latitude" DOUBLE PRECISION,
     "delivery_longitude" DOUBLE PRECISION,
@@ -364,9 +383,9 @@ CREATE TABLE "order_items" (
     "quantity" INTEGER NOT NULL,
     "delivered_quantity" INTEGER,
     "empties_collected" INTEGER,
-    "unit_price" DOUBLE PRECISION NOT NULL,
-    "discount_per_unit" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "total_price" DOUBLE PRECISION NOT NULL,
+    "unit_price" DECIMAL(18,4) NOT NULL,
+    "discount_per_unit" DECIMAL(18,4) NOT NULL DEFAULT 0,
+    "total_price" DECIMAL(18,4) NOT NULL,
 
     CONSTRAINT "order_items_pkey" PRIMARY KEY ("order_item_id")
 );
@@ -473,19 +492,21 @@ CREATE TABLE "invoices" (
     "order_id" TEXT,
     "issue_date" DATE NOT NULL,
     "due_date" DATE NOT NULL,
-    "total_amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "amount_paid" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "outstanding_amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "total_amount" DECIMAL(18,4) NOT NULL DEFAULT 0,
+    "amount_paid" DECIMAL(18,4) NOT NULL DEFAULT 0,
+    "outstanding_amount" DECIMAL(18,4) NOT NULL DEFAULT 0,
     "status" "InvoiceStatus" NOT NULL DEFAULT 'draft',
     "irn_status" "IrnStatus" NOT NULL DEFAULT 'not_attempted',
     "ewb_status" "EwbStatus" NOT NULL DEFAULT 'not_attempted',
     "irn" TEXT,
     "ack_no" TEXT,
     "ack_date" TIMESTAMP(3),
-    "cgst_value" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "sgst_value" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "igst_value" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "cgst_value" DECIMAL(18,4) NOT NULL DEFAULT 0,
+    "sgst_value" DECIMAL(18,4) NOT NULL DEFAULT 0,
+    "igst_value" DECIMAL(18,4) NOT NULL DEFAULT 0,
     "is_gaslink_billing" BOOLEAN NOT NULL DEFAULT false,
+    "is_opening_balance" BOOLEAN NOT NULL DEFAULT false,
+    "notes" TEXT,
     "issued_by" TEXT,
     "closed_at" TIMESTAMP(3),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -503,10 +524,10 @@ CREATE TABLE "invoice_items" (
     "description" TEXT NOT NULL,
     "hsn_code" TEXT NOT NULL DEFAULT '27111900',
     "quantity" INTEGER NOT NULL,
-    "unit_price" DOUBLE PRECISION NOT NULL,
-    "discount_per_unit" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "unit_price" DECIMAL(18,4) NOT NULL,
+    "discount_per_unit" DECIMAL(18,4) NOT NULL DEFAULT 0,
     "gst_rate" DOUBLE PRECISION NOT NULL DEFAULT 18,
-    "total_price" DOUBLE PRECISION NOT NULL,
+    "total_price" DECIMAL(18,4) NOT NULL,
 
     CONSTRAINT "invoice_items_pkey" PRIMARY KEY ("invoice_item_id")
 );
@@ -516,7 +537,7 @@ CREATE TABLE "credit_notes" (
     "credit_note_id" TEXT NOT NULL,
     "invoice_id" TEXT NOT NULL,
     "credit_note_number" TEXT,
-    "total_amount" DOUBLE PRECISION NOT NULL,
+    "total_amount" DECIMAL(18,4) NOT NULL,
     "reason" TEXT NOT NULL,
     "status" "CreditNoteStatus" NOT NULL DEFAULT 'pending',
     "issue_date" DATE,
@@ -534,7 +555,7 @@ CREATE TABLE "debit_notes" (
     "debit_note_id" TEXT NOT NULL,
     "invoice_id" TEXT NOT NULL,
     "debit_note_number" TEXT,
-    "total_amount" DOUBLE PRECISION NOT NULL,
+    "total_amount" DECIMAL(18,4) NOT NULL,
     "reason" TEXT NOT NULL,
     "status" "DebitNoteStatus" NOT NULL DEFAULT 'pending',
     "issue_date" DATE,
@@ -552,7 +573,7 @@ CREATE TABLE "payment_transactions" (
     "payment_id" TEXT NOT NULL,
     "distributor_id" TEXT NOT NULL,
     "customer_id" TEXT NOT NULL,
-    "amount" DOUBLE PRECISION NOT NULL,
+    "amount" DECIMAL(18,4) NOT NULL,
     "payment_method" "PaymentMethod" NOT NULL,
     "reference_number" TEXT,
     "transaction_date" DATE NOT NULL,
@@ -571,7 +592,7 @@ CREATE TABLE "payment_allocations" (
     "allocation_id" TEXT NOT NULL,
     "payment_id" TEXT NOT NULL,
     "invoice_id" TEXT NOT NULL,
-    "allocated_amount" DOUBLE PRECISION NOT NULL,
+    "allocated_amount" DECIMAL(18,4) NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "payment_allocations_pkey" PRIMARY KEY ("allocation_id")
@@ -590,6 +611,9 @@ CREATE TABLE "inventory_events" (
     "reference_type" TEXT,
     "document_type" TEXT,
     "document_number" TEXT,
+    "document_date" DATE,
+    "vehicle_number" TEXT,
+    "driver_name" TEXT,
     "notes" TEXT,
     "created_by" TEXT NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -703,9 +727,9 @@ CREATE TABLE "gaslink_billing_cycles" (
     "period_end_date" DATE NOT NULL,
     "billing_status" "BillingStatus" NOT NULL DEFAULT 'pending_generation',
     "billing_tier" "BillingTier" NOT NULL,
-    "total_amount_excl_gst" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "total_gst_amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "total_amount_incl_gst" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "total_amount_excl_gst" DECIMAL(18,4) NOT NULL DEFAULT 0,
+    "total_gst_amount" DECIMAL(18,4) NOT NULL DEFAULT 0,
+    "total_amount_incl_gst" DECIMAL(18,4) NOT NULL DEFAULT 0,
     "invoice_id" TEXT,
     "due_date" DATE,
     "suspend_date" DATE,
@@ -719,22 +743,81 @@ CREATE TABLE "gaslink_billing_cycles" (
 CREATE TABLE "gaslink_billing_items" (
     "item_id" TEXT NOT NULL,
     "billing_cycle_id" TEXT NOT NULL,
-    "item_type" "BillingItemType" NOT NULL,
+    "item_type" "billing_item_type" NOT NULL,
     "description" TEXT NOT NULL,
     "hsn_code" TEXT NOT NULL DEFAULT '998314',
     "uom" TEXT NOT NULL DEFAULT 'NOS',
     "quantity" INTEGER NOT NULL,
-    "unit_price_excl_gst" DOUBLE PRECISION NOT NULL,
+    "unit_price_excl_gst" DECIMAL(18,4) NOT NULL,
     "gst_rate" DOUBLE PRECISION NOT NULL DEFAULT 18,
-    "discount_amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "line_total_excl_gst" DOUBLE PRECISION NOT NULL,
-    "line_gst_amount" DOUBLE PRECISION NOT NULL,
-    "line_total_incl_gst" DOUBLE PRECISION NOT NULL,
+    "discount_amount" DECIMAL(18,4) NOT NULL DEFAULT 0,
+    "line_total_excl_gst" DECIMAL(18,4) NOT NULL,
+    "line_gst_amount" DECIMAL(18,4) NOT NULL,
+    "line_total_incl_gst" DECIMAL(18,4) NOT NULL,
     "metadata" JSONB,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "gaslink_billing_items_pkey" PRIMARY KEY ("item_id")
+);
+
+-- CreateTable
+CREATE TABLE "pricing_tiers" (
+    "tier_id" TEXT NOT NULL,
+    "plan" "subscription_plan" NOT NULL,
+    "volume_min" INTEGER NOT NULL,
+    "volume_max" INTEGER,
+    "monthly_price" DECIMAL(18,4) NOT NULL,
+    "quarterly_discount" DOUBLE PRECISION NOT NULL DEFAULT 5,
+    "half_yearly_discount" DOUBLE PRECISION NOT NULL DEFAULT 10,
+    "yearly_discount" DOUBLE PRECISION NOT NULL DEFAULT 15,
+    "admin_seats" INTEGER NOT NULL DEFAULT 1,
+    "finance_seats" INTEGER NOT NULL DEFAULT 1,
+    "inventory_seats" INTEGER NOT NULL DEFAULT 1,
+    "driver_seats" INTEGER NOT NULL DEFAULT 5,
+    "gst_api_calls_included" INTEGER NOT NULL DEFAULT 1500,
+    "extra_seat_price_admin" DECIMAL(18,4) NOT NULL DEFAULT 299,
+    "extra_seat_price_driver" DECIMAL(18,4) NOT NULL DEFAULT 99,
+    "customer_portal_price" DECIMAL(18,4) NOT NULL DEFAULT 49,
+    "gst_api_overage_price" DECIMAL(18,4) NOT NULL DEFAULT 2,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "pricing_tiers_pkey" PRIMARY KEY ("tier_id")
+);
+
+-- CreateTable
+CREATE TABLE "gst_api_usage" (
+    "usage_id" TEXT NOT NULL,
+    "distributor_id" TEXT NOT NULL,
+    "month" INTEGER NOT NULL,
+    "year" INTEGER NOT NULL,
+    "irn_call_count" INTEGER NOT NULL DEFAULT 0,
+    "ewb_call_count" INTEGER NOT NULL DEFAULT 0,
+    "total_calls" INTEGER NOT NULL DEFAULT 0,
+    "allocated_calls" INTEGER NOT NULL DEFAULT 0,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "gst_api_usage_pkey" PRIMARY KEY ("usage_id")
+);
+
+-- CreateTable
+CREATE TABLE "seat_requests" (
+    "request_id" TEXT NOT NULL,
+    "distributor_id" TEXT NOT NULL,
+    "requested_role" TEXT NOT NULL,
+    "requested_by" TEXT NOT NULL,
+    "reason" TEXT,
+    "status" "seat_request_status" NOT NULL DEFAULT 'pending',
+    "approved_by" TEXT,
+    "approved_at" TIMESTAMP(3),
+    "price_per_month" DECIMAL(18,4),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "seat_requests_pkey" PRIMARY KEY ("request_id")
 );
 
 -- CreateTable
@@ -776,7 +859,7 @@ CREATE TABLE "accountability_logs" (
     "incident_type" "AccountabilityType" NOT NULL,
     "incident_date" DATE NOT NULL,
     "quantity" INTEGER NOT NULL,
-    "cost_amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "cost_amount" DECIMAL(18,4) NOT NULL DEFAULT 0,
     "description" TEXT NOT NULL,
     "status" "AccountabilityStatus" NOT NULL DEFAULT 'open',
     "resolved_by" TEXT,
@@ -865,6 +948,21 @@ CREATE TABLE "hsn_codes" (
     CONSTRAINT "hsn_codes_pkey" PRIMARY KEY ("hsn_code")
 );
 
+-- CreateTable
+CREATE TABLE "provider_catalog_cylinder_types" (
+    "id" TEXT NOT NULL,
+    "provider_code" TEXT NOT NULL,
+    "short_name" TEXT NOT NULL,
+    "long_name" TEXT NOT NULL,
+    "weight" DOUBLE PRECISION NOT NULL,
+    "hsn_code" TEXT NOT NULL DEFAULT '27111900',
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "provider_catalog_cylinder_types_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
@@ -903,6 +1001,9 @@ CREATE INDEX "customer_ledger_entries_distributor_id_customer_id_entry_da_idx" O
 
 -- CreateIndex
 CREATE INDEX "customer_ledger_entries_reference_id_idx" ON "customer_ledger_entries"("reference_id");
+
+-- CreateIndex
+CREATE INDEX "cylinder_types_provider_catalog_id_idx" ON "cylinder_types"("provider_catalog_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "cylinder_types_distributor_id_type_name_key" ON "cylinder_types"("distributor_id", "type_name");
@@ -1022,6 +1123,12 @@ CREATE INDEX "gaslink_billing_cycles_distributor_id_period_start_date_idx" ON "g
 CREATE INDEX "gaslink_billing_cycles_billing_status_idx" ON "gaslink_billing_cycles"("billing_status");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "pricing_tiers_plan_key" ON "pricing_tiers"("plan");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "gst_api_usage_distributor_id_month_year_key" ON "gst_api_usage"("distributor_id", "month", "year");
+
+-- CreateIndex
 CREATE INDEX "pending_actions_distributor_id_status_idx" ON "pending_actions"("distributor_id", "status");
 
 -- CreateIndex
@@ -1050,6 +1157,12 @@ CREATE UNIQUE INDEX "distributor_settings_distributor_id_setting_key_key" ON "di
 
 -- CreateIndex
 CREATE INDEX "licenses_distributor_id_expiry_date_idx" ON "licenses"("distributor_id", "expiry_date");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "provider_catalog_cylinder_types_provider_code_short_name_key" ON "provider_catalog_cylinder_types"("provider_code", "short_name");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "provider_catalog_cylinder_types_provider_code_weight_key" ON "provider_catalog_cylinder_types"("provider_code", "weight");
 
 -- AddForeignKey
 ALTER TABLE "users" ADD CONSTRAINT "users_distributor_id_fkey" FOREIGN KEY ("distributor_id") REFERENCES "distributors"("distributor_id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1086,6 +1199,9 @@ ALTER TABLE "customer_ledger_entries" ADD CONSTRAINT "customer_ledger_entries_cu
 
 -- AddForeignKey
 ALTER TABLE "cylinder_types" ADD CONSTRAINT "cylinder_types_distributor_id_fkey" FOREIGN KEY ("distributor_id") REFERENCES "distributors"("distributor_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "cylinder_types" ADD CONSTRAINT "cylinder_types_provider_catalog_id_fkey" FOREIGN KEY ("provider_catalog_id") REFERENCES "provider_catalog_cylinder_types"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "cylinder_prices" ADD CONSTRAINT "cylinder_prices_distributor_id_fkey" FOREIGN KEY ("distributor_id") REFERENCES "distributors"("distributor_id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1221,6 +1337,12 @@ ALTER TABLE "gaslink_billing_cycles" ADD CONSTRAINT "gaslink_billing_cycles_dist
 
 -- AddForeignKey
 ALTER TABLE "gaslink_billing_items" ADD CONSTRAINT "gaslink_billing_items_billing_cycle_id_fkey" FOREIGN KEY ("billing_cycle_id") REFERENCES "gaslink_billing_cycles"("cycle_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "gst_api_usage" ADD CONSTRAINT "gst_api_usage_distributor_id_fkey" FOREIGN KEY ("distributor_id") REFERENCES "distributors"("distributor_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "seat_requests" ADD CONSTRAINT "seat_requests_distributor_id_fkey" FOREIGN KEY ("distributor_id") REFERENCES "distributors"("distributor_id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "pending_actions" ADD CONSTRAINT "pending_actions_distributor_id_fkey" FOREIGN KEY ("distributor_id") REFERENCES "distributors"("distributor_id") ON DELETE RESTRICT ON UPDATE CASCADE;

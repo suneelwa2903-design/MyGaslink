@@ -194,6 +194,8 @@ async function main() {
   // (orders/invoices/payments) further down can also reference them when
   // gated by the same flag.
   let customers: Awaited<ReturnType<typeof prisma.customer.create>>[] = [];
+  let drivers: Awaited<ReturnType<typeof prisma.driver.create>>[] = [];
+  let vehicles: Awaited<ReturnType<typeof prisma.vehicle.create>>[] = [];
   if (!bhargavaSeeded) {
   customers = await Promise.all([
     prisma.customer.create({
@@ -251,7 +253,7 @@ async function main() {
   console.log('Customer discounts set');
 
   // ─── 10. Create Drivers ───────────────────────────────────────────────────
-  const drivers = await Promise.all([
+  drivers = await Promise.all([
     prisma.driver.create({
       data: { distributorId: distributor.id, driverName: 'Raju Kumar', phone: '9800000001', licenseNumber: 'TS09-2020-001', employmentType: 'permanent', status: 'active', availableToday: true },
     }),
@@ -265,7 +267,7 @@ async function main() {
   console.log('Drivers created:', drivers.map(d => d.driverName).join(', '));
 
   // ─── 11. Create Vehicles ──────────────────────────────────────────────────
-  const vehicles = await Promise.all([
+  vehicles = await Promise.all([
     prisma.vehicle.create({
       data: { distributorId: distributor.id, vehicleNumber: 'TS09-AB-1234', vehicleType: 'Truck', capacity: 100, status: 'idle' },
     }),
