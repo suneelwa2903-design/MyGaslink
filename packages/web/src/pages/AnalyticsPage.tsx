@@ -9,11 +9,9 @@ import {
   HiOutlineArrowDownTray,
   HiOutlineTruck,
   HiOutlineCube,
-  HiOutlineClipboardDocumentList,
   HiOutlineClock,
   HiOutlineExclamationTriangle,
   HiOutlineBanknotes,
-  HiOutlineBell,
   HiOutlineCheckCircle,
   HiOutlineXCircle,
 } from 'react-icons/hi2';
@@ -234,16 +232,19 @@ export default function AnalyticsPage() {
     }
   };
 
+  // Four dashboard metric cards. Trimmed from eight on founder feedback:
+  // Orders Today / Delivered were redundant with the Today's Dispatch
+  // section, Revenue was a contextless raw number, and Pending Actions
+  // already has its own dedicated section below. Each remaining card is
+  // clickable and routes to where you'd actually act on it — note the
+  // links go to /app/collections and /app/billing-payments, NOT /app/billing
+  // (which redirects to Settings).
   const dashboardMetrics = dashboardStats
     ? [
-        { label: 'Orders Today', value: dashboardStats.ordersToday, icon: HiOutlineClipboardDocumentList, color: 'text-brand-500', bg: 'bg-brand-50 dark:bg-brand-500/10', link: '/app/orders' },
-        { label: 'Delivered', value: dashboardStats.deliveredToday, icon: HiOutlineTruck, color: 'text-accent-500', bg: 'bg-accent-50 dark:bg-accent-500/10', link: '/app/orders?status=delivered' },
-        { label: 'Revenue', value: formatCurrency(dashboardStats.revenueToday), icon: HiOutlineCurrencyRupee, color: 'text-accent-600', bg: 'bg-accent-50 dark:bg-accent-500/10', link: '/app/billing' },
         { label: 'Pending Orders', value: dashboardStats.pendingOrders, icon: HiOutlineClock, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-500/10', link: '/app/orders?status=pending_driver_assignment' },
-        { label: 'Overdue Invoices', value: dashboardStats.overdueInvoices, icon: HiOutlineExclamationTriangle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', link: '/app/billing?status=overdue' },
-        { label: 'Outstanding Amount', value: formatCurrency(dashboardStats.totalOutstanding), icon: HiOutlineBanknotes, color: 'text-flame-500', bg: 'bg-flame-50 dark:bg-flame-500/10', link: '/app/billing' },
+        { label: 'Outstanding Amount', value: formatCurrency(dashboardStats.totalOutstanding), icon: HiOutlineBanknotes, color: 'text-flame-500', bg: 'bg-flame-50 dark:bg-flame-500/10', link: '/app/collections' },
+        { label: 'Overdue Invoices', value: dashboardStats.overdueInvoices, icon: HiOutlineExclamationTriangle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', link: '/app/billing-payments?status=overdue' },
         { label: 'Inventory Alerts', value: dashboardStats.inventoryAlerts, icon: HiOutlineCube, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', link: '/app/inventory' },
-        { label: 'Pending Actions', value: dashboardStats.pendingActions, icon: HiOutlineBell, color: 'text-brand-500', bg: 'bg-brand-50 dark:bg-brand-500/10', link: '' },
       ]
     : [];
 

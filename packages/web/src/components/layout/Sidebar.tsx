@@ -7,6 +7,7 @@ import {
   HiOutlineCube,
   HiOutlineUsers,
   HiOutlineBanknotes,
+  HiOutlineCurrencyRupee,
   HiOutlineTruck,
   HiOutlineChartBar,
   HiOutlineCog6Tooth,
@@ -83,6 +84,19 @@ const adminMenuItems: MenuItem[] = [
     labelKey: 'nav.billing',
     path: '/app/billing-payments',
     icon: HiOutlineBanknotes,
+    roles: [
+      UserRole.SUPER_ADMIN,
+      UserRole.DISTRIBUTOR_ADMIN,
+      UserRole.FINANCE,
+    ],
+  },
+  {
+    // Collections (who owes money / call list) is a daily workflow for
+    // distributor admin + finance. No labelKey yet — labelOf() falls back
+    // to `label`, so EN works and i18n can add nav.collections later.
+    label: 'Collections',
+    path: '/app/collections',
+    icon: HiOutlineCurrencyRupee,
     roles: [
       UserRole.SUPER_ADMIN,
       UserRole.DISTRIBUTOR_ADMIN,
