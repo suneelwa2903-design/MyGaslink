@@ -357,7 +357,7 @@ function AssignmentsTab() {
                 </thead>
                 <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
                   {pendingOrders.orders.map((o: any) => (
-                    <tr key={o.id}>
+                    <tr key={o.orderId}>
                       <td className="px-4 py-3 text-sm font-mono">{o.orderNumber}</td>
                       <td className="px-4 py-3 text-sm">{o.customer?.customerName}</td>
                       <td className="px-4 py-3 text-sm">{o.deliveryDate?.split('T')[0]}</td>
