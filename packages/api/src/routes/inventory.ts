@@ -183,7 +183,7 @@ router.get('/threshold-alerts',
   }
 });
 
-// GET /api/inventory/customer-balances
+// GET /api/inventory/customer-balances  (all customers, optional ?customerId=)
 router.get('/customer-balances',
   requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   async (req, res) => {
@@ -191,6 +191,24 @@ router.get('/customer-balances',
     const balances = await inventoryService.getCustomerBalances(
       req.user!.distributorId!,
       req.query.customerId as string
+    );
+    return sendSuccess(res, balances);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
+
+// GET /api/inventory/customer-balances/:customerId  (single customer)
+// Used by the Customers page detail modal. Tenant isolation is enforced
+// inside getCustomerBalances — it filters via `customer: { distributorId }`,
+// so a customerId belonging to another distributor simply returns [].
+router.get('/customer-balances/:customerId',
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  async (req, res) => {
+  try {
+    const balances = await inventoryService.getCustomerBalances(
+      req.user!.distributorId!,
+      param(req.params.customerId)
     );
     return sendSuccess(res, balances);
   } catch (err) {
