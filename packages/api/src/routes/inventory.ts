@@ -217,23 +217,36 @@ router.get('/customer-balances/:customerId',
 });
 
 // PUT /api/inventory/lock-summary
+// Two shapes:
+//   { cylinderTypeId, date, lock }  → lock/unlock a single cylinder type
+//   { date }                       → lock the whole day (all cylinder types)
+// cylinderTypeId and lock are optional; lock defaults to true so the
+// frontend's day-level "Lock Day" button can just send { date }.
 router.put('/lock-summary',
   requireRole('super_admin', 'distributor_admin'),
   validate(z.object({
-    cylinderTypeId: z.string().uuid(),
+    cylinderTypeId: z.string().uuid().optional(),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    lock: z.boolean(),
+    lock: z.boolean().optional().default(true),
   })),
   auditLog('lock_summary', 'inventory'),
   async (req, res) => {
     try {
-      const result = await inventoryService.lockSummary(
-        req.user!.distributorId!,
-        req.body.cylinderTypeId,
-        req.body.date,
-        req.user!.userId,
-        req.body.lock
-      );
+      const { cylinderTypeId, date, lock } = req.body;
+      const result = cylinderTypeId
+        ? await inventoryService.lockSummary(
+            req.user!.distributorId!,
+            cylinderTypeId,
+            date,
+            req.user!.userId,
+            lock,
+          )
+        : await inventoryService.setSummaryLockForDate(
+            req.user!.distributorId!,
+            date,
+            req.user!.userId,
+            lock,
+          );
       return sendSuccess(res, result);
     } catch (err) {
       return sendError(res, (err as Error).message);

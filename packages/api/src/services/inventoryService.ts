@@ -606,6 +606,32 @@ export async function lockSummary(
 }
 
 /**
+ * Lock or unlock ALL inventory summaries for a given date (day-level).
+ * Mirrors the per-cylinder-type lockSummary() above, but operates on every
+ * summary row for the date — this is what the "Lock Day" button on the
+ * Inventory page drives.
+ */
+export async function setSummaryLockForDate(
+  distributorId: string,
+  date: string,
+  userId: string,
+  lock: boolean
+) {
+  const summaryDate = new Date(date);
+
+  const result = await prisma.inventorySummary.updateMany({
+    where: { distributorId, summaryDate },
+    data: {
+      isLocked: lock,
+      lockedAt: lock ? new Date() : null,
+      lockedBy: lock ? userId : null,
+    },
+  });
+
+  return { affectedCount: result.count, date, locked: lock };
+}
+
+/**
  * Unlock all inventory summaries for a given date.
  */
 export async function unlockSummariesForDate(

@@ -222,7 +222,21 @@ export default function InventoryPage() {
                 <HiOutlineLockOpen className="h-4 w-4" />Unlock Day
               </Button>
             ) : (
-              <Button variant="accent" size="sm" onClick={() => lockMutation.mutate()} loading={lockMutation.isPending}>
+              <Button
+                variant="accent"
+                size="sm"
+                onClick={() => {
+                  // Locking a day freezes all of that day's inventory
+                  // summaries — an admin has to explicitly unlock to edit
+                  // again. Confirm before doing it.
+                  if (window.confirm(
+                    `Lock inventory for ${selectedDate}? All summaries for this day will be frozen and can only be changed after an admin unlocks the day.`
+                  )) {
+                    lockMutation.mutate();
+                  }
+                }}
+                loading={lockMutation.isPending}
+              >
                 <HiOutlineLockClosed className="h-4 w-4" />Lock Day
               </Button>
             )}
