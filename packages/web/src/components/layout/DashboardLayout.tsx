@@ -97,19 +97,16 @@ export function DashboardLayout() {
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top header bar */}
         <header className="flex h-16 items-center justify-between gap-4 border-b border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 px-4 lg:px-6 shrink-0">
-          {/* Left: hamburger + page title area */}
+          {/* Left: mobile sidebar trigger + page title area */}
           <div className="flex items-center gap-3">
+            {/* Hamburger is mobile-only: on desktop the sidebar has its own
+                Collapse/Expand button, so showing it there is redundant.
+                On mobile the sidebar is an off-screen drawer and this is
+                the only way to open it. */}
             <button
-              onClick={() => {
-                // On mobile: open sidebar overlay; on desktop: toggle collapse
-                if (window.innerWidth >= 1024) {
-                  toggleSidebar();
-                } else {
-                  setSidebarOpen(true);
-                }
-              }}
-              className="rounded-lg p-2 text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-700 dark:hover:text-white transition-colors"
-              aria-label="Toggle sidebar"
+              onClick={() => setSidebarOpen(true)}
+              className="rounded-lg p-2 text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-700 dark:hover:text-white transition-colors lg:hidden"
+              aria-label="Open navigation menu"
             >
               <HiBars3 className="h-5 w-5" />
             </button>
