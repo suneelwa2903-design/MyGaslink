@@ -246,6 +246,22 @@ export async function lookupGstin(gstin: string): Promise<GstinDetails> {
   const legalName = (data.LegalName || data.LglNm || data.lgnm || '').trim();
   const tradeName = (data.TradeName || data.TrdNm || data.tradeNam || '').trim();
 
+  // Fail loud when NIC returns success status but a payload missing the
+  // fields the customer-create flow depends on. Silently defaulting to
+  // empty strings (the previous behavior) hides upstream regressions and
+  // is the receiving-side dual of CLAUDE.md anti-pattern #6. State code
+  // also has to be a real 2-digit GST state code so downstream IRN
+  // payloads don't get rejected at NIC validation.
+  const requiredMissing: string[] = [];
+  if (!legalName) requiredMissing.push('legalName');
+  if (!stateCode || !/^\d{2}$/.test(stateCode)) requiredMissing.push('stateCode');
+  if (!status) requiredMissing.push('status');
+  if (requiredMissing.length > 0) {
+    throw new Error(
+      `GSTIN lookup response for ${gstin} is missing required fields: ${requiredMissing.join(', ')}`,
+    );
+  }
+
   return {
     gstin: data.Gstin || gstin,
     legalName,
