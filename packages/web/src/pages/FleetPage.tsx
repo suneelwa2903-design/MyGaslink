@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
@@ -32,8 +33,11 @@ const VEHICLE_STATUS_VARIANTS: Record<string, 'success' | 'info' | 'warning' | '
 
 export default function FleetPage() {
   // Driver Assignment moved to the Orders page — Fleet is now just the
-  // drivers + vehicles registry.
-  const [tab, setTab] = useState<'drivers' | 'vehicles'>('drivers');
+  // drivers + vehicles registry. Supports a ?tab= query param so other
+  // pages (and bookmarks) can deep-link directly to a tab.
+  const [searchParams] = useSearchParams();
+  const initialTab = (searchParams.get('tab') === 'vehicles' ? 'vehicles' : 'drivers') as 'drivers' | 'vehicles';
+  const [tab, setTab] = useState<'drivers' | 'vehicles'>(initialTab);
 
   const tabs = [
     { key: 'drivers' as const, label: 'Drivers' },

@@ -617,8 +617,20 @@ export async function confirmDelivery(
     include: { items: true, customer: { select: { id: true, creditPeriodDays: true } } },
   });
   if (!order) throw new OrderError('Order not found', 404);
+  // Returns-only orders are confirmed through the same endpoint — the
+  // confirmation modal in the frontend always POSTs to /confirm-delivery,
+  // regardless of order type. Delegate to confirmReturnsCollection with the
+  // delivery-shape body mapped to a returns-shape body (the "Return Qty"
+  // input on the modal binds to deliveredQuantity for both order types,
+  // so that's the value we use as collectedQuantity).
   if (order.orderType === 'returns_only') {
-    throw new OrderError('Use confirm-returns endpoint for returns-only orders', 400);
+    return confirmReturnsCollection(orderId, distributorId, userId, {
+      items: data.items.map((i) => ({
+        cylinderTypeId: i.cylinderTypeId,
+        collectedQuantity: i.deliveredQuantity,
+      })),
+      notes: data.notes,
+    });
   }
 
   // Idempotency: a duplicate confirmation (e.g. driver retries after uncertain
@@ -840,7 +852,11 @@ export async function confirmReturnsCollection(
     const updated = await tx.order.update({
       where: { id: orderId },
       data: {
-        status: 'returns_only',
+        // Returns-only and delivery orders share the "completed" final
+        // status — orderType already distinguishes the two; doubling that
+        // up on status was redundant and gave the order list two terminal
+        // states for the same concept.
+        status: 'delivered',
         deliveredAt: new Date(),
         deliveryNotes: data.notes || null,
       },
@@ -851,7 +867,7 @@ export async function confirmReturnsCollection(
       data: {
         orderId,
         oldStatus: order.status,
-        newStatus: 'returns_only',
+        newStatus: 'delivered',
         changedBy: userId,
         notes: data.notes || 'Empty cylinders collected',
       },
