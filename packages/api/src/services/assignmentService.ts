@@ -59,6 +59,9 @@ export async function getRecommendedMappings(distributorId: string, date: string
         available: driver.availableToday,
         vehicleId: todayMapping.vehicleId,
         vehicleNumber: todayMapping.vehicle?.vehicleNumber ?? null,
+        // WI-036: trip-sheet PDF (WI-038) is keyed by assignment id, so
+        // surface it alongside the mapping for confirmed rows.
+        assignmentId: todayMapping.id,
         status: 'confirmed' as const,
         source: 'today' as const,
       };

@@ -177,11 +177,11 @@ router.post('/bulk-assign-driver',
 );
 
 // POST /api/orders/preflight-dispatch
-// WI-035: For a driver's daily route, run pre-dispatch GST preflight
-// (IRN + EWB for B2B, EWB-only for B2C ≥ ₹50K, nothing for B2C < ₹50K
-// or GST-disabled tenants). Per-order partial dispatch — successes move
-// to pending_delivery, failures revert to pending_dispatch and surface
-// in the response + PendingActions queue.
+// WI-035 + amendment: For a driver's daily route, run pre-dispatch GST
+// preflight (IRN + EWB for B2B, standalone EWB for every B2C / URP, no
+// GST calls for GST-disabled tenants). Per-order partial dispatch —
+// successes move to pending_delivery, failures revert to
+// pending_dispatch and surface in the response + PendingActions queue.
 router.post('/preflight-dispatch',
   requireRole('super_admin', 'distributor_admin'),
   validate(preflightDispatchSchema),
