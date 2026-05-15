@@ -74,6 +74,7 @@ interface InvoiceForPdf {
     ackDate: Date | null;
     signedQr: string | null;
     ewbNo: string | null;
+    ewbStatus: string;
     ewbDate: Date | null;
     ewbValidTill: Date | null;
     isLatest: boolean;
@@ -101,6 +102,7 @@ const LAYOUT = {
     PAPER: '#ffffff',
     PILL_SUCCESS: '#059669',
     PILL_FAILED: '#dc2626',
+    PILL_WARN: '#d97706',
   },
   TYPO: { H1: 18, H2: 11, BODY: 9, LABEL: 8, CAPTION: 8 },
 };
@@ -568,7 +570,18 @@ async function drawComplianceSection(
 
     doc.fontSize(F.H2).fillColor(T.PRIMARY).font('Helvetica-Bold');
     doc.text('E-Waybill (EWB)', ewbCardX + pad, cy, { width: ewbTextW });
-    drawPill(doc, ewbCardX + ewbCardWidth - pad - 72, cy - 2, 'SUCCESS', T.PILL_SUCCESS);
+    // Pill reflects the actual ewbStatus instead of always reading SUCCESS.
+    // Without this, a cancelled or failed EWB still prints with a green
+    // SUCCESS chip, which is misleading on the invoice copy.
+    const ewbStatusVal = gstDoc?.ewbStatus;
+    const ewbPillText = ewbStatusVal === 'active' ? 'SUCCESS'
+      : ewbStatusVal === 'failed' ? 'FAILED'
+      : ewbStatusVal === 'cancelled' ? 'CANCELLED'
+      : 'PENDING';
+    const ewbPillColor = ewbStatusVal === 'active' ? T.PILL_SUCCESS
+      : ewbStatusVal === 'failed' ? T.PILL_FAILED
+      : T.PILL_WARN;
+    drawPill(doc, ewbCardX + ewbCardWidth - pad - 72, cy - 2, ewbPillText, ewbPillColor);
     cy += 14;
 
     doc.fontSize(F.BODY).fillColor(T.TEXT).font('Helvetica');

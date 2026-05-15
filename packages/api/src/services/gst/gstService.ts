@@ -123,10 +123,16 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
       const ackDt = irnResponse.data?.AckDt || irnResponse.AckDt;
       const signedQr = irnResponse.data?.SignedQRCode || irnResponse.SignedQRCode;
 
-      // WhiteBooks may return EWB data along with IRN (auto-generated)
-      const irnEwbNo = irnResponse.data?.EwbNo || irnResponse.EwbNo;
-      const irnEwbDt = irnResponse.data?.EwbDt || irnResponse.EwbDt;
-      const irnEwbValidTill = irnResponse.data?.EwbValidTill || irnResponse.EwbValidTill;
+      // WhiteBooks may return EWB data along with IRN (auto-generated).
+      // The sandbox has been observed to use both naming conventions for
+      // dates — the IRN-style keys (EwbDt / EwbValidTill) and the EWB-style
+      // keys (validFrom / validTo). Try both so we don't silently drop the
+      // dates when only one set is present.
+      const irnEwbNo = irnResponse.data?.EwbNo ?? irnResponse.EwbNo;
+      const irnEwbDt = irnResponse.data?.EwbDt ?? irnResponse.EwbDt
+        ?? irnResponse.data?.validFrom ?? irnResponse.validFrom;
+      const irnEwbValidTill = irnResponse.data?.EwbValidTill ?? irnResponse.EwbValidTill
+        ?? irnResponse.data?.validTo ?? irnResponse.validTo;
       const hasIrnEwb = !!irnEwbNo && irnEwbNo !== 0 && irnEwbNo !== '0';
 
       // Update invoice with IRN (and EWB if returned)
@@ -267,7 +273,40 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
               ewbPayload, 'ewaybill');
             const ewbNo = ewbResponse.data?.ewayBillNo;
+            const ewbDate = ewbResponse.data?.validFrom;
+            const ewbValidTill = ewbResponse.data?.validTo;
             await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
+            // Ensure there's a gstDocument row to hold the EWB details
+            // (the dup-IRN branch entered the catch block before creating
+            // the row, so we either upsert it or create it now).
+            const existingDoc = await prisma.gstDocument.findFirst({
+              where: { invoiceId, isLatest: true },
+            });
+            if (existingDoc) {
+              await prisma.gstDocument.update({
+                where: { id: existingDoc.id },
+                data: {
+                  ewbStatus: 'active',
+                  ewbNo: ewbNo?.toString(),
+                  ewbDate: ewbDate ? new Date(ewbDate) : null,
+                  ewbValidTill: ewbValidTill ? new Date(ewbValidTill) : null,
+                },
+              });
+            } else {
+              await prisma.gstDocument.create({
+                data: {
+                  invoiceId, orderId: invoice.orderId, distributorId,
+                  docType: 'INV', gstDocNo: invoice.invoiceNumber,
+                  irnStatus: 'success',
+                  ewbStatus: 'active',
+                  ewbNo: ewbNo?.toString(),
+                  ewbDate: ewbDate ? new Date(ewbDate) : null,
+                  ewbValidTill: ewbValidTill ? new Date(ewbValidTill) : null,
+                  responsePayload: ewbResponse,
+                  isLatest: true,
+                },
+              });
+            }
             result.ewb = { ewbNo, status: 'active' };
           } catch (ewbErr: any) {
             if (ewbErr.code === '620' || ewbErr.message?.includes('620')) {
