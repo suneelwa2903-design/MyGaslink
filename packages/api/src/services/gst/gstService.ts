@@ -242,8 +242,13 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
                 where: { invoiceId, isLatest: true },
                 data: { ewbStatus: 'active' },
               });
-              result.ewb = { status: 'already_exists' };
-              logger.info('EWB already exists on portal (620)', { invoiceId });
+              // 620 doesn't echo back the existing ewbNo — recover it from
+              // the IRN-details endpoint, which DOES carry the linked EWB.
+              const recovered = await recoverEwbFromIrn(invoiceId, distributorId, irn);
+              result.ewb = recovered
+                ? { ewbNo: recovered.ewbNo, status: 'active', source: 'recovered_from_irn' }
+                : { status: 'already_exists' };
+              logger.info('EWB already exists on portal (620)', { invoiceId, recovered: !!recovered });
             } else {
               result.errors.push(`EWB failed: ${ewbErr.message}`);
               await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'failed' } });
@@ -872,6 +877,49 @@ export async function getEwbStatus(distributorId: string, ewbNo: string) {
     `/ewaybillapi/v1.03/ewayapi/getewaybill?email=${encodeURIComponent(email)}&ewbNo=${ewbNo}`,
     undefined, 'ewaybill'
   );
+}
+
+/**
+ * After hitting error 620 ("EWB already exists on portal"), the portal
+ * doesn't echo back the existing ewb number — but the IRN-details endpoint
+ * does, because WhiteBooks links the EWB to the IRN at the portal level.
+ * Fetch the IRN record and, if it carries EWB fields, persist them onto
+ * the invoice + gst_document so users see a real number instead of just
+ * a green pill with no detail.
+ *
+ * Idempotent: safe to call even when nothing comes back; just leaves
+ * the rows untouched.
+ */
+async function recoverEwbFromIrn(invoiceId: string, distributorId: string, irn: string) {
+  try {
+    const details = await getIrnDetails(distributorId, irn);
+    const d = details?.data ?? details ?? {};
+    const ewbNo = d.EwbNo ?? d.ewbNo;
+    const ewbDt = d.EwbDt ?? d.ewbDt ?? d.validFrom;
+    const ewbValidTill = d.EwbValidTill ?? d.ewbValidTill ?? d.validTo;
+    if (!ewbNo || ewbNo === 0 || ewbNo === '0') {
+      logger.info('IRN details had no EWB info to recover', { invoiceId, irn });
+      return null;
+    }
+    await prisma.gstDocument.updateMany({
+      where: { invoiceId, isLatest: true },
+      data: {
+        ewbStatus: 'active',
+        ewbNo: ewbNo.toString(),
+        ewbDate: ewbDt ? new Date(ewbDt) : null,
+        ewbValidTill: ewbValidTill ? new Date(ewbValidTill) : null,
+      },
+    });
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { ewbStatus: 'active' },
+    });
+    logger.info('Recovered EWB from IRN details after 620', { invoiceId, ewbNo });
+    return { ewbNo: ewbNo.toString(), ewbDate: ewbDt, ewbValidTill };
+  } catch (err: any) {
+    logger.warn('Failed to recover EWB from IRN after 620', { invoiceId, irn, error: err.message });
+    return null;
+  }
 }
 
 /**
