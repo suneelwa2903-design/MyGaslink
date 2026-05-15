@@ -94,6 +94,12 @@ export function mapInvoice(inv: any): any {
       return m;
     });
   }
+  // Flat customerName for invoice list tables. Mirrors mapOrder. Without
+  // this the frontend reads inv.customerName as undefined and displays
+  // "N/A" for every row.
+  if (inv.customer) {
+    mapped.customerName = inv.customer.customerName ?? 'Deleted Customer';
+  }
   if (mapped.customer) mapped.customer = mapCustomer(mapped.customer);
   if (mapped.order) mapped.order = mapOrder(mapped.order);
   if (mapped.paymentAllocations) {
@@ -117,10 +123,20 @@ export function mapInvoices(list: any[]): any[] {
 export function mapPayment(p: any): any {
   if (!p) return p;
   const mapped = renameId(p, 'paymentId');
-  if (mapped.customer) mapped.customer = mapCustomer(mapped.customer);
+  if (mapped.customer) {
+    mapped.customerName = mapped.customer.customerName ?? 'Deleted Customer';
+    mapped.customer = mapCustomer(mapped.customer);
+  }
   if (mapped.allocations) {
     mapped.allocations = mapped.allocations.map((a: any) => {
       const m = renameId(a, 'allocationId');
+      // Flat invoiceNumber for the Payment Allocations modal. The frontend
+      // reads alloc.invoiceNumber directly; without this it falls back to
+      // alloc.invoice.invoiceNumber, which is undefined unless the consumer
+      // explicitly navigates the nested object.
+      if (a.invoice) {
+        m.invoiceNumber = a.invoice.invoiceNumber;
+      }
       if (m.invoice) m.invoice = mapInvoice(m.invoice);
       return m;
     });
