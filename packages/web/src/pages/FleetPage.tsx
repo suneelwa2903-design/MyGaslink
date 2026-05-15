@@ -124,9 +124,31 @@ function VehicleMappingTab() {
     queryFn: () => apiGet<{ vehicles: Vehicle[] }>('/vehicles'),
     staleTime: 5 * 60 * 1000,
   });
-  const vehicleOptions = (vehiclesData?.vehicles ?? [])
-    .filter((v) => v.status !== VehicleStatus.INACTIVE)
-    .map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
+  const allVehicles = vehiclesData?.vehicles ?? [];
+  const vehicleById = new Map(allVehicles.map((v) => [v.vehicleId, v]));
+
+  // Vehicles taken by OTHER drivers today (status='confirmed' in
+  // recommendations). Exclude this set when building each row's dropdown
+  // so admins can't pick a vehicle already mapped to someone else.
+  const takenByOtherDriver = new Map<string, string>(); // vehicleId → driverId
+  (mappings?.recommendations ?? []).forEach((r) => {
+    if (r.status === 'confirmed' && r.vehicleId) {
+      takenByOtherDriver.set(r.vehicleId, r.driverId);
+    }
+  });
+
+  // Returns the dropdown options for a specific driver row:
+  // - all active (status != inactive) vehicles in the tenant
+  // - minus vehicles confirmed-mapped to ANOTHER driver today
+  // - the driver's own current vehicle is always included (so re-saving works)
+  const optionsForDriver = (driverId: string, currentVehicleId: string | null) =>
+    allVehicles
+      .filter((v) => v.status !== VehicleStatus.INACTIVE)
+      .filter((v) => {
+        const taker = takenByOtherDriver.get(v.vehicleId);
+        return !taker || taker === driverId || v.vehicleId === currentVehicleId;
+      })
+      .map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
 
   const confirmMappings = useMutation({
     mutationFn: (data: { date: string }) =>
@@ -207,40 +229,54 @@ function VehicleMappingTab() {
                 const isEditing = editingDriverId === r.driverId;
                 const hasVehicle = !!r.vehicleNumber;
                 const saving = upsertMapping.isPending && upsertMapping.variables?.driverId === r.driverId;
+                // If the mapped vehicle exists but is inactive, warn —
+                // dispatch will fail until the admin reassigns. The plate
+                // still shows (history is preserved), but the cell flags it.
+                const mappedVehicle = r.vehicleId ? vehicleById.get(r.vehicleId) : null;
+                const mappedVehicleInactive = !!mappedVehicle && mappedVehicle.status === VehicleStatus.INACTIVE;
+                const rowOptions = optionsForDriver(r.driverId, r.vehicleId);
                 return (
                   <tr key={r.driverId} className="hover:bg-surface-50 dark:hover:bg-surface-700/50">
                     <td className="px-4 py-3 text-sm">{r.driverName}</td>
                     <td className="px-4 py-3 text-sm min-w-[220px]">
-                      {isEditing || !hasVehicle ? (
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 min-w-[160px]">
-                            <Select
-                              options={vehicleOptions}
-                              placeholder={hasVehicle ? 'Select vehicle' : 'Assign vehicle'}
-                              value={r.vehicleId ?? ''}
-                              onChange={(e) => handleVehiclePick(r.driverId, e.target.value)}
-                              disabled={saving}
-                            />
+                      <div className="space-y-1">
+                        {isEditing || !hasVehicle || mappedVehicleInactive ? (
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 min-w-[160px]">
+                              <Select
+                                options={rowOptions}
+                                placeholder={hasVehicle ? 'Select vehicle' : 'Assign vehicle'}
+                                value={mappedVehicleInactive ? '' : (r.vehicleId ?? '')}
+                                onChange={(e) => handleVehiclePick(r.driverId, e.target.value)}
+                                disabled={saving}
+                              />
+                            </div>
+                            {isEditing && (
+                              <button
+                                type="button"
+                                onClick={() => setEditingDriverId(null)}
+                                className="text-xs text-surface-500 hover:text-surface-700"
+                              >
+                                Cancel
+                              </button>
+                            )}
                           </div>
-                          {isEditing && (
-                            <button
-                              type="button"
-                              onClick={() => setEditingDriverId(null)}
-                              className="text-xs text-surface-500 hover:text-surface-700"
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setEditingDriverId(r.driverId)}
-                          className="font-medium text-brand-600 dark:text-brand-400 hover:underline"
-                        >
-                          {r.vehicleNumber}
-                        </button>
-                      )}
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setEditingDriverId(r.driverId)}
+                            className="font-medium text-brand-600 dark:text-brand-400 hover:underline"
+                          >
+                            {r.vehicleNumber}
+                          </button>
+                        )}
+                        {mappedVehicleInactive && (
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant="warning">Vehicle inactive — please reassign</Badge>
+                            <span className="text-xs text-surface-500">(was {r.vehicleNumber})</span>
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <Badge
