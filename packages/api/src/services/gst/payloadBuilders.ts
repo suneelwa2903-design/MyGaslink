@@ -63,26 +63,16 @@ interface InvoiceData {
   originalDocNumber?: string;
   originalDocDate?: Date;
   reason?: string;
-  // Transport details for inline EWB generation alongside IRN.
-  // When provided, the IRN response also returns EwbNo/EwbDt/EwbValidTill —
-  // saves a second WhiteBooks call (preferred path for B2B Tax Invoices
-  // per NIC EWB spec rule #1).
-  transport?: TransportDetails;
-}
-
-interface TransportDetails {
-  vehicleNumber: string;
-  transportMode?: '1' | '2' | '3' | '4'; // 1=Road, 2=Rail, 3=Air, 4=Ship
-  distance?: number;       // 0 = let NIC auto-calc from PIN codes
-  transporterName?: string;
-  transporterId?: string;  // transporter GSTIN
-  // NIC requires both transport-doc fields when EwbDtls is sent inline
-  // with IRN. transDocNo: 1-15 chars (lorry-receipt / consignment note
-  // number — we pass the order number). transDocDt: exactly 10 chars in
-  // DD/MM/YYYY (dispatch date). Defaults derived from the invoice doc
-  // when the caller doesn't supply them.
-  transDocNo?: string;
-  transDocDt?: string;
+  // NOTE (2026-05-15): inline EwbDtls support was REMOVED. NIC's
+  // /einvoice GENERATE endpoint advertises an inline EWB option in
+  // its Postman canonical, but the WhiteBooks sandbox returns generic
+  // 5002 "Application error" for every variant we tried (PascalCase,
+  // mixed-case, NIC-canonical). We use the proven two-step flow
+  // (matches gstService.processInvoiceGst):
+  //   1. POST /einvoice/type/GENERATE/version/V1_03 (this builder, no EwbDtls)
+  //   2. POST /ewaybillapi/v1.03/ewayapi/genewaybill (buildEwbPayload)
+  // Do NOT re-introduce a `transport` field on this interface without
+  // first validating against the live sandbox. CLAUDE.md anti-pattern #10.
 }
 
 function extractStateCode(gstin: string): string {
@@ -274,53 +264,12 @@ export function buildIrnPayload(data: InvoiceData): any {
     };
   }
 
-  // Transport block — when present, NIC also generates an EWB and returns
-  // EwbNo / EwbDt / EwbValidTill alongside the IRN. distance=0 asks NIC to
-  // auto-calculate from PIN codes (sandbox + prod both honour this).
-  if (data.transport) {
-    const veh = sanitize(
-      data.transport.vehicleNumber.replace(/[^A-Za-z0-9]/g, '').toUpperCase(),
-      15,
-    );
-    if (veh) {
-      // NIC validates TransDocNo (1-15 chars) and TransDocDt (exact
-      // DD/MM/YYYY, 10 chars) even when EwbDtls is sent inline with
-      // IRN — empty strings get rejected with 5002. Default the doc
-      // number to the invoice/order number passed in `data.docNumber`
-      // and the date to the doc date (already DD/MM/YYYY). Callers
-      // can override via TransportDetails.{transDocNo,transDocDt}.
-      const transDocNoRaw = data.transport.transDocNo ?? data.docNumber;
-      const transDocNo = sanitize(
-        transDocNoRaw.replace(/[^A-Za-z0-9-]/g, ''),
-        15,
-        veh, // last-resort fallback so the field is never empty
-      );
-      const transDocDt = data.transport.transDocDt ?? formatDate(data.docDate);
-      // NIC's IRN endpoint accepts an inline EwbDtls block, but the
-      // schema is DIFFERENT from the standalone /ewbapi/genewbbyirn
-      // endpoint. The standalone EWB endpoint uses PascalCase
-      // (VehNo / VehType / TransDocNo / TransDocDt). The inline-in-IRN
-      // schema uses the casing below — see WhiteBooks Postman
-      // collection's "Generate IRN with EWB" example. Sending the
-      // standalone-EWB casing here gets rejected by NIC's IRN validator
-      // as a generic 5002 "Application error" with no specific field
-      // hint (we lost a live dispatch session to this on 2026-05-15).
-      payload.EwbDtls = {
-        TransMode: data.transport.transportMode || '1',
-        Distance: Math.max(0, Math.min(4000, data.transport.distance ?? 0)),
-        Transdocno: transDocNo,           // lowercase 'd' + 'no'
-        TransdocDt: transDocDt,           // lowercase 'd', PascalCase 'Dt'
-        Vehno: veh,                       // lowercase 'h'
-        Vehtype: 'R',                     // lowercase 't'
-        ...(data.transport.transporterName
-          ? { Transname: sanitize(data.transport.transporterName, 100) }
-          : {}),
-        ...(data.transport.transporterId
-          ? { Transid: sanitize(data.transport.transporterId, 15) }
-          : {}),
-      };
-    }
-  }
+  // Inline EwbDtls block intentionally omitted. NIC's sandbox rejected
+  // every variant we tried. EWB is generated via a separate call to
+  // /ewaybillapi/v1.03/ewayapi/genewaybill after IRN — see
+  // gstService.processInvoiceGst and gstPreflightService.runB2bPreflight.
+  // CLAUDE.md anti-pattern #10: do not re-introduce this without a live
+  // sandbox verification.
 
   return payload;
 }
