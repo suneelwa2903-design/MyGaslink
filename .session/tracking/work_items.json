@@ -292,10 +292,11 @@
       "title": "WI-A — Pre-dispatch preflight service (IRN + EWB before goods leave depot)",
       "type": "feature",
       "priority": "P0",
-      "status": "pending",
+      "status": "done",
+      "completedAt": "2026-05-15",
       "blocksLaunch": true,
       "dependencies": [],
-      "description": "Block dispatch until every order in a driver's assignment has a valid IRN (B2B) and active EWB. New service `gstPreflightService.preflightDispatch` runs per-driver: for each assigned order, ensure draft invoice exists with ordered quantities, generate IRN (B2B via /einvoice/.../GENERATE), generate EWB (inline with IRN for B2B Tax Invoices ≥ 2020-10-01 OR via /einvoice/.../GENERATE_EWAYBILL with IRN ref OR standalone /ewaybillapi/.../genewaybill for B2C). On success, transition orders to pending_delivery and the driver-vehicle assignment to loaded_and_dispatched. On any failure, surface per-order errors and keep all orders in the driver's batch in pending_dispatch — no partial dispatches. Spec: .session/specs/WI-A-predispatch-preflight.md."
+      "description": "Implemented per founder Q1-Q4 directives. Per-order partial dispatch: succeeded orders → pending_delivery, failed → pending_dispatch + PendingAction (Q1). transDistance=0 lets NIC auto-calc from PIN codes (Q2). New preflight_in_progress OrderStatus value serves as a row-level lock; conditional UPDATE makes re-claim impossible (Q3). EWBS scope used standalone for B2C/URP, IRN-with-inline-EwbDtls for B2B (Q4). New endpoint POST /api/orders/preflight-dispatch returns 200/207/400/404/409. New gst_api_logs table captures every WhiteBooks call. Migration 20260515000000_preflight_and_gst_api_log. 25 new tests, suite 265 → 290 passing. Commits: 122d577 (schema), b14c35e (TranspDtls payload), 99cd082 (service), cce457d (route), 7c8ef7c (tests + date-parsing fixes). Spec: .session/specs/WI-A-predispatch-preflight.md. Session summary: .session/session-summary-WI-035.md."
     },
     {
       "id": "WI-036",
