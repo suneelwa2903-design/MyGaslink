@@ -22,9 +22,15 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
 
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { generateToken, today } from './helpers.js';
+import { generateToken } from './helpers.js';
 import * as whitebooksClient from '../services/gst/whitebooksClient.js';
 import type { Express } from 'express';
+
+// CLAUDE.md anti-pattern #7: tests that seed time-sensitive data use
+// a fixed future date so real dev-DB rows never get swept into service
+// queries that filter by date (e.g. preflightDispatch).
+const TEST_DATE = '2099-12-31';
+const today = () => TEST_DATE;
 
 const apiCallMock = whitebooksClient.apiCall as unknown as ReturnType<typeof vi.fn>;
 

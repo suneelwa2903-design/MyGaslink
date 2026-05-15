@@ -22,7 +22,18 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
 
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { generateToken, loginAsFinance, loginAsInventory, today } from './helpers.js';
+import { generateToken, loginAsFinance, loginAsInventory } from './helpers.js';
+
+// ─── Test date isolation ────────────────────────────────────────────────────
+// CLAUDE.md anti-pattern #7: tests that seed time-sensitive data must
+// use a fixed future date that real manual-test data will never occupy.
+// preflightDispatch queries pending_dispatch orders by
+// (distributorId, driverId, deliveryDate) — using today's date here
+// caused tests to sweep up real dev-DB orders and overwrite their
+// gst_documents with mock IRNs. Fixing to 2099-12-31 keeps the test
+// fixtures in their own date bucket.
+const TEST_DATE = '2099-12-31';
+const today = () => TEST_DATE;
 import * as whitebooksClient from '../services/gst/whitebooksClient.js';
 import type { Express } from 'express';
 
