@@ -50,6 +50,33 @@ router.post('/vehicle-mappings/confirm',
   }
 );
 
+// PUT /api/assignments/vehicle-mappings — inline upsert of one driver's vehicle
+// for a date. Distinct from POST /vehicle-mappings/confirm which replaces the
+// entire day's mappings.
+router.put('/vehicle-mappings',
+  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  validate(z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    driverId: z.string().uuid(),
+    vehicleId: z.string().uuid(),
+  })),
+  auditLog('upsert_vehicle_mapping', 'assignment'),
+  async (req: Request, res: Response) => {
+    try {
+      const updated = await assignmentService.upsertDailyVehicleMapping(
+        req.user!.distributorId!, req.body,
+      );
+      return sendSuccess(res, mapAssignment(updated));
+    } catch (err: unknown) {
+      if (err instanceof assignmentService.AssignmentError) {
+        return sendError(res, err.message, err.statusCode);
+      }
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      return sendError(res, message, 500);
+    }
+  }
+);
+
 // POST /api/assignments/order-recommendations
 router.post('/order-recommendations',
   requireRole('distributor_admin', 'super_admin', 'inventory'),

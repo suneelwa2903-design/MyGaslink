@@ -12,6 +12,7 @@ import {
   HiOutlineMagnifyingGlass,
   HiOutlineTrash,
   HiOutlineArrowUturnLeft,
+  HiOutlineEye,
 } from 'react-icons/hi2';
 import {
   type Order,
@@ -84,6 +85,7 @@ export default function OrdersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [viewOrder, setViewOrder] = useState<Order | null>(null);
   const [assignOrder, setAssignOrder] = useState<Order | null>(null);
   const [deliverOrder, setDeliverOrder] = useState<Order | null>(null);
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
@@ -154,12 +156,23 @@ export default function OrdersPage() {
         </div>
         {tab === 'orders' && (
           <div className="flex items-center gap-2">
-            {selectedOrders.length > 0 && (
-              <Button variant="secondary" size="sm" onClick={() => setBulkAssignOpen(true)}>
-                <HiOutlineTruck className="h-4 w-4" />
-                Assign Driver ({selectedOrders.length})
-              </Button>
-            )}
+            {(() => {
+              // Only count selected orders that are actually pending assignment.
+              // Delivered/cancelled/dispatched orders in the selection are
+              // ignored — they can't be re-assigned, so showing a count that
+              // includes them misleads the admin.
+              const assignablePendingIds = selectedOrders.filter((id) => {
+                const o = orders.find((order) => order.orderId === id);
+                return o?.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT;
+              });
+              if (assignablePendingIds.length === 0) return null;
+              return (
+                <Button variant="secondary" size="sm" onClick={() => setBulkAssignOpen(true)}>
+                  <HiOutlineTruck className="h-4 w-4" />
+                  Assign Driver ({assignablePendingIds.length})
+                </Button>
+              );
+            })()}
             <Button variant="secondary" onClick={() => setReturnsOpen(true)}>
               <HiOutlineArrowUturnLeft className="h-4 w-4" />
               Returns Order
@@ -294,6 +307,13 @@ export default function OrdersPage() {
                     </td>
                     <td>
                       <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setViewOrder(order)}
+                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500"
+                          title="View"
+                        >
+                          <HiOutlineEye className="h-4 w-4" />
+                        </button>
                         {order.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT && (
                           <button
                             onClick={() => setAssignOrder(order)}
@@ -380,12 +400,18 @@ export default function OrdersPage() {
         />
       )}
 
-      {/* Bulk Assign Driver Modal */}
+      {/* Bulk Assign Driver Modal — only pass pending-assignment IDs.
+          The header button is hidden unless at least one selection is pending,
+          and including non-pending ids would hit the API's 400 "Order is not
+          in a state that allows driver assignment". */}
       {bulkAssignOpen && (
         <BulkAssignDriverModal
           open={bulkAssignOpen}
           onClose={() => { setBulkAssignOpen(false); setSelectedOrders([]); }}
-          orderIds={selectedOrders}
+          orderIds={selectedOrders.filter((id) => {
+            const o = orders.find((order) => order.orderId === id);
+            return o?.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT;
+          })}
           drivers={drivers?.drivers ?? []}
         />
       )}
@@ -406,6 +432,15 @@ export default function OrdersPage() {
           onClose={() => setEditOrder(null)}
           order={editOrder}
           cylinderTypes={cylinderTypes ?? []}
+        />
+      )}
+
+      {/* View Order Modal — read-only, available for every status incl. delivered/cancelled */}
+      {viewOrder && (
+        <OrderDetailModal
+          open={!!viewOrder}
+          onClose={() => setViewOrder(null)}
+          order={viewOrder}
         />
       )}
     </div>
@@ -533,6 +568,103 @@ function CreateOrderModal({
           <Button type="submit" loading={mutation.isPending}>Create Order</Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ─── Order Detail (View) Modal ───────────────────────────────────────────────
+// Read-only view of an order. Used for delivered/cancelled orders (which
+// have no edit/assign actions) and also as a quick lookup for orders in any
+// status. No mutations here — it just reads from the order row already loaded
+// by the list query.
+
+function OrderDetailModal({
+  open,
+  onClose,
+  order,
+}: {
+  open: boolean;
+  onClose: () => void;
+  order: Order;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title={`Order ${order.orderNumber}`} size="lg">
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Status</p>
+            <Badge variant={STATUS_VARIANTS[order.status] || 'neutral'}>
+              {STATUS_LABELS[order.status] || order.status}
+            </Badge>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Type</p>
+            <p className="font-medium">{order.orderType}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Customer</p>
+            <p className="font-medium">{order.customerName}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Delivery Date</p>
+            <p className="font-medium">
+              {order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString('en-IN') : '—'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Driver</p>
+            <p className="font-medium">{order.driverName || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Vehicle</p>
+            <p className="font-medium">{order.vehicleNumber || '—'}</p>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-wide text-surface-500 mb-2">Items</p>
+          <div className="rounded-lg border border-surface-200 dark:border-surface-700 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-surface-50 dark:bg-surface-700">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium">Cylinder</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium">Qty</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium">Unit Price</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium">Line Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
+                {order.items.map((item, idx) => (
+                  <tr key={idx}>
+                    <td className="px-3 py-2">{item.cylinderTypeName ?? item.cylinderTypeId}</td>
+                    <td className="px-3 py-2 text-right">{item.quantity}</td>
+                    <td className="px-3 py-2 text-right">{formatCurrency(item.unitPrice ?? 0)}</td>
+                    <td className="px-3 py-2 text-right font-medium">
+                      {formatCurrency((item.unitPrice ?? 0) * item.quantity)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="flex justify-between border-t border-surface-200 dark:border-surface-700 pt-3">
+          <span className="text-xs uppercase tracking-wide text-surface-500">Total</span>
+          <span className="text-lg font-semibold">{formatCurrency(order.totalAmount ?? 0)}</span>
+        </div>
+
+        {order.specialInstructions && (
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Special Instructions</p>
+            <p>{order.specialInstructions}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Close</Button>
+        </div>
+      </div>
     </Modal>
   );
 }
@@ -1005,15 +1137,35 @@ function AssignmentsTab() {
       }),
   });
 
-  const { data: driversData } = useQuery({
-    queryKey: ['drivers-list', 'active'],
-    queryFn: () => apiGet<{ drivers: Driver[] }>('/drivers', { status: 'active' }),
-    staleTime: 5 * 60 * 1000,
+  // Only drivers with a confirmed vehicle mapping for TODAY may be assigned
+  // — both for the inline per-row dropdown and the bulk toolbar. This mirrors
+  // the backend guard in orderService.assignDriver. Recommendations with
+  // status === 'confirmed' have a real DriverVehicleAssignment row for today;
+  // 'recommended' (yesterday's mapping copied forward but not confirmed) and
+  // 'unassigned' both lack one and would be rejected by the API.
+  const today = new Date().toISOString().split('T')[0];
+  const { data: vehicleMappings } = useQuery({
+    queryKey: ['vehicle-mappings', today],
+    queryFn: () =>
+      apiGet<{
+        recommendations: Array<{
+          driverId: string;
+          driverName: string;
+          vehicleId: string | null;
+          vehicleNumber: string | null;
+          status: string;
+          source: string;
+        }>;
+      }>(`/assignments/vehicle-mappings?date=${today}`),
+    staleTime: 60 * 1000,
   });
 
-  const drivers = driversData?.drivers ?? [];
-  const driverOptions = drivers.map((d) => ({ value: d.driverId, label: d.driverName }));
-  const driverNameById = new Map(drivers.map((d) => [d.driverId, d.driverName]));
+  const confirmedDrivers = (vehicleMappings?.recommendations ?? []).filter(
+    (r) => r.status === 'confirmed',
+  );
+  const driverOptions = confirmedDrivers.map((d) => ({ value: d.driverId, label: d.driverName }));
+  const driverNameById = new Map(confirmedDrivers.map((d) => [d.driverId, d.driverName]));
+  const noConfirmedMappings = !!vehicleMappings && confirmedDrivers.length === 0;
 
   const orders = pendingOrders?.orders ?? [];
 
@@ -1085,6 +1237,12 @@ function AssignmentsTab() {
           Orders pending driver assignment for this distributor. Use the inline dropdown to assign a single order, or select multiple orders and use the toolbar to bulk-assign.
         </p>
       </div>
+
+      {noConfirmedMappings && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+          No drivers have vehicle mappings confirmed for today. Please confirm vehicle mappings in Fleet → Vehicle Mapping first.
+        </div>
+      )}
 
       {/* Bulk toolbar */}
       <div className="card p-4 flex flex-wrap items-center gap-3">
