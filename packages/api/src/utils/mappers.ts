@@ -65,6 +65,11 @@ export function mapOrder(o: any): any {
   // blank cell.
   mapped.customerName = mapped.customer?.customerName ?? 'Deleted Customer';
   if (mapped.driver) mapped.driver = mapDriver(mapped.driver);
+  // Flat driverName for the orders list table. assignDriver() does set
+  // order.driverId + status correctly, but the table reads order.driverName
+  // (flat) — without this it always rendered "Unassigned" even after a
+  // driver was assigned. null when genuinely unassigned.
+  mapped.driverName = mapped.driver?.driverName ?? null;
   if (mapped.vehicle) mapped.vehicle = mapVehicle(mapped.vehicle);
   if (mapped.invoice) mapped.invoice = mapInvoice(mapped.invoice);
   if (mapped.statusLogs) {
