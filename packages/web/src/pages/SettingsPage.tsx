@@ -139,6 +139,19 @@ function GeneralTab() {
 
 // ─── GST Tab ──────────────────────────────────────────────────────────────────
 
+// WI-042: shape returned by GET /api/settings/gst/credentials (one row
+// per scope, masked: no clientSecret / password).
+type GstCredentialRow = {
+  id: string;
+  clientId: string;
+  username: string;
+  gstin: string;
+  email: string | null;
+  scope: 'einvoice' | 'ewaybill';
+  isValid: boolean;
+  lastValidated: string | null;
+};
+
 function GstTab() {
   const queryClient = useQueryClient();
   const distributorId = useAuthStore(selectDistributorId);
@@ -148,27 +161,29 @@ function GstTab() {
     enabled: !!distributorId,
   });
 
-  const { register, handleSubmit, formState: { errors } } = useForm<GstCredentialsInput>({
-    resolver: zodResolver(gstCredentialsSchema),
-    values: settings?.gstCredentials ? {
-      clientId: settings.gstCredentials.clientId,
-      clientSecret: settings.gstCredentials.clientSecret,
-      username: settings.gstCredentials.username,
-      gstin: settings.gstCredentials.gstin,
-    } : { clientId: '', clientSecret: '', username: '', gstin: '' },
+  // Scoped credentials list — drives the two credential cards.
+  const { data: credentials } = useQuery({
+    queryKey: ['gst-credentials', distributorId],
+    queryFn: () =>
+      apiGet<GstCredentialRow[] | GstCredentialRow | null>('/settings/gst/credentials'),
+    enabled: !!distributorId,
   });
 
-  const credentialsMutation = useMutation({
-    mutationFn: (data: GstCredentialsInput) => apiPut('/settings/gst/credentials', data),
-    onSuccess: () => { toast.success('GST credentials saved'); queryClient.invalidateQueries({ queryKey: ['settings'] }); },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
+  // Normalize: backend returns either an array (all scopes) or null.
+  const credList: GstCredentialRow[] = Array.isArray(credentials)
+    ? credentials
+    : credentials
+      ? [credentials]
+      : [];
+  const credByScope = new Map(credList.map((c) => [c.scope, c]));
 
   const modeMutation = useMutation({
     mutationFn: (mode: GstMode) => apiPut('/settings/gst/mode', { mode }),
     onSuccess: () => { toast.success('GST mode updated'); queryClient.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
+
+  const [updateScope, setUpdateScope] = useState<'einvoice' | 'ewaybill' | null>(null);
 
   if (isLoading) return <div className="flex justify-center py-20"><Loader size="lg" /></div>;
 
@@ -199,21 +214,157 @@ function GstTab() {
         </div>
       </div>
 
-      {/* GST Credentials */}
-      <div className="card p-6">
-        <h3 className="font-semibold text-surface-900 dark:text-white mb-4">GST Credentials</h3>
-        {settings?.gstCredentials?.isValid && (
-          <Badge variant="success" className="mb-4">Credentials Valid</Badge>
-        )}
-        <form onSubmit={handleSubmit((data) => credentialsMutation.mutate(data))} className="space-y-4">
-          <Input label="GSTIN" required error={errors.gstin?.message} {...register('gstin')} />
-          <Input label="Client ID" required error={errors.clientId?.message} {...register('clientId')} />
-          <Input label="Client Secret" type="password" required error={errors.clientSecret?.message} {...register('clientSecret')} />
-          <Input label="Username" required error={errors.username?.message} {...register('username')} />
-          <Button type="submit" loading={credentialsMutation.isPending}>Save Credentials</Button>
-        </form>
+      {/* GST API Credentials — one card per scope (WI-042). */}
+      <div className="card p-6 space-y-4">
+        <h3 className="font-semibold text-surface-900 dark:text-white">GST API Credentials</h3>
+        <GstCredentialCard
+          scope="einvoice"
+          label="e-Invoice Credentials"
+          row={credByScope.get('einvoice') ?? null}
+          onUpdate={() => setUpdateScope('einvoice')}
+        />
+        <GstCredentialCard
+          scope="ewaybill"
+          label="e-Way Bill Credentials"
+          row={credByScope.get('ewaybill') ?? null}
+          onUpdate={() => setUpdateScope('ewaybill')}
+        />
+      </div>
+
+      {updateScope && (
+        <GstCredentialUpdateModal
+          scope={updateScope}
+          existing={credByScope.get(updateScope) ?? null}
+          onClose={() => setUpdateScope(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ['gst-credentials'] });
+            queryClient.invalidateQueries({ queryKey: ['settings'] });
+            setUpdateScope(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function GstCredentialCard({
+  scope, label, row, onUpdate,
+}: {
+  scope: 'einvoice' | 'ewaybill';
+  label: string;
+  row: GstCredentialRow | null;
+  onUpdate: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const testMutation = useMutation({
+    mutationFn: () => apiPost(`/settings/gst/credentials/${scope}/test`),
+    onSuccess: () => {
+      toast.success('Connection validated');
+      queryClient.invalidateQueries({ queryKey: ['gst-credentials'] });
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  return (
+    <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1 min-w-0">
+          <div className="font-medium text-surface-900 dark:text-white">{label}</div>
+          {row ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-surface-500 dark:text-surface-400">
+              <div><span className="text-surface-400">Client ID:</span> <span className="font-mono">{row.clientId}</span></div>
+              <div><span className="text-surface-400">Username:</span> {row.username}</div>
+              <div><span className="text-surface-400">GSTIN:</span> <span className="font-mono">{row.gstin}</span></div>
+              <div><span className="text-surface-400">Email:</span> {row.email ?? '—'}</div>
+              <div className="col-span-full flex items-center gap-2">
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 text-xs',
+                    row.isValid ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400',
+                  )}
+                >
+                  <span className="inline-block h-2 w-2 rounded-full bg-current" />
+                  {row.isValid ? 'Valid' : 'Not validated'}
+                </span>
+                {row.lastValidated && (
+                  <span className="text-surface-400">
+                    · last validated {new Date(row.lastValidated).toLocaleDateString('en-IN')}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-surface-500 dark:text-surface-400">
+              Not configured. Click Update Credentials to enter the WhiteBooks {scope} credentials.
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {row && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => testMutation.mutate()}
+              loading={testMutation.isPending}
+            >
+              Test Connection
+            </Button>
+          )}
+          <Button size="sm" onClick={onUpdate}>Update Credentials</Button>
+        </div>
       </div>
     </div>
+  );
+}
+
+function GstCredentialUpdateModal({
+  scope, existing, onClose, onSaved,
+}: {
+  scope: 'einvoice' | 'ewaybill';
+  existing: GstCredentialRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { register, handleSubmit, formState: { errors } } = useForm<GstCredentialsInput>({
+    resolver: zodResolver(gstCredentialsSchema),
+    defaultValues: existing
+      ? {
+          clientId: existing.clientId,
+          clientSecret: '',
+          username: existing.username,
+          password: '',
+          gstin: existing.gstin,
+          email: existing.email ?? '',
+        }
+      : { clientId: '', clientSecret: '', username: '', password: '', gstin: '', email: '' },
+  });
+  const mutation = useMutation({
+    mutationFn: (data: GstCredentialsInput) =>
+      apiPut(`/settings/gst/credentials/${scope}`, { ...data, scope }),
+    onSuccess: () => { toast.success('Credentials validated ✓'); onSaved(); },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const title = scope === 'einvoice' ? 'Update e-Invoice Credentials' : 'Update e-Way Bill Credentials';
+  return (
+    <Modal open onClose={onClose} title={title} size="lg">
+      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
+        <p className="text-sm text-surface-500 dark:text-surface-400">
+          Credentials are tested against WhiteBooks before being saved. If
+          authentication fails the form stays open with the NIC error message.
+        </p>
+        <Input label="GSTIN" required error={errors.gstin?.message} {...register('gstin')} />
+        <Input label="Client ID" required error={errors.clientId?.message} {...register('clientId')} />
+        <Input label="Client Secret" type="password" required error={errors.clientSecret?.message} {...register('clientSecret')} />
+        <Input label="Username" required error={errors.username?.message} {...register('username')} />
+        <Input label="Password" type="password" error={errors.password?.message} {...register('password')} />
+        <Input label="Email" type="email" error={errors.email?.message} {...register('email')} />
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
+          <Button type="submit" loading={mutation.isPending}>Test &amp; Save</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

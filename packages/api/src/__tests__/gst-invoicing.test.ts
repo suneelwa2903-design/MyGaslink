@@ -330,6 +330,83 @@ describe('Credit Notes', () => {
 
     expect(res.status).toBe(400);
   });
+
+  // WI-039 — list, approve, reject, PDF
+  it('lists credit notes for an invoice via GET /:id/credit-notes', async () => {
+    const { invoiceId } = await createDeliveredOrderWithInvoice();
+    if (!invoiceId) return;
+
+    // Raise one CN to populate the list
+    const invRes = await request(app).get(`/api/invoices/${invoiceId}`).set(auth(financeToken));
+    const item = invRes.body.data?.items?.[0];
+    if (!item) return;
+    await request(app)
+      .post('/api/invoices/credit-notes')
+      .set(auth(financeToken))
+      .send({
+        invoiceId, reason: 'WI-039 list test',
+        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: item.unitPrice, gstRate: item.gstRate ?? 0 }],
+      });
+
+    const list = await request(app)
+      .get(`/api/invoices/${invoiceId}/credit-notes`)
+      .set(auth(financeToken));
+    expect(list.status).toBe(200);
+    expect(Array.isArray(list.body.data?.creditNotes)).toBe(true);
+    expect(list.body.data.creditNotes.length).toBeGreaterThan(0);
+    expect(list.body.data.creditNotes[0].status).toBe('pending');
+  });
+
+  it('admin can approve a credit note; finance cannot (403)', async () => {
+    const { invoiceId } = await createDeliveredOrderWithInvoice();
+    if (!invoiceId) return;
+    const invRes = await request(app).get(`/api/invoices/${invoiceId}`).set(auth(financeToken));
+    const item = invRes.body.data?.items?.[0];
+    if (!item) return;
+    const createRes = await request(app)
+      .post('/api/invoices/credit-notes')
+      .set(auth(financeToken))
+      .send({
+        invoiceId, reason: 'WI-039 approve test',
+        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: item.unitPrice, gstRate: item.gstRate ?? 0 }],
+      });
+    const creditNoteId = createRes.body.data?.creditNoteId;
+    if (!creditNoteId) return;
+
+    const financeApprove = await request(app)
+      .put(`/api/invoices/credit-notes/${creditNoteId}/approve`)
+      .set(auth(financeToken));
+    expect(financeApprove.status).toBe(403);
+
+    const adminApprove = await request(app)
+      .put(`/api/invoices/credit-notes/${creditNoteId}/approve`)
+      .set(auth(adminToken));
+    expect(adminApprove.status).toBe(200);
+    expect(adminApprove.body.data.status).toBe('approved');
+  });
+
+  it('admin can reject a credit note with a reason captured in audit', async () => {
+    const { invoiceId } = await createDeliveredOrderWithInvoice();
+    if (!invoiceId) return;
+    const invRes = await request(app).get(`/api/invoices/${invoiceId}`).set(auth(financeToken));
+    const item = invRes.body.data?.items?.[0];
+    if (!item) return;
+    const createRes = await request(app)
+      .post('/api/invoices/credit-notes')
+      .set(auth(financeToken))
+      .send({
+        invoiceId, reason: 'WI-039 reject test',
+        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: item.unitPrice, gstRate: item.gstRate ?? 0 }],
+      });
+    const creditNoteId = createRes.body.data?.creditNoteId;
+    if (!creditNoteId) return;
+    const res = await request(app)
+      .put(`/api/invoices/credit-notes/${creditNoteId}/reject`)
+      .set(auth(adminToken))
+      .send({ reason: 'Pricing was correct as-billed' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('rejected');
+  });
 });
 
 // ─── DEBIT NOTE TESTS ──────────────────────────────────────────────────────
@@ -362,6 +439,56 @@ describe('Debit Notes', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.data.debitNoteId).toBeDefined();
+  });
+
+  // WI-039 — list + PDF for debit notes
+  it('lists debit notes for an invoice via GET /:id/debit-notes', async () => {
+    const { invoiceId } = await createDeliveredOrderWithInvoice();
+    if (!invoiceId) return;
+    const invRes = await request(app).get(`/api/invoices/${invoiceId}`).set(auth(financeToken));
+    const item = invRes.body.data?.items?.[0];
+    if (!item) return;
+    await request(app)
+      .post('/api/invoices/debit-notes')
+      .set(auth(financeToken))
+      .send({
+        invoiceId, reason: 'WI-039 DN list test',
+        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: 50, gstRate: item.gstRate ?? 0 }],
+      });
+    const list = await request(app)
+      .get(`/api/invoices/${invoiceId}/debit-notes`)
+      .set(auth(financeToken));
+    expect(list.status).toBe(200);
+    expect(Array.isArray(list.body.data?.debitNotes)).toBe(true);
+    expect(list.body.data.debitNotes.length).toBeGreaterThan(0);
+  });
+
+  it('GET /debit-notes/:id/pdf returns application/pdf for approved DN', async () => {
+    const { invoiceId } = await createDeliveredOrderWithInvoice();
+    if (!invoiceId) return;
+    const invRes = await request(app).get(`/api/invoices/${invoiceId}`).set(auth(financeToken));
+    const item = invRes.body.data?.items?.[0];
+    if (!item) return;
+    const createRes = await request(app)
+      .post('/api/invoices/debit-notes')
+      .set(auth(financeToken))
+      .send({
+        invoiceId, reason: 'WI-039 DN PDF test',
+        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: 50, gstRate: item.gstRate ?? 0 }],
+      });
+    const debitNoteId = createRes.body.data?.debitNoteId;
+    if (!debitNoteId) return;
+    // Approve so the PDF reflects the final state — endpoint serves at any
+    // status, but admins typically download after approval.
+    await request(app)
+      .put(`/api/invoices/debit-notes/${debitNoteId}/approve`)
+      .set(auth(adminToken));
+    const pdfRes = await request(app)
+      .get(`/api/invoices/debit-notes/${debitNoteId}/pdf`)
+      .set(auth(financeToken));
+    expect(pdfRes.status).toBe(200);
+    expect(pdfRes.headers['content-type']).toMatch(/application\/pdf/);
+    expect(pdfRes.body.slice(0, 4).toString()).toBe('%PDF');
   });
 });
 

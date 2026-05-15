@@ -61,10 +61,17 @@ describe('Settings — Auth', () => {
 });
 
 describe('Settings — JSONB key-value', () => {
-  it('GET / returns an array (may be empty)', async () => {
+  it('GET / returns the structured settings envelope (gstMode + rawSettings)', async () => {
+    // Contract change: GET /settings now returns a DistributorSettings
+    // object — gstMode, gstCredentials, rawSettings[] — so every web
+    // consumer that reads settings.gstMode actually gets a value.
     const res = await request(app).get('/api/settings').set(auth(adminToken));
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.data).toBeTypeOf('object');
+    expect(Array.isArray(res.body.data.rawSettings)).toBe(true);
+    // gstMode reflects the distributor's current mode (string or null).
+    expect(res.body.data).toHaveProperty('gstMode');
+    expect(res.body.data).toHaveProperty('gstCredentials');
   });
 
   it('PUT /:key creates a setting and persists', async () => {
@@ -267,5 +274,84 @@ describe('Settings — Tenant Isolation', () => {
 
     // Cleanup
     await prisma.license.delete({ where: { id: dist2License.id } });
+  });
+});
+
+// WI-042 — scoped GST credentials Test & Save + role gating.
+// We can't authenticate against real WhiteBooks here, so we send
+// obviously-bogus credentials and expect the route's authenticate
+// failure path: 400 with code AUTH_FAILED, and isValid=false on the
+// stored row. The role gate runs before the WhiteBooks call.
+describe('Settings — Scoped GST credentials (WI-042)', () => {
+  const distId = 'dist-001';
+  const stamp = Date.now();
+  const validShape = {
+    clientId: `TEST-CLIENT-${stamp}`,
+    clientSecret: `TEST-SECRET-${stamp}`,
+    username: 'TESTUSER',
+    password: 'TESTPASS',
+    gstin: '29AAGCB1286Q1Z0', // valid format; WhiteBooks will still reject
+    email: 'test@mygaslink.com',
+  };
+
+  afterAll(async () => {
+    // Delete just the rows we created so the seed credentials are
+    // not affected for other tests.
+    await prisma.gstCredential.deleteMany({
+      where: {
+        distributorId: distId,
+        clientId: validShape.clientId,
+      },
+    });
+  });
+
+  it('finance is rejected (403) — only admin can PUT scoped credentials', async () => {
+    const res = await request(app)
+      .put('/api/settings/gst/credentials/einvoice')
+      .set(auth(financeToken))
+      .send(validShape);
+    expect(res.status).toBe(403);
+  });
+
+  it('admin Test & Save: rejects bad scope param (400 BAD_SCOPE)', async () => {
+    const res = await request(app)
+      .put('/api/settings/gst/credentials/nonsense')
+      .set(auth(adminToken))
+      .send(validShape);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('BAD_SCOPE');
+  });
+
+  it('admin Test & Save: stores row then fails WhiteBooks auth → 400 AUTH_FAILED + isValid=false', async () => {
+    const res = await request(app)
+      .put('/api/settings/gst/credentials/einvoice')
+      .set(auth(adminToken))
+      .send(validShape);
+    // We expect AUTH_FAILED because the bogus credentials won't pass
+    // real WhiteBooks. If somehow the network is unreachable in CI we
+    // still get 400 from the same error path.
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('AUTH_FAILED');
+
+    const row = await prisma.gstCredential.findFirst({
+      where: { distributorId: distId, scope: 'einvoice', clientId: validShape.clientId },
+    });
+    expect(row).toBeTruthy();
+    expect(row?.isValid).toBe(false);
+  });
+
+  it('POST /test rejects bad scope (400 BAD_SCOPE)', async () => {
+    const res = await request(app)
+      .post('/api/settings/gst/credentials/garbage/test')
+      .set(auth(adminToken));
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('BAD_SCOPE');
+  });
+
+  it('POST /test as finance is rejected (403)', async () => {
+    const res = await request(app)
+      .post('/api/settings/gst/credentials/einvoice/test')
+      .set(auth(financeToken));
+    expect(res.status).toBe(403);
   });
 });

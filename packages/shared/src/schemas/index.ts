@@ -269,7 +269,13 @@ export const gstCredentialsSchema = z.object({
   clientId: z.string().min(1, 'Client ID is required'),
   clientSecret: z.string().min(1, 'Client secret is required'),
   username: z.string().min(1, 'Username is required'),
+  // WI-042: password is required by WhiteBooks for both scopes; the
+  // existing service falls back to clientSecret when omitted (legacy),
+  // but the UI now collects it explicitly.
+  password: z.string().min(1, 'Password is required').optional(),
   gstin: z.string().regex(GSTIN_REGEX, 'Invalid GSTIN format'),
+  email: z.string().email().optional(),
+  scope: z.enum(['einvoice', 'ewaybill']).optional(),
 });
 
 export const gstModeSchema = z.object({
