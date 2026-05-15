@@ -4,8 +4,7 @@
  * For a driver's daily route, ensure every order has the GST documents
  * required to legally leave the depot BEFORE the vehicle moves:
  *   - B2B (customer.gstin set, ≠ 'URP'): IRN + EWB
- *   - B2C (gstin null/URP) below ₹50,000: nothing (no IRN, no EWB)
- *   - B2C (gstin null/URP) at or above ₹50,000: EWB only
+ *   - B2C (gstin null/URP): standalone EWB (always — no invoice-value gate)
  *
  * Lock semantics (founder Q3): orders transition pending_dispatch →
  * preflight_in_progress at the start, then → pending_delivery (success)
@@ -31,9 +30,6 @@ import {
 } from './gstService.js';
 import { createInvoiceFromOrder } from '../invoiceService.js';
 
-// NIC threshold: B2C / URP transactions below ₹50,000 don't need an EWB.
-const B2C_EWB_THRESHOLD = 50_000;
-
 const orderInclude = {
   customer: true,
   items: { include: { cylinderType: true } },
@@ -45,7 +41,7 @@ export type PreflightResult = {
   orderId: string;
   orderNumber: string;
   customerName: string | null;
-  mode: 'B2B' | 'B2C' | 'GST_DISABLED' | 'B2C_BELOW_THRESHOLD';
+  mode: 'B2B' | 'B2C' | 'GST_DISABLED';
   success: boolean;
   irn?: string | null;
   ackNo?: string | null;
@@ -209,7 +205,6 @@ async function preflightOne(params: {
 
   try {
     const isB2C = !order.customer?.gstin || order.customer.gstin === 'URP';
-    const total = toNum(order.totalAmount);
 
     // GST-disabled tenants: just transition to pending_delivery.
     if (distributor.gstMode === 'disabled') {
@@ -219,22 +214,6 @@ async function preflightOne(params: {
         orderNumber: order.orderNumber,
         customerName,
         mode: 'GST_DISABLED',
-        success: true,
-      };
-    }
-
-    // B2C under threshold: no EWB needed either. Just dispatch.
-    if (isB2C && total < B2C_EWB_THRESHOLD) {
-      await transitionToPendingDelivery(
-        orderId,
-        userId,
-        `B2C below ₹${B2C_EWB_THRESHOLD} threshold — no EWB required`,
-      );
-      return {
-        orderId,
-        orderNumber: order.orderNumber,
-        customerName,
-        mode: 'B2C_BELOW_THRESHOLD',
         success: true,
       };
     }
@@ -268,7 +247,7 @@ async function preflightOne(params: {
         order, invoice, distributor, vehicleNumber, userId, customerName,
       });
     }
-    // B2C ≥ threshold: EWB only (standalone).
+    // B2C / URP: EWB only (standalone) — always, regardless of invoice value.
     return await runB2cPreflight({
       order, invoice, distributor, vehicleNumber, userId, customerName,
     });
@@ -584,7 +563,7 @@ async function runB2bPreflight(params: {
   }
 }
 
-/** B2C / URP at or above ₹50K — standalone EWB endpoint. */
+/** B2C / URP — standalone EWB endpoint (always, no invoice-value gate). */
 async function runB2cPreflight(params: {
   order: any;
   invoice: { id: string; invoiceNumber: string };
