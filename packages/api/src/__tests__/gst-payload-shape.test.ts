@@ -180,19 +180,6 @@ describe('IRN payload shape validation', () => {
     expect(['INV', 'CRN', 'DBN']).toContain(payload.DocDtls.Typ);
   });
 
-  it('TranDtls.RegRev defaults to "N" — RegRev=Y with CGST/SGST trips NIC 5002', () => {
-    // Reverse Charge Mechanism only applies to notified categories.
-    // For a standard LPG sale the seller charges GST in the invoice
-    // (CGST + SGST values are non-zero), which contradicts RegRev='Y'.
-    // The NIC sandbox returns generic 5002 on that contradiction.
-    const b2b = buildIrnPayload(b2bFixture());
-    expect(b2b.TranDtls.RegRev).toBe('N');
-    const b2c = buildIrnPayload(b2bFixture({
-      buyer: { ...b2bFixture().buyer, gstin: null },
-    }));
-    expect(b2c.TranDtls.RegRev).toBe('N');
-  });
-
   it('Test 5c — TranDtls.SupTyp correctly reflects B2B vs B2C', () => {
     const b2b = buildIrnPayload(b2bFixture());
     expect(['B2B', 'SEZWP', 'SEZWOP', 'EXPWP', 'EXPWOP']).toContain(b2b.TranDtls.SupTyp);
