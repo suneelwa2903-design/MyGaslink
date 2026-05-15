@@ -460,20 +460,35 @@ export async function assignDriver(
   });
   if (!driver) throw new OrderError('Driver not found or inactive', 404);
 
-  // If no vehicleId provided, find from today's assignment
-  let vehicleId = data.vehicleId || null;
-  if (!vehicleId) {
-    const assignment = await prisma.driverVehicleAssignment.findFirst({
-      where: {
-        driverId: data.driverId,
-        distributorId,
-        assignmentDate: order.deliveryDate,
-        isReconciled: false,
-      },
-      select: { vehicleId: true },
-    });
-    vehicleId = assignment?.vehicleId || null;
+  // Driver must have a confirmed vehicle mapping for the order's delivery
+  // date before we accept the assignment. "Confirmed" here means a real
+  // DriverVehicleAssignment row exists (not cancelled) — same definition the
+  // recommendations API uses for status='confirmed'. The web client filters
+  // its dropdown the same way; this guard catches direct API calls and
+  // stale clients. The vehicle is always taken from the mapping; an explicit
+  // vehicleId in the request body must match.
+  const mapping = await prisma.driverVehicleAssignment.findFirst({
+    where: {
+      driverId: data.driverId,
+      distributorId,
+      assignmentDate: order.deliveryDate,
+      status: { not: 'cancelled' },
+    },
+    select: { vehicleId: true },
+  });
+  if (!mapping?.vehicleId) {
+    throw new OrderError(
+      'Driver has no confirmed vehicle mapping for the order delivery date. Please assign a vehicle in Fleet → Vehicle Mapping first.',
+      400,
+    );
   }
+  if (data.vehicleId && data.vehicleId !== mapping.vehicleId) {
+    throw new OrderError(
+      "Provided vehicle does not match the driver's confirmed mapping for the delivery date.",
+      400,
+    );
+  }
+  const vehicleId = mapping.vehicleId;
 
   return prisma.$transaction(async (tx) => {
     const oldStatus = order.status;
