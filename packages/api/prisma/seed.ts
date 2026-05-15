@@ -463,32 +463,35 @@ async function main() {
     data: { distributorId: gstDist.id, vehicleNumber: 'KA01-MN-9999', vehicleType: 'Truck', capacity: 80, status: 'idle' },
   });
 
-  // E-Invoice credentials (EINS prefix)
+  // E-Invoice credentials (EINS prefix). Rotated 2026-05-15: the
+  // previous shared-sandbox GSTIN/credentials accumulated quota /
+  // stuck state on NIC's IRP and started returning generic 5002 on
+  // every IRN call mid-day. Fresh WhiteBooks sandbox account issued.
   await prisma.gstCredential.create({
     data: {
       distributor: { connect: { id: gstDist.id } },
       scope: 'einvoice',
-      clientId: 'EINS47946db9-fd2c-4d9e-afb8-1af750271d8e',
-      clientSecret: 'EINS890c4fcd-a530-45af-be34-07f3627ecf57',
+      clientId: 'EINSc0e87f75-51b3-4284-a57f-639a7582514c',
+      clientSecret: 'EINSda1f2b7a-feea-46b2-9054-0e4371da3fd4',
       username: 'BVMGSP',
       password: 'Wbooks@0142',
       gstin: '29AAGCB1286Q000',
-      email: 'coolsupersaiyan@gmail.com',
+      email: 'mvsuneelkumar2903@gmail.com',
       isValid: true,
     },
   });
 
-  // E-Waybill credentials (EWBS prefix)
+  // E-Waybill credentials (EWBS prefix). Same rotation as above.
   await prisma.gstCredential.create({
     data: {
       distributor: { connect: { id: gstDist.id } },
       scope: 'ewaybill',
-      clientId: 'EWBS718799dd-d4b7-464b-997d-5de93c96a932',
-      clientSecret: 'EWBS1aefbfde-9746-4269-a2b8-42e0b9ee8c4e',
+      clientId: 'EWBSa82587b9-88ca-43d0-a514-7457a38eb813',
+      clientSecret: 'EWBS68034a54-66a6-41d5-b7df-4acd0b17b525',
       username: 'BVMGSP',
       password: 'Wbooks@0142',
       gstin: '29AAGCB1286Q000',
-      email: 'coolsupersaiyan@gmail.com',
+      email: 'mvsuneelkumar2903@gmail.com',
       isValid: true,
     },
   });
