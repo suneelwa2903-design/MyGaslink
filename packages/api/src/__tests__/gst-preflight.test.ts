@@ -603,12 +603,31 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     }
   });
 
-  it('Already-dispatched assignment: 409 ALREADY_DISPATCHED', async () => {
+  it('Already-dispatched assignment WITH in-flight orders: 409 ALREADY_DISPATCHED', async () => {
     const ctx = await getSharmaContext();
-    const orders = await seedOrders({
+    // New order ready to dispatch for trip 2.
+    const newOrders = await seedOrders({
       customerId: ctx.b2bCust.id, count: 1,
       cylinderTypeId: ctx.cyl.id, qty: 5,
       driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
+    });
+    // An order still in flight from trip 1 — this is what should block
+    // the new dispatch. Without an in-flight order the relaxed gate
+    // allows trip 2 (see the next test).
+    const inFlight = await prisma.order.create({
+      data: {
+        distributorId: 'dist-002',
+        customerId: ctx.b2bCust.id,
+        orderNumber: `PFT-IF-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        orderDate: new Date(),
+        deliveryDate: new Date(today()),
+        status: 'pending_delivery',
+        orderType: 'delivery',
+        driverId: ctx.driver.id,
+        vehicleId: ctx.vehicle.id,
+        totalAmount: 5000,
+        items: { create: [{ cylinderTypeId: ctx.cyl.id, quantity: 5, unitPrice: 2000, discountPerUnit: 0, totalPrice: 10000 }] },
+      },
     });
     try {
       await prisma.driverVehicleAssignment.update({
@@ -628,7 +647,57 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
         where: { id: ctx.mapping.id },
         data: { status: 'dispatch_ready' },
       });
-      await clearPreflightArtifacts(orders.map((o) => o.id));
+      await clearPreflightArtifacts([inFlight.id, ...newOrders.map((o) => o.id)]);
+    }
+  });
+
+  it('Already-dispatched assignment with NO in-flight orders: allowed (trip 2), bumps tripNumber', async () => {
+    const ctx = await getSharmaContext();
+    const newOrders = await seedOrders({
+      customerId: ctx.b2bCust.id, count: 1,
+      cylinderTypeId: ctx.cyl.id, qty: 5,
+      driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
+    });
+    try {
+      // Simulate the morning trip having completed but no one ran
+      // reconciliation yet.
+      await prisma.driverVehicleAssignment.update({
+        where: { id: ctx.mapping.id },
+        data: {
+          status: 'loaded_and_dispatched',
+          tripNumber: 1,
+          tripSheetNo: 'OLD-TRIP-SHEET-001',
+          tripSheetGeneratedAt: new Date(Date.now() - 4 * 3600_000),
+        },
+      });
+      apiCallMock.mockResolvedValueOnce(irnSuccessWithInlineEwb());
+      const result = await preflightDispatch({
+        distributorId: 'dist-002',
+        driverId: ctx.driver.id,
+        assignmentDate: today(),
+        userId: 'test-user',
+      });
+      expect(result.summary).toMatchObject({ total: 1, succeeded: 1, failed: 0 });
+      // tripNumber incremented; stale trip sheet cleared.
+      const updated = await prisma.driverVehicleAssignment.findUniqueOrThrow({
+        where: { id: ctx.mapping.id },
+      });
+      expect(updated.tripNumber).toBe(2);
+      expect(updated.tripSheetNo).toBeNull();
+      expect(updated.tripSheetGeneratedAt).toBeNull();
+      // And the new dispatch flips status back to loaded_and_dispatched.
+      expect(updated.status).toBe('loaded_and_dispatched');
+    } finally {
+      await prisma.driverVehicleAssignment.update({
+        where: { id: ctx.mapping.id },
+        data: {
+          status: 'dispatch_ready',
+          tripNumber: 1,
+          tripSheetNo: null,
+          tripSheetGeneratedAt: null,
+        },
+      });
+      await clearPreflightArtifacts(newOrders.map((o) => o.id));
     }
   });
 

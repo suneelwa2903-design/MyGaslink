@@ -126,11 +126,45 @@ export async function preflightDispatch(params: {
     );
   }
   if (mapping?.status === 'loaded_and_dispatched') {
-    throw new PreflightError(
-      "Driver's vehicle is already dispatched for this date",
-      'ALREADY_DISPATCHED',
-      409,
-    );
+    // The assignment row says "vehicle on the road". That's the right
+    // block when orders are genuinely in flight — refuse the second
+    // dispatch. But the old behaviour also blocked the legitimate case
+    // where all the morning's orders have already been delivered: the
+    // driver returned, new orders piled up for trip 2, but the
+    // assignment status was never advanced (no auto-transition from
+    // loaded_and_dispatched → returned_inventory after deliveries
+    // complete). Gate on actual in-flight orders instead.
+    const inFlightCount = await prisma.order.count({
+      where: {
+        distributorId,
+        driverId,
+        deliveryDate: targetDate,
+        status: { in: ['pending_delivery', 'preflight_in_progress'] },
+        deletedAt: null,
+      },
+    });
+    if (inFlightCount > 0) {
+      throw new PreflightError(
+        `Driver still has ${inFlightCount} order${inFlightCount === 1 ? '' : 's'} in flight — wait for delivery confirmation before dispatching another trip`,
+        'ALREADY_DISPATCHED',
+        409,
+      );
+    }
+    // Previous trip is complete. Bump tripNumber for the audit trail,
+    // reset the row to dispatch_ready so the standard flow can write a
+    // fresh consolidated EWB for the new batch. The prior tripSheetNo
+    // is intentionally cleared — the driver already downloaded that
+    // PDF; the new trip needs its own gencewb result.
+    await prisma.driverVehicleAssignment.update({
+      where: { id: mapping.id },
+      data: {
+        tripNumber: { increment: 1 },
+        status: 'dispatch_ready',
+        tripSheetNo: null,
+        tripSheetGeneratedAt: null,
+      },
+    });
+    mapping.status = 'dispatch_ready';
   }
 
   const orders = await prisma.order.findMany({
