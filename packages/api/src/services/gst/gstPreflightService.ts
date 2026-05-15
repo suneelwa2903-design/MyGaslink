@@ -30,6 +30,18 @@ import {
 } from './gstService.js';
 import { createInvoiceFromOrder } from '../invoiceService.js';
 
+/**
+ * Format a date as exactly 10 chars in DD/MM/YYYY — the format NIC
+ * accepts for TransDocDt. Anything else (10-char ISO, missing leading
+ * zeros, '/' vs '-') gets rejected with WhiteBooks 5002.
+ */
+function formatDdMmYyyy(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
 const orderInclude = {
   customer: true,
   items: { include: { cylinderType: true } },
@@ -440,7 +452,17 @@ async function ensureDraftInvoice(
 async function buildInvoiceData(
   invoiceId: string,
   distributor: any,
-  transport: { vehicleNumber: string; transportMode: '1'; distance: 0 } | undefined,
+  transport:
+    | {
+        vehicleNumber: string;
+        transportMode: '1';
+        distance: 0;
+        // NIC requires both fields populated on inline EWB (see WI-035
+        // amendment in payloadBuilders.ts) — fail-out 5002 otherwise.
+        transDocNo: string;
+        transDocDt: string;
+      }
+    | undefined,
 ): Promise<any> {
   const inv = await prisma.invoice.findFirstOrThrow({
     where: { id: invoiceId },
@@ -510,6 +532,11 @@ async function runB2bPreflight(params: {
 
   const invoiceData = await buildInvoiceData(invoiceId, distributor, {
     vehicleNumber, transportMode: '1', distance: 0,
+    // Lorry-receipt fields the depot uses — order number is the route
+    // identifier; dispatch date is today (preflight runs the morning
+    // the goods leave). Both fed straight into TranspDtls (5002 fix).
+    transDocNo: String(order.orderNumber).slice(-15),
+    transDocDt: formatDdMmYyyy(new Date()),
   });
 
   const credEmail =

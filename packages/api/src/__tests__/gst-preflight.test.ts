@@ -257,6 +257,19 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       expect(doc.ewbNo).toBe('181012000001');
       expect(doc.ewbDate).toBeTruthy();
       expect(doc.ewbValidTill).toBeTruthy();
+
+      // Regression guard: NIC 5002 rejects empty TransDocNo / TransDocDt.
+      // The IRN payload's EwbDtls block MUST carry both — TransDocNo
+      // sized 1-15 chars, TransDocDt exactly DD/MM/YYYY (10 chars).
+      const [, , , irnPayload] = apiCallMock.mock.calls[0];
+      const ewbDtls = (irnPayload as any).EwbDtls;
+      expect(ewbDtls).toBeTruthy();
+      expect(typeof ewbDtls.TransDocNo).toBe('string');
+      expect(ewbDtls.TransDocNo.length).toBeGreaterThanOrEqual(1);
+      expect(ewbDtls.TransDocNo.length).toBeLessThanOrEqual(15);
+      expect(typeof ewbDtls.TransDocDt).toBe('string');
+      expect(ewbDtls.TransDocDt).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+      expect(ewbDtls.TransDocDt.length).toBe(10);
     } finally {
       await clearPreflightArtifacts(orders.map((o) => o.id));
     }
@@ -776,7 +789,7 @@ describe('POST /api/orders/preflight-dispatch — integration', () => {
     }
   });
 
-  it('auth: finance → 403, inventory → 403, cross-tenant driver → 404', async () => {
+  it('auth: finance → 403, inventory now allowed (role gate passes; tenant isolation still blocks cross-tenant)', async () => {
     const ctx = await getSharmaContext();
     const orders = await seedOrders({
       customerId: ctx.b2bCust.id, count: 1,
@@ -790,11 +803,16 @@ describe('POST /api/orders/preflight-dispatch — integration', () => {
         .send({ driverId: ctx.driver.id, assignmentDate: today() });
       expect(finRes.status).toBe(403);
 
+      // Inventory role is now permitted on preflight-dispatch (founder
+      // spec: dispatch is an inventory task). The inventoryToken belongs
+      // to dist-001 (bhargava); calling on a dist-002 driver passes the
+      // role gate but fails tenant isolation → 404 NOT_FOUND, not 403.
       const invRes = await request(app)
         .post('/api/orders/preflight-dispatch')
         .set(auth(inventoryToken))
         .send({ driverId: ctx.driver.id, assignmentDate: today() });
-      expect(invRes.status).toBe(403);
+      expect(invRes.status).not.toBe(403);
+      expect(invRes.status).toBe(404);
 
       // dist-001 admin trying to preflight a dist-002 driver — 404 NOT_FOUND
       const crossRes = await request(app)

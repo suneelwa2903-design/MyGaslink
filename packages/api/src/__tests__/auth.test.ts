@@ -136,13 +136,17 @@ describe('Role-Based Access Control', () => {
     expect(res.status).toBe(200);
   });
 
-  it('should deny inventory from creating orders', async () => {
+  it('should allow inventory to create orders (depot intake flow)', async () => {
     const { token } = await loginAsInventory();
     const res = await request(app)
       .post('/api/orders')
       .set('Authorization', `Bearer ${token}`)
       .send({ customerId: 'test', deliveryDate: '2026-03-23', items: [] });
-    expect(res.status).toBe(403);
+    // Inventory is now permitted on POST /orders (founder spec: depot
+    // intake is an inventory task). The empty items list trips zod
+    // validation → 400. The role gate must NOT respond with 403.
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(400);
   });
 });
 

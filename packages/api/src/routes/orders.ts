@@ -38,7 +38,7 @@ router.get('/',
 
 // POST /api/orders/returns-only - Create returns-only order
 router.post('/returns-only',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(returnsOnlyOrderSchema),
   auditLog('create_returns_order', 'order'),
   async (req, res) => {
@@ -89,8 +89,11 @@ router.get('/:id',
 });
 
 // POST /api/orders
+// Inventory creates orders during depot intake; admin/finance retain
+// access (finance for invoicing-driven creation); customer covers the
+// self-service portal flow.
 router.post('/',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'customer'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'customer'),
   validate(createOrderSchema),
   auditLog('create', 'order'),
   async (req, res) => {
@@ -144,8 +147,9 @@ router.put('/:id/status',
 );
 
 // POST /api/orders/:id/assign-driver
+// Inventory can assign drivers as part of the morning dispatch flow.
 router.post('/:id/assign-driver',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(assignDriverSchema),
   auditLog('assign_driver', 'order'),
   async (req, res) => {
@@ -162,7 +166,7 @@ router.post('/:id/assign-driver',
 
 // POST /api/orders/bulk-assign-driver
 router.post('/bulk-assign-driver',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(bulkAssignDriverSchema),
   auditLog('bulk_assign_driver', 'order'),
   async (req, res) => {
@@ -184,7 +188,7 @@ router.post('/bulk-assign-driver',
 // successes move to pending_delivery, failures revert to
 // pending_dispatch and surface in the response + PendingActions queue.
 router.post('/preflight-dispatch',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(preflightDispatchSchema),
   auditLog('preflight_dispatch', 'order'),
   async (req, res) => {

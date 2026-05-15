@@ -65,10 +65,14 @@ function formatCurrency(amount: number): string {
 export default function OrdersPage() {
   useQueryClient();
   // Driver Assignment moved here from the Fleet page — it's an Orders-side
-  // morning workflow. The tab is only for admins (distributor_admin /
-  // super_admin); inventory + driver roles see just the Orders tab.
+  // morning workflow. Tab is available to admins AND inventory (the
+  // morning depot dispatch is an inventory task). Driver role sees only
+  // the Orders tab.
   const role = useAuthStore(selectRole);
-  const canAssignDrivers = role === UserRole.DISTRIBUTOR_ADMIN || role === UserRole.SUPER_ADMIN;
+  const canAssignDrivers =
+    role === UserRole.DISTRIBUTOR_ADMIN ||
+    role === UserRole.SUPER_ADMIN ||
+    role === UserRole.INVENTORY;
   // Read ?tab= so other pages (e.g. the AssignmentModal empty state)
   // can deep-link straight into the Driver Assignment tab.
   const [searchParams] = useSearchParams();

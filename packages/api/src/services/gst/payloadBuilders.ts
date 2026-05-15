@@ -76,6 +76,13 @@ interface TransportDetails {
   distance?: number;       // 0 = let NIC auto-calc from PIN codes
   transporterName?: string;
   transporterId?: string;  // transporter GSTIN
+  // NIC requires both transport-doc fields when EwbDtls is sent inline
+  // with IRN. transDocNo: 1-15 chars (lorry-receipt / consignment note
+  // number — we pass the order number). transDocDt: exactly 10 chars in
+  // DD/MM/YYYY (dispatch date). Defaults derived from the invoice doc
+  // when the caller doesn't supply them.
+  transDocNo?: string;
+  transDocDt?: string;
 }
 
 function extractStateCode(gstin: string): string {
@@ -276,11 +283,24 @@ export function buildIrnPayload(data: InvoiceData): any {
       15,
     );
     if (veh) {
+      // NIC validates TransDocNo (1-15 chars) and TransDocDt (exact
+      // DD/MM/YYYY, 10 chars) even when EwbDtls is sent inline with
+      // IRN — empty strings get rejected with 5002. Default the doc
+      // number to the invoice/order number passed in `data.docNumber`
+      // and the date to the doc date (already DD/MM/YYYY). Callers
+      // can override via TransportDetails.{transDocNo,transDocDt}.
+      const transDocNoRaw = data.transport.transDocNo ?? data.docNumber;
+      const transDocNo = sanitize(
+        transDocNoRaw.replace(/[^A-Za-z0-9-]/g, ''),
+        15,
+        veh, // last-resort fallback so the field is never empty
+      );
+      const transDocDt = data.transport.transDocDt ?? formatDate(data.docDate);
       payload.EwbDtls = {
         TransMode: data.transport.transportMode || '1',
         Distance: Math.max(0, Math.min(4000, data.transport.distance ?? 0)),
-        TransDocNo: '',
-        TransDocDt: '',
+        TransDocNo: transDocNo,
+        TransDocDt: transDocDt,
         VehNo: veh,
         VehType: 'R',
         ...(data.transport.transporterName
