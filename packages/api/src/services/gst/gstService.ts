@@ -35,7 +35,7 @@ function extractStateCode(gstin: string): string {
  * Date constructor mis-parses. Falls back to native Date if the format
  * is unfamiliar (e.g. an ISO string).
  */
-function parseWhitebooksDate(s: string | null | undefined): Date | null {
+export function parseWhitebooksDate(s: string | null | undefined): Date | null {
   if (!s) return null;
   // DD/MM/YYYY hh:mm:ss AM/PM  OR  DD/MM/YYYY HH:mm:ss  OR  DD/MM/YYYY
   const m = String(s).trim().match(
@@ -70,7 +70,7 @@ function parseWhitebooksDate(s: string | null | undefined): Date | null {
  * Mirrors the legacy New_GasLink/.../whitebooksEinvoiceClient.js
  * fallback chain.
  */
-function parseEwbResponse(resp: any): {
+export function parseEwbResponse(resp: any): {
   ewbNo: string | null;
   validFromDate: Date | null;
   validToDate: Date | null;
@@ -995,7 +995,7 @@ export async function getEwbStatus(distributorId: string, ewbNo: string) {
  * Idempotent: safe to call even when nothing comes back; just leaves
  * the rows untouched.
  */
-async function recoverEwbFromIrn(invoiceId: string, distributorId: string, irn: string) {
+export async function recoverEwbFromIrn(invoiceId: string, distributorId: string, irn: string) {
   try {
     const details = await getIrnDetails(distributorId, irn);
     const d = details?.data ?? details ?? {};
@@ -1073,7 +1073,7 @@ export async function cancelAndRegenerateInvoice(
 /**
  * Create a pending action for GST failures
  */
-async function createPendingAction(
+export async function createPendingAction(
   distributorId: string,
   invoiceId: string,
   actionType: string,
