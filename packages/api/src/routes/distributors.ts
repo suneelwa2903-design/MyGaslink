@@ -12,7 +12,14 @@ import { lookupGstin, geocodeAddress } from '../services/gst/gstinLookup.js';
 const router = Router();
 
 // GET /api/distributors/gstin-lookup/:gstin — Look up GSTIN details via WhiteBooks
-router.get('/gstin-lookup/:gstin', requireRole('super_admin'), async (req, res) => {
+// WI-043: opened to distributor_admin + finance + inventory so the
+// customer-create / customer-edit form (WI-040) can autofill from a GSTIN
+// without needing a super_admin. Tenant isolation is irrelevant — GSTIN
+// data is platform-level (the NIC portal owns it).
+router.get(
+  '/gstin-lookup/:gstin',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
   try {
     const gstin = (param(req.params.gstin) || '').toUpperCase();
     // Basic validation: 15 alphanumeric chars starting with 2 digits

@@ -208,3 +208,34 @@ describe('Customers — Modification Requests', () => {
     expect(res.body.data.status).toBe('approved');
   });
 });
+
+// WI-040 + WI-043 — GSTIN lookup endpoint role access.
+// We don't call the real NIC API here; we send a too-short GSTIN to make
+// the route fail at the 15-char format check. The role gate runs BEFORE
+// that check, so:
+//   - 403 ⇒ caller is not permitted on the role gate
+//   - 400 ⇒ caller passed the role gate; the bad-format check kicked in
+// This proves access widening (or denial) without depending on WhiteBooks.
+describe('Customers — GSTIN lookup role access (WI-043)', () => {
+  it('finance can call /distributors/gstin-lookup (passes role gate)', async () => {
+    const res = await request(app)
+      .get('/api/distributors/gstin-lookup/INVALIDFORMAT')
+      .set(auth(financeToken));
+    expect(res.status).not.toBe(403);
+    // Bad format → 400 from the route's format guard, not from auth.
+    expect([400, 500]).toContain(res.status);
+  });
+
+  it('distributor_admin can call /distributors/gstin-lookup (passes role gate)', async () => {
+    const res = await request(app)
+      .get('/api/distributors/gstin-lookup/INVALIDFORMAT')
+      .set(auth(adminToken));
+    expect(res.status).not.toBe(403);
+    expect([400, 500]).toContain(res.status);
+  });
+
+  it('unauthenticated request to /distributors/gstin-lookup still rejected', async () => {
+    const res = await request(app).get('/api/distributors/gstin-lookup/INVALIDFORMAT');
+    expect([401, 403]).toContain(res.status);
+  });
+});

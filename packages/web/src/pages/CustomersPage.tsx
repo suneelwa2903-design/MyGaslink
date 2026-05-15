@@ -270,7 +270,7 @@ function CustomerFormModal({
   const queryClient = useQueryClient();
   const isEdit = !!customer;
 
-  const { register, handleSubmit, control, formState: { errors } } = useForm<CreateCustomerInput>({
+  const { register, handleSubmit, control, getValues, setValue, watch, formState: { errors } } = useForm<CreateCustomerInput>({
     resolver: zodResolver(createCustomerSchema) as any,
     defaultValues: customer
       ? {
@@ -305,6 +305,66 @@ function CustomerFormModal({
   const contactFields = useFieldArray({ control, name: 'contacts' });
   const discountFields = useFieldArray({ control, name: 'cylinderDiscounts' });
 
+  // ─── WI-040: GSTIN autofill ─────────────────────────────────────────────
+  // Click "Fetch Details" → call /distributors/gstin-lookup/:gstin → fill
+  // business name + billing address fields. Phone is preserved (NIC data
+  // is often stale for contact info). The returned status surfaces as a
+  // small Active/Inactive pill so admins know if the GSTIN is suspended.
+  type GstinLookupResponse = {
+    gstin: string;
+    legalName: string;
+    tradeName: string;
+    address: string;
+    city: string;
+    state: string;
+    stateCode: string;
+    pincode: string;
+    status: string;
+  };
+  const [gstinLookupStatus, setGstinLookupStatus] = useState<string | null>(null);
+  const [gstinLookupError, setGstinLookupError] = useState<string | null>(null);
+  const gstinValue = watch('gstin');
+
+  const gstinLookupMutation = useMutation({
+    mutationFn: (gstin: string) =>
+      apiGet<GstinLookupResponse>(`/distributors/gstin-lookup/${encodeURIComponent(gstin)}`),
+    onSuccess: (data) => {
+      setGstinLookupStatus(data.status || 'Active');
+      setGstinLookupError(null);
+      // Preserve existing customerName + phone; everything else gets the
+      // NIC data. shouldDirty=true so react-hook-form treats it as edited.
+      const opts = { shouldDirty: true, shouldTouch: true };
+      setValue('businessName', data.tradeName || data.legalName || '', opts);
+      // The lookup service returns a joined address string. Put the whole
+      // thing in line 1; admins can manually split if needed.
+      setValue('billingAddressLine1', data.address || '', opts);
+      setValue('billingAddressLine2', '', opts);
+      setValue('billingCity', data.city || '', opts);
+      setValue('billingState', data.state || '', opts);
+      setValue('billingPincode', data.pincode || '', opts);
+      toast.success('GSTIN details fetched');
+    },
+    onError: (err) => {
+      setGstinLookupStatus(null);
+      setGstinLookupError(getErrorMessage(err));
+    },
+  });
+
+  const handleFetchGstin = () => {
+    setGstinLookupError(null);
+    const raw = (getValues('gstin') || '').trim().toUpperCase();
+    if (raw.length !== 15) {
+      setGstinLookupError('GSTIN must be exactly 15 characters');
+      return;
+    }
+    gstinLookupMutation.mutate(raw);
+  };
+
+  // Status indicator colour mapping. The NIC `status` field returns
+  // free-form strings — group them into active vs everything-else.
+  const isActiveGstin = !!gstinLookupStatus &&
+    /^active$/i.test(gstinLookupStatus);
+
   const mutation = useMutation({
     mutationFn: (data: CreateCustomerInput) =>
       isEdit
@@ -338,7 +398,45 @@ function CustomerFormModal({
             <Input label="Business Name" {...register('businessName')} />
             <Input label="Phone" required error={errors.phone?.message} {...register('phone')} />
             <Input label="Email" type="email" {...register('email')} />
-            <Input label="GSTIN" placeholder="e.g. 29ABCDE1234F1Z5" {...register('gstin')} />
+            <div>
+              {/* WI-040: GSTIN field with "Fetch Details" button to autofill
+                  business name and billing address from the NIC portal. */}
+              <Input
+                label="GSTIN"
+                placeholder="e.g. 29ABCDE1234F1Z5"
+                {...register('gstin')}
+              />
+              <div className="mt-1 flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleFetchGstin}
+                  loading={gstinLookupMutation.isPending}
+                  disabled={!gstinValue || gstinValue.trim().length !== 15}
+                >
+                  Fetch Details
+                </Button>
+                {gstinLookupStatus && (
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 text-xs',
+                      isActiveGstin
+                        ? 'text-green-600 dark:text-green-400'
+                        : 'text-red-600 dark:text-red-400',
+                    )}
+                  >
+                    <span className="inline-block h-2 w-2 rounded-full bg-current" />
+                    {gstinLookupStatus}
+                  </span>
+                )}
+                {gstinLookupError && (
+                  <span className="text-xs text-red-600 dark:text-red-400">
+                    {gstinLookupError}
+                  </span>
+                )}
+              </div>
+            </div>
             <Input label="Credit Period (days)" type="number" {...register('creditPeriodDays', { valueAsNumber: true })} />
           </div>
         </div>
