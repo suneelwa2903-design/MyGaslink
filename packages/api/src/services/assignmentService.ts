@@ -283,3 +283,82 @@ export async function bulkSmartAssign(
     results,
   };
 }
+
+// ─── Driver-Vehicle Assignment CRUD ─────────────────────────────────────────
+// Backs the Create Assignment modal: a single driver↔vehicle pairing for a
+// day (DriverVehicleAssignment). Distinct from the per-order DriverAssignment
+// created by bulkSmartAssign above.
+
+export class AssignmentError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+export async function createDriverVehicleAssignment(
+  distributorId: string,
+  data: { driverId: string; vehicleId: string; assignmentDate: string },
+) {
+  // Never trust the body — confirm both driver and vehicle are this tenant's.
+  const driver = await prisma.driver.findFirst({
+    where: { id: data.driverId, distributorId },
+  });
+  if (!driver) throw new AssignmentError('Driver not found', 404);
+
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: data.vehicleId, distributorId },
+  });
+  if (!vehicle) throw new AssignmentError('Vehicle not found', 404);
+
+  const created = await prisma.driverVehicleAssignment.create({
+    data: {
+      distributorId,
+      driverId: data.driverId,
+      vehicleId: data.vehicleId,
+      assignmentDate: new Date(data.assignmentDate),
+    },
+    include: {
+      driver: { select: { id: true, driverName: true } },
+      vehicle: { select: { id: true, vehicleNumber: true } },
+    },
+  });
+  return created;
+}
+
+export async function listDriverVehicleAssignments(distributorId: string) {
+  const rows = await prisma.driverVehicleAssignment.findMany({
+    where: { distributorId },
+    include: {
+      driver: { select: { id: true, driverName: true } },
+      vehicle: { select: { id: true, vehicleNumber: true } },
+    },
+    orderBy: { assignmentDate: 'desc' },
+  });
+
+  // Attach an assigned-orders count: orders on that driver for that date.
+  return Promise.all(
+    rows.map(async (a) => {
+      const assignedOrdersCount = await prisma.order.count({
+        where: {
+          distributorId,
+          driverId: a.driverId,
+          deliveryDate: a.assignmentDate,
+          deletedAt: null,
+        },
+      });
+      return { ...a, assignedOrdersCount };
+    }),
+  );
+}
+
+export async function deleteDriverVehicleAssignment(id: string, distributorId: string) {
+  // Ownership check before delete — only this tenant's assignment.
+  const existing = await prisma.driverVehicleAssignment.findFirst({
+    where: { id, distributorId },
+  });
+  if (!existing) return null;
+  await prisma.driverVehicleAssignment.delete({ where: { id } });
+  return existing;
+}
