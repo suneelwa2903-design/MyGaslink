@@ -235,24 +235,30 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
             result.ewb = { ewbNo, status: 'active' };
             logger.info('EWB generated separately', { invoiceId, ewbNo });
           } catch (ewbErr: any) {
-            // Handle 620: EWB already exists on portal (common during re-runs)
-            if (ewbErr.code === '620' || ewbErr.message?.includes('620')) {
+            const errCode = ewbErr.code || '';
+            const errMsg = ewbErr.message || '';
+            // Per NIC: 604 = "EWB already exists for this document". The
+            // EWB exists on the portal but the API doesn't return it —
+            // recover the number via the IRN-details endpoint.
+            const isAlreadyExists = errCode === '604' || errMsg.includes('604');
+            if (isAlreadyExists) {
               await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
               await prisma.gstDocument.updateMany({
                 where: { invoiceId, isLatest: true },
                 data: { ewbStatus: 'active' },
               });
-              // 620 doesn't echo back the existing ewbNo — recover it from
-              // the IRN-details endpoint, which DOES carry the linked EWB.
               const recovered = await recoverEwbFromIrn(invoiceId, distributorId, irn);
               result.ewb = recovered
                 ? { ewbNo: recovered.ewbNo, status: 'active', source: 'recovered_from_irn' }
                 : { status: 'already_exists' };
-              logger.info('EWB already exists on portal (620)', { invoiceId, recovered: !!recovered });
+              logger.info('EWB already exists on portal (604)', { invoiceId, recovered: !!recovered });
             } else {
-              result.errors.push(`EWB failed: ${ewbErr.message}`);
+              // Includes 620 ("Total invoice value < assessable + taxes"),
+              // which is a payload bug, not a 'already exists' — surface
+              // it so it gets noticed instead of silently marking active.
+              result.errors.push(`EWB failed: ${errMsg}`);
               await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'failed' } });
-              await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', ewbErr.message);
+              await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', errMsg);
             }
           }
         }
@@ -536,6 +542,22 @@ export async function cancelIrn(invoiceId: string, distributorId: string, reason
     select: { irn: true, invoiceNumber: true },
   });
   if (!invoice?.irn) throw new GstError('Invoice has no IRN to cancel', 'NO_IRN');
+
+  // NIC enforces a hard cancel order: EWB must be cancelled BEFORE IRN.
+  // Attempting to cancel an IRN that still has an active EWB returns a
+  // portal error and leaves both documents in an inconsistent state.
+  // Pattern lifted from the legacy einvoiceService.js. Caller should
+  // call cancelEwb() first, then cancelIrn().
+  const activeEwb = await prisma.gstDocument.findFirst({
+    where: { invoiceId, isLatest: true, ewbStatus: 'active', ewbNo: { not: null } },
+    select: { ewbNo: true },
+  });
+  if (activeEwb?.ewbNo) {
+    throw new GstError(
+      `Cannot cancel IRN: an active e-way bill exists for this invoice (EWB No: ${activeEwb.ewbNo}). Cancel the e-way bill first.`,
+      'EWB_ACTIVE',
+    );
+  }
 
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
