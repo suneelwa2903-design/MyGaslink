@@ -1010,10 +1010,19 @@ function AssignmentsTab() {
 
   const confirmMappings = useMutation({
     mutationFn: (data: { date: string; mappings?: any[] }) =>
-      apiPost('/assignments/vehicle-mappings/confirm', data),
-    onSuccess: () => {
+      apiPost<{ confirmed: number; message?: string }>('/assignments/vehicle-mappings/confirm', data),
+    // Previously had no toast and no onError — the button worked but gave
+    // zero feedback (success, failure, or "0 confirmed" all looked
+    // identical), so it read as broken. Now it always reports back.
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['vehicle-mappings'] });
+      if (result?.confirmed && result.confirmed > 0) {
+        toast.success(`Confirmed ${result.confirmed} driver-vehicle mapping${result.confirmed === 1 ? '' : 's'}`);
+      } else {
+        toast(result?.message || 'No mappings to confirm — no previous-day assignments found', { icon: 'ℹ️' });
+      }
     },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const { data: pendingOrders } = useQuery({
