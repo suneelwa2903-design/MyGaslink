@@ -296,18 +296,27 @@ export function buildIrnPayload(data: InvoiceData): any {
         veh, // last-resort fallback so the field is never empty
       );
       const transDocDt = data.transport.transDocDt ?? formatDate(data.docDate);
+      // NIC's IRN endpoint accepts an inline EwbDtls block, but the
+      // schema is DIFFERENT from the standalone /ewbapi/genewbbyirn
+      // endpoint. The standalone EWB endpoint uses PascalCase
+      // (VehNo / VehType / TransDocNo / TransDocDt). The inline-in-IRN
+      // schema uses the casing below — see WhiteBooks Postman
+      // collection's "Generate IRN with EWB" example. Sending the
+      // standalone-EWB casing here gets rejected by NIC's IRN validator
+      // as a generic 5002 "Application error" with no specific field
+      // hint (we lost a live dispatch session to this on 2026-05-15).
       payload.EwbDtls = {
         TransMode: data.transport.transportMode || '1',
         Distance: Math.max(0, Math.min(4000, data.transport.distance ?? 0)),
-        TransDocNo: transDocNo,
-        TransDocDt: transDocDt,
-        VehNo: veh,
-        VehType: 'R',
+        Transdocno: transDocNo,           // lowercase 'd' + 'no'
+        TransdocDt: transDocDt,           // lowercase 'd', PascalCase 'Dt'
+        Vehno: veh,                       // lowercase 'h'
+        Vehtype: 'R',                     // lowercase 't'
         ...(data.transport.transporterName
-          ? { TransName: sanitize(data.transport.transporterName, 100) }
+          ? { Transname: sanitize(data.transport.transporterName, 100) }
           : {}),
         ...(data.transport.transporterId
-          ? { TransId: sanitize(data.transport.transporterId, 15) }
+          ? { Transid: sanitize(data.transport.transporterId, 15) }
           : {}),
       };
     }

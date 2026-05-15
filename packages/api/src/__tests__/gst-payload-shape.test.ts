@@ -83,9 +83,9 @@ describe('IRN payload shape validation', () => {
   it('Test 1 — transDocNo length is between 1 and 15 chars', () => {
     const payload = buildIrnPayload(b2bFixture());
     expect(payload.EwbDtls).toBeTruthy();
-    expect(typeof payload.EwbDtls.TransDocNo).toBe('string');
-    expect(payload.EwbDtls.TransDocNo.length).toBeGreaterThanOrEqual(1);
-    expect(payload.EwbDtls.TransDocNo.length).toBeLessThanOrEqual(15);
+    expect(typeof payload.EwbDtls.Transdocno).toBe('string');
+    expect(payload.EwbDtls.Transdocno.length).toBeGreaterThanOrEqual(1);
+    expect(payload.EwbDtls.Transdocno.length).toBeLessThanOrEqual(15);
   });
 
   it('Test 1b — transDocNo is truncated when caller passes >15 chars', () => {
@@ -98,7 +98,7 @@ describe('IRN payload shape validation', () => {
         transDocDt: '15/05/2026',
       },
     }));
-    expect(payload.EwbDtls.TransDocNo.length).toBeLessThanOrEqual(15);
+    expect(payload.EwbDtls.Transdocno.length).toBeLessThanOrEqual(15);
   });
 
   it('Test 1c — transDocNo falls back to docNumber when not supplied', () => {
@@ -111,15 +111,15 @@ describe('IRN payload shape validation', () => {
         // transDocNo intentionally omitted
       },
     }));
-    expect(payload.EwbDtls.TransDocNo.length).toBeGreaterThanOrEqual(1);
-    expect(payload.EwbDtls.TransDocNo.length).toBeLessThanOrEqual(15);
+    expect(payload.EwbDtls.Transdocno.length).toBeGreaterThanOrEqual(1);
+    expect(payload.EwbDtls.Transdocno.length).toBeLessThanOrEqual(15);
   });
 
   it('Test 2 — transDocDt is exactly DD/MM/YYYY (10 chars)', () => {
     const payload = buildIrnPayload(b2bFixture());
-    expect(typeof payload.EwbDtls.TransDocDt).toBe('string');
-    expect(payload.EwbDtls.TransDocDt).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
-    expect(payload.EwbDtls.TransDocDt.length).toBe(10);
+    expect(typeof payload.EwbDtls.TransdocDt).toBe('string');
+    expect(payload.EwbDtls.TransdocDt).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(payload.EwbDtls.TransdocDt.length).toBe(10);
   });
 
   it('Test 2b — transDocDt defaults to docDate when caller omits it', () => {
@@ -132,8 +132,8 @@ describe('IRN payload shape validation', () => {
         // transDocDt omitted
       },
     }));
-    expect(payload.EwbDtls.TransDocDt).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
-    expect(payload.EwbDtls.TransDocDt.length).toBe(10);
+    expect(payload.EwbDtls.TransdocDt).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(payload.EwbDtls.TransdocDt.length).toBe(10);
   });
 
   it('Test 3 — transMode is "1" (road transport) by default', () => {
@@ -143,11 +143,11 @@ describe('IRN payload shape validation', () => {
 
   it('Test 4 — VehNo is non-empty when vehicle is assigned', () => {
     const payload = buildIrnPayload(b2bFixture());
-    expect(typeof payload.EwbDtls.VehNo).toBe('string');
-    expect(payload.EwbDtls.VehNo.length).toBeGreaterThan(0);
-    expect(payload.EwbDtls.VehNo.length).toBeLessThanOrEqual(15);
+    expect(typeof payload.EwbDtls.Vehno).toBe('string');
+    expect(payload.EwbDtls.Vehno.length).toBeGreaterThan(0);
+    expect(payload.EwbDtls.Vehno.length).toBeLessThanOrEqual(15);
     // VehNo is sanitised to alphanumeric uppercase by buildIrnPayload
-    expect(payload.EwbDtls.VehNo).toMatch(/^[A-Z0-9]+$/);
+    expect(payload.EwbDtls.Vehno).toMatch(/^[A-Z0-9]+$/);
   });
 
   it('Test 4b — EwbDtls block is omitted entirely when no transport is provided', () => {

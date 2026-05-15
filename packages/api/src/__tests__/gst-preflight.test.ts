@@ -269,18 +269,34 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       expect(doc.ewbDate).toBeTruthy();
       expect(doc.ewbValidTill).toBeTruthy();
 
-      // Regression guard: NIC 5002 rejects empty TransDocNo / TransDocDt.
-      // The IRN payload's EwbDtls block MUST carry both — TransDocNo
-      // sized 1-15 chars, TransDocDt exactly DD/MM/YYYY (10 chars).
+      // Regression guards:
+      //   1. NIC 5002 rejects empty TransDocNo / TransDocDt — both
+      //      must be populated.
+      //   2. Inline EwbDtls (inside IRN payload) uses different field
+      //      casing than the standalone /ewbapi/genewbbyirn endpoint.
+      //      NIC's IRN validator returns a generic 5002 with no field
+      //      hint when the casing is wrong — we lost a live dispatch
+      //      session to this on 2026-05-15. The casing below is the
+      //      WhiteBooks Postman canonical for inline IRN+EWB.
       const [, , , irnPayload] = apiCallMock.mock.calls[0];
       const ewbDtls = (irnPayload as any).EwbDtls;
       expect(ewbDtls).toBeTruthy();
-      expect(typeof ewbDtls.TransDocNo).toBe('string');
-      expect(ewbDtls.TransDocNo.length).toBeGreaterThanOrEqual(1);
-      expect(ewbDtls.TransDocNo.length).toBeLessThanOrEqual(15);
-      expect(typeof ewbDtls.TransDocDt).toBe('string');
-      expect(ewbDtls.TransDocDt).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
-      expect(ewbDtls.TransDocDt.length).toBe(10);
+      // Field names — exact casing match against WhiteBooks Postman.
+      expect(ewbDtls).toHaveProperty('Transdocno');
+      expect(ewbDtls).toHaveProperty('TransdocDt');
+      expect(ewbDtls).toHaveProperty('Vehno');
+      expect(ewbDtls).toHaveProperty('Vehtype');
+      expect(ewbDtls).not.toHaveProperty('TransDocNo'); // standalone-EWB casing — wrong here
+      expect(ewbDtls).not.toHaveProperty('TransDocDt');
+      expect(ewbDtls).not.toHaveProperty('VehNo');
+      expect(ewbDtls).not.toHaveProperty('VehType');
+      // Value constraints
+      expect(typeof ewbDtls.Transdocno).toBe('string');
+      expect(ewbDtls.Transdocno.length).toBeGreaterThanOrEqual(1);
+      expect(ewbDtls.Transdocno.length).toBeLessThanOrEqual(15);
+      expect(typeof ewbDtls.TransdocDt).toBe('string');
+      expect(ewbDtls.TransdocDt).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+      expect(ewbDtls.TransdocDt.length).toBe(10);
     } finally {
       await clearPreflightArtifacts(orders.map((o) => o.id));
     }
