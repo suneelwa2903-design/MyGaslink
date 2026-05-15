@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -22,8 +23,6 @@ import {
   type PaginationMeta,
   OrderStatus,
   OrderType,
-  DriverStatus,
-  VehicleStatus,
   UserRole,
   createOrderSchema,
   type CreateOrderInput,
@@ -990,17 +989,8 @@ function AssignmentsTab() {
   const [selectedDate, setSelectedDate] = useState(today);
   const [assignmentSubTab, setAssignmentSubTab] = useState<'mappings' | 'orders'>('mappings');
 
-  const { data: driversData } = useQuery({
-    queryKey: ['drivers'],
-    queryFn: () => apiGet<{ drivers: Driver[] }>('/drivers'),
-  });
-  const { data: vehiclesData } = useQuery({
-    queryKey: ['vehicles'],
-    queryFn: () => apiGet<{ vehicles: Vehicle[] }>('/vehicles'),
-  });
-  const drivers = driversData?.drivers ?? [];
-  const vehicles = vehiclesData?.vehicles ?? [];
-
+  // AssignmentModal now fetches /assignments/vehicle-mappings itself, so the
+  // tab no longer needs to pre-load full drivers/vehicles lists.
   const [assignmentOpen, setAssignmentOpen] = useState(false);
 
   const { data: mappings, isLoading: mappingsLoading } = useQuery({
@@ -1156,45 +1146,125 @@ function AssignmentsTab() {
       )}
 
       {assignmentOpen && (
-        <AssignmentModal open={assignmentOpen} onClose={() => setAssignmentOpen(false)} drivers={drivers} vehicles={vehicles} />
+        <AssignmentModal open={assignmentOpen} onClose={() => setAssignmentOpen(false)} />
       )}
     </div>
   );
 }
 
 // ─── Assignment Modal ───────────────────────────────────────────────────────
+//
+// Single "Driver & Vehicle" dropdown sourced from /assignments/vehicle-mappings
+// for the chosen Assignment Date. The previous design had separate Driver and
+// Vehicle dropdowns, which let admins create nonsensical pairings (a driver
+// with a vehicle they're not mapped to). Now we only offer the day's existing
+// mapped pairs.
 
-function AssignmentModal({ open, onClose, drivers, vehicles }: { open: boolean; onClose: () => void; drivers: Driver[]; vehicles: Vehicle[] }) {
+type VehicleMapping = {
+  driverId: string;
+  driverName: string;
+  vehicleId: string | null;
+  vehicleNumber: string | null;
+  status: string;
+  source: string;
+};
+
+function AssignmentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
-  const { register, handleSubmit, formState: { errors } } = useForm({
-    defaultValues: { driverId: '', vehicleId: '', assignmentDate: new Date().toISOString().split('T')[0] },
+  const today = new Date().toISOString().split('T')[0];
+  const [assignmentDate, setAssignmentDate] = useState(today);
+  // Composite "driverId|vehicleId" — react-hook-form is overkill for two fields.
+  const [pairKey, setPairKey] = useState('');
+  const [pairError, setPairError] = useState<string | null>(null);
+
+  const { data: mappingsData, isLoading: mappingsLoading } = useQuery({
+    queryKey: ['vehicle-mappings', assignmentDate],
+    queryFn: () =>
+      apiGet<{ recommendations: VehicleMapping[] }>(
+        `/assignments/vehicle-mappings?date=${assignmentDate}`,
+      ),
+    enabled: open,
   });
 
+  // Only show pairs where both driver AND vehicle are present.
+  const pairs = (mappingsData?.recommendations ?? []).filter(
+    (r) => r.vehicleId && r.vehicleNumber,
+  );
+  const pairOptions = pairs.map((p) => ({
+    value: `${p.driverId}|${p.vehicleId}`,
+    label: `${p.driverName} — ${p.vehicleNumber}`,
+  }));
+
   const mutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => apiPost('/assignments', data),
+    mutationFn: (data: { driverId: string; vehicleId: string; assignmentDate: string }) =>
+      apiPost('/assignments', data),
     onSuccess: () => {
       toast.success('Assignment created');
       queryClient.invalidateQueries({ queryKey: ['assignments'] });
-      queryClient.invalidateQueries({ queryKey: ['drivers'] });
-      queryClient.invalidateQueries({ queryKey: ['vehicles'] });
+      queryClient.invalidateQueries({ queryKey: ['vehicle-mappings'] });
       onClose();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const driverOptions = drivers.filter((d) => d.status === DriverStatus.ACTIVE).map((d) => ({ value: d.driverId, label: d.driverName }));
-  const vehicleOptions = vehicles.filter((v) => v.status === VehicleStatus.IDLE).map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pairKey) {
+      setPairError('Driver & Vehicle is required');
+      return;
+    }
+    const [driverId, vehicleId] = pairKey.split('|');
+    mutation.mutate({ driverId, vehicleId, assignmentDate });
+  };
 
   return (
     <Modal open={open} onClose={onClose} title="Create Assignment">
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
-        <Select label="Driver" options={driverOptions} placeholder="Select driver" required error={errors.driverId?.message} {...register('driverId', { required: 'Driver is required' })} />
-        <Select label="Vehicle" options={vehicleOptions} placeholder="Select vehicle" required error={errors.vehicleId?.message} {...register('vehicleId', { required: 'Vehicle is required' })} />
-        <Input label="Assignment Date" type="date" required error={errors.assignmentDate?.message} {...register('assignmentDate', { required: 'Date is required' })} />
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Input
+          label="Assignment Date"
+          type="date"
+          required
+          value={assignmentDate}
+          onChange={(e) => { setAssignmentDate(e.target.value); setPairKey(''); }}
+        />
+
+        {mappingsLoading ? (
+          <div className="flex justify-center py-4"><Loader /></div>
+        ) : pairs.length === 0 ? (
+          <div className="p-4 rounded-lg bg-amber-50 dark:bg-amber-500/10 text-sm space-y-2">
+            <p className="font-medium text-amber-900 dark:text-amber-200">
+              No vehicle mappings configured yet.
+            </p>
+            <p className="text-amber-800 dark:text-amber-300">
+              Please set up vehicle mappings in Fleet first.
+            </p>
+            <button
+              type="button"
+              onClick={() => { onClose(); navigate('/app/fleet?tab=vehicle-mapping'); }}
+              className="text-sm font-medium text-brand-600 dark:text-brand-400 hover:underline"
+            >
+              Go to Fleet →
+            </button>
+          </div>
+        ) : (
+          <Select
+            label="Driver & Vehicle"
+            options={pairOptions}
+            placeholder="Select driver & vehicle pair"
+            required
+            value={pairKey}
+            onChange={(e) => { setPairKey(e.target.value); setPairError(null); }}
+            error={pairError ?? undefined}
+          />
+        )}
+
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" loading={mutation.isPending}>Create Assignment</Button>
+          <Button type="submit" loading={mutation.isPending} disabled={pairs.length === 0}>
+            Create Assignment
+          </Button>
         </div>
       </form>
     </Modal>
