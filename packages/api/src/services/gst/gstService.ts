@@ -30,24 +30,55 @@ function extractStateCode(gstin: string): string {
 }
 
 /**
+ * Parse a WhiteBooks date string. Real sandbox EWB responses use
+ * Indian-format dates like "15/05/2026 12:32:00 PM" which JavaScript's
+ * Date constructor mis-parses. Falls back to native Date if the format
+ * is unfamiliar (e.g. an ISO string).
+ */
+function parseWhitebooksDate(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  // DD/MM/YYYY hh:mm:ss AM/PM  OR  DD/MM/YYYY HH:mm:ss  OR  DD/MM/YYYY
+  const m = String(s).trim().match(
+    /^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/,
+  );
+  if (m) {
+    const [, dd, mm, yyyy, hh, mi, ss, ampm] = m;
+    let hour = hh ? parseInt(hh, 10) : 0;
+    if (ampm) {
+      const upper = ampm.toUpperCase();
+      if (upper === 'PM' && hour < 12) hour += 12;
+      if (upper === 'AM' && hour === 12) hour = 0;
+    }
+    const iso = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T${String(hour).padStart(2, '0')}:${(mi ?? '00').padStart(2, '0')}:${(ss ?? '00').padStart(2, '0')}`;
+    const d = new Date(iso);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  const fallback = new Date(s);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+/**
  * Extract EWB number + validity dates from a WhiteBooks /genewaybill
- * response. WhiteBooks has shipped the EWB fields at various paths over
- * the years (data.ewayBillNo, top-level ewayBillNo, ewbNo, EwbNo, and
- * sometimes data is a raw string of the number). Checking only one path
- * silently drops the number when the API shape shifts.
+ * response. WhiteBooks ships the same data under multiple field-name
+ * conventions: data.ewayBillNo, data.ewbNo, data.EwbNo, top-level
+ * ewayBillNo, and sometimes data is a raw string of the number.
+ * Dates use either validFrom/validTo (older docs), validUpto +
+ * ewayBillDate (current sandbox), or capitalized variants.
  *
- * Lifted from the legacy New_GasLink/.../whitebooksEinvoiceClient.js
- * which evolved these fallbacks the hard way.
+ * Checking only one path silently drops the data when the API shape
+ * shifts — exactly what happened to us on INV-MP6KJ9E57P5.
+ * Mirrors the legacy New_GasLink/.../whitebooksEinvoiceClient.js
+ * fallback chain.
  */
 function parseEwbResponse(resp: any): {
   ewbNo: string | null;
-  validFrom: string | null;
-  validTo: string | null;
+  validFromDate: Date | null;
+  validToDate: Date | null;
 } {
   // data may be an object or a JSON-encoded string of the body
   let data: any = resp?.data;
   if (typeof data === 'string') {
-    try { data = JSON.parse(data); } catch { /* string number */ }
+    try { data = JSON.parse(data); } catch { /* leave as string */ }
   }
   const ewbNoRaw =
     data?.ewayBillNo ?? data?.ewbNo ?? data?.EwbNo ??
@@ -56,9 +87,21 @@ function parseEwbResponse(resp: any): {
   const ewbNo = ewbNoRaw != null && ewbNoRaw !== 0 && ewbNoRaw !== '0'
     ? String(ewbNoRaw)
     : null;
-  const validFrom = (data?.validFrom ?? data?.ValidFrom ?? resp?.validFrom ?? resp?.ValidFrom) ?? null;
-  const validTo = (data?.validTo ?? data?.ValidTo ?? resp?.validTo ?? resp?.ValidTo) ?? null;
-  return { ewbNo, validFrom, validTo };
+  // EWB issue date — current sandbox uses ewayBillDate; older docs use validFrom
+  const fromRaw =
+    data?.ewayBillDate ?? data?.EwayBillDate ??
+    data?.validFrom ?? data?.ValidFrom ??
+    resp?.ewayBillDate ?? resp?.validFrom ?? resp?.ValidFrom ?? null;
+  // EWB expiry — current sandbox uses validUpto; older docs use validTo
+  const toRaw =
+    data?.validUpto ?? data?.ValidUpto ??
+    data?.validTo ?? data?.ValidTo ??
+    resp?.validUpto ?? resp?.validTo ?? resp?.ValidTo ?? null;
+  return {
+    ewbNo,
+    validFromDate: parseWhitebooksDate(fromRaw),
+    validToDate: parseWhitebooksDate(toRaw),
+  };
 }
 
 /**
@@ -264,8 +307,8 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               data: {
                 ewbStatus: 'active',
                 ewbNo: parsed.ewbNo,
-                ewbDate: parsed.validFrom ? new Date(parsed.validFrom) : null,
-                ewbValidTill: parsed.validTo ? new Date(parsed.validTo) : null,
+                ewbDate: parsed.validFromDate,
+                ewbValidTill: parsed.validToDate,
                 // Keep raw EWB response so we can audit response-shape
                 // drift instead of guessing.
                 responsePayload: ewbResponse,
