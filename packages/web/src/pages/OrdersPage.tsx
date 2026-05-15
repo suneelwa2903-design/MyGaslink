@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -12,7 +12,6 @@ import {
   HiOutlineMagnifyingGlass,
   HiOutlineTrash,
   HiOutlineArrowUturnLeft,
-  HiOutlineLink,
 } from 'react-icons/hi2';
 import {
   type Order,
@@ -986,293 +985,200 @@ function ReturnsOrderModal({
 }
 
 // ─── Driver Assignment Tab ───────────────────────────────────────────────────
-// Moved here from FleetPage — assigning drivers to the day's orders is an
-// Orders-side morning workflow, not fleet maintenance.
+// Pure order-to-driver assignment workflow (Concept B). Vehicle mappings
+// (Concept A — which driver typically uses which vehicle) live in Fleet.
+// Inline per-row dropdown for single assignment; checkboxes + toolbar
+// dropdown for bulk assignment. Driver list comes from /drivers?status=active;
+// vehicle is auto-resolved server-side from the day's mapping.
 
 function AssignmentsTab() {
   const queryClient = useQueryClient();
-  const today = new Date().toISOString().split('T')[0];
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [assignmentSubTab, setAssignmentSubTab] = useState<'mappings' | 'orders'>('mappings');
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [bulkDriverId, setBulkDriverId] = useState('');
 
-  // AssignmentModal now fetches /assignments/vehicle-mappings itself, so the
-  // tab no longer needs to pre-load full drivers/vehicles lists.
-  const [assignmentOpen, setAssignmentOpen] = useState(false);
-
-  const { data: mappings, isLoading: mappingsLoading } = useQuery({
-    queryKey: ['vehicle-mappings', selectedDate],
-    queryFn: () => apiGet<{ recommendations: any[]; confirmedCount: number; recommendedCount: number; unassignedCount: number }>(`/assignments/vehicle-mappings?date=${selectedDate}`),
-  });
-
-  const confirmMappings = useMutation({
-    mutationFn: (data: { date: string; mappings?: any[] }) =>
-      apiPost<{ confirmed: number; message?: string }>('/assignments/vehicle-mappings/confirm', data),
-    // Previously had no toast and no onError — the button worked but gave
-    // zero feedback (success, failure, or "0 confirmed" all looked
-    // identical), so it read as broken. Now it always reports back.
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['vehicle-mappings'] });
-      if (result?.confirmed && result.confirmed > 0) {
-        toast.success(`Confirmed ${result.confirmed} driver-vehicle mapping${result.confirmed === 1 ? '' : 's'}`);
-      } else {
-        toast(result?.message || 'No mappings to confirm — no previous-day assignments found', { icon: 'ℹ️' });
-      }
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
-
-  const { data: pendingOrders } = useQuery({
+  const { data: pendingOrders, isLoading } = useQuery({
     queryKey: ['pending-orders'],
     queryFn: () =>
-      apiGet<{ orders: any[] }>('/orders?status=pending_driver_assignment&pageSize=100'),
+      apiGet<{ orders: any[] }>('/orders', {
+        status: OrderStatus.PENDING_DRIVER_ASSIGNMENT,
+        pageSize: 100,
+      }),
   });
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-2">
-          <button
-            className={`px-4 py-2 rounded-lg text-sm font-medium ${assignmentSubTab === 'mappings' ? 'bg-brand-600 text-white' : 'bg-surface-100 dark:bg-surface-800'}`}
-            onClick={() => setAssignmentSubTab('mappings')}
-          >
-            Vehicle Mappings
-          </button>
-          <button
-            className={`px-4 py-2 rounded-lg text-sm font-medium ${assignmentSubTab === 'orders' ? 'bg-brand-600 text-white' : 'bg-surface-100 dark:bg-surface-800'}`}
-            onClick={() => setAssignmentSubTab('orders')}
-          >
-            Order Assignment
-          </button>
-        </div>
-        <Button onClick={() => setAssignmentOpen(true)}>
-          <HiOutlineLink className="h-4 w-4" />Create Assignment
-        </Button>
-      </div>
-
-      {assignmentSubTab === 'mappings' && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-4">
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="px-3 py-2 border rounded-lg dark:bg-surface-800 dark:border-surface-700"
-            />
-            <Button
-              onClick={() => confirmMappings.mutate({ date: selectedDate })}
-              disabled={confirmMappings.isPending}
-            >
-              {confirmMappings.isPending
-                ? 'Confirming...'
-                : 'Bulk Confirm All (Use Previous Day)'}
-            </Button>
-          </div>
-
-          {mappingsLoading ? (
-            <Loader />
-          ) : !mappings?.recommendations?.length ? (
-            <EmptyState
-              title="No mappings"
-              description="No driver-vehicle mappings for this date"
-            />
-          ) : (
-            <div className="bg-white dark:bg-surface-800 rounded-xl shadow-sm overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-surface-50 dark:bg-surface-700">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Driver</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Vehicle</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Status</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Source</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
-                  {mappings.recommendations.map((r: any) => (
-                    <tr key={r.driverId} className="hover:bg-surface-50 dark:hover:bg-surface-700/50">
-                      <td className="px-4 py-3 text-sm">{r.driverName}</td>
-                      <td className="px-4 py-3 text-sm">{r.vehicleNumber || '—'}</td>
-                      <td className="px-4 py-3">
-                        <Badge
-                          variant={
-                            r.status === 'confirmed' ? 'success' :
-                            r.status === 'recommended' ? 'warning' : 'neutral'
-                          }
-                        >
-                          {r.status}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-surface-500">{r.source}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="px-4 py-3 bg-surface-50 dark:bg-surface-700 text-sm">
-                Confirmed: {mappings.confirmedCount} | Recommended: {mappings.recommendedCount} | Unassigned: {mappings.unassignedCount}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {assignmentSubTab === 'orders' && (
-        <div className="space-y-4">
-          <p className="text-sm text-surface-500">
-            Orders pending driver assignment. Use bulk assign to assign drivers based on recommendations.
-          </p>
-          {pendingOrders?.orders?.length ? (
-            <div className="bg-white dark:bg-surface-800 rounded-xl shadow-sm overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-surface-50 dark:bg-surface-700">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Order</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Customer</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Delivery Date</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
-                  {pendingOrders.orders.map((o: any) => (
-                    <tr key={o.orderId}>
-                      <td className="px-4 py-3 text-sm font-mono">{o.orderNumber}</td>
-                      <td className="px-4 py-3 text-sm">{o.customerName}</td>
-                      <td className="px-4 py-3 text-sm">{o.deliveryDate?.split('T')[0]}</td>
-                      <td className="px-4 py-3 text-sm font-medium">&#8377;{o.totalAmount?.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <EmptyState
-              title="No pending orders"
-              description="All orders have been assigned"
-            />
-          )}
-        </div>
-      )}
-
-      {assignmentOpen && (
-        <AssignmentModal open={assignmentOpen} onClose={() => setAssignmentOpen(false)} />
-      )}
-    </div>
-  );
-}
-
-// ─── Assignment Modal ───────────────────────────────────────────────────────
-//
-// Single "Driver & Vehicle" dropdown sourced from /assignments/vehicle-mappings
-// for the chosen Assignment Date. The previous design had separate Driver and
-// Vehicle dropdowns, which let admins create nonsensical pairings (a driver
-// with a vehicle they're not mapped to). Now we only offer the day's existing
-// mapped pairs.
-
-type VehicleMapping = {
-  driverId: string;
-  driverName: string;
-  vehicleId: string | null;
-  vehicleNumber: string | null;
-  status: string;
-  source: string;
-};
-
-function AssignmentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-
-  const today = new Date().toISOString().split('T')[0];
-  const [assignmentDate, setAssignmentDate] = useState(today);
-  // Composite "driverId|vehicleId" — react-hook-form is overkill for two fields.
-  const [pairKey, setPairKey] = useState('');
-  const [pairError, setPairError] = useState<string | null>(null);
-
-  const { data: mappingsData, isLoading: mappingsLoading } = useQuery({
-    queryKey: ['vehicle-mappings', assignmentDate],
-    queryFn: () =>
-      apiGet<{ recommendations: VehicleMapping[] }>(
-        `/assignments/vehicle-mappings?date=${assignmentDate}`,
-      ),
-    enabled: open,
+  const { data: driversData } = useQuery({
+    queryKey: ['drivers-list', 'active'],
+    queryFn: () => apiGet<{ drivers: Driver[] }>('/drivers', { status: 'active' }),
+    staleTime: 5 * 60 * 1000,
   });
 
-  // Only show pairs where both driver AND vehicle are present.
-  const pairs = (mappingsData?.recommendations ?? []).filter(
-    (r) => r.vehicleId && r.vehicleNumber,
-  );
-  const pairOptions = pairs.map((p) => ({
-    value: `${p.driverId}|${p.vehicleId}`,
-    label: `${p.driverName} — ${p.vehicleNumber}`,
-  }));
+  const drivers = driversData?.drivers ?? [];
+  const driverOptions = drivers.map((d) => ({ value: d.driverId, label: d.driverName }));
+  const driverNameById = new Map(drivers.map((d) => [d.driverId, d.driverName]));
 
-  const mutation = useMutation({
-    mutationFn: (data: { driverId: string; vehicleId: string; assignmentDate: string }) =>
-      apiPost('/assignments', data),
-    onSuccess: () => {
-      toast.success('Assignment created');
-      queryClient.invalidateQueries({ queryKey: ['assignments'] });
-      queryClient.invalidateQueries({ queryKey: ['vehicle-mappings'] });
-      onClose();
+  const orders = pendingOrders?.orders ?? [];
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['pending-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['orders'] });
+  };
+
+  const inlineAssign = useMutation({
+    mutationFn: ({ orderId, driverId }: { orderId: string; driverId: string }) =>
+      apiPost(`/orders/${orderId}/assign-driver`, { driverId }),
+    onSuccess: (_data, vars) => {
+      const order = orders.find((o: any) => o.orderId === vars.orderId);
+      const driverName = driverNameById.get(vars.driverId) ?? 'driver';
+      toast.success(`${order?.orderNumber ?? 'Order'} assigned to ${driverName}`);
+      setSelectedOrderIds((prev) => prev.filter((id) => id !== vars.orderId));
+      refresh();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pairKey) {
-      setPairError('Driver & Vehicle is required');
-      return;
-    }
-    const [driverId, vehicleId] = pairKey.split('|');
-    mutation.mutate({ driverId, vehicleId, assignmentDate });
+  const bulkAssign = useMutation({
+    mutationFn: ({ orderIds, driverId }: { orderIds: string[]; driverId: string }) =>
+      apiPost<Array<{ orderId: string; success: boolean; error?: string }>>(
+        '/orders/bulk-assign-driver',
+        { orderIds, driverId },
+      ),
+    onSuccess: (results, vars) => {
+      const assigned = Array.isArray(results) ? results.filter((r) => r.success).length : vars.orderIds.length;
+      const failed = Array.isArray(results) ? results.length - assigned : 0;
+      const driverName = driverNameById.get(vars.driverId) ?? 'driver';
+      if (assigned > 0) {
+        toast.success(`${assigned} order${assigned === 1 ? '' : 's'} assigned to ${driverName}`);
+      }
+      if (failed > 0) {
+        toast.error(`${failed} order${failed === 1 ? '' : 's'} could not be assigned`);
+      }
+      setSelectedOrderIds([]);
+      setBulkDriverId('');
+      refresh();
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const allSelected = orders.length > 0 && selectedOrderIds.length === orders.length;
+  const toggleSelectAll = () => {
+    setSelectedOrderIds(allSelected ? [] : orders.map((o: any) => o.orderId));
+  };
+  const toggleSelectOne = (orderId: string) => {
+    setSelectedOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId],
+    );
+  };
+
+  const handleBulkAssign = () => {
+    if (!bulkDriverId || selectedOrderIds.length === 0) return;
+    bulkAssign.mutate({ orderIds: selectedOrderIds, driverId: bulkDriverId });
+  };
+
+  const handleAssignAll = () => {
+    if (!bulkDriverId || orders.length === 0) return;
+    bulkAssign.mutate({ orderIds: orders.map((o: any) => o.orderId), driverId: bulkDriverId });
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Create Assignment">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Input
-          label="Assignment Date"
-          type="date"
-          required
-          value={assignmentDate}
-          onChange={(e) => { setAssignmentDate(e.target.value); setPairKey(''); }}
-        />
+    <div className="space-y-4">
+      <div>
+        <p className="text-sm text-surface-500 dark:text-surface-400">
+          Orders pending driver assignment for this distributor. Use the inline dropdown to assign a single order, or select multiple orders and use the toolbar to bulk-assign.
+        </p>
+      </div>
 
-        {mappingsLoading ? (
-          <div className="flex justify-center py-4"><Loader /></div>
-        ) : pairs.length === 0 ? (
-          <div className="p-4 rounded-lg bg-amber-50 dark:bg-amber-500/10 text-sm space-y-2">
-            <p className="font-medium text-amber-900 dark:text-amber-200">
-              No vehicle mappings configured yet.
-            </p>
-            <p className="text-amber-800 dark:text-amber-300">
-              Please set up vehicle mappings in Fleet first.
-            </p>
-            <button
-              type="button"
-              onClick={() => { onClose(); navigate('/app/orders?tab=assignment'); }}
-              className="text-sm font-medium text-brand-600 dark:text-brand-400 hover:underline"
-            >
-              Set up vehicle mappings →
-            </button>
-          </div>
-        ) : (
+      {/* Bulk toolbar */}
+      <div className="card p-4 flex flex-wrap items-center gap-3">
+        <span className="text-sm font-medium">
+          {selectedOrderIds.length > 0
+            ? `${selectedOrderIds.length} order${selectedOrderIds.length === 1 ? '' : 's'} selected`
+            : 'Select orders to bulk-assign'}
+        </span>
+        <div className="flex-1 min-w-[200px] max-w-xs">
           <Select
-            label="Driver & Vehicle"
-            options={pairOptions}
-            placeholder="Select driver & vehicle pair"
-            required
-            value={pairKey}
-            onChange={(e) => { setPairKey(e.target.value); setPairError(null); }}
-            error={pairError ?? undefined}
+            options={driverOptions}
+            placeholder="Select driver"
+            value={bulkDriverId}
+            onChange={(e) => setBulkDriverId(e.target.value)}
           />
-        )}
-
-        <div className="flex justify-end gap-3 pt-4">
-          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" loading={mutation.isPending} disabled={pairs.length === 0}>
-            Create Assignment
-          </Button>
         </div>
-      </form>
-    </Modal>
+        <Button
+          size="sm"
+          onClick={handleBulkAssign}
+          disabled={!bulkDriverId || selectedOrderIds.length === 0 || bulkAssign.isPending}
+          loading={bulkAssign.isPending && selectedOrderIds.length > 0}
+        >
+          Assign Selected
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={handleAssignAll}
+          disabled={!bulkDriverId || orders.length === 0 || bulkAssign.isPending}
+        >
+          Assign All to Driver
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader /></div>
+      ) : orders.length === 0 ? (
+        <EmptyState
+          title="No orders pending driver assignment 🎉"
+          description="All orders for this distributor have been assigned."
+        />
+      ) : (
+        <div className="table-container">
+          <table className="table">
+            <thead>
+              <tr>
+                <th className="w-8">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded border-surface-300 dark:border-surface-600"
+                  />
+                </th>
+                <th>Order #</th>
+                <th>Customer</th>
+                <th>Delivery Date</th>
+                <th>Total</th>
+                <th>Assign Driver</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((order: any) => (
+                <tr key={order.orderId}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedOrderIds.includes(order.orderId)}
+                      onChange={() => toggleSelectOne(order.orderId)}
+                      className="rounded border-surface-300 dark:border-surface-600"
+                    />
+                  </td>
+                  <td className="font-medium font-mono text-surface-900 dark:text-white">{order.orderNumber}</td>
+                  <td>{order.customerName}</td>
+                  <td>{order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString('en-IN') : '—'}</td>
+                  <td className="font-medium">{formatCurrency(order.totalAmount ?? 0)}</td>
+                  <td className="min-w-[200px]">
+                    <Select
+                      options={driverOptions}
+                      placeholder="Assign Driver"
+                      value=""
+                      onChange={(e) => {
+                        const driverId = e.target.value;
+                        if (driverId) inlineAssign.mutate({ orderId: order.orderId, driverId });
+                      }}
+                      disabled={inlineAssign.isPending}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }

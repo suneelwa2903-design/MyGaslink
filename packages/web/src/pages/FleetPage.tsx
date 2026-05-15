@@ -32,16 +32,22 @@ const VEHICLE_STATUS_VARIANTS: Record<string, 'success' | 'info' | 'warning' | '
 
 
 export default function FleetPage() {
-  // Driver Assignment moved to the Orders page — Fleet is now just the
-  // drivers + vehicles registry. Supports a ?tab= query param so other
-  // pages (and bookmarks) can deep-link directly to a tab.
+  // Day-of order-to-driver assignment lives in Orders → Driver Assignment.
+  // Fleet owns the long-lived registry: drivers, vehicles, and the
+  // driver↔vehicle mapping admins maintain once. Supports a ?tab= query
+  // param so other pages (and bookmarks) can deep-link directly to a tab.
   const [searchParams] = useSearchParams();
-  const initialTab = (searchParams.get('tab') === 'vehicles' ? 'vehicles' : 'drivers') as 'drivers' | 'vehicles';
-  const [tab, setTab] = useState<'drivers' | 'vehicles'>(initialTab);
+  const tabParam = searchParams.get('tab');
+  const initialTab: 'drivers' | 'vehicles' | 'mapping' =
+    tabParam === 'vehicles' ? 'vehicles'
+    : tabParam === 'mapping' || tabParam === 'mappings' ? 'mapping'
+    : 'drivers';
+  const [tab, setTab] = useState<'drivers' | 'vehicles' | 'mapping'>(initialTab);
 
   const tabs = [
     { key: 'drivers' as const, label: 'Drivers' },
     { key: 'vehicles' as const, label: 'Vehicles' },
+    { key: 'mapping' as const, label: 'Vehicle Mapping' },
   ];
 
   return (
@@ -74,6 +80,119 @@ export default function FleetPage() {
       {/* Tab Content */}
       {tab === 'drivers' && <DriversTab />}
       {tab === 'vehicles' && <VehiclesTab />}
+      {tab === 'mapping' && <VehicleMappingTab />}
+    </div>
+  );
+}
+
+// ─── Vehicle Mapping Tab ─────────────────────────────────────────────────────
+// Concept A: which driver typically uses which vehicle. This is admin setup,
+// not the daily order-assignment workflow (which lives in Orders → Driver
+// Assignment). Mappings come from /assignments/vehicle-mappings, and the
+// "Bulk Confirm" button copies the previous day's mappings forward.
+
+function VehicleMappingTab() {
+  const queryClient = useQueryClient();
+  const today = new Date().toISOString().split('T')[0];
+  const [selectedDate, setSelectedDate] = useState(today);
+
+  const { data: mappings, isLoading } = useQuery({
+    queryKey: ['vehicle-mappings', selectedDate],
+    queryFn: () =>
+      apiGet<{
+        recommendations: Array<{
+          driverId: string;
+          driverName: string;
+          vehicleId: string | null;
+          vehicleNumber: string | null;
+          status: string;
+          source: string;
+        }>;
+        confirmedCount: number;
+        recommendedCount: number;
+        unassignedCount: number;
+      }>(`/assignments/vehicle-mappings?date=${selectedDate}`),
+  });
+
+  const confirmMappings = useMutation({
+    mutationFn: (data: { date: string }) =>
+      apiPost<{ confirmed: number; message?: string }>('/assignments/vehicle-mappings/confirm', data),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['vehicle-mappings'] });
+      if (result?.confirmed && result.confirmed > 0) {
+        toast.success(`Confirmed ${result.confirmed} driver-vehicle mapping${result.confirmed === 1 ? '' : 's'}`);
+      } else {
+        toast(result?.message || 'No mappings to confirm — no previous-day assignments found', { icon: 'ℹ️' });
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-surface-500 dark:text-surface-400">
+        The driver↔vehicle pairing admins maintain. Used as the default when assigning a driver to an order — the day's mapping is used to auto-resolve the vehicle.
+      </p>
+
+      <div className="flex items-center gap-3">
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
+          className="px-3 py-2 border rounded-lg dark:bg-surface-800 dark:border-surface-700"
+        />
+        <Button
+          onClick={() => confirmMappings.mutate({ date: selectedDate })}
+          disabled={confirmMappings.isPending}
+          loading={confirmMappings.isPending}
+        >
+          Bulk Confirm (Use Previous Day)
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader /></div>
+      ) : !mappings?.recommendations?.length ? (
+        <EmptyState
+          title="No mappings"
+          description="No driver-vehicle mappings for this date"
+        />
+      ) : (
+        <div className="bg-white dark:bg-surface-800 rounded-xl shadow-sm overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-surface-50 dark:bg-surface-700">
+              <tr>
+                <th className="px-4 py-3 text-left text-sm font-medium">Driver</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">Vehicle</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">Status</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">Source</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
+              {mappings.recommendations.map((r) => (
+                <tr key={r.driverId} className="hover:bg-surface-50 dark:hover:bg-surface-700/50">
+                  <td className="px-4 py-3 text-sm">{r.driverName}</td>
+                  <td className="px-4 py-3 text-sm">{r.vehicleNumber || '—'}</td>
+                  <td className="px-4 py-3">
+                    <Badge
+                      variant={
+                        r.status === 'confirmed' ? 'success' :
+                        r.status === 'recommended' ? 'warning' : 'neutral'
+                      }
+                    >
+                      {r.status}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-surface-500">{r.source}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-4 py-3 bg-surface-50 dark:bg-surface-700 text-sm">
+            Confirmed: {mappings.confirmedCount} | Recommended: {mappings.recommendedCount} | Unassigned: {mappings.unassignedCount}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
