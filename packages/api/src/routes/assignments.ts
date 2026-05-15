@@ -44,6 +44,9 @@ router.post('/vehicle-mappings/confirm',
       );
       return sendSuccess(res, result);
     } catch (err: unknown) {
+      if (err instanceof assignmentService.AssignmentError) {
+        return sendError(res, err.message, err.statusCode);
+      }
       const message = err instanceof Error ? err.message : 'Unknown error';
       return sendError(res, message, 500);
     }
