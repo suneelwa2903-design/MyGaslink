@@ -10,8 +10,14 @@ import {
   returnsOnlyOrderSchema, returnsConfirmationSchema,
 } from '@gaslink/shared';
 import * as orderService from '../services/orderService.js';
+import { preflightDispatch, PreflightError } from '../services/gst/gstPreflightService.js';
 import { mapOrder, mapOrders } from '../utils/mappers.js';
 import { z } from 'zod';
+
+const preflightDispatchSchema = z.object({
+  driverId: z.string().uuid(),
+  assignmentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
 
 const router = Router();
 
@@ -165,6 +171,38 @@ router.post('/bulk-assign-driver',
       );
       return sendSuccess(res, results);
     } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// POST /api/orders/preflight-dispatch
+// WI-035: For a driver's daily route, run pre-dispatch GST preflight
+// (IRN + EWB for B2B, EWB-only for B2C ≥ ₹50K, nothing for B2C < ₹50K
+// or GST-disabled tenants). Per-order partial dispatch — successes move
+// to pending_delivery, failures revert to pending_dispatch and surface
+// in the response + PendingActions queue.
+router.post('/preflight-dispatch',
+  requireRole('super_admin', 'distributor_admin'),
+  validate(preflightDispatchSchema),
+  auditLog('preflight_dispatch', 'order'),
+  async (req, res) => {
+    try {
+      const result = await preflightDispatch({
+        distributorId: req.user!.distributorId!,
+        driverId: req.body.driverId,
+        assignmentDate: req.body.assignmentDate,
+        userId: req.user!.userId,
+      });
+      // 207 Multi-Status when at least one order succeeded AND at least
+      // one failed — surfaces partial-success to clients without
+      // overloading 200. Pure success or pure failure still gets 200.
+      const status = result.summary.failed > 0 && result.summary.succeeded > 0 ? 207 : 200;
+      return res.status(status).json({ success: true, data: result, error: null });
+    } catch (err: any) {
+      if (err instanceof PreflightError) {
+        return sendError(res, err.message, err.statusCode, err.code);
+      }
       return sendError(res, err.message, err.statusCode || 500);
     }
   }
