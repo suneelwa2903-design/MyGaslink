@@ -60,6 +60,19 @@ export async function upsertGstCredentials(
   });
 }
 
+// WI-042: roll back isValid when a Test & Save call's authenticate()
+// step fails after the upsert. Keeps the credential row but flags it
+// so getGstCredentials surfaces the correct status to the UI.
+export async function markGstCredentialsInvalid(
+  distributorId: string,
+  scope: 'einvoice' | 'ewaybill',
+) {
+  return prisma.gstCredential.updateMany({
+    where: { distributorId, scope },
+    data: { isValid: false, lastValidated: new Date() },
+  });
+}
+
 export async function updateGstMode(distributorId: string, mode: string) {
   return prisma.distributor.update({
     where: { id: distributorId },
