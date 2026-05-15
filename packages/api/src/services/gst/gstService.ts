@@ -1006,13 +1006,17 @@ export async function recoverEwbFromIrn(invoiceId: string, distributorId: string
       logger.info('IRN details had no EWB info to recover', { invoiceId, irn });
       return null;
     }
+    // NIC returns dates in DD/MM/YYYY hh:mm:ss AM/PM — parseWhitebooksDate
+    // handles that format. Plain new Date() returns Invalid Date.
+    const ewbDate = parseWhitebooksDate(ewbDt);
+    const ewbValidTillDate = parseWhitebooksDate(ewbValidTill);
     await prisma.gstDocument.updateMany({
       where: { invoiceId, isLatest: true },
       data: {
         ewbStatus: 'active',
         ewbNo: ewbNo.toString(),
-        ewbDate: ewbDt ? new Date(ewbDt) : null,
-        ewbValidTill: ewbValidTill ? new Date(ewbValidTill) : null,
+        ewbDate,
+        ewbValidTill: ewbValidTillDate,
       },
     });
     await prisma.invoice.update({
@@ -1020,7 +1024,7 @@ export async function recoverEwbFromIrn(invoiceId: string, distributorId: string
       data: { ewbStatus: 'active' },
     });
     logger.info('Recovered EWB from IRN details after 620', { invoiceId, ewbNo });
-    return { ewbNo: ewbNo.toString(), ewbDate: ewbDt, ewbValidTill };
+    return { ewbNo: ewbNo.toString(), ewbDate, ewbValidTill: ewbValidTillDate?.toISOString() ?? null };
   } catch (err: any) {
     logger.warn('Failed to recover EWB from IRN after 620', { invoiceId, irn, error: err.message });
     return null;
@@ -1078,9 +1082,9 @@ export async function createPendingAction(
   invoiceId: string,
   actionType: string,
   errorMessage: string
-) {
+): Promise<{ id: string } | null> {
   try {
-    await prisma.pendingAction.create({
+    const row = await prisma.pendingAction.create({
       data: {
         distributorId,
         module: 'gst_compliance',
@@ -1091,8 +1095,11 @@ export async function createPendingAction(
         severity: 'high',
         status: 'open',
       },
+      select: { id: true },
     });
+    return row;
   } catch (err) {
     logger.error('Failed to create pending action', { distributorId, invoiceId, actionType, err });
+    return null;
   }
 }

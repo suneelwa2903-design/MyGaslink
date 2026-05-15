@@ -25,6 +25,7 @@ import { apiCall, getCredentials } from './whitebooksClient.js';
 import { buildIrnPayload } from './payloadBuilders.js';
 import {
   parseEwbResponse,
+  parseWhitebooksDate,
   recoverEwbFromIrn,
   createPendingAction,
 } from './gstService.js';
@@ -478,13 +479,19 @@ async function runB2bPreflight(params: {
     const irnEwbValidTill = irnResponse.data?.EwbValidTill ?? irnResponse.EwbValidTill;
     const hasIrnEwb = !!irnEwbNo && irnEwbNo !== 0 && irnEwbNo !== '0';
 
-    // Persist IRN + (inline EWB if present)
+    // Persist IRN + (inline EWB if present). NIC dates come back in Indian
+    // DD/MM/YYYY hh:mm:ss AM/PM format — JS Date() can't parse that, so we
+    // route every date through parseWhitebooksDate.
+    const ackDate = parseWhitebooksDate(ackDt);
+    const ewbDate = parseWhitebooksDate(irnEwbDt);
+    const ewbValidTillDate = parseWhitebooksDate(irnEwbValidTill);
+
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: {
         irn,
         ackNo: ackNo?.toString(),
-        ackDate: ackDt ? new Date(ackDt) : null,
+        ackDate,
         irnStatus: 'success',
         ...(hasIrnEwb ? { ewbStatus: 'active' } : {}),
       },
@@ -496,13 +503,13 @@ async function runB2bPreflight(params: {
       data: {
         irnStatus: 'success', irn,
         ackNo: ackNo?.toString(),
-        ackDate: ackDt ? new Date(ackDt) : null,
+        ackDate,
         signedQr,
         ...(hasIrnEwb ? {
           ewbStatus: 'active',
           ewbNo: irnEwbNo?.toString(),
-          ewbDate: irnEwbDt ? new Date(irnEwbDt) : null,
-          ewbValidTill: irnEwbValidTill ? new Date(irnEwbValidTill) : null,
+          ewbDate,
+          ewbValidTill: ewbValidTillDate,
         } : {}),
         requestPayload: irnPayload,
         responsePayload: irnResponse,
