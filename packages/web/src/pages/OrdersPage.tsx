@@ -11,6 +11,7 @@ import {
   HiOutlineMagnifyingGlass,
   HiOutlineTrash,
   HiOutlineArrowUturnLeft,
+  HiOutlineLink,
 } from 'react-icons/hi2';
 import {
   type Order,
@@ -20,6 +21,10 @@ import {
   type Vehicle,
   type PaginationMeta,
   OrderStatus,
+  OrderType,
+  DriverStatus,
+  VehicleStatus,
+  UserRole,
   createOrderSchema,
   type CreateOrderInput,
   assignDriverSchema,
@@ -30,7 +35,9 @@ import {
   type ReturnsOnlyOrderInput,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
+import { useAuthStore, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { cn } from '@/lib/cn';
 
 const STATUS_VARIANTS: Record<string, 'info' | 'warning' | 'success' | 'danger' | 'neutral'> = {
   [OrderStatus.PENDING_DRIVER_ASSIGNMENT]: 'warning',
@@ -56,6 +63,12 @@ function formatCurrency(amount: number): string {
 
 export default function OrdersPage() {
   useQueryClient();
+  // Driver Assignment moved here from the Fleet page — it's an Orders-side
+  // morning workflow. The tab is only for admins (distributor_admin /
+  // super_admin); inventory + driver roles see just the Orders tab.
+  const role = useAuthStore(selectRole);
+  const canAssignDrivers = role === UserRole.DISTRIBUTOR_ADMIN || role === UserRole.SUPER_ADMIN;
+  const [tab, setTab] = useState<'orders' | 'assignment'>('orders');
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -135,24 +148,55 @@ export default function OrdersPage() {
             Manage orders and deliveries
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {selectedOrders.length > 0 && (
-            <Button variant="secondary" size="sm" onClick={() => setBulkAssignOpen(true)}>
-              <HiOutlineTruck className="h-4 w-4" />
-              Assign Driver ({selectedOrders.length})
+        {tab === 'orders' && (
+          <div className="flex items-center gap-2">
+            {selectedOrders.length > 0 && (
+              <Button variant="secondary" size="sm" onClick={() => setBulkAssignOpen(true)}>
+                <HiOutlineTruck className="h-4 w-4" />
+                Assign Driver ({selectedOrders.length})
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => setReturnsOpen(true)}>
+              <HiOutlineArrowUturnLeft className="h-4 w-4" />
+              Returns Order
             </Button>
-          )}
-          <Button variant="secondary" onClick={() => setReturnsOpen(true)}>
-            <HiOutlineArrowUturnLeft className="h-4 w-4" />
-            Returns Order
-          </Button>
-          <Button onClick={() => setCreateOpen(true)}>
-            <HiOutlinePlus className="h-4 w-4" />
-            New Order
-          </Button>
-        </div>
+            <Button onClick={() => setCreateOpen(true)}>
+              <HiOutlinePlus className="h-4 w-4" />
+              New Order
+            </Button>
+          </div>
+        )}
       </div>
 
+      {/* Tabs — Orders | Driver Assignment (admins only) */}
+      {canAssignDrivers && (
+        <div className="border-b border-surface-200 dark:border-surface-700">
+          <div className="flex gap-4">
+            {([
+              { key: 'orders' as const, label: 'Orders' },
+              { key: 'assignment' as const, label: 'Driver Assignment' },
+            ]).map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  'pb-2 text-sm font-medium border-b-2 transition-colors',
+                  tab === t.key
+                    ? 'border-brand-500 text-brand-600 dark:text-brand-400'
+                    : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === 'assignment' && canAssignDrivers && <AssignmentsTab />}
+
+      {tab === 'orders' && (
+       <>
       {/* Filters */}
       <div className="card p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -298,6 +342,8 @@ export default function OrdersPage() {
             </div>
           )}
         </>
+      )}
+       </>
       )}
 
       {/* Create Order Modal */}
@@ -725,6 +771,10 @@ function DeliveryConfirmationModal({
   order: Order;
 }) {
   const queryClient = useQueryClient();
+  // The same confirmation modal is reached for both delivery orders and
+  // returns-only orders. Returns are the opposite of deliveries, so the
+  // verbiage flips when orderType === returns_only.
+  const isReturn = order.orderType === OrderType.RETURNS_ONLY;
 
   const { register, handleSubmit, formState: { errors } } = useForm<DeliveryConfirmationInput>({
     resolver: zodResolver(deliveryConfirmationSchema),
@@ -742,7 +792,7 @@ function DeliveryConfirmationModal({
     mutationFn: (data: DeliveryConfirmationInput) =>
       apiPost(`/orders/${order.orderId}/confirm-delivery`, data),
     onSuccess: () => {
-      toast.success('Delivery confirmed');
+      toast.success(isReturn ? 'Return confirmed' : 'Delivery confirmed');
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
       onClose();
@@ -751,18 +801,23 @@ function DeliveryConfirmationModal({
   });
 
   return (
-    <Modal open={open} onClose={onClose} title={`Confirm Delivery - ${order.orderNumber}`} size="lg">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`${isReturn ? 'Confirm Return' : 'Confirm Delivery'} - ${order.orderNumber}`}
+      size="lg"
+    >
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
         <div className="space-y-3">
           {order.items.map((item, index) => (
             <div key={item.orderItemId} className="p-4 bg-surface-50 dark:bg-surface-800/50 rounded-xl space-y-3">
               <p className="font-medium text-surface-900 dark:text-white">
-                {item.cylinderTypeName} (Ordered: {item.quantity})
+                {item.cylinderTypeName} ({isReturn ? 'Expected' : 'Ordered'}: {item.quantity})
               </p>
               <input type="hidden" {...register(`items.${index}.cylinderTypeId`)} />
               <div className="grid grid-cols-2 gap-3">
                 <Input
-                  label="Delivered Qty"
+                  label={isReturn ? 'Return Qty' : 'Delivered Qty'}
                   type="number"
                   min={0}
                   required
@@ -783,7 +838,7 @@ function DeliveryConfirmationModal({
         </div>
 
         <Input
-          label="Delivery Notes"
+          label={isReturn ? 'Return Notes' : 'Delivery Notes'}
           placeholder="Optional notes..."
           {...register('notes')}
         />
@@ -792,7 +847,7 @@ function DeliveryConfirmationModal({
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={mutation.isPending} variant="accent">
             <HiOutlineCheckCircle className="h-4 w-4" />
-            Confirm Delivery
+            {isReturn ? 'Confirm Return' : 'Confirm Delivery'}
           </Button>
         </div>
       </form>
@@ -853,7 +908,7 @@ function ReturnsOrderModal({
         />
 
         <Input
-          label="Scheduled Date"
+          label="Return Date"
           type="date"
           required
           error={errors.scheduledDate?.message}
@@ -919,6 +974,227 @@ function ReturnsOrderModal({
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={mutation.isPending}>Create Returns Order</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Driver Assignment Tab ───────────────────────────────────────────────────
+// Moved here from FleetPage — assigning drivers to the day's orders is an
+// Orders-side morning workflow, not fleet maintenance.
+
+function AssignmentsTab() {
+  const queryClient = useQueryClient();
+  const today = new Date().toISOString().split('T')[0];
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [assignmentSubTab, setAssignmentSubTab] = useState<'mappings' | 'orders'>('mappings');
+
+  const { data: driversData } = useQuery({
+    queryKey: ['drivers'],
+    queryFn: () => apiGet<{ drivers: Driver[] }>('/drivers'),
+  });
+  const { data: vehiclesData } = useQuery({
+    queryKey: ['vehicles'],
+    queryFn: () => apiGet<{ vehicles: Vehicle[] }>('/vehicles'),
+  });
+  const drivers = driversData?.drivers ?? [];
+  const vehicles = vehiclesData?.vehicles ?? [];
+
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
+
+  const { data: mappings, isLoading: mappingsLoading } = useQuery({
+    queryKey: ['vehicle-mappings', selectedDate],
+    queryFn: () => apiGet<{ recommendations: any[]; confirmedCount: number; recommendedCount: number; unassignedCount: number }>(`/assignments/vehicle-mappings?date=${selectedDate}`),
+  });
+
+  const confirmMappings = useMutation({
+    mutationFn: (data: { date: string; mappings?: any[] }) =>
+      apiPost<{ confirmed: number; message?: string }>('/assignments/vehicle-mappings/confirm', data),
+    // Previously had no toast and no onError — the button worked but gave
+    // zero feedback (success, failure, or "0 confirmed" all looked
+    // identical), so it read as broken. Now it always reports back.
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['vehicle-mappings'] });
+      if (result?.confirmed && result.confirmed > 0) {
+        toast.success(`Confirmed ${result.confirmed} driver-vehicle mapping${result.confirmed === 1 ? '' : 's'}`);
+      } else {
+        toast(result?.message || 'No mappings to confirm — no previous-day assignments found', { icon: 'ℹ️' });
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const { data: pendingOrders } = useQuery({
+    queryKey: ['pending-orders'],
+    queryFn: () =>
+      apiGet<{ orders: any[] }>('/orders?status=pending_driver_assignment&pageSize=100'),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <button
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${assignmentSubTab === 'mappings' ? 'bg-brand-600 text-white' : 'bg-surface-100 dark:bg-surface-800'}`}
+            onClick={() => setAssignmentSubTab('mappings')}
+          >
+            Vehicle Mappings
+          </button>
+          <button
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${assignmentSubTab === 'orders' ? 'bg-brand-600 text-white' : 'bg-surface-100 dark:bg-surface-800'}`}
+            onClick={() => setAssignmentSubTab('orders')}
+          >
+            Order Assignment
+          </button>
+        </div>
+        <Button onClick={() => setAssignmentOpen(true)}>
+          <HiOutlineLink className="h-4 w-4" />Create Assignment
+        </Button>
+      </div>
+
+      {assignmentSubTab === 'mappings' && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="px-3 py-2 border rounded-lg dark:bg-surface-800 dark:border-surface-700"
+            />
+            <Button
+              onClick={() => confirmMappings.mutate({ date: selectedDate })}
+              disabled={confirmMappings.isPending}
+            >
+              {confirmMappings.isPending
+                ? 'Confirming...'
+                : 'Bulk Confirm All (Use Previous Day)'}
+            </Button>
+          </div>
+
+          {mappingsLoading ? (
+            <Loader />
+          ) : !mappings?.recommendations?.length ? (
+            <EmptyState
+              title="No mappings"
+              description="No driver-vehicle mappings for this date"
+            />
+          ) : (
+            <div className="bg-white dark:bg-surface-800 rounded-xl shadow-sm overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-surface-50 dark:bg-surface-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Driver</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Vehicle</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Status</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Source</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
+                  {mappings.recommendations.map((r: any) => (
+                    <tr key={r.driverId} className="hover:bg-surface-50 dark:hover:bg-surface-700/50">
+                      <td className="px-4 py-3 text-sm">{r.driverName}</td>
+                      <td className="px-4 py-3 text-sm">{r.vehicleNumber || '—'}</td>
+                      <td className="px-4 py-3">
+                        <Badge
+                          variant={
+                            r.status === 'confirmed' ? 'success' :
+                            r.status === 'recommended' ? 'warning' : 'neutral'
+                          }
+                        >
+                          {r.status}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-surface-500">{r.source}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="px-4 py-3 bg-surface-50 dark:bg-surface-700 text-sm">
+                Confirmed: {mappings.confirmedCount} | Recommended: {mappings.recommendedCount} | Unassigned: {mappings.unassignedCount}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {assignmentSubTab === 'orders' && (
+        <div className="space-y-4">
+          <p className="text-sm text-surface-500">
+            Orders pending driver assignment. Use bulk assign to assign drivers based on recommendations.
+          </p>
+          {pendingOrders?.orders?.length ? (
+            <div className="bg-white dark:bg-surface-800 rounded-xl shadow-sm overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-surface-50 dark:bg-surface-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Order</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Customer</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Delivery Date</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
+                  {pendingOrders.orders.map((o: any) => (
+                    <tr key={o.orderId}>
+                      <td className="px-4 py-3 text-sm font-mono">{o.orderNumber}</td>
+                      <td className="px-4 py-3 text-sm">{o.customerName}</td>
+                      <td className="px-4 py-3 text-sm">{o.deliveryDate?.split('T')[0]}</td>
+                      <td className="px-4 py-3 text-sm font-medium">&#8377;{o.totalAmount?.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState
+              title="No pending orders"
+              description="All orders have been assigned"
+            />
+          )}
+        </div>
+      )}
+
+      {assignmentOpen && (
+        <AssignmentModal open={assignmentOpen} onClose={() => setAssignmentOpen(false)} drivers={drivers} vehicles={vehicles} />
+      )}
+    </div>
+  );
+}
+
+// ─── Assignment Modal ───────────────────────────────────────────────────────
+
+function AssignmentModal({ open, onClose, drivers, vehicles }: { open: boolean; onClose: () => void; drivers: Driver[]; vehicles: Vehicle[] }) {
+  const queryClient = useQueryClient();
+
+  const { register, handleSubmit, formState: { errors } } = useForm({
+    defaultValues: { driverId: '', vehicleId: '', assignmentDate: new Date().toISOString().split('T')[0] },
+  });
+
+  const mutation = useMutation({
+    mutationFn: (data: Record<string, unknown>) => apiPost('/assignments', data),
+    onSuccess: () => {
+      toast.success('Assignment created');
+      queryClient.invalidateQueries({ queryKey: ['assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['drivers'] });
+      queryClient.invalidateQueries({ queryKey: ['vehicles'] });
+      onClose();
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const driverOptions = drivers.filter((d) => d.status === DriverStatus.ACTIVE).map((d) => ({ value: d.driverId, label: d.driverName }));
+  const vehicleOptions = vehicles.filter((v) => v.status === VehicleStatus.IDLE).map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
+
+  return (
+    <Modal open={open} onClose={onClose} title="Create Assignment">
+      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
+        <Select label="Driver" options={driverOptions} placeholder="Select driver" required error={errors.driverId?.message} {...register('driverId', { required: 'Driver is required' })} />
+        <Select label="Vehicle" options={vehicleOptions} placeholder="Select vehicle" required error={errors.vehicleId?.message} {...register('vehicleId', { required: 'Vehicle is required' })} />
+        <Input label="Assignment Date" type="date" required error={errors.assignmentDate?.message} {...register('assignmentDate', { required: 'Date is required' })} />
+        <div className="flex justify-end gap-3 pt-4">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={mutation.isPending}>Create Assignment</Button>
         </div>
       </form>
     </Modal>
