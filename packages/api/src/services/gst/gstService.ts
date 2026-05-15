@@ -30,6 +30,38 @@ function extractStateCode(gstin: string): string {
 }
 
 /**
+ * Extract EWB number + validity dates from a WhiteBooks /genewaybill
+ * response. WhiteBooks has shipped the EWB fields at various paths over
+ * the years (data.ewayBillNo, top-level ewayBillNo, ewbNo, EwbNo, and
+ * sometimes data is a raw string of the number). Checking only one path
+ * silently drops the number when the API shape shifts.
+ *
+ * Lifted from the legacy New_GasLink/.../whitebooksEinvoiceClient.js
+ * which evolved these fallbacks the hard way.
+ */
+function parseEwbResponse(resp: any): {
+  ewbNo: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+} {
+  // data may be an object or a JSON-encoded string of the body
+  let data: any = resp?.data;
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); } catch { /* string number */ }
+  }
+  const ewbNoRaw =
+    data?.ewayBillNo ?? data?.ewbNo ?? data?.EwbNo ??
+    resp?.ewayBillNo ?? resp?.ewbNo ?? resp?.EwbNo ??
+    (typeof resp?.data === 'string' && resp.data.match(/^\d+$/) ? resp.data : null);
+  const ewbNo = ewbNoRaw != null && ewbNoRaw !== 0 && ewbNoRaw !== '0'
+    ? String(ewbNoRaw)
+    : null;
+  const validFrom = (data?.validFrom ?? data?.ValidFrom ?? resp?.validFrom ?? resp?.ValidFrom) ?? null;
+  const validTo = (data?.validTo ?? data?.ValidTo ?? resp?.validTo ?? resp?.ValidTo) ?? null;
+  return { ewbNo, validFrom, validTo };
+}
+
+/**
  * Process GST compliance for an invoice.
  * Called after invoice creation. Non-blocking - failures create pending actions.
  */
@@ -213,9 +245,14 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               ewbPayload, 'ewaybill'
             );
 
-            const ewbNo = ewbResponse.data?.ewayBillNo;
-            const ewbDate = ewbResponse.data?.validFrom;
-            const ewbValidTill = ewbResponse.data?.validTo;
+            const parsed = parseEwbResponse(ewbResponse);
+            if (!parsed.ewbNo) {
+              logger.warn('EWB response missing ewayBillNo', {
+                invoiceId, responseKeys: Object.keys(ewbResponse ?? {}),
+                dataKeys: ewbResponse?.data && typeof ewbResponse.data === 'object'
+                  ? Object.keys(ewbResponse.data) : null,
+              });
+            }
 
             await prisma.invoice.update({
               where: { id: invoiceId },
@@ -226,14 +263,17 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               where: { invoiceId, isLatest: true },
               data: {
                 ewbStatus: 'active',
-                ewbNo: ewbNo?.toString(),
-                ewbDate: ewbDate ? new Date(ewbDate) : null,
-                ewbValidTill: ewbValidTill ? new Date(ewbValidTill) : null,
+                ewbNo: parsed.ewbNo,
+                ewbDate: parsed.validFrom ? new Date(parsed.validFrom) : null,
+                ewbValidTill: parsed.validTo ? new Date(parsed.validTo) : null,
+                // Keep raw EWB response so we can audit response-shape
+                // drift instead of guessing.
+                responsePayload: ewbResponse,
               },
             });
 
-            result.ewb = { ewbNo, status: 'active' };
-            logger.info('EWB generated separately', { invoiceId, ewbNo });
+            result.ewb = { ewbNo: parsed.ewbNo, status: 'active' };
+            logger.info('EWB generated separately', { invoiceId, ewbNo: parsed.ewbNo });
           } catch (ewbErr: any) {
             const errCode = ewbErr.code || '';
             const errMsg = ewbErr.message || '';
