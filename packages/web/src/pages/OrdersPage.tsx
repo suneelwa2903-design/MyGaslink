@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -67,7 +67,13 @@ export default function OrdersPage() {
   // super_admin); inventory + driver roles see just the Orders tab.
   const role = useAuthStore(selectRole);
   const canAssignDrivers = role === UserRole.DISTRIBUTOR_ADMIN || role === UserRole.SUPER_ADMIN;
-  const [tab, setTab] = useState<'orders' | 'assignment'>('orders');
+  // Read ?tab= so other pages (e.g. the AssignmentModal empty state)
+  // can deep-link straight into the Driver Assignment tab.
+  const [searchParams] = useSearchParams();
+  const initialOrdersTab = (searchParams.get('tab') === 'assignment' && canAssignDrivers)
+    ? 'assignment' as const
+    : 'orders' as const;
+  const [tab, setTab] = useState<'orders' | 'assignment'>(initialOrdersTab);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -1242,10 +1248,10 @@ function AssignmentModal({ open, onClose }: { open: boolean; onClose: () => void
             </p>
             <button
               type="button"
-              onClick={() => { onClose(); navigate('/app/fleet?tab=vehicle-mapping'); }}
+              onClick={() => { onClose(); navigate('/app/orders?tab=assignment'); }}
               className="text-sm font-medium text-brand-600 dark:text-brand-400 hover:underline"
             >
-              Go to Fleet →
+              Set up vehicle mappings →
             </button>
           </div>
         ) : (
