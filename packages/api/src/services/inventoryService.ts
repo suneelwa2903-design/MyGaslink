@@ -560,13 +560,27 @@ export async function getCustomerBalances(distributorId: string, customerId?: st
   // Filter by distributor through customer relation
   where.customer = { distributorId, deletedAt: null };
 
-  return prisma.customerInventoryBalance.findMany({
+  const rows = await prisma.customerInventoryBalance.findMany({
     where,
     include: {
       customer: { select: { id: true, customerName: true } },
       cylinderType: { select: { typeName: true } },
     },
   });
+
+  // Flatten to the shared CustomerInventoryBalance shape — both the
+  // Inventory > Customer Balances tab and the Customers detail modal
+  // read flat customerName / cylinderTypeName, not the nested relations.
+  return rows.map((b) => ({
+    customerId: b.customerId,
+    customerName: b.customer.customerName,
+    cylinderTypeId: b.cylinderTypeId,
+    cylinderTypeName: b.cylinderType.typeName,
+    withCustomerQty: b.withCustomerQty,
+    pendingReturns: b.pendingReturns,
+    missingQty: b.missingQty,
+    lastUpdated: b.lastUpdated,
+  }));
 }
 
 /**
