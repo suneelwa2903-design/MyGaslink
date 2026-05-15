@@ -206,7 +206,7 @@ function drawPill(doc: PDFKit.PDFDocument, x: number, y: number, text: string, f
 function drawHeader(
   doc: PDFKit.PDFDocument,
   seller: { name: string; gstin: string | null },
-  meta: { gstDocNo: string; invoiceDate: string; dueDate: string; paymentTerms: string },
+  meta: { gstDocNo: string; invoiceDate: string; dueDate: string; paymentTerms: string; ewbNo?: string | null },
   startY: number,
 ): number {
   const T = LAYOUT.THEME;
@@ -238,6 +238,18 @@ function drawHeader(
   const docNoW = doc.widthOfString(docNoText);
   doc.text(docNoText, rightMargin - docNoW, rightY, { width: docNoW + 10 });
   rightY += 14;
+
+  // WI-041: EWB No directly under GST Doc No when the invoice has one
+  // (only true for B2B with inline EWB or B2C with standalone EWB).
+  // Existing e-Documents card lower in the doc still shows the full
+  // EWB block (validity, vehicle, etc.); this header line is for
+  // quick-glance reference at the top of the page.
+  if (meta.ewbNo) {
+    const ewbText = `EWB No: ${meta.ewbNo}`;
+    const ewbW = doc.widthOfString(ewbText);
+    doc.text(ewbText, rightMargin - ewbW, rightY, { width: ewbW + 10 });
+    rightY += 14;
+  }
 
   // Divider line
   const bottomY = Math.max(companyY, rightY);
@@ -675,7 +687,7 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
   const dueDate = formatDate(invoice.dueDate);
   const creditDays = cust?.creditPeriodDays ?? 30;
   const paymentTerms = `Net ${creditDays}`;
-  const meta = { gstDocNo, invoiceDate, dueDate, paymentTerms };
+  const meta = { gstDocNo, invoiceDate, dueDate, paymentTerms, ewbNo: gstDoc?.ewbNo ?? null };
 
   // Compute items
   const { computed: computedItems } = computeItems(invoice.items);
