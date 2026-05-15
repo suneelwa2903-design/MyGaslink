@@ -61,10 +61,17 @@ describe('Settings — Auth', () => {
 });
 
 describe('Settings — JSONB key-value', () => {
-  it('GET / returns an array (may be empty)', async () => {
+  it('GET / returns the structured settings envelope (gstMode + rawSettings)', async () => {
+    // Contract change: GET /settings now returns a DistributorSettings
+    // object — gstMode, gstCredentials, rawSettings[] — so every web
+    // consumer that reads settings.gstMode actually gets a value.
     const res = await request(app).get('/api/settings').set(auth(adminToken));
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.data).toBeTypeOf('object');
+    expect(Array.isArray(res.body.data.rawSettings)).toBe(true);
+    // gstMode reflects the distributor's current mode (string or null).
+    expect(res.body.data).toHaveProperty('gstMode');
+    expect(res.body.data).toHaveProperty('gstCredentials');
   });
 
   it('PUT /:key creates a setting and persists', async () => {

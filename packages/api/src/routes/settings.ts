@@ -15,9 +15,34 @@ const router = Router();
 router.get('/', async (req, res) => {
   try {
     const distributorId = req.user!.distributorId;
-    if (!distributorId) return sendSuccess(res, []); // super admin without distributor selected
-    const settings = await settingsService.getSettings(distributorId);
-    return sendSuccess(res, settings);
+    if (!distributorId) {
+      // super_admin without a tenant selected — empty object is safer
+      // than [] since every UI consumer expects an object shape.
+      return sendSuccess(res, {
+        distributorId: null,
+        gstMode: null,
+        gstCredentials: null,
+        rawSettings: [],
+      });
+    }
+    // The TS contract on the web (DistributorSettings interface) expects
+    // an object with gstMode + gstCredentials on it, not the raw
+    // DistributorSetting[] rows. Build that envelope here so every page
+    // that reads `settings.gstMode` works.
+    const [rawSettings, distributor, gstCred] = await Promise.all([
+      settingsService.getSettings(distributorId),
+      (await import('../lib/prisma.js')).prisma.distributor.findUnique({
+        where: { id: distributorId },
+        select: { gstMode: true },
+      }),
+      settingsService.getGstCredentials(distributorId, 'einvoice'),
+    ]);
+    return sendSuccess(res, {
+      distributorId,
+      gstMode: distributor?.gstMode ?? null,
+      gstCredentials: gstCred ?? null,
+      rawSettings,
+    });
   } catch (err) {
     return sendError(res, (err as Error).message);
   }
