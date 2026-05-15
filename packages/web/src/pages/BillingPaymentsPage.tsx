@@ -35,9 +35,10 @@ import {
   type CreateDebitNoteInput,
   createPaymentSchema,
   type CreatePaymentInput,
+  UserRole,
 } from '@gaslink/shared';
-import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
-import { useAuthStore, selectDistributorId } from '@/stores/authStore';
+import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
+import { useAuthStore, selectDistributorId, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -703,6 +704,11 @@ function InvoiceDetailModal({
               )}
             </div>
 
+            {/* WI-039: Credit / Debit Notes section. Approve/Reject are
+                only visible to admins; finance can raise notes but not
+                approve them. Approved CN/DN expose a Download PDF link. */}
+            <InvoiceNotesSection invoiceId={invoice.invoiceId} />
+
             {/* View GST Documents expandable section */}
             <div className="border-t border-surface-200 dark:border-surface-700 pt-2">
               <button
@@ -759,6 +765,315 @@ function InvoiceDetailModal({
           </>
         )}
       </div>
+    </Modal>
+  );
+}
+
+// ─── Invoice Notes Section (WI-039) ─────────────────────────────────────────
+// Lists credit + debit notes raised against an invoice. Admins see
+// Approve / Reject on pending notes; approved notes expose a Download PDF
+// link.  Finance can see + raise notes (the raise modals are wired by
+// the parent BillingPaymentsPage), but cannot approve.
+
+type CreditNoteRow = {
+  creditNoteId: string;
+  creditNoteNumber: string | null;
+  totalAmount: number;
+  reason: string;
+  status: string; // 'pending' | 'approved' | 'rejected' | 'issued' | 'cancelled'
+  approvedBy: string | null;
+  approvedAt: string | null;
+  issueDate: string | null;
+  createdAt: string;
+};
+
+type DebitNoteRow = {
+  debitNoteId: string;
+  debitNoteNumber: string | null;
+  totalAmount: number;
+  reason: string;
+  status: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  issueDate: string | null;
+  createdAt: string;
+};
+
+const NOTE_STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
+  pending: 'warning',
+  approved: 'success',
+  issued: 'success',
+  rejected: 'danger',
+  cancelled: 'danger',
+};
+
+function InvoiceNotesSection({ invoiceId }: { invoiceId: string }) {
+  const queryClient = useQueryClient();
+  const role = useAuthStore(selectRole);
+  const canApprove = role === UserRole.SUPER_ADMIN || role === UserRole.DISTRIBUTOR_ADMIN;
+  const [open, setOpen] = useState(false);
+  const [rejectTarget, setRejectTarget] = useState<{ kind: 'cn' | 'dn'; id: string; number: string | null } | null>(null);
+
+  const { data: cnData } = useQuery({
+    queryKey: ['invoice-credit-notes', invoiceId],
+    queryFn: () => apiGet<{ creditNotes: CreditNoteRow[] }>(`/invoices/${invoiceId}/credit-notes`),
+    enabled: open,
+  });
+  const { data: dnData } = useQuery({
+    queryKey: ['invoice-debit-notes', invoiceId],
+    queryFn: () => apiGet<{ debitNotes: DebitNoteRow[] }>(`/invoices/${invoiceId}/debit-notes`),
+    enabled: open,
+  });
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['invoice-credit-notes', invoiceId] });
+    queryClient.invalidateQueries({ queryKey: ['invoice-debit-notes', invoiceId] });
+    queryClient.invalidateQueries({ queryKey: ['invoices'] });
+  };
+
+  const approveCn = useMutation({
+    mutationFn: (id: string) => apiPut(`/invoices/credit-notes/${id}/approve`),
+    onSuccess: () => { toast.success('Credit note approved'); refresh(); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+  const approveDn = useMutation({
+    mutationFn: (id: string) => apiPut(`/invoices/debit-notes/${id}/approve`),
+    onSuccess: () => { toast.success('Debit note approved'); refresh(); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+  const rejectCn = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      apiPut(`/invoices/credit-notes/${id}/reject`, { reason }),
+    onSuccess: () => { toast.success('Credit note rejected'); setRejectTarget(null); refresh(); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+  const rejectDn = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      apiPut(`/invoices/debit-notes/${id}/reject`, { reason }),
+    onSuccess: () => { toast.success('Debit note rejected'); setRejectTarget(null); refresh(); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  const cns = cnData?.creditNotes ?? [];
+  const dns = dnData?.debitNotes ?? [];
+  const total = cns.length + dns.length;
+
+  const downloadNotePdf = async (kind: 'cn' | 'dn', id: string, number: string | null) => {
+    try {
+      const path = kind === 'cn'
+        ? `/invoices/credit-notes/${id}/pdf`
+        : `/invoices/debit-notes/${id}/pdf`;
+      const resp = await api.get(path, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(resp.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${kind === 'cn' ? 'credit-note' : 'debit-note'}-${number ?? id.slice(0, 8)}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  };
+
+  return (
+    <div className="border-t border-surface-200 dark:border-surface-700 pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600"
+      >
+        <HiOutlineDocumentText className="h-4 w-4" />
+        {open ? 'Hide' : 'View'} Credit / Debit Notes
+        {open ? '' : total > 0 ? ` (${total})` : ''}
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          <NoteList
+            title="Credit Notes"
+            emptyText="No credit notes raised on this invoice."
+            rows={cns.map((cn) => ({
+              kind: 'cn' as const,
+              id: cn.creditNoteId,
+              number: cn.creditNoteNumber,
+              amount: cn.totalAmount,
+              reason: cn.reason,
+              status: cn.status,
+              createdAt: cn.createdAt,
+            }))}
+            canApprove={canApprove}
+            onApprove={(id) => approveCn.mutate(id)}
+            onReject={(id, number) => setRejectTarget({ kind: 'cn', id, number })}
+            onDownload={(id, number) => downloadNotePdf('cn', id, number)}
+            approving={approveCn.isPending}
+          />
+          <NoteList
+            title="Debit Notes"
+            emptyText="No debit notes raised on this invoice."
+            rows={dns.map((dn) => ({
+              kind: 'dn' as const,
+              id: dn.debitNoteId,
+              number: dn.debitNoteNumber,
+              amount: dn.totalAmount,
+              reason: dn.reason,
+              status: dn.status,
+              createdAt: dn.createdAt,
+            }))}
+            canApprove={canApprove}
+            onApprove={(id) => approveDn.mutate(id)}
+            onReject={(id, number) => setRejectTarget({ kind: 'dn', id, number })}
+            onDownload={(id, number) => downloadNotePdf('dn', id, number)}
+            approving={approveDn.isPending}
+          />
+        </div>
+      )}
+
+      {rejectTarget && (
+        <RejectNoteModal
+          target={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onSubmit={(reason) => {
+            if (rejectTarget.kind === 'cn') rejectCn.mutate({ id: rejectTarget.id, reason });
+            else rejectDn.mutate({ id: rejectTarget.id, reason });
+          }}
+          submitting={rejectCn.isPending || rejectDn.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+type NoteRow = {
+  kind: 'cn' | 'dn';
+  id: string;
+  number: string | null;
+  amount: number;
+  reason: string;
+  status: string;
+  createdAt: string;
+};
+
+function NoteList({
+  title, emptyText, rows, canApprove, onApprove, onReject, onDownload, approving,
+}: {
+  title: string;
+  emptyText: string;
+  rows: NoteRow[];
+  canApprove: boolean;
+  onApprove: (id: string) => void;
+  onReject: (id: string, number: string | null) => void;
+  onDownload: (id: string, number: string | null) => void;
+  approving: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-surface-500 dark:text-surface-400">
+        {title}
+      </h4>
+      {rows.length === 0 ? (
+        <p className="text-sm text-surface-400 py-1">{emptyText}</p>
+      ) : (
+        <div className="space-y-1.5">
+          {rows.map((r) => {
+            const isPending = r.status === 'pending';
+            const isApproved = r.status === 'approved' || r.status === 'issued';
+            return (
+              <div key={r.id} className="rounded-lg border border-surface-200 dark:border-surface-700 px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-mono font-medium text-surface-900 dark:text-white">
+                    {r.number ?? r.id.slice(0, 8)}
+                    <span className="ml-2 text-surface-500 dark:text-surface-400 font-sans font-normal">
+                      ₹{Number(r.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={NOTE_STATUS_VARIANTS[r.status] || 'neutral'}>
+                      {r.status.replace(/_/g, ' ')}
+                    </Badge>
+                    {isApproved && (
+                      <button
+                        type="button"
+                        onClick={() => onDownload(r.id, r.number)}
+                        className="text-xs text-brand-500 hover:text-brand-600 underline-offset-2 hover:underline"
+                      >
+                        Download PDF
+                      </button>
+                    )}
+                    {canApprove && isPending && (
+                      <>
+                        <Button size="sm" variant="accent" onClick={() => onApprove(r.id)} loading={approving}>
+                          Approve
+                        </Button>
+                        <Button size="sm" variant="danger" onClick={() => onReject(r.id, r.number)}>
+                          Reject
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {r.reason && (
+                  <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+                    {r.reason}
+                  </p>
+                )}
+                <p className="mt-1 text-xs text-surface-400">
+                  Created: {new Date(r.createdAt).toLocaleString('en-IN')}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RejectNoteModal({
+  target, onClose, onSubmit, submitting,
+}: {
+  target: { kind: 'cn' | 'dn'; id: string; number: string | null };
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+  submitting: boolean;
+}) {
+  const [reason, setReason] = useState('');
+  const noun = target.kind === 'cn' ? 'Credit Note' : 'Debit Note';
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Reject ${noun} ${target.number ?? ''}`.trim()}
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!reason.trim()) { toast.error('Please enter a reason'); return; }
+          onSubmit(reason.trim());
+        }}
+        className="space-y-4"
+      >
+        <p className="text-sm text-surface-500 dark:text-surface-400">
+          The reason is recorded in the audit log. The {noun.toLowerCase()} will be
+          marked as rejected and the original invoice is left unchanged.
+        </p>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={3}
+          maxLength={500}
+          placeholder="Reason for rejection"
+          className="input w-full"
+          required
+        />
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="danger" loading={submitting}>
+            Reject
+          </Button>
+        </div>
+      </form>
     </Modal>
   );
 }

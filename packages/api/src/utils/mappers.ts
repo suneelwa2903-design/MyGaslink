@@ -240,14 +240,31 @@ export function mapInventoryEvents(list: any[]): any[] {
 
 // ─── Credit/Debit Note ──────────────────────────────────────────────────────
 
+/**
+ * Prisma surfaces CreditNoteStatus / DebitNoteStatus as the TS-side enum
+ * names (`pending_cn`, `approved_cn`, etc.) rather than the @map'd DB
+ * values (`pending`, `approved`, …). Strip the `_cn` / `_dn` suffix so
+ * the API matches the shared CreditNoteStatus / DebitNoteStatus enum
+ * the web client uses for badge colors. Same fix shape as WI-019
+ * (BillingStatus enum mismatch).
+ */
+function normalizeNoteStatus(status: string | null | undefined, suffix: '_cn' | '_dn'): string | null | undefined {
+  if (status == null) return status;
+  return status.endsWith(suffix) ? status.slice(0, -suffix.length) : status;
+}
+
 export function mapCreditNote(n: any): any {
   if (!n) return n;
-  return renameId(n, 'creditNoteId');
+  const mapped = renameId(n, 'creditNoteId');
+  mapped.status = normalizeNoteStatus(mapped.status, '_cn');
+  return mapped;
 }
 
 export function mapDebitNote(n: any): any {
   if (!n) return n;
-  return renameId(n, 'debitNoteId');
+  const mapped = renameId(n, 'debitNoteId');
+  mapped.status = normalizeNoteStatus(mapped.status, '_dn');
+  return mapped;
 }
 
 // ─── Accountability Log ─────────────────────────────────────────────────────

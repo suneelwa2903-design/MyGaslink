@@ -12,6 +12,7 @@ import { mapInvoice, mapInvoices, mapCreditNote, mapDebitNote } from '../utils/m
 import * as gstService from '../services/gst/gstService.js';
 import { generateInvoicePdf } from '../services/pdf/invoicePdfService.js';
 import { generateCreditNotePdf } from '../services/pdf/creditNotePdfService.js';
+import { generateDebitNotePdf } from '../services/pdf/debitNotePdfService.js';
 import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 
@@ -199,8 +200,10 @@ router.post('/:id/generate-gst',
 );
 
 // POST /api/invoices/:id/cancel-irn - Cancel IRN
+// WI-039: finance can also cancel IRN — they're the team raising CN/DN
+// and need to clean up the upstream IRN before reissuing.
 router.post('/:id/cancel-irn',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance'),
   validate(z.object({ reason: z.string().min(1).max(100) })),
   auditLog('cancel_irn', 'invoice'),
   async (req, res) => {
@@ -216,8 +219,9 @@ router.post('/:id/cancel-irn',
 );
 
 // POST /api/invoices/:id/cancel-ewb - Cancel e-Way Bill
+// WI-039: finance can also cancel EWB (companion to cancel-irn above).
 router.post('/:id/cancel-ewb',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance'),
   validate(z.object({ reason: z.string().min(1).max(100) })),
   auditLog('cancel_ewb', 'invoice'),
   async (req, res) => {
@@ -270,6 +274,30 @@ router.get('/:id/gst-documents',
 
 // ─── Credit Notes ───────────────────────────────────────────────────────────
 
+// GET /api/invoices/:id/credit-notes - List CNs for an invoice (admin/finance)
+// Used by the View Invoice modal to render the CN list section.
+router.get('/:id/credit-notes',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  async (req, res) => {
+    try {
+      const invoiceId = param(req.params.id);
+      // Tenant-scope via the invoice — match cancel/regenerate routes.
+      const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, distributorId: req.user!.distributorId! },
+        select: { id: true },
+      });
+      if (!invoice) return sendNotFound(res, 'Invoice');
+      const notes = await prisma.creditNote.findMany({
+        where: { invoiceId },
+        orderBy: { createdAt: 'desc' },
+      });
+      return sendSuccess(res, { creditNotes: notes.map(mapCreditNote) });
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
 router.post('/credit-notes',
   requireRole('super_admin', 'distributor_admin', 'finance'),
   validate(createCreditNoteSchema),
@@ -301,6 +329,10 @@ router.put('/credit-notes/:id/approve',
 
 router.put('/credit-notes/:id/reject',
   requireRole('super_admin', 'distributor_admin'),
+  // Optional `reason` — captured by auditLog middleware in the request body
+  // for compliance trail. Not stored on the credit_note row (no column
+  // for it; deferred until a separate audit column is added).
+  validate(z.object({ reason: z.string().max(500).optional() })),
   auditLog('reject', 'credit_note'),
   async (req, res) => {
     try {
@@ -333,6 +365,28 @@ router.get('/credit-notes/:id/pdf',
 
 // ─── Debit Notes ────────────────────────────────────────────────────────────
 
+// GET /api/invoices/:id/debit-notes - List DNs for an invoice
+router.get('/:id/debit-notes',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  async (req, res) => {
+    try {
+      const invoiceId = param(req.params.id);
+      const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, distributorId: req.user!.distributorId! },
+        select: { id: true },
+      });
+      if (!invoice) return sendNotFound(res, 'Invoice');
+      const notes = await prisma.debitNote.findMany({
+        where: { invoiceId },
+        orderBy: { createdAt: 'desc' },
+      });
+      return sendSuccess(res, { debitNotes: notes.map(mapDebitNote) });
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
 router.post('/debit-notes',
   requireRole('super_admin', 'distributor_admin', 'finance'),
   validate(createDebitNoteSchema),
@@ -364,6 +418,7 @@ router.put('/debit-notes/:id/approve',
 
 router.put('/debit-notes/:id/reject',
   requireRole('super_admin', 'distributor_admin'),
+  validate(z.object({ reason: z.string().max(500).optional() })),
   auditLog('reject', 'debit_note'),
   async (req, res) => {
     try {
@@ -371,6 +426,26 @@ router.put('/debit-notes/:id/reject',
       return sendSuccess(res, mapDebitNote(dn));
     } catch (err: any) {
       return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// GET /api/invoices/debit-notes/:id/pdf - Generate debit note PDF (WI-039)
+// Mirrors the credit-note PDF route; tenant-scoped at the service layer.
+router.get('/debit-notes/:id/pdf',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  async (req, res) => {
+    try {
+      const pdfBuffer = await generateDebitNotePdf(param(req.params.id), req.user!.distributorId!);
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="debit-note-${req.params.id}.pdf"`,
+        'Content-Length': String(pdfBuffer.length),
+      });
+      return res.send(pdfBuffer);
+    } catch (err: any) {
+      if (err.message === 'Debit note not found') return sendNotFound(res, 'Debit note');
+      return sendError(res, err.message, 500);
     }
   }
 );
