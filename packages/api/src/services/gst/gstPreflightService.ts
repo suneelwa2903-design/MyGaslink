@@ -20,7 +20,8 @@
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
-import { apiCall, getCredentials } from './whitebooksClient.js';
+import { getCredentials } from './whitebooksClient.js';
+import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 import {
   parseEwbResponse,
@@ -269,10 +270,11 @@ async function generateConsolidatedEwb(args: {
     transDocDate: '',
   };
 
-  const resp: any = await apiCall(
+  const resp: any = await callWithLog<any>(
     distributorId, 'POST',
     `/ewaybillapi/v1.03/ewayapi/gencewb?email=${encodeURIComponent(credEmail)}`,
     payload, 'ewaybill',
+    { apiType: 'CEWB_GENERATE' },
   );
 
   // gencewb response shapes seen in the wild:
@@ -568,19 +570,20 @@ async function runB2bPreflight(params: {
     distributor.email ||
     'info@mygaslink.com';
 
+  // CRITICAL — see comment in gstService.processInvoiceGst on the same flag.
+  // Two invoices (INV-MP6FSGSNM1N, INV-MP6JW3EH46T) ended up with a real NIC
+  // IRN but irn_status='failed' because an error in the EWB sub-step
+  // propagated into the outer catch and overwrote irnStatus. The local flag
+  // makes that overwrite conditional on "did we actually commit the IRN?".
+  let irnPersisted = false;
   try {
     const irnPayload = buildIrnPayload(invoiceData);
-    const irnResponse: any = await logApiCall({
-      distributorId, orderId, invoiceId,
-      apiType: 'IRN_GENERATE', scope: 'einvoice',
-      endpoint: '/einvoice/type/GENERATE/version/V1_03',
-      payload: irnPayload,
-      call: () => apiCall(
-        distributorId, 'POST',
-        `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(credEmail)}`,
-        irnPayload, 'einvoice',
-      ),
-    });
+    const irnResponse: any = await callWithLog<any>(
+      distributorId, 'POST',
+      `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(credEmail)}`,
+      irnPayload, 'einvoice',
+      { apiType: 'IRN_GENERATE', invoiceId, orderId },
+    );
 
     const irn = irnResponse.data?.Irn ?? irnResponse.Irn;
     const ackNo = irnResponse.data?.AckNo ?? irnResponse.AckNo;
@@ -608,6 +611,9 @@ async function runB2bPreflight(params: {
         ...(hasIrnEwb ? { ewbStatus: 'active' } : {}),
       },
     });
+    // Past this line, any throw must NOT cause the outer catch to set
+    // irnStatus back to 'failed' — the IRN is real and on the NIC portal.
+    irnPersisted = true;
 
     await upsertLatestGstDocument({
       invoiceId, orderId, distributorId,
@@ -647,17 +653,12 @@ async function runB2bPreflight(params: {
           transportMode: '1',
           distance: 1, // standalone EWB rejects distance:0 (error 721)
         });
-        const ewbResponse: any = await logApiCall({
-          distributorId, orderId, invoiceId,
-          apiType: 'EWB_GENERATE_BY_IRN', scope: 'ewaybill',
-          endpoint: '/ewaybillapi/v1.03/ewayapi/genewaybill',
-          payload: ewbPayload,
-          call: () => apiCall(
-            distributorId, 'POST',
-            `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(ewbCredEmail)}`,
-            ewbPayload, 'ewaybill',
-          ),
-        });
+        const ewbResponse: any = await callWithLog<any>(
+          distributorId, 'POST',
+          `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(ewbCredEmail)}`,
+          ewbPayload, 'ewaybill',
+          { apiType: 'EWB_GENERATE_BY_IRN', invoiceId, orderId },
+        );
         const parsed = parseEwbResponse(ewbResponse);
         if (parsed.ewbNo) {
           ewbNo = parsed.ewbNo;
@@ -734,12 +735,23 @@ async function runB2bPreflight(params: {
         errorMessage: 'Duplicate IRN — already on portal',
       };
     }
-    logger.error('Preflight B2B failed', { orderId, invoiceId, error: err.message });
-    await prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { irnStatus: 'failed' },
-    });
-    await revertToPendingDispatch(orderId);
+    logger.error('Preflight B2B failed', { orderId, invoiceId, error: err.message, irnPersisted });
+    if (!irnPersisted) {
+      // IRN never made it to NIC (or never landed in our DB) — safe to
+      // mark failed and bounce the order back to pending_dispatch.
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { irnStatus: 'failed' },
+      });
+      await revertToPendingDispatch(orderId);
+    } else {
+      // IRN succeeded; the error came from a downstream step (gst_documents
+      // write, EWB, status transition). Do NOT corrupt irnStatus. Leave the
+      // order at its current state — admin can retry EWB via /generate-gst.
+      logger.error('Preflight error after IRN persisted — leaving irnStatus=success', {
+        orderId, invoiceId, error: err.message,
+      });
+    }
     const pa = await createPendingAction(
       distributorId, invoiceId, 'IRN_GENERATION',
       `Order ${order.orderNumber}: ${err.message}`,
@@ -785,17 +797,12 @@ async function runB2cPreflight(params: {
       vehicleNumber, transportMode: '1', distance: 1,
     });
 
-    const ewbResponse: any = await logApiCall({
-      distributorId, orderId, invoiceId,
-      apiType: 'EWB_GENERATE_STANDALONE', scope: 'ewaybill',
-      endpoint: '/ewaybillapi/v1.03/ewayapi/genewaybill',
-      payload: ewbPayload,
-      call: () => apiCall(
-        distributorId, 'POST',
-        `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
-        ewbPayload, 'ewaybill',
-      ),
-    });
+    const ewbResponse: any = await callWithLog<any>(
+      distributorId, 'POST',
+      `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
+      ewbPayload, 'ewaybill',
+      { apiType: 'EWB_GENERATE_STANDALONE', invoiceId, orderId },
+    );
 
     const parsed = parseEwbResponse(ewbResponse);
 
@@ -848,38 +855,6 @@ async function runB2cPreflight(params: {
 }
 
 /**
- * Run a WhiteBooks API call and persist a gst_api_logs row for it. The
- * call is invoked even if the log write fails — never block API on audit.
- */
-async function logApiCall<T>(args: {
-  distributorId: string;
-  orderId?: string;
-  invoiceId?: string;
-  apiType: string;
-  scope: string;
-  endpoint: string;
-  payload: any;
-  call: () => Promise<T>;
-}): Promise<T> {
-  const started = Date.now();
-  try {
-    const resp = await args.call();
-    void writeApiLog({ ...args, status: 'success', response: resp, latencyMs: Date.now() - started });
-    return resp;
-  } catch (err: any) {
-    void writeApiLog({
-      ...args,
-      status: 'failed',
-      response: null,
-      latencyMs: Date.now() - started,
-      errorCode: err.code,
-      errorMessage: err.message,
-    });
-    throw err;
-  }
-}
-
-/**
  * Find-or-update the `is_latest` gst_documents row for an invoice; create
  * if none exists. Used by both B2B and B2C preflight branches so a retry
  * after partial failure updates the existing row instead of duplicating.
@@ -915,38 +890,3 @@ async function upsertLatestGstDocument(args: {
   });
 }
 
-async function writeApiLog(args: {
-  distributorId: string;
-  orderId?: string;
-  invoiceId?: string;
-  apiType: string;
-  scope: string;
-  endpoint: string;
-  payload: any;
-  status: 'success' | 'failed';
-  response: any;
-  latencyMs: number;
-  errorCode?: string;
-  errorMessage?: string;
-}) {
-  try {
-    await prisma.gstApiLog.create({
-      data: {
-        distributorId: args.distributorId,
-        orderId: args.orderId,
-        invoiceId: args.invoiceId,
-        apiType: args.apiType,
-        scope: args.scope,
-        endpoint: args.endpoint,
-        status: args.status,
-        errorCode: args.errorCode ?? null,
-        errorMessage: args.errorMessage ?? null,
-        requestPayload: args.payload,
-        responsePayload: args.response ?? null,
-        latencyMs: args.latencyMs,
-      },
-    });
-  } catch (logErr) {
-    logger.warn('gst_api_logs write failed (non-blocking)', { err: (logErr as Error).message });
-  }
-}

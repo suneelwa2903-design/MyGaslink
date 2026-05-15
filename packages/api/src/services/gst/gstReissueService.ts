@@ -23,7 +23,8 @@
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
-import { apiCall, getCredentials } from './whitebooksClient.js';
+import { getCredentials } from './whitebooksClient.js';
+import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 import {
   cancelEwb,
@@ -278,10 +279,11 @@ async function regenerateB2bIrn(
     distributor.email ||
     'info@mygaslink.com';
 
-  const callIrn = async (payload: any) => apiCall(
+  const callIrn = async (payload: any) => callWithLog<any>(
     distributorId, 'POST',
     `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(credEmail)}`,
     payload, 'einvoice',
+    { apiType: 'IRN_GENERATE_REISSUE', invoiceId },
   );
 
   let response: any;
@@ -354,10 +356,11 @@ async function regenerateB2cEwb(
     distributor.email ||
     'info@mygaslink.com';
 
-  const resp = await apiCall(
+  const resp = await callWithLog<any>(
     distributorId, 'POST',
     `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
     ewbPayload, 'ewaybill',
+    { apiType: 'EWB_GENERATE_REISSUE_B2C', invoiceId },
   );
   const parsed = parseEwbResponse(resp);
   await prisma.invoice.update({

@@ -167,14 +167,40 @@ export async function getAuthToken(
 }
 
 /**
- * Make an authenticated API call to WhiteBooks
+ * Optional per-call context. Used by the gst_api_logs caller-side wrapper
+ * ([apiLogger.ts](./apiLogger.ts)) so that every outgoing WhiteBooks call is
+ * forensically traceable to an invoice/order regardless of which code path
+ * triggered it.
+ *
+ * apiType examples: IRN_GENERATE, IRN_CANCEL, EWB_GENERATE_BY_IRN,
+ * EWB_GENERATE_STANDALONE, EWB_CANCEL, GSTIN_LOOKUP, EWB_RECOVER.
+ *
+ * Logging itself happens in `loggedApiCall` (apiLogger.ts), NOT here — that
+ * keeps `apiCall` mockable in the test suite without losing audit coverage.
+ */
+export interface ApiCallContext {
+  apiType?: string;
+  invoiceId?: string | null;
+  orderId?: string | null;
+}
+
+/**
+ * Make an authenticated API call to WhiteBooks. Most callers should go
+ * through `loggedApiCall` ([apiLogger.ts](./apiLogger.ts)) instead, which
+ * wraps this and writes a `gst_api_logs` row on success AND failure
+ * (Anti-pattern #11).
+ *
+ * The `context` parameter is accepted but unused here — it's only present so
+ * call sites that already pass it for the logged path keep typechecking when
+ * they accidentally hit this function directly.
  */
 export async function apiCall<T = any>(
   distributorId: string | null,
   method: 'GET' | 'POST',
   path: string,
   body?: any,
-  scope: 'einvoice' | 'ewaybill' = 'einvoice'
+  scope: 'einvoice' | 'ewaybill' = 'einvoice',
+  _context?: ApiCallContext
 ): Promise<T> {
   const creds = await getCredentials(distributorId, scope);
   if (!creds) throw new GstError('GST credentials not configured', 'NO_CREDENTIALS');
@@ -251,7 +277,7 @@ export async function apiCall<T = any>(
       }
     }
 
-    throw new GstError(errorMessage, errorCode || 'API_ERROR');
+    throw new GstError(errorMessage, errorCode || 'API_ERROR', json);
   }
 
   return json as T;
@@ -266,7 +292,14 @@ export function clearTokenCache(distributorId: string | null) {
 }
 
 export class GstError extends Error {
-  constructor(message: string, public code: string) {
+  /**
+   * `response` carries the raw NIC JSON body (when available) so the
+   * caller-side logger (apiLogger.writeApiLog) can persist exactly what
+   * the upstream returned, not just our parsed error_message. This is
+   * critical for the generic 5002 case where NIC gives no field hint —
+   * we want the un-massaged response body in gst_api_logs.
+   */
+  constructor(message: string, public code: string, public response?: any) {
     super(message);
     this.name = 'GstError';
   }

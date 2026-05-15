@@ -13,7 +13,8 @@
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
-import { apiCall, getCredentials, GstError } from './whitebooksClient.js';
+import { getCredentials, GstError } from './whitebooksClient.js';
+import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 // Distance: minimum 1km (0 causes EWB error 721)
 
@@ -182,15 +183,25 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
   const credEmail = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
   // Step 1: Generate IRN (B2B only)
+  //
+  // CRITICAL: track IRN success in a local flag. The historical bug here
+  // (INV-MP6FSGSNM1N, INV-MP6JW3EH46T on 2026-05-15) was that an error in
+  // the EWB sub-block (e.g. recoverEwbFromIrn throw) escaped the inner
+  // catch and landed in the outer IRN catch at the bottom — which then
+  // overwrote invoice.irnStatus to 'failed' even though NIC had already
+  // issued the IRN. The flag lets the outer catch see "IRN succeeded,
+  // only EWB blew up" and skip the destructive overwrite.
+  let irnPersisted = false;
   if (isB2B) {
     try {
       const irnPayload = buildIrnPayload(invoiceData);
       const email = credEmail;
 
-      const irnResponse = await apiCall(
+      const irnResponse = await callWithLog<any>(
         distributorId, 'POST',
         `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(email)}`,
-        irnPayload, 'einvoice'
+        irnPayload, 'einvoice',
+        { apiType: 'IRN_GENERATE', invoiceId, orderId: invoice.orderId },
       );
 
       const irn = irnResponse.data?.Irn || irnResponse.Irn;
@@ -219,6 +230,10 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           ...(hasIrnEwb ? { ewbStatus: 'active' } : {}),
         },
       });
+      // From this point on, IRN is committed to the DB. Any thrown error
+      // in the EWB step MUST NOT cause the outer catch to overwrite
+      // irnStatus back to 'failed' — see comment on `irnPersisted` above.
+      irnPersisted = true;
 
       // Create GST document record (include EWB if returned with IRN)
       await prisma.gstDocument.create({
@@ -282,10 +297,11 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               distance: 1,
             });
 
-            const ewbResponse = await apiCall(
+            const ewbResponse = await callWithLog<any>(
               distributorId, 'POST',
               `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(email)}`,
-              ewbPayload, 'ewaybill'
+              ewbPayload, 'ewaybill',
+              { apiType: 'EWB_GENERATE_BY_IRN', invoiceId, orderId: invoice.orderId },
             );
 
             const parsed = parseEwbResponse(ewbResponse);
@@ -363,9 +379,10 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               transportMode: '1',
               distance: 1,
             });
-            const ewbResponse = await apiCall(distributorId, 'POST',
+            const ewbResponse = await callWithLog<any>(distributorId, 'POST',
               `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
-              ewbPayload, 'ewaybill');
+              ewbPayload, 'ewaybill',
+              { apiType: 'EWB_GENERATE_BY_IRN_DUP', invoiceId, orderId: invoice.orderId });
             const ewbNo = ewbResponse.data?.ewayBillNo;
             const ewbDate = ewbResponse.data?.validFrom;
             const ewbValidTill = ewbResponse.data?.validTo;
@@ -416,9 +433,23 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
             }
           }
         }
-      } else {
+      } else if (!irnPersisted) {
         await prisma.invoice.update({ where: { id: invoiceId }, data: { irnStatus: 'failed' } });
         await createPendingAction(distributorId, invoiceId, 'IRN_GENERATION', irnErr.message);
+      } else {
+        // IRN was already persisted; the error came from the EWB sub-step.
+        // Surface the EWB failure but DO NOT touch invoice.irnStatus.
+        logger.error('IRN succeeded but EWB sub-step threw — leaving irnStatus=success', {
+          invoiceId, err: irnErr.message,
+        });
+        result.errors.push(`EWB failed after IRN success: ${irnErr.message}`);
+        // Mark EWB as failed since we never finished generating it.
+        try {
+          await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'failed' } });
+        } catch (uErr) {
+          logger.error('Failed to mark ewbStatus=failed after IRN-success EWB throw', { invoiceId, err: (uErr as Error).message });
+        }
+        await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', irnErr.message);
       }
     }
   } else {
@@ -446,10 +477,11 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           distance: 1,
         });
 
-        const ewbResponse = await apiCall(
+        const ewbResponse = await callWithLog<any>(
           distributorId, 'POST',
           `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
-          ewbPayload, 'ewaybill'
+          ewbPayload, 'ewaybill',
+          { apiType: 'EWB_GENERATE_B2C', invoiceId, orderId: invoice.orderId },
         );
 
         const ewbNo = ewbResponse.data?.ewayBillNo;
@@ -553,10 +585,11 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
 
     const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
-    const ewbResponse = await apiCall(
+    const ewbResponse = await callWithLog<any>(
       distributorId, 'POST',
       `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(email)}`,
-      ewbPayload, 'ewaybill'
+      ewbPayload, 'ewaybill',
+      { apiType: 'EWB_GENERATE_DISPATCH', orderId },
     );
 
     const ewbNo = ewbResponse.data?.ewayBillNo;
@@ -659,10 +692,11 @@ export async function cancelIrn(invoiceId: string, distributorId: string, reason
     CnlRem: reason.substring(0, 100),
   };
 
-  const response = await apiCall(
+  const response = await callWithLog<any>(
     distributorId, 'POST',
     `/einvoice/type/CANCEL/version/V1_03?email=${encodeURIComponent(email)}`,
-    cancelPayload, 'einvoice'
+    cancelPayload, 'einvoice',
+    { apiType: 'IRN_CANCEL', invoiceId },
   );
 
   await prisma.invoice.update({
@@ -699,11 +733,12 @@ export async function cancelEwb(invoiceId: string, distributorId: string, reason
     : reason.toLowerCase().includes('error') ? 2
     : reason.toLowerCase().includes('cancel') ? 3 : 4;
 
-  const response = await apiCall(
+  const response = await callWithLog<any>(
     distributorId, 'POST',
     `/ewaybillapi/v1.03/ewayapi/canewb?email=${encodeURIComponent(email)}`,
     { ewbNo: parseInt(gstDoc.ewbNo), cancelRsnCode, cancelRmrk: reason.substring(0, 100) },
-    'ewaybill'
+    'ewaybill',
+    { apiType: 'EWB_CANCEL', invoiceId },
   );
 
   await prisma.invoice.update({
@@ -798,10 +833,11 @@ export async function processCreditNoteGst(creditNoteId: string, distributorId: 
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
   try {
-    const response = await apiCall(
+    const response = await callWithLog<any>(
       distributorId, 'POST',
       `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(email)}`,
-      payload, 'einvoice'
+      payload, 'einvoice',
+      { apiType: 'IRN_GENERATE_CRN', invoiceId: cn.invoiceId },
     );
 
     const irn = response.data?.Irn || response.Irn;
@@ -895,10 +931,11 @@ export async function processDebitNoteGst(debitNoteId: string, distributorId: st
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
   try {
-    const response = await apiCall(
+    const response = await callWithLog<any>(
       distributorId, 'POST',
       `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(email)}`,
-      payload, 'einvoice'
+      payload, 'einvoice',
+      { apiType: 'IRN_GENERATE_DBN', invoiceId: dn.invoiceId },
     );
 
     const irn = response.data?.Irn || response.Irn;
@@ -934,10 +971,11 @@ export async function validateGstin(distributorId: string, gstin: string) {
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
   try {
-    const response = await apiCall(
+    const response = await callWithLog<any>(
       distributorId, 'GET',
       `/einvoice/type/GSTNDETAILS/version/V1_03?param1=${gstin}&email=${encodeURIComponent(email)}`,
-      undefined, 'einvoice'
+      undefined, 'einvoice',
+      { apiType: 'GSTIN_LOOKUP' },
     );
 
     return {
@@ -960,10 +998,11 @@ export async function getIrnDetails(distributorId: string, irn: string) {
   });
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
 
-  return apiCall(
+  return callWithLog<any>(
     distributorId, 'GET',
     `/einvoice/type/GETIRN/version/V1_03?param1=${irn}&email=${encodeURIComponent(email)}`,
-    undefined, 'einvoice'
+    undefined, 'einvoice',
+    { apiType: 'IRN_GET_DETAILS' },
   );
 }
 
@@ -977,10 +1016,11 @@ export async function getEwbStatus(distributorId: string, ewbNo: string) {
   });
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
 
-  return apiCall(
+  return callWithLog<any>(
     distributorId, 'GET',
     `/ewaybillapi/v1.03/ewayapi/getewaybill?email=${encodeURIComponent(email)}&ewbNo=${ewbNo}`,
-    undefined, 'ewaybill'
+    undefined, 'ewaybill',
+    { apiType: 'EWB_GET_STATUS' },
   );
 }
 
