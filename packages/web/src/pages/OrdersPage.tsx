@@ -154,12 +154,23 @@ export default function OrdersPage() {
         </div>
         {tab === 'orders' && (
           <div className="flex items-center gap-2">
-            {selectedOrders.length > 0 && (
-              <Button variant="secondary" size="sm" onClick={() => setBulkAssignOpen(true)}>
-                <HiOutlineTruck className="h-4 w-4" />
-                Assign Driver ({selectedOrders.length})
-              </Button>
-            )}
+            {(() => {
+              // Only count selected orders that are actually pending assignment.
+              // Delivered/cancelled/dispatched orders in the selection are
+              // ignored — they can't be re-assigned, so showing a count that
+              // includes them misleads the admin.
+              const assignablePendingIds = selectedOrders.filter((id) => {
+                const o = orders.find((order) => order.orderId === id);
+                return o?.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT;
+              });
+              if (assignablePendingIds.length === 0) return null;
+              return (
+                <Button variant="secondary" size="sm" onClick={() => setBulkAssignOpen(true)}>
+                  <HiOutlineTruck className="h-4 w-4" />
+                  Assign Driver ({assignablePendingIds.length})
+                </Button>
+              );
+            })()}
             <Button variant="secondary" onClick={() => setReturnsOpen(true)}>
               <HiOutlineArrowUturnLeft className="h-4 w-4" />
               Returns Order
@@ -380,12 +391,18 @@ export default function OrdersPage() {
         />
       )}
 
-      {/* Bulk Assign Driver Modal */}
+      {/* Bulk Assign Driver Modal — only pass pending-assignment IDs.
+          The header button is hidden unless at least one selection is pending,
+          and including non-pending ids would hit the API's 400 "Order is not
+          in a state that allows driver assignment". */}
       {bulkAssignOpen && (
         <BulkAssignDriverModal
           open={bulkAssignOpen}
           onClose={() => { setBulkAssignOpen(false); setSelectedOrders([]); }}
-          orderIds={selectedOrders}
+          orderIds={selectedOrders.filter((id) => {
+            const o = orders.find((order) => order.orderId === id);
+            return o?.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT;
+          })}
           drivers={drivers?.drivers ?? []}
         />
       )}
