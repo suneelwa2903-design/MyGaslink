@@ -258,8 +258,8 @@ export async function createManualInvoice(
   const igstValue = isInterState ? totalBeforeGst * GST_RATES.IGST : 0;
   const totalAmount = totalBeforeGst + cgstValue + sgstValue + igstValue;
 
-  return prisma.$transaction(async (tx) => {
-    const invoice = await tx.invoice.create({
+  const invoice = await prisma.$transaction(async (tx) => {
+    const created = await tx.invoice.create({
       data: {
         invoiceNumber,
         distributorId,
@@ -283,8 +283,8 @@ export async function createManualInvoice(
         distributorId,
         customerId: data.customerId,
         entryType: 'invoice_entry',
-        referenceId: invoice.id,
-        invoiceId: invoice.id,
+        referenceId: created.id,
+        invoiceId: created.id,
         amountDelta: totalAmount,
         narration: `Invoice ${invoiceNumber}`,
         entryDate: new Date(data.issueDate),
@@ -292,8 +292,23 @@ export async function createManualInvoice(
       },
     });
 
-    return invoice;
+    return created;
   });
+
+  // Auto-trigger GST compliance (IRN + EWB) for GST-enabled tenants. Same
+  // pattern as orderService.confirmDelivery — dynamic import avoids a
+  // require cycle, fire-and-forget so a WhiteBooks outage never blocks
+  // invoice creation. processInvoiceGst itself returns early when
+  // distributor.gstMode === 'disabled'.
+  try {
+    const { processInvoiceGst } = await import('./gst/gstService.js');
+    processInvoiceGst(invoice.id, distributorId).catch(() => {
+      // intentionally swallowed — failures land in the invoice's irnStatus
+      // / ewbStatus columns and the pending-actions queue
+    });
+  } catch { /* non-blocking */ }
+
+  return invoice;
 }
 
 /**
