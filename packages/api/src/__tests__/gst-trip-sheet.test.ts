@@ -312,14 +312,117 @@ describe('GET /api/orders/trip-sheet/:assignmentId — integration', () => {
     expect(res.status).toBe(404);
   });
 
-  it('Returns 400 when trip sheet not yet generated', async () => {
+  it('Returns 400 when no EWB exists anywhere on the route', async () => {
+    // Fresh mapping, no tripSheetNo, no orders with EWB → 400.
+    // gst-trip-sheet currently runs with TEST_DATE = '2099-12-31', so
+    // there will be no real-world orders on the same driver/date to
+    // accidentally satisfy this. Mapping created in getSharmaContext
+    // starts without tripSheetNo.
     const ctx = await getSharmaContext();
-    // mapping starts without tripSheetNo from getSharmaContext()
     const res = await request(app)
       .get(`/api/orders/trip-sheet/${ctx.mapping.id}`)
       .set(auth(sharmaAdminToken));
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/not been generated/i);
+    expect(res.body.error).toMatch(/No EWB available/i);
+  });
+
+  it('Returns 200 PDF when tripSheetNo is null but orders carry per-order EWBs (fallback)', async () => {
+    const ctx = await getSharmaContext();
+    const orders = await seedOrders({
+      customerId: ctx.b2bCust.id, count: 2,
+      cylinderTypeId: ctx.cyl.id,
+      driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
+    });
+    try {
+      // Move orders to a deliverable status so the PDF service finds them.
+      await prisma.order.updateMany({
+        where: { id: { in: orders.map((o) => o.id) } },
+        data: { status: 'pending_delivery' },
+      });
+      // Create per-order EWB rows in gst_documents without a consolidated
+      // tripSheetNo — this is the bug scenario the founder reported.
+      for (let i = 0; i < orders.length; i++) {
+        const inv = await prisma.invoice.create({
+          data: {
+            invoiceNumber: `INV-TS-FALLBACK-${Date.now()}-${i}`,
+            distributorId: 'dist-002',
+            customerId: ctx.b2bCust.id,
+            orderId: orders[i].id,
+            issueDate: new Date('2099-12-31'),
+            dueDate: new Date('2099-12-31'),
+            totalAmount: 10000,
+            ewbStatus: 'active',
+          },
+        });
+        await prisma.gstDocument.create({
+          data: {
+            invoiceId: inv.id,
+            orderId: orders[i].id,
+            distributorId: 'dist-002',
+            docType: 'INV',
+            gstDocNo: inv.invoiceNumber,
+            ewbStatus: 'active',
+            ewbNo: `1810000${i}999`,
+            isLatest: true,
+          },
+        });
+      }
+      const res = await request(app)
+        .get(`/api/orders/trip-sheet/${ctx.mapping.id}`)
+        .set(auth(sharmaAdminToken));
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/application\/pdf/);
+      expect(res.body.slice(0, 4).toString()).toBe('%PDF');
+    } finally {
+      await cleanupOrders(orders.map((o) => o.id));
+    }
+  });
+
+  it('Returns 200 PDF for a single-order trip sheet (no consolidated EWB needed)', async () => {
+    const ctx = await getSharmaContext();
+    const orders = await seedOrders({
+      customerId: ctx.b2bCust.id, count: 1,
+      cylinderTypeId: ctx.cyl.id,
+      driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
+    });
+    try {
+      await prisma.order.updateMany({
+        where: { id: { in: orders.map((o) => o.id) } },
+        data: { status: 'pending_delivery' },
+      });
+      const inv = await prisma.invoice.create({
+        data: {
+          invoiceNumber: `INV-TS-SINGLE-${Date.now()}`,
+          distributorId: 'dist-002',
+          customerId: ctx.b2bCust.id,
+          orderId: orders[0].id,
+          issueDate: new Date('2099-12-31'),
+          dueDate: new Date('2099-12-31'),
+          totalAmount: 10000,
+          ewbStatus: 'active',
+        },
+      });
+      await prisma.gstDocument.create({
+        data: {
+          invoiceId: inv.id,
+          orderId: orders[0].id,
+          distributorId: 'dist-002',
+          docType: 'INV',
+          gstDocNo: inv.invoiceNumber,
+          ewbStatus: 'active',
+          ewbNo: '181000099999',
+          isLatest: true,
+        },
+      });
+      const res = await request(app)
+        .get(`/api/orders/trip-sheet/${ctx.mapping.id}`)
+        .set(auth(sharmaAdminToken));
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/application\/pdf/);
+      expect(res.body.slice(0, 4).toString()).toBe('%PDF');
+    } finally {
+      await cleanupOrders(orders.map((o) => o.id));
+    }
   });
 
   it('Returns 404 for non-existent assignment', async () => {

@@ -37,12 +37,11 @@ export async function generateTripSheetPdf(
     },
   });
   if (!assignment) throw new TripSheetError('Assignment not found', 404);
-  if (!assignment.tripSheetNo) {
-    throw new TripSheetError(
-      'Trip sheet has not been generated for this assignment yet',
-      400,
-    );
-  }
+  // Note on tripSheetNo: when present (set by gencewb in preflight when
+  // 2+ orders generated EWBs in a single batch), the PDF labels itself
+  // "Consolidated EWB". When null, we fall back to listing per-order
+  // EWBs and label the doc accordingly — see below. We only hard-fail
+  // when there's no usable EWB anywhere on the route.
 
   const orders = await prisma.order.findMany({
     where: {
@@ -69,6 +68,42 @@ export async function generateTripSheetPdf(
   }) : [];
   const ewbByOrder = new Map(gstDocs.map((d) => [d.orderId, d.ewbNo]));
 
+  // Fallback rules (WI-038 + post-launch fix):
+  //   - tripSheetNo present                       → "Consolidated Trip Sheet"
+  //   - tripSheetNo null + ≥2 EWBs across orders → "Trip Sheet (Per-Order EWBs)"
+  //     (gencewb either wasn't called or failed; per-order EWBs are still valid)
+  //   - tripSheetNo null + exactly 1 EWB         → "Single Order Trip Sheet"
+  //   - tripSheetNo null + 0 EWBs                → 400 "No EWB available"
+  const ewbCount = ewbByOrder.size;
+  if (!assignment.tripSheetNo && ewbCount === 0) {
+    throw new TripSheetError(
+      'No EWB available for trip sheet — no orders on this route have an e-Way Bill yet',
+      400,
+    );
+  }
+  const docTitle = assignment.tripSheetNo
+    ? 'DELIVERY TRIP SHEET'
+    : ewbCount === 1
+    ? 'SINGLE ORDER TRIP SHEET'
+    : 'DELIVERY TRIP SHEET (PER-ORDER EWBs)';
+  const headerEwbLabel = assignment.tripSheetNo
+    ? 'Consolidated EWB:'
+    : 'EWB References:';
+  // For the fallback paths, surface either the single EWB number or
+  // "(see per-order column below)". Avoids a blank line in the metadata.
+  const headerEwbValue = assignment.tripSheetNo
+    ? assignment.tripSheetNo
+    : ewbCount === 1
+    ? String([...ewbByOrder.values()][0])
+    : `${ewbCount} per-order EWBs (listed below)`;
+  const footerText = assignment.tripSheetNo
+    ? 'This is a legally valid trip document. The consolidated e-Way Bill above covers ' +
+      'all per-order EWBs listed in this trip sheet for the date shown. Carry this ' +
+      'document during transit and present at NIC checkpoints on request.'
+    : 'This is a legally valid trip document. Each order below carries its own ' +
+      'e-Way Bill (no consolidated EWB was generated for this route). Carry this ' +
+      'document during transit and present at NIC checkpoints on request.';
+
   const distributor = await prisma.distributor.findUniqueOrThrow({
     where: { id: distributorId },
     select: { businessName: true, address: true, city: true, gstin: true },
@@ -83,7 +118,7 @@ export async function generateTripSheetPdf(
 
     // Header
     doc.fontSize(16).font('Helvetica-Bold')
-      .text('DELIVERY TRIP SHEET', { align: 'center' });
+      .text(docTitle, { align: 'center' });
     doc.moveDown(0.3);
     doc.fontSize(10).font('Helvetica')
       .text(distributor.businessName, { align: 'center' });
@@ -101,8 +136,8 @@ export async function generateTripSheetPdf(
       .font('Helvetica').text(`  ${assignment.vehicle?.vehicleNumber ?? '—'}`);
     doc.font('Helvetica-Bold').text('Date:', { continued: true })
       .font('Helvetica').text(`  ${formatDate(assignment.assignmentDate)}`);
-    doc.font('Helvetica-Bold').text('Consolidated EWB:', { continued: true })
-      .font('Helvetica').text(`  ${assignment.tripSheetNo}`);
+    doc.font('Helvetica-Bold').text(headerEwbLabel, { continued: true })
+      .font('Helvetica').text(`  ${headerEwbValue}`);
     doc.moveDown(0.8);
 
     // Table header
@@ -140,12 +175,7 @@ export async function generateTripSheetPdf(
 
     doc.moveDown(1);
     doc.fontSize(8).font('Helvetica-Oblique').fillColor('#555')
-      .text(
-        'This is a legally valid trip document. The consolidated e-Way Bill above covers ' +
-        'all per-order EWBs listed in this trip sheet for the date shown. Carry this ' +
-        'document during transit and present at NIC checkpoints on request.',
-        { align: 'center' },
-      );
+      .text(footerText, { align: 'center' });
 
     doc.end();
   });

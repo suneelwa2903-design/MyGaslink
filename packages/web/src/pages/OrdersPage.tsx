@@ -1633,7 +1633,15 @@ function DispatchProgressModal({
         )}
 
         <div className="flex justify-end gap-2 pt-2">
-          {phase === 'done' && result && result.summary.succeeded > 0 && driver.assignmentId && (
+          {/*
+            Download Trip Sheet is only useful when there's an EWB on the
+            route — either inline EWB on the IRN (B2B success) or a
+            standalone EWB (B2C success). If every order failed or only
+            GST-disabled / no-EWB results came back, the trip-sheet
+            endpoint will return 400 anyway, so hide the button.
+          */}
+          {phase === 'done' && result && driver.assignmentId &&
+            result.results.some((r) => !!r.ewbNo) && (
             <Button variant="secondary" onClick={downloadTripSheet}>
               Download Trip Sheet
             </Button>
