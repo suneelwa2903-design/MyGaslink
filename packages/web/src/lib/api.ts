@@ -1,6 +1,19 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
+import toast from 'react-hot-toast';
 import type { ApiResponse } from '@gaslink/shared';
 import { useAuthStore } from '@/stores/authStore';
+
+// One-shot guard: an expired-session causes a burst of failed in-flight
+// requests, and we want exactly one "session expired" toast — not one per
+// failed request. Resets to false on next successful login (cleared
+// alongside the rest of auth state via logout()/setTokens()).
+let sessionExpiredToastShown = false;
+
+function showSessionExpiredOnce() {
+  if (sessionExpiredToastShown) return;
+  sessionExpiredToastShown = true;
+  toast.error('Your session has expired. Please log in again.', { duration: 5000 });
+}
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -45,6 +58,8 @@ function refreshAccessToken(): Promise<string> {
   refreshPromise = (async () => {
     const { refreshToken, setTokens, logout } = useAuthStore.getState();
     if (!refreshToken) {
+      // No refresh token to use — surface why before kicking to /login.
+      showSessionExpiredOnce();
       logout();
       throw new Error('No refresh token available');
     }
@@ -59,11 +74,14 @@ function refreshAccessToken(): Promise<string> {
         throw new Error('Malformed refresh response');
       }
       setTokens(tokens.accessToken, tokens.refreshToken);
+      // Successful refresh — re-arm the toast so the *next* expiry shows it.
+      sessionExpiredToastShown = false;
       return tokens.accessToken;
     } catch (err) {
       // Refresh itself failed (401/403/expired refresh token, network, or
       // bad payload) → the session is genuinely dead. This is the ONLY
       // path that logs the user out.
+      showSessionExpiredOnce();
       useAuthStore.getState().logout();
       throw err;
     } finally {
