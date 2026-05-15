@@ -91,28 +91,42 @@ export default function FleetPage() {
 // Assignment). Mappings come from /assignments/vehicle-mappings, and the
 // "Bulk Confirm" button copies the previous day's mappings forward.
 
+type MappingRow = {
+  driverId: string;
+  driverName: string;
+  vehicleId: string | null;
+  vehicleNumber: string | null;
+  status: string;
+  source: string;
+};
+
 function VehicleMappingTab() {
   const queryClient = useQueryClient();
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
+  // editingDriverId: which row's vehicle cell is currently in edit mode.
+  // Null cells (no vehicle assigned) still render a select directly.
+  const [editingDriverId, setEditingDriverId] = useState<string | null>(null);
 
   const { data: mappings, isLoading } = useQuery({
     queryKey: ['vehicle-mappings', selectedDate],
     queryFn: () =>
       apiGet<{
-        recommendations: Array<{
-          driverId: string;
-          driverName: string;
-          vehicleId: string | null;
-          vehicleNumber: string | null;
-          status: string;
-          source: string;
-        }>;
+        recommendations: MappingRow[];
         confirmedCount: number;
         recommendedCount: number;
         unassignedCount: number;
       }>(`/assignments/vehicle-mappings?date=${selectedDate}`),
   });
+
+  const { data: vehiclesData } = useQuery({
+    queryKey: ['vehicles', 'mapping'],
+    queryFn: () => apiGet<{ vehicles: Vehicle[] }>('/vehicles'),
+    staleTime: 5 * 60 * 1000,
+  });
+  const vehicleOptions = (vehiclesData?.vehicles ?? [])
+    .filter((v) => v.status !== VehicleStatus.INACTIVE)
+    .map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
 
   const confirmMappings = useMutation({
     mutationFn: (data: { date: string }) =>
@@ -128,17 +142,37 @@ function VehicleMappingTab() {
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  const upsertMapping = useMutation({
+    mutationFn: (data: { driverId: string; vehicleId: string; date: string }) =>
+      apiPut('/assignments/vehicle-mappings', data),
+    onSuccess: (_data, vars) => {
+      const driver = mappings?.recommendations.find((r) => r.driverId === vars.driverId);
+      const vehicle = (vehiclesData?.vehicles ?? []).find((v) => v.vehicleId === vars.vehicleId);
+      toast.success(
+        `${vehicle?.vehicleNumber ?? 'Vehicle'} assigned to ${driver?.driverName ?? 'driver'}`,
+      );
+      setEditingDriverId(null);
+      queryClient.invalidateQueries({ queryKey: ['vehicle-mappings'] });
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const handleVehiclePick = (driverId: string, vehicleId: string) => {
+    if (!vehicleId) return;
+    upsertMapping.mutate({ driverId, vehicleId, date: selectedDate });
+  };
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-surface-500 dark:text-surface-400">
-        The driver↔vehicle pairing admins maintain. Used as the default when assigning a driver to an order — the day's mapping is used to auto-resolve the vehicle.
+        The driver↔vehicle pairing admins maintain. Click a vehicle to change it. Used when assigning a driver to an order — the day's mapping is used to auto-resolve the vehicle.
       </p>
 
       <div className="flex items-center gap-3">
         <input
           type="date"
           value={selectedDate}
-          onChange={(e) => setSelectedDate(e.target.value)}
+          onChange={(e) => { setSelectedDate(e.target.value); setEditingDriverId(null); }}
           className="px-3 py-2 border rounded-lg dark:bg-surface-800 dark:border-surface-700"
         />
         <Button
@@ -169,23 +203,59 @@ function VehicleMappingTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
-              {mappings.recommendations.map((r) => (
-                <tr key={r.driverId} className="hover:bg-surface-50 dark:hover:bg-surface-700/50">
-                  <td className="px-4 py-3 text-sm">{r.driverName}</td>
-                  <td className="px-4 py-3 text-sm">{r.vehicleNumber || '—'}</td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      variant={
-                        r.status === 'confirmed' ? 'success' :
-                        r.status === 'recommended' ? 'warning' : 'neutral'
-                      }
-                    >
-                      {r.status}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-surface-500">{r.source}</td>
-                </tr>
-              ))}
+              {mappings.recommendations.map((r) => {
+                const isEditing = editingDriverId === r.driverId;
+                const hasVehicle = !!r.vehicleNumber;
+                const saving = upsertMapping.isPending && upsertMapping.variables?.driverId === r.driverId;
+                return (
+                  <tr key={r.driverId} className="hover:bg-surface-50 dark:hover:bg-surface-700/50">
+                    <td className="px-4 py-3 text-sm">{r.driverName}</td>
+                    <td className="px-4 py-3 text-sm min-w-[220px]">
+                      {isEditing || !hasVehicle ? (
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-[160px]">
+                            <Select
+                              options={vehicleOptions}
+                              placeholder={hasVehicle ? 'Select vehicle' : 'Assign vehicle'}
+                              value={r.vehicleId ?? ''}
+                              onChange={(e) => handleVehiclePick(r.driverId, e.target.value)}
+                              disabled={saving}
+                            />
+                          </div>
+                          {isEditing && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingDriverId(null)}
+                              className="text-xs text-surface-500 hover:text-surface-700"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setEditingDriverId(r.driverId)}
+                          className="font-medium text-brand-600 dark:text-brand-400 hover:underline"
+                        >
+                          {r.vehicleNumber}
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        variant={
+                          r.status === 'confirmed' ? 'success' :
+                          r.status === 'recommended' ? 'warning' : 'neutral'
+                        }
+                      >
+                        {r.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-surface-500">{r.source}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <div className="px-4 py-3 bg-surface-50 dark:bg-surface-700 text-sm">

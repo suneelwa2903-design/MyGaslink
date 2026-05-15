@@ -297,6 +297,63 @@ export class AssignmentError extends Error {
   }
 }
 
+/**
+ * Inline single-row upsert from Fleet → Vehicle Mapping.
+ *
+ * The bulk confirm flow (POST /vehicle-mappings/confirm) replaces every
+ * mapping for a date — wrong for an inline edit of one driver's vehicle.
+ * This finds the existing assignment for (distributor, driver, date) and
+ * swaps the vehicle, or creates one if none exists. Status stays
+ * dispatch_ready so the row reads as 'confirmed' in the recommendations
+ * view, matching what bulk confirm produces.
+ */
+export async function upsertDailyVehicleMapping(
+  distributorId: string,
+  data: { driverId: string; vehicleId: string; date: string },
+) {
+  const driver = await prisma.driver.findFirst({
+    where: { id: data.driverId, distributorId, deletedAt: null },
+  });
+  if (!driver) throw new AssignmentError('Driver not found', 404);
+
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: data.vehicleId, distributorId, deletedAt: null },
+  });
+  if (!vehicle) throw new AssignmentError('Vehicle not found', 404);
+
+  const assignmentDate = new Date(data.date);
+
+  const existing = await prisma.driverVehicleAssignment.findFirst({
+    where: { distributorId, driverId: data.driverId, assignmentDate },
+  });
+
+  if (existing) {
+    return prisma.driverVehicleAssignment.update({
+      where: { id: existing.id },
+      data: { vehicleId: data.vehicleId },
+      include: {
+        driver: { select: { id: true, driverName: true } },
+        vehicle: { select: { id: true, vehicleNumber: true } },
+      },
+    });
+  }
+
+  return prisma.driverVehicleAssignment.create({
+    data: {
+      distributorId,
+      driverId: data.driverId,
+      vehicleId: data.vehicleId,
+      assignmentDate,
+      status: 'dispatch_ready',
+      isReconciled: false,
+    },
+    include: {
+      driver: { select: { id: true, driverName: true } },
+      vehicle: { select: { id: true, vehicleNumber: true } },
+    },
+  });
+}
+
 export async function createDriverVehicleAssignment(
   distributorId: string,
   data: { driverId: string; vehicleId: string; assignmentDate: string },
