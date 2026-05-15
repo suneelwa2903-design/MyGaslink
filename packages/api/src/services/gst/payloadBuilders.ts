@@ -344,8 +344,15 @@ export function buildEwbPayload(
     shipToGSTIN: isB2C ? seller.Gstin : buyer.Gstin,
     shipToTradeName: buyer.TrdNm || buyer.LglNm,
 
-    totInvValue: vals.AssVal,
+    // NIC EWB validator rule: totInvValue must be >= totalValue + cgstValue +
+    // sgstValue + igstValue + cessValue. Violating it returns error 620:
+    // "Total invoice value cannot be less than the sum of total assessable
+    // value and tax values." This bug was masquerading as 'EWB already
+    // exists' — it isn't; the legacy New_GasLink/.../gstEwayPayloadBuilder.js
+    // had the right mapping. totalValue uses AssVal (taxable subtotal);
+    // totInvValue uses TotInvVal (taxable + all taxes + round-off).
     totalValue: vals.AssVal,
+    totInvValue: vals.TotInvVal,
     cgstValue: vals.CgstVal,
     sgstValue: vals.SgstVal,
     igstValue: vals.IgstVal,
