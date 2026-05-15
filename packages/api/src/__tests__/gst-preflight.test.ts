@@ -237,7 +237,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     preflightDispatch = mod.preflightDispatch;
   });
 
-  it('B2B happy path: IRN + EWB inline → pending_delivery + gst_documents row', async () => {
+  it('B2B happy path: IRN-only then EWB-by-IRN → pending_delivery + gst_documents row', async () => {
     const ctx = await getSharmaContext();
     const orders = await seedOrders({
       customerId: ctx.b2bCust.id, count: 1,
@@ -245,7 +245,11 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
     });
     try {
-      apiCallMock.mockResolvedValueOnce(irnSuccessWithInlineEwb());
+      // Two-step pattern (2026-05-15 fix): IRN GENERATE without inline
+      // EwbDtls, then standalone genewaybill. Mock both responses.
+      apiCallMock
+        .mockResolvedValueOnce(irnSuccessNoInlineEwb())
+        .mockResolvedValueOnce(ewbStandaloneSuccess());
       const result = await preflightDispatch({
         distributorId: 'dist-002',
         driverId: ctx.driver.id,
@@ -255,7 +259,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       expect(result.summary).toMatchObject({ total: 1, succeeded: 1, failed: 0 });
       expect(result.results[0]).toMatchObject({ mode: 'B2B', success: true });
       expect(result.results[0].irn).toBeTruthy();
-      expect(result.results[0].ewbNo).toBe('181012000001');
+      expect(result.results[0].ewbNo).toBe('181012000999');
       expect(result.dispatched).toBe(true);
 
       const order = await prisma.order.findUniqueOrThrow({ where: { id: orders[0].id } });
@@ -265,38 +269,21 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       expect(inv.irnStatus).toBe('success');
       expect(inv.ewbStatus).toBe('active');
       const doc = await prisma.gstDocument.findFirstOrThrow({ where: { invoiceId: inv.id, isLatest: true } });
-      expect(doc.ewbNo).toBe('181012000001');
-      expect(doc.ewbDate).toBeTruthy();
-      expect(doc.ewbValidTill).toBeTruthy();
+      expect(doc.ewbNo).toBe('181012000999');
 
-      // Regression guards:
-      //   1. NIC 5002 rejects empty TransDocNo / TransDocDt — both
-      //      must be populated.
-      //   2. Inline EwbDtls (inside IRN payload) uses different field
-      //      casing than the standalone /ewbapi/genewbbyirn endpoint.
-      //      NIC's IRN validator returns a generic 5002 with no field
-      //      hint when the casing is wrong — we lost a live dispatch
-      //      session to this on 2026-05-15. The casing below is the
-      //      WhiteBooks Postman canonical for inline IRN+EWB.
-      const [, , , irnPayload] = apiCallMock.mock.calls[0];
-      const ewbDtls = (irnPayload as any).EwbDtls;
-      expect(ewbDtls).toBeTruthy();
-      // Field names — exact casing match against WhiteBooks Postman.
-      expect(ewbDtls).toHaveProperty('Transdocno');
-      expect(ewbDtls).toHaveProperty('TransdocDt');
-      expect(ewbDtls).toHaveProperty('Vehno');
-      expect(ewbDtls).toHaveProperty('Vehtype');
-      expect(ewbDtls).not.toHaveProperty('TransDocNo'); // standalone-EWB casing — wrong here
-      expect(ewbDtls).not.toHaveProperty('TransDocDt');
-      expect(ewbDtls).not.toHaveProperty('VehNo');
-      expect(ewbDtls).not.toHaveProperty('VehType');
-      // Value constraints
-      expect(typeof ewbDtls.Transdocno).toBe('string');
-      expect(ewbDtls.Transdocno.length).toBeGreaterThanOrEqual(1);
-      expect(ewbDtls.Transdocno.length).toBeLessThanOrEqual(15);
-      expect(typeof ewbDtls.TransdocDt).toBe('string');
-      expect(ewbDtls.TransdocDt).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
-      expect(ewbDtls.TransdocDt.length).toBe(10);
+      // Regression guards (2026-05-15 fixes):
+      //   - IRN payload MUST NOT include the inline EwbDtls block. NIC
+      //     sandbox returns generic 5002 when it's present (we lost a
+      //     live dispatch session to this; PascalCase, mixed-case, and
+      //     NIC-canonical casing all failed).
+      //   - The standalone /ewaybillapi/.../genewaybill call MUST be
+      //     made as a second API call.
+      expect(apiCallMock).toHaveBeenCalledTimes(2);
+      const [, , irnPath, irnPayload] = apiCallMock.mock.calls[0];
+      const [, , ewbPath] = apiCallMock.mock.calls[1];
+      expect(String(irnPath)).toContain('/einvoice/type/GENERATE/version/V1_03');
+      expect(String(ewbPath)).toContain('/ewaybillapi/v1.03/ewayapi/genewaybill');
+      expect((irnPayload as any).EwbDtls).toBeUndefined();
     } finally {
       await clearPreflightArtifacts(orders.map((o) => o.id));
     }

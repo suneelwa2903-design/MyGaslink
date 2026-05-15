@@ -21,26 +21,13 @@ import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
 import { apiCall, getCredentials } from './whitebooksClient.js';
-import { buildIrnPayload } from './payloadBuilders.js';
+import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 import {
   parseEwbResponse,
   parseWhitebooksDate,
-  recoverEwbFromIrn,
   createPendingAction,
 } from './gstService.js';
 import { createInvoiceFromOrder } from '../invoiceService.js';
-
-/**
- * Format a date as exactly 10 chars in DD/MM/YYYY — the format NIC
- * accepts for TransDocDt. Anything else (10-char ISO, missing leading
- * zeros, '/' vs '-') gets rejected with WhiteBooks 5002.
- */
-function formatDdMmYyyy(d: Date): string {
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
 
 const orderInclude = {
   customer: true,
@@ -564,14 +551,17 @@ async function runB2bPreflight(params: {
   const invoiceId = invoice.id;
   const orderId: string = order.id;
 
-  const invoiceData = await buildInvoiceData(invoiceId, distributor, {
-    vehicleNumber, transportMode: '1', distance: 0,
-    // Lorry-receipt fields the depot uses — order number is the route
-    // identifier; dispatch date is today (preflight runs the morning
-    // the goods leave). Both fed straight into TranspDtls (5002 fix).
-    transDocNo: String(order.orderNumber).slice(-15),
-    transDocDt: formatDdMmYyyy(new Date()),
-  });
+  // IRN is called WITHOUT inline EwbDtls. NIC's /einvoice GENERATE
+  // endpoint accepts inline EWB in theory (Postman example shows it),
+  // but in practice both PascalCase (VehNo/TransDocNo) and the
+  // canonical mixed-case (Vehno/Transdocno) variants are rejected with
+  // generic 5002 against the WhiteBooks sandbox. The two-step pattern
+  // — IRN-only then explicit /ewaybillapi/genewaybill — is the path
+  // used by gstService.processInvoiceGst and has 5 historical
+  // successes today, so we mirror it here. One extra API call per
+  // order; correctness wins over the "1-call" optimization promised
+  // in WI-035.
+  const invoiceData = await buildInvoiceData(invoiceId, distributor, undefined);
 
   const credEmail =
     (await getCredentials(distributorId, 'einvoice'))?.email ||
@@ -640,17 +630,75 @@ async function runB2bPreflight(params: {
 
     let ewbNo: string | null = hasIrnEwb ? String(irnEwbNo) : null;
     let ewbValidTill: string | null = irnEwbValidTill ? String(irnEwbValidTill) : null;
+    let ewbDateOut: Date | null = ewbDate;
+    let ewbValidTillOut: Date | null = ewbValidTillDate;
 
     if (!hasIrnEwb) {
-      // Fallback: try recovering EWB from IRN-details. This handles the
-      // case where NIC accepted the IRN but, for whatever reason, didn't
-      // return inline EWB fields (sandbox quirk, port-side delay).
-      const recovered = await recoverEwbFromIrn(invoiceId, distributorId, irn);
-      if (recovered?.ewbNo) {
-        ewbNo = recovered.ewbNo;
-        ewbValidTill = recovered.ewbValidTill ?? null;
+      // IRN succeeded but no inline EWB came back (expected after the
+      // 2026-05-15 fix that strips the inline EwbDtls block). Generate
+      // the EWB via the standalone endpoint — the proven path from
+      // gstService.processInvoiceGst.
+      try {
+        const ewbCredEmail =
+          (await getCredentials(distributorId, 'ewaybill'))?.email ||
+          credEmail;
+        const ewbPayload = buildEwbPayload(irnPayload, {
+          vehicleNumber,
+          transportMode: '1',
+          distance: 1, // standalone EWB rejects distance:0 (error 721)
+        });
+        const ewbResponse: any = await logApiCall({
+          distributorId, orderId, invoiceId,
+          apiType: 'EWB_GENERATE_BY_IRN', scope: 'ewaybill',
+          endpoint: '/ewaybillapi/v1.03/ewayapi/genewaybill',
+          payload: ewbPayload,
+          call: () => apiCall(
+            distributorId, 'POST',
+            `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(ewbCredEmail)}`,
+            ewbPayload, 'ewaybill',
+          ),
+        });
+        const parsed = parseEwbResponse(ewbResponse);
+        if (parsed.ewbNo) {
+          ewbNo = parsed.ewbNo;
+          ewbValidTill = parsed.validToDate?.toISOString() ?? null;
+          ewbDateOut = parsed.validFromDate;
+          ewbValidTillOut = parsed.validToDate;
+          await prisma.invoice.update({
+            where: { id: invoiceId },
+            data: { ewbStatus: 'active' },
+          });
+          await upsertLatestGstDocument({
+            invoiceId, orderId, distributorId,
+            gstDocNo: invoice.invoiceNumber,
+            data: {
+              ewbStatus: 'active',
+              ewbNo: parsed.ewbNo,
+              ewbDate: parsed.validFromDate,
+              ewbValidTill: parsed.validToDate,
+            },
+          });
+        } else {
+          logger.warn('EWB response missing ewayBillNo after IRN success', { invoiceId });
+        }
+      } catch (ewbErr: any) {
+        // IRN already succeeded — don't fail the dispatch on a missed
+        // EWB. Raise a HIGH pending action; admin can retry the EWB
+        // via the existing /generate-gst flow on the invoice.
+        logger.error('EWB generation failed after IRN success', { orderId, invoiceId, error: ewbErr.message });
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { ewbStatus: 'failed' },
+        });
+        await createPendingAction(
+          distributorId, invoiceId, 'EWB_GENERATION',
+          `Order ${order.orderNumber}: IRN succeeded but EWB failed — ${ewbErr.message}`,
+          'high',
+        );
       }
     }
+    // Suppress unused-var lint — kept for future audit hooks.
+    void ewbDateOut; void ewbValidTillOut;
 
     await transitionToPendingDelivery(
       orderId, userId,
