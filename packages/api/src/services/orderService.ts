@@ -821,13 +821,33 @@ export async function confirmDelivery(
 
   // Process GST compliance (non-blocking) — only if GST is enabled
   try {
-    const invoice = await prisma.invoice.findFirst({ where: { orderId, deletedAt: null }, select: { id: true } });
+    const invoice = await prisma.invoice.findFirst({
+      where: { orderId, deletedAt: null },
+      select: { id: true, irnStatus: true, ewbStatus: true },
+    });
     if (invoice) {
-      const { processInvoiceGst } = await import('./gst/gstService.js');
-      // Fire and forget — don't block delivery confirmation on GST
-      processInvoiceGst(invoice.id, distributorId).catch(err => {
-        logger.warn('GST processing failed (non-blocking)', { orderId, error: err.message });
-      });
+      // WI-037: if the invoice already has a live IRN or EWB (pre-dispatch
+      // preflight ran) AND the delivery is modified, run the reissue flow
+      // instead of generating fresh compliance docs from scratch.
+      // Otherwise fall back to the original post-delivery GST trigger.
+      const hasLiveGstDoc = invoice.irnStatus === 'success' || invoice.ewbStatus === 'active';
+      if (isModified && hasLiveGstDoc) {
+        const { reissueForDeliveryMismatch } = await import('./gst/gstReissueService.js');
+        reissueForDeliveryMismatch({
+          invoiceId: invoice.id,
+          distributorId,
+          userId,
+          mismatchContext: { orderId, source: 'confirmDelivery' },
+        }).catch((err) => {
+          logger.warn('Delivery-mismatch reissue failed (non-blocking)', { orderId, error: err.message });
+        });
+      } else {
+        const { processInvoiceGst } = await import('./gst/gstService.js');
+        // Fire and forget — don't block delivery confirmation on GST
+        processInvoiceGst(invoice.id, distributorId).catch(err => {
+          logger.warn('GST processing failed (non-blocking)', { orderId, error: err.message });
+        });
+      }
     }
   } catch { /* GST processing is non-blocking */ }
 
