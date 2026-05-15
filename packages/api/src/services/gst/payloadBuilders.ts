@@ -213,7 +213,17 @@ export function buildIrnPayload(data: InvoiceData): any {
     TranDtls: {
       TaxSch: 'GST',
       SupTyp: isB2C ? 'B2C' : 'B2B',
-      RegRev: 'Y',
+      // Reverse Charge Mechanism flag. 'Y' means the BUYER pays GST
+      // instead of the seller charging it — applies only to notified
+      // categories (services from unregistered suppliers, certain
+      // notified goods, etc.). For a standard LPG sale where the
+      // seller charges CGST/SGST or IGST in the invoice itself,
+      // RegRev MUST be 'N'. NIC's validator returns generic 5002
+      // "Application error" when RegRev='Y' is combined with
+      // CGST/SGST/IGST values on the invoice (legacy New_GasLink had
+      // the same hard-coded 'Y' bug — likely never caught in their
+      // older sandbox).
+      RegRev: 'N',
       IgstOnIntra: 'N', // Only 'Y' for special intra-state IGST cases (SEZ etc.)
     },
     DocDtls: {
