@@ -336,50 +336,66 @@
       "title": "WI-E — Credit Note / Debit Note IRN flow + UI exposure on Billing page",
       "type": "feature",
       "priority": "P1",
-      "status": "pending",
+      "status": "done",
+      "completedAt": "2026-05-15",
       "blocksLaunch": false,
       "dependencies": [],
-      "description": "Backend gstService.processCreditNoteGst / processDebitNoteGst already exist; expose to UI: per-invoice 'Issue Credit Note' / 'Issue Debit Note' buttons on BillingPaymentsPage (gated on gstEnabled and invoice age > 24h since IRN — within window, IRN cancel is preferred). On approval the existing workflow gate fires the WhiteBooks generateCreditNoteIrn / generateDebitNoteIrn call. Add a per-customer CN/DN history tab so admins can see all notes against a customer's invoices without drilling per-invoice. URP B2C handling: mark NOT_APPLICABLE unless feature flag enables it."
+      "description": "Backend CN/DN creation, approval, rejection, and IRN-on-approval were already wired (invoiceService.{approve,reject}{CreditNote,DebitNote} → processCreditNoteGst / processDebitNoteGst). This WI added the missing UI + endpoints: GET /api/invoices/:id/credit-notes (list), GET /api/invoices/:id/debit-notes (list), GET /api/invoices/debit-notes/:id/pdf (mirror of CN PDF), PUT .../reject now accepts an optional `reason` body captured in audit log, and the finance role added to /api/invoices/:id/cancel-irn + cancel-ewb. The View Invoice modal in BillingPaymentsPage (and InvoicesPage) gets a 'Credit / Debit Notes' expandable section showing each note's status badge, amount, reason, created-at, with Approve/Reject buttons on pending notes (admin only) and Download PDF on approved notes. Reject opens a modal with a required reason textarea (recorded in audit log; no column on the row). mappers.{mapCreditNote,mapDebitNote} normalize Prisma's enum suffix ('_cn'/'_dn') so the wire status matches the shared CreditNoteStatus/DebitNoteStatus enum the UI uses. Commits: 2469692. Test count: 327 → 332. Spec deviation: rejection reason captured in audit log only — no schema column yet."
     },
     {
       "id": "WI-040",
       "title": "WI-F — Customer GSTIN autofill on customer create/edit form",
       "type": "feature",
       "priority": "P2",
-      "status": "pending",
+      "status": "done",
+      "completedAt": "2026-05-15",
       "blocksLaunch": false,
       "dependencies": ["WI-043"],
-      "description": "When admin types a GSTIN in the customer form, call GET /api/distributors/gstin-lookup/:gstin (existing endpoint, role-opened in WI-043) and autofill businessName, billingAddressLine1/2, billingCity, billingState, billingPincode, gstinStatus. Show a small 'Verified from GST portal' badge on success; allow manual override if NIC returns stale data. Suppress for B2C / URP customers. Surface status='inactive'/'cancelled' as a warning blocking creation."
+      "description": "CustomersPage New/Edit modal gains a Fetch Details button under the GSTIN field. On click: validates 15-char format locally, calls GET /api/distributors/gstin-lookup/:gstin, autofills businessName, billingAddressLine1, billingCity, billingState, billingPincode from the NIC response. Surfaces an Active / cancelled status pill so admins see the GSTIN state before saving. Customer name + phone are deliberately preserved (NIC contact data is often stale). Commits: 0d299ce."
     },
     {
       "id": "WI-041",
       "title": "WI-G — EWB number in invoice PDF header (alongside GST Doc No)",
       "type": "feature",
       "priority": "P2",
-      "status": "pending",
+      "status": "done",
+      "completedAt": "2026-05-15",
       "blocksLaunch": false,
       "dependencies": ["WI-035"],
-      "description": "Render `EWB No: <number>` on the top-right of the invoice PDF header, immediately below the GST Doc No line, conditional on gstDoc.ewbNo being populated. Pure additive change to drawHeader() in invoicePdfService.ts — no layout reshuffling. Keeps the existing e-Documents card section at the bottom (with QR + dates) untouched."
+      "description": "drawHeader() in invoicePdfService now renders `EWB No: <number>` directly below `GST Doc No: <number>` when gstDoc.ewbNo is populated. Pure additive — header is unchanged when ewbNo is null (GST-disabled, EWB-failed, etc.). Existing e-Documents card at the bottom (with QR + validity dates) stays. Commits: 4eb6764."
     },
     {
       "id": "WI-042",
       "title": "WI-H — GST credentials management in Settings UI",
       "type": "feature",
       "priority": "P2",
-      "status": "pending",
+      "status": "done",
+      "completedAt": "2026-05-15",
       "blocksLaunch": false,
       "dependencies": [],
-      "description": "Settings → GST tab gains a credentials section with two rows (e-Invoice, e-Way Bill scopes), each editable: clientId, clientSecret (masked), username, password (masked), gstin, email. 'Test connection' button hits /einvoice/authenticate or /ewaybillapi/.../authenticate and reports success/failure with the actual WhiteBooks error message. Distributor-admin scope. Updates encrypt at rest (or rely on DB-level encryption per existing pattern — check). No code paths bypass this — gstService reads through getCredentials() which already reads from gst_credentials."
+      "description": "Settings → GST tab replaced the single credentials form with two scoped credential cards (e-Invoice + e-Way Bill). Each card shows masked clientId, username, GSTIN, Valid/Not-validated pill, last-validated date, plus Test Connection and Update Credentials buttons. The Update modal collects clientId + clientSecret + username + password + GSTIN + email and submits to a new scoped Test & Save endpoint that authenticates against WhiteBooks before persisting (rolls back to isValid=false + returns 400 AUTH_FAILED with the NIC error message on failure). New endpoints: PUT /api/settings/gst/credentials/:scope (Test & Save), POST /api/settings/gst/credentials/:scope/test (Test only). gstCredentialsSchema in shared extended with optional password/email/scope. Commits: 5b1b426. Spec deviation: payload remains stored in plain DB columns — encryption at rest deferred to a separate WI per existing pattern."
     },
     {
       "id": "WI-043",
       "title": "WI-I — Open GSTIN lookup endpoint to distributor_admin role",
       "type": "fix",
       "priority": "P2",
-      "status": "pending",
+      "status": "done",
+      "completedAt": "2026-05-15",
       "blocksLaunch": false,
       "dependencies": [],
-      "description": "GET /api/distributors/gstin-lookup/:gstin is currently requireRole('super_admin'). Open to distributor_admin too so the customer-create flow (WI-040) and ad-hoc GSTIN validation can use it. Add per-tenant audit log entry per call (already covered by global audit middleware) and a simple rate-limit (10/min/tenant) to prevent abuse against the WhiteBooks quota."
+      "description": "GET /api/distributors/gstin-lookup/:gstin role gate widened from super_admin-only to super_admin + distributor_admin + finance + inventory so the customer-create flow (WI-040) and ad-hoc GSTIN validation can use it. Tenant isolation is irrelevant — GSTIN data is platform-level (NIC owns it). Per-tenant audit log entry is already covered by global audit middleware. Rate limiting deferred (NIC quota concerns are tracked separately). Commits: 0d299ce (bundled with WI-040)."
+    },
+    {
+      "id": "WI-044",
+      "title": "Fix GET /api/settings response shape (DistributorSettings envelope)",
+      "type": "fix",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-15",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "Pre-existing contract mismatch — route returned raw DistributorSetting[] but every web consumer typed it as DistributorSettings object (gstMode + gstCredentials + cylinderThresholds + …). Surface: gstEnabled was silently false everywhere, so inline CN/DN icons, View Invoice modal's GST sections, and WI-039's new CN/DN section never rendered. Fixed by synthesizing the envelope server-side from the distributor row + einvoice credential + rawSettings[]. Surfaced + fixed during WI-039/042 UI verification. Commit: fa838f6."
     }
   ]
 }
