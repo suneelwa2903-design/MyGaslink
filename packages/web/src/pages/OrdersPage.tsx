@@ -12,6 +12,7 @@ import {
   HiOutlineMagnifyingGlass,
   HiOutlineTrash,
   HiOutlineArrowUturnLeft,
+  HiOutlineEye,
 } from 'react-icons/hi2';
 import {
   type Order,
@@ -84,6 +85,7 @@ export default function OrdersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [viewOrder, setViewOrder] = useState<Order | null>(null);
   const [assignOrder, setAssignOrder] = useState<Order | null>(null);
   const [deliverOrder, setDeliverOrder] = useState<Order | null>(null);
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
@@ -305,6 +307,13 @@ export default function OrdersPage() {
                     </td>
                     <td>
                       <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setViewOrder(order)}
+                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500"
+                          title="View"
+                        >
+                          <HiOutlineEye className="h-4 w-4" />
+                        </button>
                         {order.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT && (
                           <button
                             onClick={() => setAssignOrder(order)}
@@ -423,6 +432,15 @@ export default function OrdersPage() {
           onClose={() => setEditOrder(null)}
           order={editOrder}
           cylinderTypes={cylinderTypes ?? []}
+        />
+      )}
+
+      {/* View Order Modal — read-only, available for every status incl. delivered/cancelled */}
+      {viewOrder && (
+        <OrderDetailModal
+          open={!!viewOrder}
+          onClose={() => setViewOrder(null)}
+          order={viewOrder}
         />
       )}
     </div>
@@ -550,6 +568,103 @@ function CreateOrderModal({
           <Button type="submit" loading={mutation.isPending}>Create Order</Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ─── Order Detail (View) Modal ───────────────────────────────────────────────
+// Read-only view of an order. Used for delivered/cancelled orders (which
+// have no edit/assign actions) and also as a quick lookup for orders in any
+// status. No mutations here — it just reads from the order row already loaded
+// by the list query.
+
+function OrderDetailModal({
+  open,
+  onClose,
+  order,
+}: {
+  open: boolean;
+  onClose: () => void;
+  order: Order;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title={`Order ${order.orderNumber}`} size="lg">
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Status</p>
+            <Badge variant={STATUS_VARIANTS[order.status] || 'neutral'}>
+              {STATUS_LABELS[order.status] || order.status}
+            </Badge>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Type</p>
+            <p className="font-medium">{order.orderType}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Customer</p>
+            <p className="font-medium">{order.customerName}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Delivery Date</p>
+            <p className="font-medium">
+              {order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString('en-IN') : '—'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Driver</p>
+            <p className="font-medium">{order.driverName || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Vehicle</p>
+            <p className="font-medium">{order.vehicleNumber || '—'}</p>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-wide text-surface-500 mb-2">Items</p>
+          <div className="rounded-lg border border-surface-200 dark:border-surface-700 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-surface-50 dark:bg-surface-700">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium">Cylinder</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium">Qty</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium">Unit Price</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium">Line Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
+                {order.items.map((item, idx) => (
+                  <tr key={idx}>
+                    <td className="px-3 py-2">{item.cylinderTypeName ?? item.cylinderTypeId}</td>
+                    <td className="px-3 py-2 text-right">{item.quantity}</td>
+                    <td className="px-3 py-2 text-right">{formatCurrency(item.unitPrice ?? 0)}</td>
+                    <td className="px-3 py-2 text-right font-medium">
+                      {formatCurrency((item.unitPrice ?? 0) * item.quantity)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="flex justify-between border-t border-surface-200 dark:border-surface-700 pt-3">
+          <span className="text-xs uppercase tracking-wide text-surface-500">Total</span>
+          <span className="text-lg font-semibold">{formatCurrency(order.totalAmount ?? 0)}</span>
+        </div>
+
+        {order.specialInstructions && (
+          <div>
+            <p className="text-xs uppercase tracking-wide text-surface-500">Special Instructions</p>
+            <p>{order.specialInstructions}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Close</Button>
+        </div>
+      </div>
     </Modal>
   );
 }
