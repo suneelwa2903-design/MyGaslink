@@ -1005,15 +1005,35 @@ function AssignmentsTab() {
       }),
   });
 
-  const { data: driversData } = useQuery({
-    queryKey: ['drivers-list', 'active'],
-    queryFn: () => apiGet<{ drivers: Driver[] }>('/drivers', { status: 'active' }),
-    staleTime: 5 * 60 * 1000,
+  // Only drivers with a confirmed vehicle mapping for TODAY may be assigned
+  // — both for the inline per-row dropdown and the bulk toolbar. This mirrors
+  // the backend guard in orderService.assignDriver. Recommendations with
+  // status === 'confirmed' have a real DriverVehicleAssignment row for today;
+  // 'recommended' (yesterday's mapping copied forward but not confirmed) and
+  // 'unassigned' both lack one and would be rejected by the API.
+  const today = new Date().toISOString().split('T')[0];
+  const { data: vehicleMappings } = useQuery({
+    queryKey: ['vehicle-mappings', today],
+    queryFn: () =>
+      apiGet<{
+        recommendations: Array<{
+          driverId: string;
+          driverName: string;
+          vehicleId: string | null;
+          vehicleNumber: string | null;
+          status: string;
+          source: string;
+        }>;
+      }>(`/assignments/vehicle-mappings?date=${today}`),
+    staleTime: 60 * 1000,
   });
 
-  const drivers = driversData?.drivers ?? [];
-  const driverOptions = drivers.map((d) => ({ value: d.driverId, label: d.driverName }));
-  const driverNameById = new Map(drivers.map((d) => [d.driverId, d.driverName]));
+  const confirmedDrivers = (vehicleMappings?.recommendations ?? []).filter(
+    (r) => r.status === 'confirmed',
+  );
+  const driverOptions = confirmedDrivers.map((d) => ({ value: d.driverId, label: d.driverName }));
+  const driverNameById = new Map(confirmedDrivers.map((d) => [d.driverId, d.driverName]));
+  const noConfirmedMappings = !!vehicleMappings && confirmedDrivers.length === 0;
 
   const orders = pendingOrders?.orders ?? [];
 
@@ -1085,6 +1105,12 @@ function AssignmentsTab() {
           Orders pending driver assignment for this distributor. Use the inline dropdown to assign a single order, or select multiple orders and use the toolbar to bulk-assign.
         </p>
       </div>
+
+      {noConfirmedMappings && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+          No drivers have vehicle mappings confirmed for today. Please confirm vehicle mappings in Fleet → Vehicle Mapping first.
+        </div>
+      )}
 
       {/* Bulk toolbar */}
       <div className="card p-4 flex flex-wrap items-center gap-3">
