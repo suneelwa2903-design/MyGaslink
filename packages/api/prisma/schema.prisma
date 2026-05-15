@@ -55,6 +55,7 @@ enum CustomerStatus {
 enum OrderStatus {
   pending_driver_assignment
   pending_dispatch
+  preflight_in_progress
   pending_delivery
   delivered
   modified_delivered
@@ -1213,6 +1214,35 @@ model GstApiUsage {
 
   @@unique([distributorId, month, year])
   @@map("gst_api_usage")
+}
+
+// ─── GST API Call Log ───────────────────────────────────────────────────────
+// Per-call audit of WhiteBooks GST API requests. Captures everything needed
+// to diagnose payload-shape drift, NIC errors, latency regressions, and
+// per-tenant API-quota usage — without needing to enable verbose Winston logs
+// in production.
+
+model GstApiLog {
+  id              String   @id @default(uuid()) @map("log_id")
+  distributorId   String   @map("distributor_id")
+  invoiceId       String?  @map("invoice_id")
+  orderId         String?  @map("order_id")
+  apiType         String   @map("api_type") // IRN_GENERATE / EWB_GENERATE_INLINE / EWB_GENERATE_BY_IRN / EWB_GENERATE_STANDALONE / IRN_CANCEL / EWB_CANCEL / GSTIN_LOOKUP / EWB_RECOVER ...
+  scope           String   // 'einvoice' | 'ewaybill'
+  endpoint        String
+  httpStatus      Int?     @map("http_status")
+  status          String   // 'success' | 'failed'
+  errorCode       String?  @map("error_code")
+  errorMessage    String?  @map("error_message")
+  requestPayload  Json     @map("request_payload")
+  responsePayload Json?    @map("response_payload")
+  latencyMs       Int      @map("latency_ms")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([distributorId, createdAt(sort: Desc)])
+  @@index([invoiceId])
+  @@index([orderId])
+  @@map("gst_api_logs")
 }
 
 // ─── Seat Overage Requests ──────────────────────────────────────────────────

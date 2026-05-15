@@ -64,6 +64,7 @@ export enum ModificationType {
 export enum OrderStatus {
   PENDING_DRIVER_ASSIGNMENT = 'pending_driver_assignment',
   PENDING_DISPATCH = 'pending_dispatch',
+  PREFLIGHT_IN_PROGRESS = 'preflight_in_progress',
   PENDING_DELIVERY = 'pending_delivery',
   DELIVERED = 'delivered',
   MODIFIED_DELIVERED = 'modified_delivered',

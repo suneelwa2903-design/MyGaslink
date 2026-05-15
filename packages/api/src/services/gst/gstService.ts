@@ -35,7 +35,7 @@ function extractStateCode(gstin: string): string {
  * Date constructor mis-parses. Falls back to native Date if the format
  * is unfamiliar (e.g. an ISO string).
  */
-function parseWhitebooksDate(s: string | null | undefined): Date | null {
+export function parseWhitebooksDate(s: string | null | undefined): Date | null {
   if (!s) return null;
   // DD/MM/YYYY hh:mm:ss AM/PM  OR  DD/MM/YYYY HH:mm:ss  OR  DD/MM/YYYY
   const m = String(s).trim().match(
@@ -70,7 +70,7 @@ function parseWhitebooksDate(s: string | null | undefined): Date | null {
  * Mirrors the legacy New_GasLink/.../whitebooksEinvoiceClient.js
  * fallback chain.
  */
-function parseEwbResponse(resp: any): {
+export function parseEwbResponse(resp: any): {
   ewbNo: string | null;
   validFromDate: Date | null;
   validToDate: Date | null;
@@ -995,7 +995,7 @@ export async function getEwbStatus(distributorId: string, ewbNo: string) {
  * Idempotent: safe to call even when nothing comes back; just leaves
  * the rows untouched.
  */
-async function recoverEwbFromIrn(invoiceId: string, distributorId: string, irn: string) {
+export async function recoverEwbFromIrn(invoiceId: string, distributorId: string, irn: string) {
   try {
     const details = await getIrnDetails(distributorId, irn);
     const d = details?.data ?? details ?? {};
@@ -1006,13 +1006,17 @@ async function recoverEwbFromIrn(invoiceId: string, distributorId: string, irn: 
       logger.info('IRN details had no EWB info to recover', { invoiceId, irn });
       return null;
     }
+    // NIC returns dates in DD/MM/YYYY hh:mm:ss AM/PM — parseWhitebooksDate
+    // handles that format. Plain new Date() returns Invalid Date.
+    const ewbDate = parseWhitebooksDate(ewbDt);
+    const ewbValidTillDate = parseWhitebooksDate(ewbValidTill);
     await prisma.gstDocument.updateMany({
       where: { invoiceId, isLatest: true },
       data: {
         ewbStatus: 'active',
         ewbNo: ewbNo.toString(),
-        ewbDate: ewbDt ? new Date(ewbDt) : null,
-        ewbValidTill: ewbValidTill ? new Date(ewbValidTill) : null,
+        ewbDate,
+        ewbValidTill: ewbValidTillDate,
       },
     });
     await prisma.invoice.update({
@@ -1020,7 +1024,7 @@ async function recoverEwbFromIrn(invoiceId: string, distributorId: string, irn: 
       data: { ewbStatus: 'active' },
     });
     logger.info('Recovered EWB from IRN details after 620', { invoiceId, ewbNo });
-    return { ewbNo: ewbNo.toString(), ewbDate: ewbDt, ewbValidTill };
+    return { ewbNo: ewbNo.toString(), ewbDate, ewbValidTill: ewbValidTillDate?.toISOString() ?? null };
   } catch (err: any) {
     logger.warn('Failed to recover EWB from IRN after 620', { invoiceId, irn, error: err.message });
     return null;
@@ -1073,14 +1077,14 @@ export async function cancelAndRegenerateInvoice(
 /**
  * Create a pending action for GST failures
  */
-async function createPendingAction(
+export async function createPendingAction(
   distributorId: string,
   invoiceId: string,
   actionType: string,
   errorMessage: string
-) {
+): Promise<{ id: string } | null> {
   try {
-    await prisma.pendingAction.create({
+    const row = await prisma.pendingAction.create({
       data: {
         distributorId,
         module: 'gst_compliance',
@@ -1091,8 +1095,11 @@ async function createPendingAction(
         severity: 'high',
         status: 'open',
       },
+      select: { id: true },
     });
+    return row;
   } catch (err) {
     logger.error('Failed to create pending action', { distributorId, invoiceId, actionType, err });
+    return null;
   }
 }

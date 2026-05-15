@@ -286,6 +286,97 @@
       "completedAt": "2026-05-14",
       "blocksLaunch": false,
       "description": "The WI-032 idempotency refactor hoisted `customers` to outer scope but left `drivers` and `vehicles` as `const` inside the `if (!bhargavaSeeded)` block, while the Bhargava transactional section (orders/assignments) references them from its own separate `if` block. A full `pnpm db:seed` on an empty DB crashed at seed.ts:677 with `ReferenceError: drivers is not defined` — only surfaced now because pre-WI-032 the seed never re-ran on a clean DB. Fix: hoisted `drivers` and `vehicles` to outer-scope `let` declarations alongside `customers`. Verified 2026-05-14: full seed completes (11 orders, 4 invoices, 4 payments, 8 customer balances)."
+    },
+    {
+      "id": "WI-035",
+      "title": "WI-A — Pre-dispatch preflight service (IRN + EWB before goods leave depot)",
+      "type": "feature",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-15",
+      "blocksLaunch": true,
+      "dependencies": [],
+      "description": "Implemented per founder Q1-Q4 directives. Per-order partial dispatch: succeeded orders → pending_delivery, failed → pending_dispatch + PendingAction (Q1). transDistance=0 lets NIC auto-calc from PIN codes (Q2). New preflight_in_progress OrderStatus value serves as a row-level lock; conditional UPDATE makes re-claim impossible (Q3). EWBS scope used standalone for B2C/URP, IRN-with-inline-EwbDtls for B2B (Q4). New endpoint POST /api/orders/preflight-dispatch returns 200/207/400/404/409. New gst_api_logs table captures every WhiteBooks call. Migration 20260515000000_preflight_and_gst_api_log. 25 new tests, suite 265 → 290 passing. Commits: 122d577 (schema), b14c35e (TranspDtls payload), 99cd082 (service), cce457d (route), 7c8ef7c (tests + date-parsing fixes). Spec: .session/specs/WI-A-predispatch-preflight.md. Session summary: .session/session-summary-WI-035.md."
+    },
+    {
+      "id": "WI-036",
+      "title": "WI-B — Dispatch UI: per-driver Dispatch button + preflight results screen",
+      "type": "feature",
+      "priority": "P0",
+      "status": "pending",
+      "blocksLaunch": true,
+      "dependencies": ["WI-035"],
+      "description": "Driver Assignment tab gains a per-driver 'Dispatch' card showing: driver name, order count, estimated trip distance, [Dispatch <Name>] button. Click triggers the WI-035 preflight for that driver's orders. UI shows progress order-by-order (✓/✗) and on completion presents either a 'Dispatched — N orders' confirmation with a 'Download Trip Sheet' button (link to consolidated EWB PDF from WI-038) or a per-order error list with retry-this-driver action. Orders that successfully dispatch disappear from the assignment list; failed orders stay with the failure reason inline."
+    },
+    {
+      "id": "WI-037",
+      "title": "WI-C — Delivery-mismatch reissue (cancel + regenerate IRN/EWB on qty change)",
+      "type": "feature",
+      "priority": "P0",
+      "status": "pending",
+      "blocksLaunch": true,
+      "dependencies": ["WI-035"],
+      "description": "When delivered quantity ≠ ordered quantity at confirm-delivery time AND compliance docs were generated pre-dispatch, run the reissue flow (lifted from legacy gstComplianceReissueService): write invoice revision snapshot → cancel EWB → cancel IRN (B2B only) → update invoice items + totals to delivered quantities → for B2B generate new IRN only (no new EWB since goods already moved) and stamp invoice.revisedPostDeliveryAt; for B2C generate new standalone EWB only. Hard rule: any IRN cancel failure aborts and creates an IRN_CANCEL_BLOCKED pending action. Adds `invoice_revisions` table + `revised_post_delivery_at` column to invoices."
+    },
+    {
+      "id": "WI-038",
+      "title": "WI-D — Consolidated EWB (trip sheet) auto-generated on dispatch",
+      "type": "feature",
+      "priority": "P1",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": ["WI-035", "WI-036"],
+      "description": "After WI-035 preflight generates per-order EWBs successfully for a driver's batch, call POST /ewaybillapi/v1.03/ewayapi/gencewb to consolidate them into one trip sheet bound to the day's driver-vehicle assignment. Persist the trip sheet number (`tripSheetNo`) on the DriverVehicleAssignment row, expose download/share endpoints (PDF + WhatsApp share intent) from the dispatch confirmation screen. Driver mobile app sees the trip sheet on their Today view. Includes regenerate-on-vehicle-change wiring (regentripsheet)."
+    },
+    {
+      "id": "WI-039",
+      "title": "WI-E — Credit Note / Debit Note IRN flow + UI exposure on Billing page",
+      "type": "feature",
+      "priority": "P1",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "Backend gstService.processCreditNoteGst / processDebitNoteGst already exist; expose to UI: per-invoice 'Issue Credit Note' / 'Issue Debit Note' buttons on BillingPaymentsPage (gated on gstEnabled and invoice age > 24h since IRN — within window, IRN cancel is preferred). On approval the existing workflow gate fires the WhiteBooks generateCreditNoteIrn / generateDebitNoteIrn call. Add a per-customer CN/DN history tab so admins can see all notes against a customer's invoices without drilling per-invoice. URP B2C handling: mark NOT_APPLICABLE unless feature flag enables it."
+    },
+    {
+      "id": "WI-040",
+      "title": "WI-F — Customer GSTIN autofill on customer create/edit form",
+      "type": "feature",
+      "priority": "P2",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": ["WI-043"],
+      "description": "When admin types a GSTIN in the customer form, call GET /api/distributors/gstin-lookup/:gstin (existing endpoint, role-opened in WI-043) and autofill businessName, billingAddressLine1/2, billingCity, billingState, billingPincode, gstinStatus. Show a small 'Verified from GST portal' badge on success; allow manual override if NIC returns stale data. Suppress for B2C / URP customers. Surface status='inactive'/'cancelled' as a warning blocking creation."
+    },
+    {
+      "id": "WI-041",
+      "title": "WI-G — EWB number in invoice PDF header (alongside GST Doc No)",
+      "type": "feature",
+      "priority": "P2",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": ["WI-035"],
+      "description": "Render `EWB No: <number>` on the top-right of the invoice PDF header, immediately below the GST Doc No line, conditional on gstDoc.ewbNo being populated. Pure additive change to drawHeader() in invoicePdfService.ts — no layout reshuffling. Keeps the existing e-Documents card section at the bottom (with QR + dates) untouched."
+    },
+    {
+      "id": "WI-042",
+      "title": "WI-H — GST credentials management in Settings UI",
+      "type": "feature",
+      "priority": "P2",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "Settings → GST tab gains a credentials section with two rows (e-Invoice, e-Way Bill scopes), each editable: clientId, clientSecret (masked), username, password (masked), gstin, email. 'Test connection' button hits /einvoice/authenticate or /ewaybillapi/.../authenticate and reports success/failure with the actual WhiteBooks error message. Distributor-admin scope. Updates encrypt at rest (or rely on DB-level encryption per existing pattern — check). No code paths bypass this — gstService reads through getCredentials() which already reads from gst_credentials."
+    },
+    {
+      "id": "WI-043",
+      "title": "WI-I — Open GSTIN lookup endpoint to distributor_admin role",
+      "type": "fix",
+      "priority": "P2",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "GET /api/distributors/gstin-lookup/:gstin is currently requireRole('super_admin'). Open to distributor_admin too so the customer-create flow (WI-040) and ad-hoc GSTIN validation can use it. Add per-tenant audit log entry per call (already covered by global audit middleware) and a simple rate-limit (10/min/tenant) to prevent abuse against the WhiteBooks quota."
     }
   ]
 }

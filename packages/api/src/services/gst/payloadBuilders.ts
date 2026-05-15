@@ -63,6 +63,19 @@ interface InvoiceData {
   originalDocNumber?: string;
   originalDocDate?: Date;
   reason?: string;
+  // Transport details for inline EWB generation alongside IRN.
+  // When provided, the IRN response also returns EwbNo/EwbDt/EwbValidTill —
+  // saves a second WhiteBooks call (preferred path for B2B Tax Invoices
+  // per NIC EWB spec rule #1).
+  transport?: TransportDetails;
+}
+
+interface TransportDetails {
+  vehicleNumber: string;
+  transportMode?: '1' | '2' | '3' | '4'; // 1=Road, 2=Rail, 3=Air, 4=Ship
+  distance?: number;       // 0 = let NIC auto-calc from PIN codes
+  transporterName?: string;
+  transporterId?: string;  // transporter GSTIN
 }
 
 function extractStateCode(gstin: string): string {
@@ -252,6 +265,32 @@ export function buildIrnPayload(data: InvoiceData): any {
         OthRefNo: sanitize(data.reason, 20, data.docType === 'CRN' ? 'Credit Note' : 'Debit Note'),
       }],
     };
+  }
+
+  // Transport block — when present, NIC also generates an EWB and returns
+  // EwbNo / EwbDt / EwbValidTill alongside the IRN. distance=0 asks NIC to
+  // auto-calculate from PIN codes (sandbox + prod both honour this).
+  if (data.transport) {
+    const veh = sanitize(
+      data.transport.vehicleNumber.replace(/[^A-Za-z0-9]/g, '').toUpperCase(),
+      15,
+    );
+    if (veh) {
+      payload.EwbDtls = {
+        TransMode: data.transport.transportMode || '1',
+        Distance: Math.max(0, Math.min(4000, data.transport.distance ?? 0)),
+        TransDocNo: '',
+        TransDocDt: '',
+        VehNo: veh,
+        VehType: 'R',
+        ...(data.transport.transporterName
+          ? { TransName: sanitize(data.transport.transporterName, 100) }
+          : {}),
+        ...(data.transport.transporterId
+          ? { TransId: sanitize(data.transport.transporterId, 15) }
+          : {}),
+      };
+    }
   }
 
   return payload;
