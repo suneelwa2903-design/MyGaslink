@@ -297,15 +297,14 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     }
   });
 
-  it('B2C above ₹50K threshold: standalone EWB only, no IRN', async () => {
+  it('B2C high-value order: standalone EWB only, no IRN', async () => {
     const ctx = await getSharmaContext();
     if (!ctx.b2cCust) return; // no B2C seeded → skip
     const orders = await seedOrders({
       customerId: ctx.b2cCust.id, count: 1,
-      cylinderTypeId: ctx.cyl.id, qty: 30, // 30 * 2000 = 60K, above threshold
+      cylinderTypeId: ctx.cyl.id, qty: 30,
       driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
     });
-    // Force the order total above threshold
     await prisma.order.update({ where: { id: orders[0].id }, data: { totalAmount: 60_000 } });
     try {
       apiCallMock.mockResolvedValueOnce(ewbStandaloneSuccess());
@@ -326,7 +325,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     }
   });
 
-  it('B2C below ₹50K threshold: no API call, dispatched immediately', async () => {
+  it('B2C low-value order: still generates standalone EWB (no invoice-value gate)', async () => {
     const ctx = await getSharmaContext();
     if (!ctx.b2cCust) return;
     const orders = await seedOrders({
@@ -336,6 +335,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     });
     await prisma.order.update({ where: { id: orders[0].id }, data: { totalAmount: 4_000 } });
     try {
+      apiCallMock.mockResolvedValueOnce(ewbStandaloneSuccess());
       const result = await preflightDispatch({
         distributorId: 'dist-002',
         driverId: ctx.driver.id,
@@ -343,8 +343,11 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
         userId: 'test-user',
       });
       expect(result.summary.succeeded).toBe(1);
-      expect(result.results[0].mode).toBe('B2C_BELOW_THRESHOLD');
-      expect(apiCallMock).not.toHaveBeenCalled();
+      expect(result.results[0].mode).toBe('B2C');
+      expect(result.results[0].ewbNo).toBe('181012000999');
+      expect(apiCallMock).toHaveBeenCalledTimes(1);
+      const [, , path] = apiCallMock.mock.calls[0];
+      expect(String(path)).toContain('/ewaybillapi/v1.03/ewayapi/genewaybill');
       const order = await prisma.order.findUniqueOrThrow({ where: { id: orders[0].id } });
       expect(order.status).toBe('pending_delivery');
     } finally {

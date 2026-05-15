@@ -786,6 +786,10 @@ model DriverVehicleAssignment {
   status         AssignmentStatus @default(dispatch_ready)
   isReconciled   Boolean          @default(false) @map("is_reconciled")
   isSubmitted    Boolean          @default(false) @map("is_submitted")
+  // WI-038: consolidated EWB ("trip sheet") number persisted after a
+  // successful gencewb call at the end of pre-dispatch preflight.
+  tripSheetNo          String?   @map("trip_sheet_no")
+  tripSheetGeneratedAt DateTime? @map("trip_sheet_generated_at")
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
 
@@ -852,6 +856,10 @@ model Invoice {
   igstValue         Decimal       @default(0) @map("igst_value") @db.Decimal(18, 4)
   isGaslinkBilling  Boolean       @default(false) @map("is_gaslink_billing")
   isOpeningBalance  Boolean       @default(false) @map("is_opening_balance")
+  // WI-037: set when a post-delivery reissue (cancel + regenerate IRN/EWB
+  // because delivered qty ≠ ordered qty) has been applied. Used by the
+  // reissue audit + UI badges.
+  revisedPostDeliveryAt DateTime? @map("revised_post_delivery_at")
   notes             String?
   issuedBy          String?       @map("issued_by")
   closedAt          DateTime?     @map("closed_at")
@@ -868,11 +876,37 @@ model Invoice {
   creditNotes      CreditNote[]
   debitNotes       DebitNote[]
   gstDocuments     GstDocument[]
+  revisions        InvoiceRevision[]
 
   @@index([distributorId, status, dueDate])
   @@index([distributorId, customerId, createdAt(sort: Desc)])
   @@index([irnStatus])
   @@map("invoices")
+}
+
+/// WI-037: append-only audit row capturing every post-IRN reissue of an
+/// invoice. Created whenever cancel + regenerate IRN/EWB runs because
+/// delivery quantities diverged from what was preflighted. The JSON
+/// snapshots are deliberately denormalised so the row stays meaningful
+/// even if the invoice is later mutated again.
+model InvoiceRevision {
+  id              String   @id @default(uuid()) @map("revision_id")
+  invoiceId       String   @map("invoice_id")
+  distributorId   String   @map("distributor_id")
+  revisionNumber  Int      @map("revision_number")
+  reason          String
+  originalTotal   Decimal  @map("original_total") @db.Decimal(18, 4)
+  revisedTotal    Decimal  @map("revised_total") @db.Decimal(18, 4)
+  originalItems   Json     @map("original_items")
+  revisedItems    Json     @map("revised_items")
+  revisedBy       String?  @map("revised_by")
+  revisedAt       DateTime @default(now()) @map("revised_at")
+
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@index([distributorId])
+  @@map("invoice_revisions")
 }
 
 model InvoiceItem {

@@ -4,8 +4,7 @@
  * For a driver's daily route, ensure every order has the GST documents
  * required to legally leave the depot BEFORE the vehicle moves:
  *   - B2B (customer.gstin set, ≠ 'URP'): IRN + EWB
- *   - B2C (gstin null/URP) below ₹50,000: nothing (no IRN, no EWB)
- *   - B2C (gstin null/URP) at or above ₹50,000: EWB only
+ *   - B2C (gstin null/URP): standalone EWB (always — no invoice-value gate)
  *
  * Lock semantics (founder Q3): orders transition pending_dispatch →
  * preflight_in_progress at the start, then → pending_delivery (success)
@@ -31,9 +30,6 @@ import {
 } from './gstService.js';
 import { createInvoiceFromOrder } from '../invoiceService.js';
 
-// NIC threshold: B2C / URP transactions below ₹50,000 don't need an EWB.
-const B2C_EWB_THRESHOLD = 50_000;
-
 const orderInclude = {
   customer: true,
   items: { include: { cylinderType: true } },
@@ -45,7 +41,7 @@ export type PreflightResult = {
   orderId: string;
   orderNumber: string;
   customerName: string | null;
-  mode: 'B2B' | 'B2C' | 'GST_DISABLED' | 'B2C_BELOW_THRESHOLD';
+  mode: 'B2B' | 'B2C' | 'GST_DISABLED';
   success: boolean;
   irn?: string | null;
   ackNo?: string | null;
@@ -167,6 +163,39 @@ export async function preflightDispatch(params: {
       where: { id: mapping.id },
       data: { status: 'loaded_and_dispatched' },
     });
+
+    // WI-038: bundle the per-order EWBs into a single consolidated EWB
+    // (trip sheet) so the driver carries one printable doc. Single-order
+    // drivers skip this — their per-order EWB IS the trip sheet. gencewb
+    // failure is non-blocking; we already let the goods leave the depot.
+    const ewbNumbers = results
+      .map((r) => r.ewbNo)
+      .filter((n): n is string => !!n);
+    if (ewbNumbers.length >= 2 && mapping.vehicle?.vehicleNumber) {
+      try {
+        const tripSheetNo = await generateConsolidatedEwb({
+          distributorId,
+          distributor,
+          ewbNumbers,
+          vehicleNumber: mapping.vehicle.vehicleNumber,
+        });
+        await prisma.driverVehicleAssignment.update({
+          where: { id: mapping.id },
+          data: { tripSheetNo, tripSheetGeneratedAt: new Date() },
+        });
+        logger.info('Consolidated EWB generated', { assignmentId: mapping.id, tripSheetNo, count: ewbNumbers.length });
+      } catch (err: any) {
+        logger.warn('Consolidated EWB (gencewb) failed — dispatch already complete, raising LOW pending action', {
+          assignmentId: mapping.id, err: err.message,
+        });
+        await createPendingAction(
+          distributorId, mapping.id,
+          'CONSOLIDATED_EWB_FAILED',
+          `gencewb failed for assignment ${mapping.id}: ${err.message ?? 'unknown'}`,
+          'low',
+        );
+      }
+    }
   }
 
   return {
@@ -174,6 +203,55 @@ export async function preflightDispatch(params: {
     results,
     dispatched: failed === 0,
   };
+}
+
+/**
+ * WI-038: call WhiteBooks gencewb to bundle a driver's per-order EWBs
+ * into a single consolidated EWB. Returns the consolidated EWB number
+ * (NIC docs call it tripSheetNo). The response shape is loose — data
+ * may be a raw number, a string, or an object with `cEwbNo` /
+ * `tripSheetNo` depending on the sandbox build.
+ */
+async function generateConsolidatedEwb(args: {
+  distributorId: string;
+  distributor: any;
+  ewbNumbers: string[];
+  vehicleNumber: string;
+}): Promise<string> {
+  const { distributorId, distributor, ewbNumbers, vehicleNumber } = args;
+  const credEmail =
+    (await getCredentials(distributorId, 'ewaybill'))?.email ||
+    (await getCredentials(distributorId, 'einvoice'))?.email ||
+    distributor.email ||
+    'info@mygaslink.com';
+
+  const fromState = parseInt((distributor.gstin || '').substring(0, 2), 10) || 0;
+  const payload = {
+    fromPlace: distributor.city || '',
+    fromState,
+    transMode: '1',
+    tripSheetEwbBills: ewbNumbers.map((n) => ({ ewbNo: Number(n) })),
+    vehicleNo: vehicleNumber,
+    transDocNo: '',
+    transDocDate: '',
+  };
+
+  const resp: any = await apiCall(
+    distributorId, 'POST',
+    `/ewaybillapi/v1.03/ewayapi/gencewb?email=${encodeURIComponent(credEmail)}`,
+    payload, 'ewaybill',
+  );
+
+  // gencewb response shapes seen in the wild:
+  //   { data: '<tripSheetNo>' }       — raw string
+  //   { data: { cEwbNo: '...' } }     — object with cEwbNo
+  //   { data: { tripSheetNo: '...' }} — object with tripSheetNo
+  const raw = resp?.data;
+  if (typeof raw === 'string' || typeof raw === 'number') return String(raw);
+  if (raw && typeof raw === 'object') {
+    return String(raw.cEwbNo ?? raw.tripSheetNo ?? raw.consolidatedEwbNo ?? '');
+  }
+  throw new Error('Consolidated EWB response did not include a trip sheet number');
 }
 
 /**
@@ -209,7 +287,6 @@ async function preflightOne(params: {
 
   try {
     const isB2C = !order.customer?.gstin || order.customer.gstin === 'URP';
-    const total = toNum(order.totalAmount);
 
     // GST-disabled tenants: just transition to pending_delivery.
     if (distributor.gstMode === 'disabled') {
@@ -219,22 +296,6 @@ async function preflightOne(params: {
         orderNumber: order.orderNumber,
         customerName,
         mode: 'GST_DISABLED',
-        success: true,
-      };
-    }
-
-    // B2C under threshold: no EWB needed either. Just dispatch.
-    if (isB2C && total < B2C_EWB_THRESHOLD) {
-      await transitionToPendingDelivery(
-        orderId,
-        userId,
-        `B2C below ₹${B2C_EWB_THRESHOLD} threshold — no EWB required`,
-      );
-      return {
-        orderId,
-        orderNumber: order.orderNumber,
-        customerName,
-        mode: 'B2C_BELOW_THRESHOLD',
         success: true,
       };
     }
@@ -268,7 +329,7 @@ async function preflightOne(params: {
         order, invoice, distributor, vehicleNumber, userId, customerName,
       });
     }
-    // B2C ≥ threshold: EWB only (standalone).
+    // B2C / URP: EWB only (standalone) — always, regardless of invoice value.
     return await runB2cPreflight({
       order, invoice, distributor, vehicleNumber, userId, customerName,
     });
@@ -584,7 +645,7 @@ async function runB2bPreflight(params: {
   }
 }
 
-/** B2C / URP at or above ₹50K — standalone EWB endpoint. */
+/** B2C / URP — standalone EWB endpoint (always, no invoice-value gate). */
 async function runB2cPreflight(params: {
   order: any;
   invoice: { id: string; invoiceNumber: string };

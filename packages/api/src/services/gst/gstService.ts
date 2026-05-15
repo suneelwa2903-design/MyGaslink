@@ -1081,7 +1081,8 @@ export async function createPendingAction(
   distributorId: string,
   invoiceId: string,
   actionType: string,
-  errorMessage: string
+  errorMessage: string,
+  severity: 'low' | 'medium' | 'high' | 'critical' = 'high',
 ): Promise<{ id: string } | null> {
   try {
     const row = await prisma.pendingAction.create({
@@ -1092,7 +1093,7 @@ export async function createPendingAction(
         entityType: 'invoice',
         actionType,
         description: errorMessage.substring(0, 500),
-        severity: 'high',
+        severity,
         status: 'open',
       },
       select: { id: true },

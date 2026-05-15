@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray } from 'react-hook-form';
@@ -33,7 +33,7 @@ import {
   returnsOnlyOrderSchema,
   type ReturnsOnlyOrderInput,
 } from '@gaslink/shared';
-import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -41,7 +41,8 @@ import { cn } from '@/lib/cn';
 const STATUS_VARIANTS: Record<string, 'info' | 'warning' | 'success' | 'danger' | 'neutral'> = {
   [OrderStatus.PENDING_DRIVER_ASSIGNMENT]: 'warning',
   [OrderStatus.PENDING_DISPATCH]: 'info',
-  [OrderStatus.PENDING_DELIVERY]: 'info',
+  [OrderStatus.PREFLIGHT_IN_PROGRESS]: 'info',
+  [OrderStatus.PENDING_DELIVERY]: 'warning',
   [OrderStatus.DELIVERED]: 'success',
   [OrderStatus.MODIFIED_DELIVERED]: 'success',
   [OrderStatus.CANCELLED]: 'danger',
@@ -50,7 +51,8 @@ const STATUS_VARIANTS: Record<string, 'info' | 'warning' | 'success' | 'danger' 
 const STATUS_LABELS: Record<string, string> = {
   [OrderStatus.PENDING_DRIVER_ASSIGNMENT]: 'Pending Assignment',
   [OrderStatus.PENDING_DISPATCH]: 'Pending Dispatch',
-  [OrderStatus.PENDING_DELIVERY]: 'Pending Delivery',
+  [OrderStatus.PREFLIGHT_IN_PROGRESS]: 'Dispatching…',
+  [OrderStatus.PENDING_DELIVERY]: 'Out for Delivery',
   [OrderStatus.DELIVERED]: 'Delivered',
   [OrderStatus.MODIFIED_DELIVERED]: 'Modified Delivered',
   [OrderStatus.CANCELLED]: 'Cancelled',
@@ -1127,12 +1129,29 @@ function AssignmentsTab() {
   const queryClient = useQueryClient();
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [bulkDriverId, setBulkDriverId] = useState('');
+  const [dispatchDriver, setDispatchDriver] = useState<{
+    driverId: string;
+    driverName: string;
+    vehicleNumber: string | null;
+    assignmentId: string | null;
+    orders: any[];
+  } | null>(null);
 
   const { data: pendingOrders, isLoading } = useQuery({
     queryKey: ['pending-orders'],
     queryFn: () =>
       apiGet<{ orders: any[] }>('/orders', {
         status: OrderStatus.PENDING_DRIVER_ASSIGNMENT,
+        pageSize: 100,
+      }),
+  });
+
+  // WI-036: orders already assigned but not yet dispatched, grouped by driver.
+  const { data: pendingDispatch } = useQuery({
+    queryKey: ['pending-dispatch-orders'],
+    queryFn: () =>
+      apiGet<{ orders: any[] }>('/orders', {
+        status: OrderStatus.PENDING_DISPATCH,
         pageSize: 100,
       }),
   });
@@ -1153,6 +1172,7 @@ function AssignmentsTab() {
           driverName: string;
           vehicleId: string | null;
           vehicleNumber: string | null;
+          assignmentId?: string;
           status: string;
           source: string;
         }>;
@@ -1171,8 +1191,41 @@ function AssignmentsTab() {
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['pending-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['pending-dispatch-orders'] });
     queryClient.invalidateQueries({ queryKey: ['orders'] });
   };
+
+  // WI-036: group pending_dispatch orders by driver for the dispatch UI.
+  // Vehicle number comes from the day's vehicle-mappings; if missing the
+  // dispatch button is disabled and we surface a warning instead.
+  const mappingByDriver = new Map(
+    (vehicleMappings?.recommendations ?? []).map((m) => [m.driverId, m]),
+  );
+  const dispatchGroups: Array<{
+    driverId: string;
+    driverName: string;
+    vehicleNumber: string | null;
+    orders: any[];
+    totalValue: number;
+  }> = [];
+  {
+    const byDriver = new Map<string, any[]>();
+    for (const order of pendingDispatch?.orders ?? []) {
+      if (!order.driverId) continue;
+      if (!byDriver.has(order.driverId)) byDriver.set(order.driverId, []);
+      byDriver.get(order.driverId)!.push(order);
+    }
+    byDriver.forEach((driverOrders, driverId) => {
+      const mapping = mappingByDriver.get(driverId);
+      const driverName = mapping?.driverName ?? driverOrders[0]?.driverName ?? 'Driver';
+      const vehicleNumber = mapping?.vehicleNumber ?? null;
+      const totalValue = driverOrders.reduce(
+        (sum, o) => sum + Number(o.totalAmount ?? 0),
+        0,
+      );
+      dispatchGroups.push({ driverId, driverName, vehicleNumber, orders: driverOrders, totalValue });
+    });
+  }
 
   const inlineAssign = useMutation({
     mutationFn: ({ orderId, driverId }: { orderId: string; driverId: string }) =>
@@ -1337,6 +1390,256 @@ function AssignmentsTab() {
           </table>
         </div>
       )}
+
+      {/* WI-036: Ready-to-dispatch section — one card per driver with pending_dispatch orders. */}
+      {dispatchGroups.length > 0 && (
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-lg font-semibold text-surface-900 dark:text-white">
+              Ready to Dispatch
+            </h3>
+            <p className="text-sm text-surface-500 dark:text-surface-400">
+              Click Dispatch to generate IRN + EWB for each driver's orders before the vehicle leaves the depot.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            {dispatchGroups.map((g) => {
+              const canDispatch = !!g.vehicleNumber;
+              const mapping = mappingByDriver.get(g.driverId);
+              return (
+                <div
+                  key={g.driverId}
+                  className="card p-4 flex flex-wrap items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium text-surface-900 dark:text-white">
+                      {g.driverName}
+                      <span className="ml-2 text-sm text-surface-500 dark:text-surface-400">
+                        {g.vehicleNumber ?? '(no vehicle)'}
+                      </span>
+                    </div>
+                    <div className="text-sm text-surface-500 dark:text-surface-400">
+                      {g.orders.length} order{g.orders.length === 1 ? '' : 's'}
+                      {' · '}
+                      {formatCurrency(g.totalValue)}
+                    </div>
+                    {!canDispatch && (
+                      <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                        ⚠ Assign vehicle in Fleet → Vehicle Mapping first
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={!canDispatch}
+                    onClick={() =>
+                      setDispatchDriver({
+                        driverId: g.driverId,
+                        driverName: g.driverName,
+                        vehicleNumber: g.vehicleNumber,
+                        assignmentId: mapping?.assignmentId ?? null,
+                        orders: g.orders,
+                      })
+                    }
+                  >
+                    Dispatch {g.driverName.split(' ')[0]} ▶
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {dispatchDriver && (
+        <DispatchProgressModal
+          driver={dispatchDriver}
+          onClose={() => {
+            setDispatchDriver(null);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
+
+// ─── Dispatch Progress Modal ────────────────────────────────────────────────
+// WI-036: Calls POST /api/orders/preflight-dispatch, shows per-order
+// success/failure rows, and on full success offers a trip-sheet download
+// (WI-038). Renders a "Dispatching…" pulse while in flight.
+
+type DispatchDriverContext = {
+  driverId: string;
+  driverName: string;
+  vehicleNumber: string | null;
+  assignmentId: string | null;
+  orders: any[];
+};
+
+type PreflightResultRow = {
+  orderId: string;
+  orderNumber: string;
+  customerName: string | null;
+  mode: string;
+  success: boolean;
+  irn?: string | null;
+  ewbNo?: string | null;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
+type PreflightResponseEnvelope = {
+  summary: { total: number; succeeded: number; failed: number };
+  results: PreflightResultRow[];
+  dispatched: boolean;
+};
+
+function DispatchProgressModal({
+  driver,
+  onClose,
+}: {
+  driver: DispatchDriverContext;
+  onClose: () => void;
+}) {
+  const today = new Date().toISOString().split('T')[0];
+  const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
+  const [result, setResult] = useState<PreflightResponseEnvelope | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    setPhase('running');
+    setError(null);
+    try {
+      const resp = await apiPost<PreflightResponseEnvelope>('/orders/preflight-dispatch', {
+        driverId: driver.driverId,
+        assignmentDate: today,
+      });
+      setResult(resp);
+      setPhase('done');
+    } catch (err) {
+      setError(getErrorMessage(err));
+      setPhase('done');
+    }
+  };
+
+  // Auto-start preflight when the modal opens. StrictMode double-invokes
+  // effects in dev, so guard with a ref to fire the API call exactly once.
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Trip sheet download goes through the shared axios client so the
+  // Authorization + X-Distributor-Id headers are injected — a raw <a href>
+  // would download a 401 JSON body as the PDF (see Anti-pattern #5).
+  const downloadTripSheet = async () => {
+    if (!driver.assignmentId) return;
+    try {
+      const resp = await api.get(`/orders/trip-sheet/${driver.assignmentId}`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(resp.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `trip-sheet-${driver.driverName.replace(/\s+/g, '-')}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Dispatching ${driver.driverName}'s orders`}
+      size="md"
+    >
+      <div className="space-y-4">
+        <div className="text-sm text-surface-500 dark:text-surface-400">
+          {driver.vehicleNumber ?? '(no vehicle)'} · {driver.orders.length} order
+          {driver.orders.length === 1 ? '' : 's'}
+        </div>
+
+        {phase === 'running' && (
+          <div className="flex items-center gap-3 py-4">
+            <Loader size="sm" />
+            <span className="text-sm">Generating IRN / EWB at WhiteBooks…</span>
+          </div>
+        )}
+
+        {phase === 'done' && error && (
+          <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200">
+            {error}
+          </div>
+        )}
+
+        {phase === 'done' && result && (
+          <>
+            <div className="text-sm font-medium">
+              {result.summary.succeeded}/{result.summary.total} dispatched
+              {result.summary.failed > 0
+                ? ` · ${result.summary.failed} need attention`
+                : ' successfully'}
+            </div>
+            <ul className="divide-y divide-surface-200 dark:divide-surface-700 rounded-lg border border-surface-200 dark:border-surface-700">
+              {result.results.map((r) => (
+                <li key={r.orderId} className="px-3 py-2 flex items-start gap-2 text-sm">
+                  <span
+                    className={cn(
+                      'mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full text-xs',
+                      r.success
+                        ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-300'
+                        : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300',
+                    )}
+                  >
+                    {r.success ? '✓' : '✗'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono font-medium">
+                      {r.orderNumber}
+                      {r.customerName && (
+                        <span className="ml-2 text-surface-500 dark:text-surface-400 font-sans font-normal">
+                          — {r.customerName}
+                        </span>
+                      )}
+                    </div>
+                    {r.success ? (
+                      <div className="text-xs text-surface-500 dark:text-surface-400">
+                        {r.mode}
+                        {r.irn ? ` · IRN ${r.irn.slice(0, 12)}…` : ''}
+                        {r.ewbNo ? ` · EWB ${r.ewbNo}` : ''}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-red-700 dark:text-red-300">
+                        {r.errorCode ? `${r.errorCode}: ` : ''}
+                        {r.errorMessage ?? 'Failed'}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2">
+          {phase === 'done' && result && result.summary.succeeded > 0 && driver.assignmentId && (
+            <Button variant="secondary" onClick={downloadTripSheet}>
+              Download Trip Sheet
+            </Button>
+          )}
+          <Button variant="secondary" onClick={onClose} disabled={phase === 'running'}>
+            Close
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
