@@ -210,7 +210,7 @@ Re-New_Gaslink/
 
 ## 13. Key Domain Rules
 
-- Order lifecycle: `pending_driver_assignment → pending_dispatch → pending_delivery → delivered | modified_delivered | cancelled | returns_only`
+- Order lifecycle: `pending_driver_assignment → pending_dispatch → preflight_in_progress → pending_delivery → delivered | modified_delivered | cancelled | returns_only`
 - Invoice lifecycle: `draft → issued → partially_paid | paid | overdue | cancelled`
 - IRN lifecycle: `not_attempted → pending → success | failed | cancelled` (only attempted when distributor.gstMode != disabled)
 - E-waybill lifecycle: `not_attempted → pending → active | failed | cancelled`
@@ -226,3 +226,108 @@ Re-New_Gaslink/
 - Multi-tenant isolation is convention-based — every new query is a potential leak. (Audit complete as of 2026-05-06; CRITICAL/HIGH/MEDIUM closed in commits b6f8c58, a0f855c, 8c758b2.)
 - Single migration on disk → discipline needed going forward (founder confirmed: every schema change = a new incremental migration, no resets on shared DBs).
 - Ad-hoc test scripts at `packages/api/` root removed 2026-05-06.
+
+## 15. GST Compliance Flow (WI-035 → WI-043)
+
+Built 2026-05-15. Replaces the old post-delivery GST trigger that left goods in transit without legally valid documents. End-to-end pipeline:
+
+```
+Order assigned to driver
+       │
+       ▼  status: pending_dispatch
+[POST /api/orders/preflight-dispatch]  ← WI-035
+       │  per-order lock via conditional UPDATE → preflight_in_progress
+       ▼
+   For each order:
+     ┌─ B2B (customer.gstin != URP)
+     │    [WhiteBooks /einvoice/GENERATE]   IRN + inline EWB (TranspDtls block)
+     │    → invoice.irnStatus=success, ewbStatus=active
+     ├─ B2C / URP
+     │    [WhiteBooks /ewaybillapi/.../genewaybill]  standalone EWB
+     │    → invoice.ewbStatus=active
+     └─ GST disabled tenant: no-op
+       │
+       ▼  status: pending_delivery (success)  OR  pending_dispatch + PendingAction (failure)
+[WhiteBooks /ewaybillapi/.../gencewb]   ← WI-038
+       │  consolidated EWB for the driver's batch (2+ per-order EWBs)
+       │  → DriverVehicleAssignment.tripSheetNo
+       ▼
+[GET /api/orders/trip-sheet/:assignmentId]   pdfkit A4 trip sheet
+       │  per-order EWB list; consolidated EWB at top; fallback paths for
+       │  single-order trips and gencewb failures.
+       ▼  driver delivers route
+[POST /api/orders/:id/confirm-delivery]
+       │  delivered qty ≠ ordered qty AND invoice has live IRN/EWB?
+       │       │
+       │       └→ [reissueForDeliveryMismatch]   ← WI-037 (fire-and-forget)
+       │            1. cancel EWB         (MEDIUM PendingAction on fail)
+       │            2. cancel IRN B2B     (HIGH PendingAction on fail, abort)
+       │            3. recompute invoice items + totals
+       │            4. new IRN B2B (with 2150 duplicate retry on bumped doc no)
+       │                 OR standalone EWB for B2C
+       │            5. write invoice_revisions audit row + revisedPostDeliveryAt
+       ▼
+   status: delivered | modified_delivered
+```
+
+**Founder Q&A nailed to behaviour (from session-summary-WI-035):**
+- Per-order partial dispatch (Q1) — succeeded orders ship even when peers fail.
+- `transDistance=0` so NIC auto-calculates from PIN codes (Q2).
+- `preflight_in_progress` is the lock state (Q3).
+- B2C uses standalone EWB regardless of invoice value (Q4 + WI-035 amendment).
+
+**Receiving-side payload guard** added 2026-05-15: `lookupGstin` throws when NIC returns success but a payload missing `legalName` / `stateCode` / `status`. Symmetric defence to anti-pattern #6.
+
+**Credit / Debit Note workflow** (WI-039): finance raises (`POST /api/invoices/{credit,debit}-notes`), admin approves/rejects (`PUT .../approve | .../reject`), approval fires `processCreditNoteGst` / `processDebitNoteGst` in the background. PDFs for both flavours under `…/{credit,debit}-notes/:id/pdf`.
+
+## 16. Schema Additions (2026-05-15)
+
+| Table | Migration | Purpose |
+|------|-----------|---------|
+| `gst_api_logs` | `20260515000000_preflight_and_gst_api_log` | Every WhiteBooks API call (request payload, response, latency, errorCode) — full audit trail. |
+| `invoice_revisions` | `20260515010000_invoice_revisions` | Post-IRN reissue snapshots (original_total, revised_total, original_items JSONB, revised_items JSONB, reason). |
+| `driver_vehicle_assignments.trip_sheet_no, trip_sheet_generated_at` | `20260515020000_trip_sheet_columns` | Consolidated EWB number (gencewb output). |
+| `invoices.revised_post_delivery_at` | `20260515010000_invoice_revisions` | Timestamp of the most recent post-delivery reissue. |
+| `OrderStatus.preflight_in_progress` enum value | `20260515000000_preflight_and_gst_api_log` | Per-order row-level lock during preflight. |
+
+## 17. API Surface Additions (2026-05-15)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/api/orders/preflight-dispatch` | super_admin, distributor_admin, inventory | WI-035 — generate IRN + EWB for a driver's pending_dispatch orders. Returns 200 on full success, 207 on partial. |
+| GET | `/api/orders/trip-sheet/:assignmentId` | super_admin, distributor_admin | WI-038 — pdfkit trip-sheet PDF (consolidated, per-order fallback, or single-order). |
+| GET | `/api/invoices/:id/credit-notes` | super_admin, distributor_admin, finance | WI-039 — list CNs for an invoice. |
+| GET | `/api/invoices/:id/debit-notes` | super_admin, distributor_admin, finance | WI-039 — list DNs for an invoice. |
+| GET | `/api/invoices/debit-notes/:id/pdf` | super_admin, distributor_admin, finance | WI-039 — DN PDF. |
+| PUT | `/api/invoices/{credit,debit}-notes/:id/reject` | super_admin, distributor_admin | WI-039 — now accepts optional `reason` (captured in audit log). |
+| POST | `/api/invoices/:id/cancel-irn` | super_admin, distributor_admin, **finance** | WI-039 — finance role added. |
+| POST | `/api/invoices/:id/cancel-ewb` | super_admin, distributor_admin, **finance** | WI-039 — finance role added. |
+| GET | `/api/distributors/gstin-lookup/:gstin` | super_admin, distributor_admin, finance, inventory | WI-043 — role-widened from super_admin-only. |
+| PUT | `/api/settings/gst/credentials/:scope` | super_admin, distributor_admin | WI-042 — scoped Test & Save (authenticates against WhiteBooks before persisting). |
+| POST | `/api/settings/gst/credentials/:scope/test` | super_admin, distributor_admin | WI-042 — re-validate stored credentials without modifying. |
+
+**Existing routes whose role gate widened to `inventory`** (founder spec, dispatch is an inventory task): `POST /api/orders`, `/orders/returns-only`, `/orders/:id/assign-driver`, `/orders/bulk-assign-driver`.
+
+## 18. New Services (2026-05-15)
+
+| File | Purpose |
+|------|---------|
+| [`packages/api/src/services/gst/gstPreflightService.ts`](packages/api/src/services/gst/gstPreflightService.ts) | WI-035 — orchestrates IRN/EWB generation per driver batch with per-order locking, partial dispatch, and gencewb wrap-up. |
+| [`packages/api/src/services/gst/gstReissueService.ts`](packages/api/src/services/gst/gstReissueService.ts) | WI-037 — cancel + regenerate IRN/EWB when delivered qty ≠ ordered qty; writes `invoice_revisions` audit row. |
+| [`packages/api/src/services/pdf/tripSheetPdfService.ts`](packages/api/src/services/pdf/tripSheetPdfService.ts) | WI-038 — A4 trip sheet PDF (consolidated / per-order / single-order variants). |
+| [`packages/api/src/services/pdf/debitNotePdfService.ts`](packages/api/src/services/pdf/debitNotePdfService.ts) | WI-039 — DN PDF (mirror of creditNotePdfService). |
+
+## 19. Test Files (2026-05-15)
+
+| File | Tests | Covers |
+|------|-------|--------|
+| `gst-preflight.test.ts` | 25 | WI-035 preflight (B2B, B2C, partial, lock, audit logs). |
+| `gst-reissue.test.ts` | 12 | WI-037 reissue (happy path, EWB cancel fail, IRN cancel fail, 2150 retry, GST-disabled, B2C, revision JSON, sequential revisions, tenant isolation). |
+| `gst-trip-sheet.test.ts` | 7 | WI-038 gencewb + PDF endpoint (success, single-order, gencewb failure, fallback paths, cross-tenant 404). |
+| `gst-payload-shape.test.ts` | 16 | NIC payload shape contracts (TransDocNo / TransDocDt / required IRN keys). |
+| `anti-pattern-guards.test.ts` | 10 | CLAUDE.md anti-patterns #1, #6, #9 + role escalation + CN/DN scoping. |
+| `gst-invoicing.test.ts` (extended) | +5 = 24 | WI-039 CN/DN list, approve / reject, DN PDF. |
+| `customers.test.ts` (extended) | +3 = 16 | WI-040 + WI-043 GSTIN lookup role widening. |
+| `settings.test.ts` (extended) | +5 = 24 | WI-042 scoped Test & Save + Test Connection role/scope gating. |
+
+Suite total: **350/350 passing** as of master `6e77993`.

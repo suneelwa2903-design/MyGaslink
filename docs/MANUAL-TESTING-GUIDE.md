@@ -552,7 +552,185 @@ Notes: ___________
 
 ---
 
-## BUG REPORT TEMPLATE
+## SESSION 8 — GST Compliance Flow (Sharma, ~45 min) (NEW — WI-035 to WI-043)
+
+These tests exercise the full pre-dispatch GST pipeline added in WI-035 through WI-043. Run as `sharma@gasdist.com / Gstadmin@123` unless a step explicitly switches users — Sharma is the only seeded distributor with `gstMode=sandbox`, so the WhiteBooks calls actually fire.
+
+> **Prereqs:** API running on :5000, web on :5173, postgres up. Sharma's e-Invoice and e-Way Bill credentials must already be Valid (Settings → GST tab). If they aren't, run **Test 8.4** first.
+
+---
+
+### Test 8.1: Dispatch flow — per-driver button + progress modal (WI-036)
+
+Steps:
+1. Login as `sharma@gasdist.com`.
+2. Navigate to **Orders → Driver Assignment** tab.
+3. Find any unassigned order on today's delivery date (create one if none — Test 2.5 has the recipe). Assign it to a driver with a confirmed vehicle mapping (Kiran Reddy on KA01-MN-9999 is seeded).
+4. Scroll to the "Ready to Dispatch" section that appears below the assignment table. Confirm the driver card shows: `Kiran Reddy KA01-MN-9999`, order count, total value, and a `Dispatch Kiran ▶` button.
+5. Click `Dispatch Kiran ▶`.
+6. The progress modal opens with `Dispatching Kiran Reddy's orders` and a spinner reading "Generating IRN / EWB at WhiteBooks…".
+7. When the response returns, confirm per-order rows render with a green ✓ for each success, showing `B2B · IRN xxxx… · EWB xxxx` (or `B2C` for B2C customers).
+8. On full success the modal shows "N/N dispatched successfully" plus a `Download Trip Sheet` button.
+
+Expected: dispatched orders disappear from the assignment list. Their status flips to `Out for Delivery` (orange badge) on the Orders tab. Browser console stays clean.
+
+Pass criteria: ✓ all orders succeed (or partial-success modal with per-order error messages); ✓ assignment status moves to `loaded_and_dispatched`; ✓ zero console errors.
+
+Notes: ___________
+
+---
+
+### Test 8.2: Trip sheet PDF download (WI-038)
+
+Steps:
+1. From Test 8.1's successful modal, click `Download Trip Sheet`. (If you closed the modal, the assignment can still be re-fetched — call the endpoint directly: `http://localhost:5000/api/orders/trip-sheet/<assignmentId>`.)
+2. PDF opens / downloads.
+
+Expected: A4 PDF titled `DELIVERY TRIP SHEET` (or `SINGLE ORDER TRIP SHEET` if only one order) with:
+- Driver name + vehicle number + date in the header
+- `Consolidated EWB: <number>` (or `EWB References: N per-order EWBs (listed below)` for the fallback path)
+- Table listing every order with Order # | Customer | Address | EWB No | Items | Value
+- Footer line affirming legal validity
+
+Pass criteria: ✓ PDF opens; ✓ EWB numbers match what the dispatch modal showed; ✓ download triggered through the shared axios client (no JSON-as-PDF — anti-pattern #5).
+
+Notes: ___________
+
+---
+
+### Test 8.3: Invoice PDF — EWB No in header (WI-041)
+
+Steps:
+1. Still as Sharma. Navigate to **Billing & Payments → Invoices** tab.
+2. Find an invoice that has both an IRN and an EWB (any of the dispatched orders from Test 8.1 — filter by `irnStatus=success`).
+3. Click the download icon on the row to fetch the invoice PDF.
+
+Expected: invoice PDF header (top-right) shows three stacked lines:
+```
+Tax Invoice
+GST Doc No: INV-xxxxxxxxxxxxxxx
+EWB No: 181012xxxxxx
+```
+The `EWB No` line appears only when `gstDoc.ewbNo` is present.
+
+Pass criteria: ✓ EWB No line visible; ✓ format matches above; ✓ existing e-Documents card at the bottom (with QR + validity dates) still renders.
+
+Notes: ___________
+
+---
+
+### Test 8.4: GST credentials Settings UI — Test & Save + Test Connection (WI-042)
+
+Steps:
+1. Navigate to **Settings → GST** tab.
+2. Confirm two cards render: `e-Invoice Credentials` and `e-Way Bill Credentials`. Each shows masked Client ID, username, GSTIN, a status pill (`● Valid` or `● Not validated`) with the last-validated date.
+3. Click `Test Connection` on the e-Invoice card.
+   - **Expected on valid creds:** toast `Connection validated`; status pill stays / becomes `Valid` with today's date.
+   - **Expected on invalid creds:** toast with the WhiteBooks error message; pill flips to `Not validated`.
+4. Click `Update Credentials` on the e-Way Bill card.
+5. In the modal, change the `Password` field to `WrongPassword123` and click `Test & Save`.
+6. Expected: modal stays open; toast shows the actual WhiteBooks `AUTH_FAILED` message; the stored row's `isValid` is now false (verify via the pill after closing).
+7. Re-open the modal, restore the correct password, click `Test & Save`.
+8. Expected: toast `Credentials validated ✓`; modal closes; pill returns to `Valid`.
+
+Pass criteria: ✓ Test & Save authenticates BEFORE persisting; ✓ failures surface the NIC error message verbatim; ✓ finance role (`finance@gasagency.com`) cannot see/click these buttons (verify in a second login session).
+
+Notes: ___________
+
+---
+
+### Test 8.5: Customer GSTIN autofill (WI-040)
+
+Steps:
+1. Navigate to **Customers**, click `New Customer`.
+2. In the modal, leave the GSTIN field empty. Confirm the `Fetch Details` button under the field is **disabled**.
+3. Enter a valid GSTIN (sandbox: `29AAGCB1286Q1Z0` works for testing). The button enables.
+4. Click `Fetch Details`.
+
+Expected (success): a green `● Active` pill appears next to the button; `Business Name`, `Address Line 1`, `City`, `State`, and `Pincode` fields auto-populate from the NIC response. `Customer Name` and `Phone` stay untouched (preserved on purpose — NIC contact data is often stale).
+
+Expected (failure path): for an invalid GSTIN like `29INVALID00000Z0`, a red error message renders next to the button without clearing existing field values.
+
+Pass criteria: ✓ autofill works on a valid GSTIN; ✓ finance / inventory / distributor_admin all reach this endpoint (WI-043 widened access); ✓ no console errors.
+
+Notes: ___________
+
+---
+
+### Test 8.6: Credit Note workflow — create → approve → IRN → PDF (WI-039)
+
+Steps:
+1. Login as `finance@gasagency.com / Finance@123` (note: switch to Bhargava — GST is off here so the IRN step at #4 will be skipped; for full GST flow run this against Sharma's `sharma@gasdist.com` instead).
+2. Navigate to **Billing & Payments → Invoices** tab.
+3. Pick an issued invoice. Click the `Credit Note` icon (red minus circle) on the row.
+4. In the Credit Note modal, fill `Reason: Quantity adjustment` and add one line item with `Quantity: 1, Unit Price: 100, GST Rate: 18`. Submit.
+5. Toast confirms creation. The CN status is `pending`.
+6. Click the View (eye) icon on the same invoice. The View Invoice modal opens. Expand `View Credit / Debit Notes`.
+7. Confirm the new CN appears with a yellow `pending` badge, amount, reason, created-at.
+8. Logout, log back in as `sharma@gasdist.com` (or any `distributor_admin`).
+9. Re-open the same invoice's View modal → Credit / Debit Notes section. The pending CN now shows `Approve` and `Reject` buttons.
+10. Click `Approve`. Toast confirms. Status pill flips to green `approved`.
+11. (Sharma only — Bhargava has GST disabled) Wait 2–3 seconds, refresh the modal. A `Download PDF` link appears next to the status pill. Click it.
+12. Expected: credit note PDF downloads (`credit-note-xxxxx.pdf`), starts with `%PDF`, contains the seller info, reason, and amount.
+13. **Reject path (run on a separate CN):** create another CN as finance, view as admin, click `Reject`. A modal opens with a required reason textarea. Submit.
+14. Expected: CN status flips to red `rejected`. The reason is captured in the audit log (verify via DB if desired: `SELECT * FROM audit_logs WHERE action='reject' AND entity_type='credit_note'`).
+
+Pass criteria: ✓ finance can create + reject is admin-only; ✓ approve fires IRN generation in the background (Sharma); ✓ PDF downloads on approved CN; ✓ reject reason captured in audit log.
+
+Notes: ___________
+
+---
+
+### Test 8.7: Debit Note PDF (WI-039 — DN side)
+
+Steps:
+1. Repeat Test 8.6 but use the `Debit Note` icon (red plus circle) on the row.
+2. After admin approves the DN, look for `Download PDF` in the Credit / Debit Notes section.
+3. Click → DN PDF downloads.
+
+Expected: A4 PDF titled `Debit Note` with seller / buyer block, reference invoice number, reason, and amount. Layout mirrors the credit note PDF.
+
+Pass criteria: ✓ DN PDF available only on approved notes; ✓ tenant-scoped (cross-tenant DN id returns 404).
+
+Notes: ___________
+
+---
+
+### Test 8.8: Delivery mismatch reissue (WI-037)
+
+Steps:
+1. As Sharma, find a `pending_delivery` order created via the WI-035 preflight (it should have a valid IRN and EWB).
+2. Confirm delivery with a **different quantity** than ordered — e.g. ordered 10 cylinders, confirm 8 delivered.
+3. Submit the delivery.
+4. Wait 2–3 seconds (the reissue runs fire-and-forget after confirmDelivery returns).
+
+Expected behind the scenes:
+- The existing EWB is cancelled (if active and within 24hrs).
+- The existing IRN is cancelled.
+- Invoice items + totals are updated to the delivered qty (8 in this example).
+- A new IRN is generated for the revised invoice (B2B). For B2C, a fresh standalone EWB is generated.
+- A row is written to `invoice_revisions` with original_total, revised_total, original_items JSON, revised_items JSON, reason `delivery_mismatch`.
+- `Invoice.revisedPostDeliveryAt` timestamp is set.
+
+Verify via DB:
+```bash
+docker exec gaslink-db psql -U gaslink -d gaslink -c \
+  "SELECT invoice_id, revision_number, reason, original_total, revised_total FROM invoice_revisions ORDER BY revised_at DESC LIMIT 5;"
+```
+
+Expected DB output: one row for the modified invoice with `original_total > revised_total` and reason `delivery_mismatch`.
+
+Edge cases to spot-check:
+- IRN cancel failure → flow aborts; a HIGH-severity `IRN_CANCEL_BLOCKED` PendingAction appears in Settings → Pending Actions. Invoice quantities stay at original.
+- EWB cancel failure → flow continues; a MEDIUM-severity `EWB_CANCEL_FAILED` PendingAction appears.
+
+Pass criteria: ✓ invoice items reflect delivered qty; ✓ new IRN value is 64 hex chars (real, not the mock `irn_xxxxxxxx` test fixture); ✓ invoice_revisions row written.
+
+Notes: ___________
+
+---
+
+
 
 Copy this for each bug you find:
 
@@ -573,7 +751,7 @@ Severity:
 
 ---
 
-**Total tests across all sessions: 22.**
+**Total tests across all sessions: 30.**
 - Session 1: 5 (1.1 – 1.5)
 - Session 2: 7 (2.1 – 2.7)
 - Session 3: 3 (3.1 – 3.3)
@@ -581,3 +759,4 @@ Severity:
 - Session 5: 3 (5.1 – 5.3)
 - Session 6: 4 (6.1 – 6.4)
 - Session 7: 3 (7.1 – 7.3)
+- Session 8: 8 (8.1 – 8.8) — GST Compliance Flow, WI-035 to WI-043
