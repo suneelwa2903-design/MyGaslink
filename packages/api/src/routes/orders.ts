@@ -11,6 +11,7 @@ import {
 } from '@gaslink/shared';
 import * as orderService from '../services/orderService.js';
 import { preflightDispatch, PreflightError } from '../services/gst/gstPreflightService.js';
+import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
 import { mapOrder, mapOrders } from '../utils/mappers.js';
 import { z } from 'zod';
 
@@ -202,6 +203,32 @@ router.post('/preflight-dispatch',
     } catch (err: any) {
       if (err instanceof PreflightError) {
         return sendError(res, err.message, err.statusCode, err.code);
+      }
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// GET /api/orders/trip-sheet/:assignmentId
+// WI-038: Returns the consolidated EWB trip sheet for a driver's day
+// as a PDF. Tenant-scoped at the service layer; drivers see their
+// route's trip sheet through the mobile assignments flow, which
+// already enforces per-driver ownership separately.
+router.get('/trip-sheet/:assignmentId',
+  requireRole('super_admin', 'distributor_admin'),
+  async (req, res) => {
+    try {
+      const assignmentId = param(req.params.assignmentId);
+      const pdf = await generateTripSheetPdf(assignmentId, req.user!.distributorId!);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="trip-sheet-${assignmentId.substring(0, 8)}.pdf"`,
+      );
+      return res.send(pdf);
+    } catch (err: any) {
+      if (err instanceof TripSheetError) {
+        return sendError(res, err.message, err.statusCode);
       }
       return sendError(res, err.message, err.statusCode || 500);
     }

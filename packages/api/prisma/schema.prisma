@@ -786,6 +786,10 @@ model DriverVehicleAssignment {
   status         AssignmentStatus @default(dispatch_ready)
   isReconciled   Boolean          @default(false) @map("is_reconciled")
   isSubmitted    Boolean          @default(false) @map("is_submitted")
+  // WI-038: consolidated EWB ("trip sheet") number persisted after a
+  // successful gencewb call at the end of pre-dispatch preflight.
+  tripSheetNo          String?   @map("trip_sheet_no")
+  tripSheetGeneratedAt DateTime? @map("trip_sheet_generated_at")
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
 

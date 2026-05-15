@@ -33,7 +33,7 @@ import {
   returnsOnlyOrderSchema,
   type ReturnsOnlyOrderInput,
 } from '@gaslink/shared';
-import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -1533,9 +1533,25 @@ function DispatchProgressModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tripSheetHref = driver.assignmentId
-    ? `/api/orders/trip-sheet/${driver.assignmentId}`
-    : null;
+  // Trip sheet download goes through the shared axios client so the
+  // Authorization + X-Distributor-Id headers are injected — a raw <a href>
+  // would download a 401 JSON body as the PDF (see Anti-pattern #5).
+  const downloadTripSheet = async () => {
+    if (!driver.assignmentId) return;
+    try {
+      const resp = await api.get(`/orders/trip-sheet/${driver.assignmentId}`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(resp.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `trip-sheet-${driver.driverName.replace(/\s+/g, '-')}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  };
 
   return (
     <Modal
@@ -1613,15 +1629,10 @@ function DispatchProgressModal({
         )}
 
         <div className="flex justify-end gap-2 pt-2">
-          {phase === 'done' && result && result.summary.succeeded > 0 && tripSheetHref && (
-            <a
-              href={tripSheetHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-secondary"
-            >
+          {phase === 'done' && result && result.summary.succeeded > 0 && driver.assignmentId && (
+            <Button variant="secondary" onClick={downloadTripSheet}>
               Download Trip Sheet
-            </a>
+            </Button>
           )}
           <Button variant="secondary" onClick={onClose} disabled={phase === 'running'}>
             Close

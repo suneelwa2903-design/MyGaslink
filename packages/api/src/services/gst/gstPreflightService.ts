@@ -163,6 +163,39 @@ export async function preflightDispatch(params: {
       where: { id: mapping.id },
       data: { status: 'loaded_and_dispatched' },
     });
+
+    // WI-038: bundle the per-order EWBs into a single consolidated EWB
+    // (trip sheet) so the driver carries one printable doc. Single-order
+    // drivers skip this — their per-order EWB IS the trip sheet. gencewb
+    // failure is non-blocking; we already let the goods leave the depot.
+    const ewbNumbers = results
+      .map((r) => r.ewbNo)
+      .filter((n): n is string => !!n);
+    if (ewbNumbers.length >= 2 && mapping.vehicle?.vehicleNumber) {
+      try {
+        const tripSheetNo = await generateConsolidatedEwb({
+          distributorId,
+          distributor,
+          ewbNumbers,
+          vehicleNumber: mapping.vehicle.vehicleNumber,
+        });
+        await prisma.driverVehicleAssignment.update({
+          where: { id: mapping.id },
+          data: { tripSheetNo, tripSheetGeneratedAt: new Date() },
+        });
+        logger.info('Consolidated EWB generated', { assignmentId: mapping.id, tripSheetNo, count: ewbNumbers.length });
+      } catch (err: any) {
+        logger.warn('Consolidated EWB (gencewb) failed — dispatch already complete, raising LOW pending action', {
+          assignmentId: mapping.id, err: err.message,
+        });
+        await createPendingAction(
+          distributorId, mapping.id,
+          'CONSOLIDATED_EWB_FAILED',
+          `gencewb failed for assignment ${mapping.id}: ${err.message ?? 'unknown'}`,
+          'low',
+        );
+      }
+    }
   }
 
   return {
@@ -170,6 +203,55 @@ export async function preflightDispatch(params: {
     results,
     dispatched: failed === 0,
   };
+}
+
+/**
+ * WI-038: call WhiteBooks gencewb to bundle a driver's per-order EWBs
+ * into a single consolidated EWB. Returns the consolidated EWB number
+ * (NIC docs call it tripSheetNo). The response shape is loose — data
+ * may be a raw number, a string, or an object with `cEwbNo` /
+ * `tripSheetNo` depending on the sandbox build.
+ */
+async function generateConsolidatedEwb(args: {
+  distributorId: string;
+  distributor: any;
+  ewbNumbers: string[];
+  vehicleNumber: string;
+}): Promise<string> {
+  const { distributorId, distributor, ewbNumbers, vehicleNumber } = args;
+  const credEmail =
+    (await getCredentials(distributorId, 'ewaybill'))?.email ||
+    (await getCredentials(distributorId, 'einvoice'))?.email ||
+    distributor.email ||
+    'info@mygaslink.com';
+
+  const fromState = parseInt((distributor.gstin || '').substring(0, 2), 10) || 0;
+  const payload = {
+    fromPlace: distributor.city || '',
+    fromState,
+    transMode: '1',
+    tripSheetEwbBills: ewbNumbers.map((n) => ({ ewbNo: Number(n) })),
+    vehicleNo: vehicleNumber,
+    transDocNo: '',
+    transDocDate: '',
+  };
+
+  const resp: any = await apiCall(
+    distributorId, 'POST',
+    `/ewaybillapi/v1.03/ewayapi/gencewb?email=${encodeURIComponent(credEmail)}`,
+    payload, 'ewaybill',
+  );
+
+  // gencewb response shapes seen in the wild:
+  //   { data: '<tripSheetNo>' }       — raw string
+  //   { data: { cEwbNo: '...' } }     — object with cEwbNo
+  //   { data: { tripSheetNo: '...' }} — object with tripSheetNo
+  const raw = resp?.data;
+  if (typeof raw === 'string' || typeof raw === 'number') return String(raw);
+  if (raw && typeof raw === 'object') {
+    return String(raw.cEwbNo ?? raw.tripSheetNo ?? raw.consolidatedEwbNo ?? '');
+  }
+  throw new Error('Consolidated EWB response did not include a trip sheet number');
 }
 
 /**
