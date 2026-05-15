@@ -1,6 +1,6 @@
 import type {
   UserRole, UserStatus, ProvisioningStatus, DistributorStatus, GstMode, SubscriptionPlan,
-  CustomerStatus, OrderStatus, InvoiceStatus, IrnStatus, EwbStatus,
+  CustomerStatus, OrderStatus, OrderType, InvoiceStatus, IrnStatus, EwbStatus,
   DriverStatus, VehicleStatus, AssignmentStatus, AdjustmentStatus,
   CancelledStockStatus, PaymentMethod, PaymentAllocationStatus,
   CreditNoteStatus, DebitNoteStatus, BillingPeriodType, BillingStatus,
@@ -253,6 +253,7 @@ export interface Order {
   orderDate: string;
   deliveryDate: string;
   status: OrderStatus;
+  orderType?: OrderType;
   totalAmount: number;
   specialInstructions: string | null;
   items: OrderItem[];

@@ -21,6 +21,7 @@ import {
   type Vehicle,
   type PaginationMeta,
   OrderStatus,
+  OrderType,
   DriverStatus,
   VehicleStatus,
   UserRole,
@@ -770,6 +771,10 @@ function DeliveryConfirmationModal({
   order: Order;
 }) {
   const queryClient = useQueryClient();
+  // The same confirmation modal is reached for both delivery orders and
+  // returns-only orders. Returns are the opposite of deliveries, so the
+  // verbiage flips when orderType === returns_only.
+  const isReturn = order.orderType === OrderType.RETURNS_ONLY;
 
   const { register, handleSubmit, formState: { errors } } = useForm<DeliveryConfirmationInput>({
     resolver: zodResolver(deliveryConfirmationSchema),
@@ -787,7 +792,7 @@ function DeliveryConfirmationModal({
     mutationFn: (data: DeliveryConfirmationInput) =>
       apiPost(`/orders/${order.orderId}/confirm-delivery`, data),
     onSuccess: () => {
-      toast.success('Delivery confirmed');
+      toast.success(isReturn ? 'Return confirmed' : 'Delivery confirmed');
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
       onClose();
@@ -796,18 +801,23 @@ function DeliveryConfirmationModal({
   });
 
   return (
-    <Modal open={open} onClose={onClose} title={`Confirm Delivery - ${order.orderNumber}`} size="lg">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`${isReturn ? 'Confirm Return' : 'Confirm Delivery'} - ${order.orderNumber}`}
+      size="lg"
+    >
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
         <div className="space-y-3">
           {order.items.map((item, index) => (
             <div key={item.orderItemId} className="p-4 bg-surface-50 dark:bg-surface-800/50 rounded-xl space-y-3">
               <p className="font-medium text-surface-900 dark:text-white">
-                {item.cylinderTypeName} (Ordered: {item.quantity})
+                {item.cylinderTypeName} ({isReturn ? 'Expected' : 'Ordered'}: {item.quantity})
               </p>
               <input type="hidden" {...register(`items.${index}.cylinderTypeId`)} />
               <div className="grid grid-cols-2 gap-3">
                 <Input
-                  label="Delivered Qty"
+                  label={isReturn ? 'Return Qty' : 'Delivered Qty'}
                   type="number"
                   min={0}
                   required
@@ -828,7 +838,7 @@ function DeliveryConfirmationModal({
         </div>
 
         <Input
-          label="Delivery Notes"
+          label={isReturn ? 'Return Notes' : 'Delivery Notes'}
           placeholder="Optional notes..."
           {...register('notes')}
         />
@@ -837,7 +847,7 @@ function DeliveryConfirmationModal({
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={mutation.isPending} variant="accent">
             <HiOutlineCheckCircle className="h-4 w-4" />
-            Confirm Delivery
+            {isReturn ? 'Confirm Return' : 'Confirm Delivery'}
           </Button>
         </div>
       </form>
@@ -898,7 +908,7 @@ function ReturnsOrderModal({
         />
 
         <Input
-          label="Scheduled Date"
+          label="Return Date"
           type="date"
           required
           error={errors.scheduledDate?.message}
