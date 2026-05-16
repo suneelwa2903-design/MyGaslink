@@ -169,9 +169,18 @@ router.put('/gst/credentials/:scope',
   }
 );
 
-// WI-042: trigger a re-validation against WhiteBooks without modifying
-// the stored credentials. Used by the "Test Connection" button when the
-// admin just wants to confirm the existing config still authenticates.
+// WI-042 / WI-054: Test Connection.
+//
+// Two-stage probe — see [docs/specs/WI-054-test-connection-fix.md]:
+//   Stage 1 — WhiteBooks auth (force fresh, bypass token cache).
+//   Stage 2 — NIC reachability via a read-only GSTNDETAILS ping on the
+//             distributor's own GSTIN (einvoice scope only).
+//
+// Returns a structured envelope so the UI can render two distinct
+// indicators instead of conflating "credentials are valid" with
+// "NIC IRP will accept work". A green Test Connection here means BOTH
+// hops are healthy — the 2026-05-15 outage (auth green, NIC IRN 5002)
+// surfaced as a false positive under the old endpoint shape.
 router.post('/gst/credentials/:scope/test',
   requireRole('super_admin', 'distributor_admin'),
   auditLog('test_connection', 'gst_credentials'),
@@ -183,14 +192,79 @@ router.post('/gst/credentials/:scope/test',
       if (scope !== 'einvoice' && scope !== 'ewaybill') {
         return sendError(res, 'Scope must be einvoice or ewaybill', 400, 'BAD_SCOPE');
       }
-      const { getAuthToken } = await import('../services/gst/whitebooksClient.js');
+
+      const { getAuthToken, clearTokenCache } = await import('../services/gst/whitebooksClient.js');
+
+      // Force a fresh auth call regardless of cache state. Without this,
+      // a still-valid token returns success without ever hitting
+      // WhiteBooks — which masked the 2026-05-16 outage where the email
+      // got deregistered upstream but our cached token still said OK.
+      clearTokenCache(distributorId);
+
+      // Default to "both failed" and flip the flags as each stage passes.
+      // Always return 200 — the failure is captured in the booleans, not
+      // an HTTP error. UI renders both indicators regardless.
+      let authenticated = false;
+      let nicReachable = false;
+      let authError: string | undefined;
+      let nicError: string | undefined;
+
+      // Stage 1 — WhiteBooks auth
       try {
         await getAuthToken(distributorId, scope);
+        authenticated = true;
       } catch (authErr: any) {
+        authError = authErr?.message || 'WhiteBooks authentication failed';
         await settingsService.markGstCredentialsInvalid(distributorId, scope);
-        return sendError(res, authErr.message || 'WhiteBooks authentication failed', 400, 'AUTH_FAILED');
       }
-      return sendSuccess(res, { message: 'Connection validated', scope });
+
+      // Stage 2 — NIC reachability (einvoice scope only).
+      //
+      // For `ewaybill`, the authenticate endpoint itself touches the NIC
+      // EWB portal, so a green auth in Stage 1 already implies NIC is
+      // reachable. We mirror that into `nicReachable` to keep the
+      // response shape symmetric.
+      if (authenticated) {
+        if (scope === 'ewaybill') {
+          nicReachable = true;
+        } else {
+          try {
+            const { getDistributorGstin } = await import('../services/settingsService.js');
+            const ownGstin = await getDistributorGstin(distributorId);
+            if (!ownGstin) {
+              nicError = 'Distributor has no GSTIN configured — cannot probe NIC';
+            } else {
+              const { validateGstin } = await import('../services/gst/gstService.js');
+              const lookup = await validateGstin(distributorId, ownGstin);
+              if (lookup && (lookup as any).valid === false) {
+                nicError = `NIC GSTNDETAILS rejected: ${(lookup as any).error || 'unknown error'}`;
+              } else {
+                nicReachable = true;
+              }
+            }
+          } catch (nicErr: any) {
+            nicError = nicErr?.message || 'NIC GSTNDETAILS call failed';
+          }
+        }
+      }
+
+      // Build the human-readable summary. Front-end renders the two
+      // booleans directly; this string is the screen-reader / log copy.
+      const message =
+        authenticated && nicReachable
+          ? 'WhiteBooks auth OK, NIC responding'
+          : authenticated
+            ? 'WhiteBooks auth OK, NIC unreachable'
+            : 'WhiteBooks auth failed';
+
+      return sendSuccess(res, {
+        scope,
+        authenticated,
+        nicReachable,
+        message,
+        authError,
+        nicError,
+      });
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

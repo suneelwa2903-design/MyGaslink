@@ -247,6 +247,22 @@ function GstTab() {
   );
 }
 
+/**
+ * WI-054: Test Connection response shape — both halves of the probe
+ * (WhiteBooks auth + NIC reachability) are surfaced as distinct
+ * indicators so admins can see WHICH hop is broken. Today's WhiteBooks
+ * "email not registered" outage renders authenticated=false; the
+ * 2026-05-15 NIC 5002 outage renders authenticated=true / nicReachable=false.
+ */
+type TestConnectionResult = {
+  scope: 'einvoice' | 'ewaybill';
+  authenticated: boolean;
+  nicReachable: boolean;
+  message: string;
+  authError?: string;
+  nicError?: string;
+};
+
 function GstCredentialCard({
   scope, label, row, onUpdate,
 }: {
@@ -256,10 +272,15 @@ function GstCredentialCard({
   onUpdate: () => void;
 }) {
   const queryClient = useQueryClient();
+  const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const testMutation = useMutation({
-    mutationFn: () => apiPost(`/settings/gst/credentials/${scope}/test`),
-    onSuccess: () => {
-      toast.success('Connection validated');
+    mutationFn: () => apiPost<TestConnectionResult>(`/settings/gst/credentials/${scope}/test`),
+    onSuccess: (result) => {
+      setTestResult(result);
+      // Only toast for the all-green case; UI panel surfaces the mixed/red states inline.
+      if (result.authenticated && result.nicReachable) {
+        toast.success(result.message || 'Connection validated');
+      }
       queryClient.invalidateQueries({ queryKey: ['gst-credentials'] });
     },
     onError: (err) => toast.error(getErrorMessage(err)),
@@ -313,6 +334,49 @@ function GstCredentialCard({
           <Button size="sm" onClick={onUpdate}>Update Credentials</Button>
         </div>
       </div>
+
+      {/* WI-054: Two-row Test Connection result panel. Renders when the
+          mutation has completed at least once. Each row is independently
+          green/red so the user can tell which hop failed. */}
+      {testResult && (
+        <div className="mt-3 rounded-md border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800 p-3 text-xs space-y-1">
+          <TestStatusRow
+            label="WhiteBooks"
+            ok={testResult.authenticated}
+            okText="Connected"
+            failText={testResult.authError || 'Authentication failed'}
+          />
+          <TestStatusRow
+            label="NIC Portal"
+            ok={testResult.nicReachable}
+            okText={scope === 'ewaybill' ? 'Reachable (via EWB auth)' : 'Reachable'}
+            failText={
+              testResult.authenticated
+                ? testResult.nicError || 'NIC not responding'
+                : '— (skipped, auth failed first)'
+            }
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TestStatusRow({
+  label, ok, okText, failText,
+}: { label: string; ok: boolean; okText: string; failText: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-24 text-surface-500 dark:text-surface-400">{label}:</span>
+      <span
+        className={cn(
+          'inline-flex items-center gap-1',
+          ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400',
+        )}
+      >
+        <span aria-hidden>{ok ? '✅' : '❌'}</span>
+        <span>{ok ? okText : failText}</span>
+      </span>
     </div>
   );
 }

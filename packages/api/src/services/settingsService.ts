@@ -73,6 +73,19 @@ export async function markGstCredentialsInvalid(
   });
 }
 
+/**
+ * Used by Test Connection (WI-054) to ping NIC via a read-only
+ * GSTNDETAILS lookup on the distributor's own GSTIN. Returns null if
+ * the distributor has no GSTIN configured (cannot probe).
+ */
+export async function getDistributorGstin(distributorId: string): Promise<string | null> {
+  const d = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { gstin: true },
+  });
+  return d?.gstin ?? null;
+}
+
 export async function updateGstMode(distributorId: string, mode: string) {
   return prisma.distributor.update({
     where: { id: distributorId },

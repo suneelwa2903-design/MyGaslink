@@ -463,10 +463,11 @@ async function main() {
     data: { distributorId: gstDist.id, vehicleNumber: 'KA01-MN-9999', vehicleType: 'Truck', capacity: 80, status: 'idle' },
   });
 
-  // E-Invoice credentials (EINS prefix). Rotated 2026-05-15: the
-  // previous shared-sandbox GSTIN/credentials accumulated quota /
-  // stuck state on NIC's IRP and started returning generic 5002 on
-  // every IRN call mid-day. Fresh WhiteBooks sandbox account issued.
+  // E-Invoice credentials (EINS prefix). Rotated 2026-05-15 from the
+  // original coolsupersaiyan@gmail.com account to mvsuneelkumar2903@gmail.com
+  // because the original WhiteBooks sandbox account was deregistered
+  // (auth returns "This email is not registered with WhiteBooks").
+  // Confirmed 2026-05-16 by switching back and getting the same rejection.
   await prisma.gstCredential.create({
     data: {
       distributor: { connect: { id: gstDist.id } },
