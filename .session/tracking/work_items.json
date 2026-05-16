@@ -398,6 +398,39 @@
       "description": "Pre-existing contract mismatch — route returned raw DistributorSetting[] but every web consumer typed it as DistributorSettings object (gstMode + gstCredentials + cylinderThresholds + …). Surface: gstEnabled was silently false everywhere, so inline CN/DN icons, View Invoice modal's GST sections, and WI-039's new CN/DN section never rendered. Fixed by synthesizing the envelope server-side from the distributor row + einvoice credential + rawSettings[]. Surfaced + fixed during WI-039/042 UI verification. Commit: fa838f6."
     },
     {
+      "id": "WI-054",
+      "title": "Test Connection — bypass token cache, add NIC reachability probe",
+      "type": "fix",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-16",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "Old endpoint had two falsity modes: (1) in-memory token cache short-circuited /authenticate so a cached token reported OK even when WhiteBooks had deregistered the account; (2) it only checked auth, never NIC — yesterday's 5002 outage on IRN GENERATE returned green throughout. Reworked into a two-stage probe: clearTokenCache + getAuthToken (force fresh), then validateGstin on the distributor's own GSTIN to read NIC GSTNDETAILS. Response shape carries both `authenticated` and `nicReachable` booleans + authError/nicError strings. ewaybill scope mirrors auth into nicReachable since its /authenticate already hits NIC. UI renders two distinct ✅/❌ rows so admins can see which hop is broken. Spec: .session/specs/WI-054-test-connection-fix.md. Commit: 39e6a5f. +6 tests."
+    },
+    {
+      "id": "WI-055",
+      "title": "Amount-based Credit / Debit Note modal (drop items grid)",
+      "type": "feature",
+      "priority": "P2",
+      "status": "done",
+      "completedAt": "2026-05-16",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "Finance teams almost always want to credit/debit a specific rupee amount, not reconstruct an items[] grid. Replaced the four-column form with Reason + Amount + Note. Shared createCreditNoteSchema / createDebitNoteSchema swapped items[] for `amount` (positiveNumber) + optional `note` (0-500). invoiceService enforces CN amount ≤ invoice.totalAmount with a clear 400; DN has no upper bound (surcharges legitimately exceed the original bill). Prisma migration 20260516000000_credit_debit_note_text_column adds nullable `note` columns; existing items-based rows in the DB remain readable. Also fixed a pre-existing URL bug: DebitNoteModal was POSTing to /debit-notes (404) instead of /invoices/debit-notes. Spec: .session/specs/WI-055-credit-note-modal-redesign.md. Commit: c6849c2. +7 tests."
+    },
+    {
+      "id": "WI-056",
+      "title": "Invoice list CN/DN count badges + CN PDF reads IRN from gst_documents",
+      "type": "feature",
+      "priority": "P2",
+      "status": "done",
+      "completedAt": "2026-05-16",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "Two improvements bundled: (1) GET /api/invoices was shipping the full creditNotes[] + debitNotes[] arrays on every row — bandwidth waste plus no visual signal that CNs/DNs existed. Split the include into list (uses Prisma _count → numeric counts only) and detail (still full arrays for the View modal). Shared Invoice type gains creditNotesCount / debitNotesCount. Web renders small `CN N` / `DN N` pills next to the invoice number. (2) CN PDF's IRN block was dead code — gated on cnAny.irn / cnAny.ackNo / cnAny.signedQrCode, fields the CreditNote Prisma model never had. PDF generator now reads the latest CRN-type gst_documents row joined to the invoice (where processCreditNoteGst actually writes IRN data) and renders the existing CRN box from it. Spec: .session/specs/WI-056-cn-dn-badge-and-pdf.md. Commit: 4560a46. +6 tests."
+    },
+    {
       "id": "WI-045",
       "title": "Mobile — Driver smoke test + fixes",
       "type": "testing",
