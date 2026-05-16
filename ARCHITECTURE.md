@@ -330,4 +330,102 @@ Order assigned to driver
 | `customers.test.ts` (extended) | +3 = 16 | WI-040 + WI-043 GSTIN lookup role widening. |
 | `settings.test.ts` (extended) | +5 = 24 | WI-042 scoped Test & Save + Test Connection role/scope gating. |
 
-Suite total: **350/350 passing** as of master `6e77993`.
+Suite total: **350/350 passing** as of master `6e77993`. (347/347 reproducible on a freshly seeded dev DB at HEAD `301aede`; the 3-test delta is fixture state on shared dev DB, not behavioural.)
+
+---
+
+## 20. Mobile Architecture (2026-05-16)
+
+`packages/mobile` is far more built-out than the §10 sketch implies. All six roles have functional screens that consume the same API contract as the web.
+
+**Stack:**
+- **Expo SDK 54** (`~54.0.33`), **React Native 0.81.5**, **React 19.1**
+- **Router:** expo-router 6 (file-based). Folder names with `(parens)` are route groups (no URL segment).
+- **State:** Zustand 5 (auth, theme, distributor) + TanStack Query 5 (server state)
+- **HTTP:** axios 1.15 with JWT bearer + `X-Distributor-Id` interceptor and 401-triggered refresh-with-queue
+- **Storage:** [`expo-secure-store`](packages/mobile/src/lib/api.ts:13) for JWT (Keychain on iOS, Keystore on Android). **Never `AsyncStorage` for auth** — see CLAUDE.md mobile rule.
+- **Styling:** NativeWind 4 (Tailwind-for-RN)
+- **Offline:** [`deliveryQueue.ts`](packages/mobile/src/services/deliveryQueue.ts) writes to SecureStore, [`@react-native-community/netinfo`](packages/mobile/src/services/deliveryQueue.ts) drives auto-sync on reconnect
+- **Forms:** raw RN `<TextInput>` today (CLAUDE.md mobile rule prefers react-hook-form + Zod going forward)
+
+**Role navigation groups** under [`packages/mobile/app/`](packages/mobile/app):
+- `(auth)` — login, forgot-password
+- `(driver)` — analytics · orders · trip · inventory · more · profile (5 tabs + profile)
+- `(customer)` — dashboard · orders · invoices · payments · account
+- `(admin)` — dashboard · orders · finance · inventory · more (5 tabs)
+- `(finance)` — dashboard · payments · invoices · collections · more · profile
+- `(inventory)` — summary · actions · reconciliation · alerts · orders · fleet · inventory · analytics · more · profile
+- `(super-admin)` — dashboard · billing · fleet · settings · distributors · provider-catalog · health · users · inventory · orders · customers · more
+
+**Entry:** [`app/index.tsx`](packages/mobile/app/index.tsx) reads auth state on cold launch and `router.replace`s to the matching role group's home screen. **Note:** the role-group `_layout.tsx` files do NOT re-check role; only the cold-launch entry guards. Defense-in-depth lives at the API level (every endpoint enforces role + tenant). See WI-051 for the planned client-side guard.
+
+**API URL:** [`EXPO_PUBLIC_API_URL`](packages/mobile/.env.example) env var, exposed at bundle time.
+- Dev (phone via Expo Go on LAN): `http://<LAN-IP>:5000/api`
+- Dev (Android emulator): `http://10.0.2.2:5000/api`
+- Dev (iOS simulator / Web): `http://localhost:5000/api`
+- Preview / Production builds: `https://api.mygaslink.com/api` (set in [`eas.json`](packages/mobile/eas.json))
+
+**Native services in use:** expo-camera (delivery proof), expo-location (driver tracking, 60s interval, gated by `loaded_and_dispatched` status), expo-notifications (stubbed in [`notifications.ts`](packages/mobile/src/services/notifications.ts) for Expo Go — real impl runs only in EAS dev/preview/production builds).
+
+---
+
+## 21. Mobile Completeness (2026-05-16 assessment)
+
+Per-role smoke estimate based on screen inventory + API call audit. Numbers are screens-built × wiring-quality, NOT verified-via-manual-test (that's WI-045 → WI-050).
+
+| Role | Screens built | Est. % complete | Gaps |
+|---|---|---|---|
+| **Driver** | 6 | **95%** | Fully offline-capable via `deliveryQueue` + NetInfo. Polish only — signature capture, route map. |
+| **Distributor Admin** | 5 (large) | **85%** | One known TODO at [(admin)/finance.tsx:496](packages/mobile/app/(admin)/finance.tsx:496) — PDF download not wired. Depth not yet smoke-tested. |
+| **Inventory** | 10 | **80%** | Largest screen count of any role (4-tab inner navigation). Smoke-test will surface field/endpoint mismatches. |
+| **Customer** | 5 | **80%** | Customer portal mirror. Place-order flow needs verification. |
+| **Finance** | 6 | **80%** | Reconciliation flows not audited. |
+| **Super Admin** | 12 | **75%** | Mobile super-admin is unusual — depth probably superficial for some screens (e.g. provider-catalog 157 lines vs web equivalent). One vestigial "Coming Soon" alert at [(super-admin)/more.tsx:57](packages/mobile/app/(super-admin)/more.tsx:57) is dead code (every menu item has a route). |
+
+**Auth + API plumbing:** production-ready. JWT in SecureStore, refresh-with-queue, distributor header injection, role-based cold-launch routing, ErrorBoundary + Sentry crash reporting, NetworkIndicator banner.
+
+**Tests:** 3 Jest files only ([api.test.ts](packages/mobile/src/__tests__/api.test.ts), [authStore.test.ts](packages/mobile/src/__tests__/authStore.test.ts), [notifications.test.ts](packages/mobile/src/__tests__/notifications.test.ts)). Coverage thin compared to API's 347. Detox not yet wired (CLAUDE.md flags this as PLANNED).
+
+---
+
+## 22. Mobile Security (2026-05-16)
+
+**In place today:**
+- ✅ JWT stored in `expo-secure-store` (Keychain / Keystore — encrypted at rest)
+- ✅ Token refresh + queueing via axios interceptor — single concurrent refresh, in-flight requests parked until it completes
+- ✅ Role gates enforced on every API endpoint (`requireRole(...)` middleware — see [packages/api/src/middleware/auth.ts](packages/api/src/middleware/auth.ts))
+- ✅ HTTPS in preview + production builds (per [`eas.json`](packages/mobile/eas.json) `EXPO_PUBLIC_API_URL`)
+- ✅ Per-tenant scoping enforced server-side via `requireDistributor` middleware
+- ✅ Rate limiting on `/api/auth/login`, `/api/auth/refresh`, `/api/auth/forgot-password`, `/api/auth/verify-reset-otp` (added 2026-05-16, WI-053)
+- ✅ Sentry crash reporting wired for both platforms
+- ✅ App-level error boundary, network-state indicator
+
+**Pre-launch gaps (WI-053):**
+- ❌ **SSL certificate pinning** — without it, MITM attacks on mobile networks are trivial. Plan: `react-native-ssl-pinning` against the production cert chain, with a fallback expiry guard. CLAUDE.md flags this as required for full launch.
+- ❌ **Client-side role guards on layout files** — only `app/index.tsx` checks role on cold launch. A misnavigation lands on a broken-but-empty screen instead of redirecting (WI-051).
+- ❌ **`0.0.0.0` API binding restricted to dev only** — done 2026-05-16 (FIX B in WI-053). Prod binds `127.0.0.1`; reverse proxy handles external traffic.
+
+**Post-launch (deferred):**
+- 🔜 Jailbreak / root detection (`jail-monkey` or `expo-device`) — financial app risk profile
+- 🔜 Biometric auth via `expo-local-authentication` for re-entry after backgrounding
+- 🔜 Request signing (HMAC over body + timestamp) for write endpoints
+- 🔜 Deep link parameter validation — scheme `mygaslink://` is registered but no incoming deeplinks are parsed today
+
+---
+
+## 23. API Server Binding
+
+**Development** ([packages/api/src/server.ts](packages/api/src/server.ts)):
+```ts
+const host = process.env.HOST
+  ?? (config.nodeEnv === 'production' ? '127.0.0.1' : '0.0.0.0');
+```
+- Binds to `0.0.0.0:5000` so phones on the same Wi-Fi can reach the API for Expo Go testing.
+- The dev box's firewall, plus the LAN being a trusted network, is the security boundary.
+
+**Production:**
+- Binds to `127.0.0.1:5000`. The Node process is **never world-reachable**.
+- NGINX (or whatever reverse proxy fronts the box) terminates TLS, enforces HTTPS-only, and forwards to `127.0.0.1:5000`.
+- Override only via explicit `HOST` env var if a deploy needs something else (e.g. a sidecar container topology).
+
+**Why this matters:** the previous default `app.listen(port)` binds to all interfaces in some Node versions and to `localhost` in others — non-portable. Pinning the host explicitly removes the ambiguity and lets us safely ship the dev-side LAN openness without weakening prod.

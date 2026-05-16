@@ -732,6 +732,135 @@ Notes: ___________
 
 
 
+## SESSION 9 — Mobile Setup (~15 min, ONE-TIME)
+
+This session has no test result rows — it's the prerequisite for SESSIONS 10 → 13. Run it once per dev machine.
+
+### 9.0 Prerequisites
+
+- [ ] Phone (Android or iOS) and laptop on the **same Wi-Fi network**
+- [ ] **Expo Go** installed on the phone (Play Store / App Store — search "Expo Go")
+- [ ] API server running on the laptop on port 5000 (`pnpm dev:api`). The server now binds `0.0.0.0` automatically in dev (server.ts WI-053 FIX B), so it's already reachable from the LAN.
+- [ ] Find your laptop's LAN IP:
+  - **Windows:** `ipconfig` → look for "IPv4 Address" under your **Wi-Fi adapter** (not Ethernet, not WSL). Example: `192.168.1.5`.
+  - **macOS:** `ifconfig | grep inet` → grab the `192.168.x.x` (not `127.0.0.1`)
+  - **Linux:** `hostname -I` → first IP in the list
+
+### 9.1 Configure mobile app
+
+1. From the repo root:
+   ```powershell
+   cp packages/mobile/.env.local.example packages/mobile/.env.local
+   ```
+2. Open `packages/mobile/.env.local` and replace the example IP with **your** LAN IP:
+   ```
+   EXPO_PUBLIC_API_URL=http://192.168.1.5:5000/api
+   ```
+3. Start the mobile app (from repo root):
+   ```powershell
+   pnpm --filter @gaslink/mobile start
+   ```
+4. Wait for the QR code to render in your terminal.
+5. Open Expo Go on your phone → scan the QR code → app loads.
+
+**Smoke check:** the login screen renders. If it doesn't, the most common causes are (a) wrong LAN IP, (b) phone on a different Wi-Fi (e.g. guest network), (c) laptop firewall blocking inbound 5000 (Windows Defender often does — allow Node.js when it prompts).
+
+### 9.2 Driver mobile flow (raju@gasagency.com)
+
+**Credentials:** `raju@gasagency.com` / `Driver@123` (Bhargava driver)
+
+| # | Step | Pass criteria | Result | Notes |
+|---|------|---------------|--------|-------|
+| 9.2.1 | Login on mobile | 4 tabs visible: Analytics, My Deliveries, Trip, Vehicle Stock (+ More) | ⬜ | |
+| 9.2.2 | **Analytics** tab loads | KPI cards render: Completed Today, Pending Deliveries, etc. | ⬜ | |
+| 9.2.3 | **My Deliveries** tab | Pending-delivery orders for Raju show. If empty, create one from web admin. | ⬜ | |
+| 9.2.4 | **Trip** tab | Today's assignment card with vehicle + 4-step status pipeline. | ⬜ | |
+| 9.2.5 | **Vehicle Stock** tab | Per-cylinder-type fulls + empties + cancelled-stock-to-return. | ⬜ | |
+
+**Delivery flow (~5 min):**
+
+1. Tap an order on My Deliveries → tap **Deliver** → confirm in alert.
+2. Expected: alert "Delivery confirmed!", the order disappears from the pending list.
+3. On web (as `bhargava@gasagency.com`): the order's status is now `delivered`. Open the order → an invoice should be auto-generated.
+
+### 9.3 Driver offline test (~5 min, NEW today)
+
+1. Make sure there's at least one undelivered order in the list (create one from web admin if needed).
+2. **Turn OFF Wi-Fi on the phone** (or stop the API with Ctrl-C in the terminal).
+3. Open an undelivered order → tap **Deliver** → confirm.
+4. Expected: alert "Saved offline — Delivery will sync automatically when you're back online", the order shows a **"pending sync"** orange badge instead of its normal status, and the My Deliveries tab icon shows an orange count badge.
+5. **Turn Wi-Fi back ON** (or restart `pnpm dev:api`).
+6. Expected: within ~5–10 seconds the queue auto-syncs (NetInfo listener fires on reconnect). The pending-sync badge disappears.
+7. On web: confirm the delivery is recorded against the order **exactly once** (idempotency from WI-027).
+
+Pass criteria: offline save works, auto-sync on reconnect works, server records the delivery exactly once.
+
+Notes: ___________
+
+---
+
+## SESSION 10 — Mobile Distributor Admin (~25 min)
+
+**Credentials:** `sharma@gasdist.com` / `Gstadmin@123` (GST sandbox tenant — exercises the IRN/EWB flow on the dispatch path)
+
+| # | Test | Pass criteria | Result | Notes |
+|---|------|---------------|--------|-------|
+| 10.1 | Dashboard loads with today's metrics | KPI cards render, no console errors visible (use the More → debug if exposed) | ⬜ | |
+| 10.2 | **Orders** tab shows all orders | List populates; status badges render | ⬜ | |
+| 10.3 | Assign driver to an unassigned order | Tap order → Assign Driver → pick driver from list → save → status flips to `pending_dispatch` | ⬜ | |
+| 10.4 | **Dispatch** from mobile (only if WhiteBooks sandbox is up) | After assignment, dispatch flow generates IRN + EWB; status flips to `pending_delivery`. If WhiteBooks is down, expect a clear error toast — not a silent failure. | ⬜ | |
+| 10.5 | **Inventory** tab shows stock levels | Per cylinder type fulls + empties; matches web Inventory page | ⬜ | |
+| 10.6 | **Finance** tab | Outstanding/overdue cards; click an invoice → details show. Known TODO: PDF download not wired (WI-046 will fix). | ⬜ | |
+| 10.7 | **More** tab — customer/driver/vehicle/user CRUD | Open each form, create one of each (use unique phone like `9999000010`). Save returns success. | ⬜ | |
+
+---
+
+## SESSION 11 — Mobile Customer Portal (~15 min)
+
+**Credentials:** `royal@kitchen.com` / `Customer@123`
+
+| # | Test | Pass criteria | Result | Notes |
+|---|------|---------------|--------|-------|
+| 11.1 | Dashboard loads | Outstanding, overdue, total orders, pending, empty cylinders cards. Recent orders list. | ⬜ | |
+| 11.2 | **Orders** list | Shows ONLY Royal Kitchen's orders. Tap one → detail view. | ⬜ | |
+| 11.3 | **Invoices** list | Shows ONLY Royal Kitchen's invoices. Tap one → detail. | ⬜ | |
+| 11.4 | **Payments** list | Shows ONLY Royal Kitchen's payments. | ⬜ | |
+| 11.5 | **Account** screen | Profile + addresses + sign out work. | ⬜ | |
+
+**Tenant isolation spot-check:** none of Bhargava's other customers' data should ever appear. If you see anything from "Spice Garden Hotel" or any other customer here, that's a CRITICAL bug.
+
+---
+
+## SESSION 12 — Mobile Inventory (~20 min)
+
+**Credentials:** `inventory@gasagency.com` / `Inventory@123`
+
+| # | Test | Pass criteria | Result | Notes |
+|---|------|---------------|--------|-------|
+| 12.1 | **Summary** tab loads | Per-cylinder-type opening / incoming / outgoing / closing | ⬜ | |
+| 12.2 | **Actions** — record incoming stock | Tap Incoming Fulls → pick cylinder type → quantity 100 → reference "INV-MOBILE-TEST-001" → Save. Toast confirms; today's summary updates. | ⬜ | |
+| 12.3 | **Actions** — record outgoing empties | Same shape, opposite direction. | ⬜ | |
+| 12.4 | **Reconciliation** tab | Lists driver-vehicle assignments pending reconciliation. | ⬜ | |
+| 12.5 | **Alerts** tab | Cylinder types currently below warning/critical threshold. Empty if everything's healthy. | ⬜ | |
+| 12.6 | **Fleet** tab | Drivers + vehicles list. | ⬜ | |
+| 12.7 | **Orders** tab | Inventory user can create orders too (per role widening in §17 of ARCHITECTURE). | ⬜ | |
+
+---
+
+## SESSION 13 — Mobile Finance (~15 min)
+
+**Credentials:** `finance@gasagency.com` / `Finance@123`
+
+| # | Test | Pass criteria | Result | Notes |
+|---|------|---------------|--------|-------|
+| 13.1 | Dashboard loads | Call list at top, unallocated payments below, GST failures section, pending actions at bottom. | ⬜ | |
+| 13.2 | **Payments** — record payment | Pick customer → enter amount → method (cash/UPI/cheque) → reference → save. Toast confirms; outstanding balance reduces. | ⬜ | |
+| 13.3 | **Invoices** — view + filter | List loads; filter by status. Tap invoice → details. | ⬜ | |
+| 13.4 | **Collections** | Same call list as the dashboard, with a "Call" button per customer (tappable `tel:` link). | ⬜ | |
+| 13.5 | Cancel IRN / EWB (Sharma only) | If you logged in as Sharma's finance equivalent: WI-039 widened cancel-IRN / cancel-EWB to finance role. Verify the buttons are visible. (For Bhargava finance, GST is off — no buttons expected.) | ⬜ | |
+
+---
+
 Copy this for each bug you find:
 
 ```
@@ -751,7 +880,7 @@ Severity:
 
 ---
 
-**Total tests across all sessions: 30.**
+**Total tests across all sessions: 60.**
 - Session 1: 5 (1.1 – 1.5)
 - Session 2: 7 (2.1 – 2.7)
 - Session 3: 3 (3.1 – 3.3)
@@ -760,3 +889,8 @@ Severity:
 - Session 6: 4 (6.1 – 6.4)
 - Session 7: 3 (7.1 – 7.3)
 - Session 8: 8 (8.1 – 8.8) — GST Compliance Flow, WI-035 to WI-043
+- Session 9: 6 (9.2.1 – 9.2.5 + 9.3) — Mobile setup + Driver
+- Session 10: 7 (10.1 – 10.7) — Mobile Distributor Admin
+- Session 11: 5 (11.1 – 11.5) — Mobile Customer
+- Session 12: 7 (12.1 – 12.7) — Mobile Inventory
+- Session 13: 5 (13.1 – 13.5) — Mobile Finance

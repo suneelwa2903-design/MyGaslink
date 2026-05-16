@@ -367,3 +367,16 @@ Never do these in mobile code:
 - `Platform.OS === 'ios' ? ... : ...` scattered everywhere (centralise platform logic)
 - Ignoring keyboard avoiding on forms (always wrap with `KeyboardAvoidingView`)
 - Not handling app state changes (background/foreground for session refresh)
+
+---
+
+## Mobile Development Rules
+
+These are NON-NEGOTIABLE rules for the `packages/mobile` codebase. They turn the anti-pattern list above into positive guardrails. Added 2026-05-16 alongside WI-053 hardening.
+
+1. **Always use `expo-secure-store` for tokens.** Never `AsyncStorage`. Encrypted at rest via Keychain (iOS) / Keystore (Android). Reference: [packages/mobile/src/lib/api.ts:13](packages/mobile/src/lib/api.ts:13).
+2. **Every screen must handle loading, error, and empty states.** Use `EmptyState` from [components/ui/](packages/mobile/src/components/ui/). A spinner-then-blank-screen is not acceptable — the user must always know which of (loading / error / empty / data) state they're in.
+3. **All API calls go through `useApiQuery` or `useApiMutation`** ([hooks/useApi.ts](packages/mobile/src/hooks/useApi.ts)). Never raw `fetch()` or raw `axios`. The hooks ensure JWT injection, distributor header, error normalisation, and TanStack Query cache integration.
+4. **Test offline scenarios for every driver-facing screen.** The driver works in low-coverage areas; the app must enqueue writes and auto-sync on reconnect. Reference implementation: [services/deliveryQueue.ts](packages/mobile/src/services/deliveryQueue.ts) + the NetInfo listener in [(driver)/_layout.tsx](packages/mobile/app/(driver)/_layout.tsx).
+5. **`EXPO_PUBLIC_API_URL` must use the laptop's LAN IP for phone testing** — never `localhost`. Phones can't reach `localhost` on your laptop. The API binds `0.0.0.0` in dev so this works automatically (see [packages/api/src/server.ts](packages/api/src/server.ts)). Setup walkthrough in [docs/MANUAL-TESTING-GUIDE.md SESSION 9](docs/MANUAL-TESTING-GUIDE.md).
+6. **Rate limiting on auth endpoints must be verified before any pilot with real users.** Login, refresh, forgot-password, and verify-reset-otp are all rate-limited as of WI-053 (commit on this branch). Don't ship without confirming the limiter actually fires (manual check: 11 rapid login attempts → 11th returns 429).
