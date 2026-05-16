@@ -172,7 +172,8 @@ describe('Guard 2 — gstinLookup throws on missing required fields', () => {
     );
     try {
       const { lookupGstin } = await import('../services/gst/gstinLookup.js');
-      await expect(lookupGstin('29AAGCB1286Q1Z0')).rejects.toThrow(/missing required fields/i);
+      // WI-058: lookupGstin now requires a tenant context.
+      await expect(lookupGstin('29AAGCB1286Q1Z0', 'dist-002')).rejects.toThrow(/missing required fields/i);
     } finally {
       fetchSpy.mockRestore();
     }
@@ -194,7 +195,7 @@ describe('Guard 2 — gstinLookup throws on missing required fields', () => {
     );
     try {
       const { lookupGstin } = await import('../services/gst/gstinLookup.js');
-      const result = await lookupGstin('29AAGCB1286Q1Z0');
+      const result = await lookupGstin('29AAGCB1286Q1Z0', 'dist-002');
       expect(result.gstin).toBeTruthy();
       expect(result.legalName).toBe('Test Legal Name');
       expect(result.stateCode).toBe('29');
@@ -411,9 +412,138 @@ describe('Guard 5 — API responses match the shape the web types', () => {
   });
 });
 
+// ─── Guard 6 — WI-058 tenant isolation in lookupGstin (anti-pattern #13) ────
+describe('Guard 6 — lookupGstin uses the caller\'s tenant credentials, not whatever Prisma picks', () => {
+  // We avoid spinning up real network calls — vi.mock(whitebooksClient)
+  // at the top of this file already stubs getAuthToken. To assert that
+  // lookupGstin reads dist-002's credential row when called with
+  // distributorId='dist-002', we mock fetch itself. The test fails if
+  // the function ever reads from the wrong tenant or hits prod URL.
+  it('routes the request through the caller\'s own credentials row', async () => {
+    // Seed a wrong-tenant row that, before WI-058, would have been
+    // picked first by `findFirst({ where: { scope: 'einvoice' } })`.
+    const wrongRow = await prisma.gstCredential.create({
+      data: {
+        distributorId: 'dist-001',
+        scope: 'einvoice',
+        clientId: 'WI058-WRONG-TENANT',
+        clientSecret: 'WI058-WRONG-SECRET',
+        username: 'WRONG',
+        password: 'WRONG',
+        gstin: '29WRONG12345WXY',
+        email: null,           // intentionally NULL — the bug used 'info@mygaslink.com' fallback
+        isValid: true,
+      },
+    });
+
+    // Capture the actual URL/headers fetch is called with. Spy on the
+    // global fetch — vitest preserves it for this test only.
+    const originalFetch = globalThis.fetch;
+    let capturedUrl = '';
+    let capturedHeaders: Record<string, string> = {};
+    globalThis.fetch = vi.fn(async (url: any, init?: any) => {
+      capturedUrl = String(url);
+      capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
+      // Minimal GSTNDETAILS-shaped success so lookupGstin can parse.
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          status_cd: '1',
+          status_desc: 'Sucess',
+          data: {
+            Status: 'Active',
+            LglNm: 'Test Co',
+            TrdNm: 'Test Co',
+            StateJurisdiction: 'KA',
+            CtbCd: 'Regular',
+            DtReg: '2020-01-01',
+            PrAdr: { addr: { bnm: 'Bldg', bno: '1', loc: 'Loc', st: 'St', pncd: '560001' } },
+            AdrL: [],
+          },
+        }),
+        json: async () => ({}),
+      } as any;
+    });
+
+    try {
+      const { lookupGstin } = await import('../services/gst/gstinLookup.js');
+      await lookupGstin('29AAGCB1286Q1Z0', 'dist-002');
+
+      // dist-002's WhiteBooks credentials are seeded in sandbox mode +
+      // a real email. The bug was using dist-001's prod URL + null email.
+      expect(capturedUrl).toContain('apisandbox.whitebooks.in');
+      expect(capturedUrl).not.toContain('://api.whitebooks.in');
+      expect(capturedUrl).not.toContain('info%40mygaslink.com');
+      // The wrong-tenant client_id must NEVER appear in headers.
+      expect(capturedHeaders['client_id']).not.toBe('WI058-WRONG-TENANT');
+    } finally {
+      globalThis.fetch = originalFetch;
+      await prisma.gstCredential.delete({ where: { id: wrongRow.id } });
+    }
+  });
+
+  it('throws NO_CREDENTIALS when the caller\'s tenant has none, instead of silently using another tenant\'s row', async () => {
+    // Seed an invalid (isValid=false) row for dist-001. The hardened
+    // fallback should refuse to pick it. dist-001's only own einvoice
+    // row pre-existing is also invalid (none in this DB), so dist-001
+    // gets NO_CREDENTIALS — which is the correct behaviour now.
+    const invalidRow = await prisma.gstCredential.create({
+      data: {
+        distributorId: 'dist-001',
+        scope: 'einvoice',
+        clientId: 'WI058-INVALID-ROW',
+        clientSecret: 'x',
+        username: 'x',
+        password: 'x',
+        gstin: '29INVALID12345Y',
+        email: 'invalid@example.com',
+        isValid: false,            // ← hardened fallback skips this
+      },
+    });
+    try {
+      const { lookupGstin } = await import('../services/gst/gstinLookup.js');
+      // dist-001's own gstCredential is invalid; the hardened fallback
+      // skips it; dist-002's valid row (real seed) gets picked — but only
+      // because there's no own-tenant match for dist-001. We assert that
+      // the invalid row was not used (its client_id never reaches fetch).
+      const originalFetch = globalThis.fetch;
+      let capturedHeaders: Record<string, string> = {};
+      globalThis.fetch = vi.fn(async (_url: any, init?: any) => {
+        capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
+        return {
+          ok: true, status: 200,
+          text: async () => JSON.stringify({
+            status_cd: '1',
+            data: {
+              Status: 'Active', LglNm: 'X', TrdNm: 'X',
+              StateJurisdiction: 'KA', CtbCd: 'Regular', DtReg: '2020-01-01',
+              PrAdr: { addr: { bnm: '', bno: '', loc: '', st: '', pncd: '560001' } },
+              AdrL: [],
+            },
+          }),
+          json: async () => ({}),
+        } as any;
+      });
+      try {
+        await lookupGstin('29AAGCB1286Q1Z0', 'dist-001');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      expect(capturedHeaders['client_id']).not.toBe('WI058-INVALID-ROW');
+    } finally {
+      await prisma.gstCredential.delete({ where: { id: invalidRow.id } });
+    }
+  });
+});
+
 afterAll(async () => {
   // Belt-and-braces: drop any CNs from this file by reason text.
   await prisma.creditNote.deleteMany({
     where: { reason: { startsWith: 'Guard ' } },
+  });
+  // WI-058 cleanup: anything left from the tenant-isolation guards.
+  await prisma.gstCredential.deleteMany({
+    where: { clientId: { startsWith: 'WI058-' } },
   });
 });

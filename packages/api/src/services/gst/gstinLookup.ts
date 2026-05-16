@@ -118,22 +118,75 @@ function getStateName(stateCode: string): string {
 }
 
 /**
- * Look up GSTIN details via WhiteBooks e-Invoice API
- * Uses GasLink-level credentials first, falls back to any available distributor credentials
+ * Look up GSTIN details via WhiteBooks e-Invoice API.
+ *
+ * WI-058 — tenant-scoped lookup. Callers MUST pass the
+ * authenticated user's `distributorId` so we use that tenant's own
+ * WhiteBooks credentials. The legacy unscoped fallback (used when a
+ * caller has no creds of their own) is retained but hardened:
+ *   - `isValid: true` required (skip never-validated rows)
+ *   - `email` not null required (the auth URL needs it)
+ *   - deterministic `orderBy: lastValidated desc` so a test-leaked
+ *     row can't win a race with a real row
+ *
+ * The 2026-05-16 outage we misdiagnosed for ~24h was caused by this
+ * function picking a leaked dist-001 test row (no tenant filter, no
+ * isValid check, no deterministic order) and routing every Sharma
+ * admin's GSTIN lookup through production WhiteBooks with bogus
+ * credentials. See [docs/anti-pattern #13](../../../CLAUDE.md).
  */
-export async function lookupGstin(gstin: string): Promise<GstinDetails> {
-  // Try GasLink-level credentials first, then fall back to any available
-  let creds = await getCredentials(null, 'einvoice');
-  let credDistributorId: string | null = null;
+export async function lookupGstin(
+  gstin: string,
+  distributorId: string,
+): Promise<GstinDetails> {
+  // Prefer the caller's own tenant credentials — but only if they're
+  // (a) marked valid and (b) carry a real email. The 2026-05-16
+  // outage was caused by a NULL-email row silently falling back to
+  // 'info@mygaslink.com' which production WhiteBooks rejected.
+  const ownRow = await prisma.gstCredential.findFirst({
+    where: {
+      distributorId,
+      scope: 'einvoice',
+      isValid: true,
+      email: { not: null },
+    },
+    include: { distributor: { select: { gstMode: true } } },
+  });
+  let creds = ownRow
+    ? {
+        clientId: ownRow.clientId,
+        clientSecret: ownRow.clientSecret,
+        username: ownRow.username,
+        password: ownRow.password,
+        gstin: ownRow.gstin,
+        email: ownRow.email!,
+        baseUrl: (ownRow.distributor?.gstMode === 'sandbox' || !ownRow.distributor)
+          ? 'https://apisandbox.whitebooks.in'
+          : 'https://api.whitebooks.in',
+      }
+    : null;
+  let credDistributorId: string | null = ownRow ? distributorId : null;
+  // Silence unused-import warning when this path is skipped.
+  void getCredentials;
 
   if (!creds) {
-    // Fall back: find any distributor with valid einvoice credentials
+    // Fallback path — only when the caller's tenant has no einvoice
+    // credentials at all. Tighter `where` clauses here than the
+    // historical bug so a leaked/invalid row can never hijack.
     const fallbackCred = await prisma.gstCredential.findFirst({
-      where: { scope: 'einvoice' },
+      where: {
+        scope: 'einvoice',
+        isValid: true,
+        email: { not: null },
+      },
+      orderBy: { lastValidated: 'desc' },
       include: { distributor: { select: { id: true, gstMode: true } } },
     });
     if (!fallbackCred) {
-      throw new GstError('No GST credentials configured. Please set up WhiteBooks credentials in Settings.', 'NO_CREDENTIALS');
+      throw new GstError(
+        'No GST credentials configured for this distributor. Please set them up in Settings.',
+        'NO_CREDENTIALS',
+      );
     }
     credDistributorId = fallbackCred.distributorId;
     const isSandbox = fallbackCred.distributor?.gstMode === 'sandbox' || !fallbackCred.distributor;

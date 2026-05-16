@@ -295,12 +295,25 @@ describe('Settings — Scoped GST credentials (WI-042)', () => {
   };
 
   afterAll(async () => {
-    // Delete just the rows we created so the seed credentials are
+    // Delete just the row this test created so the seed credentials are
     // not affected for other tests.
     await prisma.gstCredential.deleteMany({
       where: {
         distributorId: distId,
         clientId: validShape.clientId,
+      },
+    });
+    // WI-058 belt-and-braces: also remove any TEST-CLIENT-* / test-client-id
+    // rows leaked by prior runs (the dev DB is shared with manual testing,
+    // anti-pattern #2 / #7). One such leak in May-2026 routed every Sharma
+    // GSTIN lookup through prod WhiteBooks with bogus dist-001 creds for
+    // a full day before we caught it.
+    await prisma.gstCredential.deleteMany({
+      where: {
+        OR: [
+          { clientId: { startsWith: 'TEST-CLIENT' } },
+          { clientId: 'test-client-id' },
+        ],
       },
     });
   });

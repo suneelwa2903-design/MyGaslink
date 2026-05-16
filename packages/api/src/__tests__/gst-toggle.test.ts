@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
+import { prisma } from '../lib/prisma.js';
 import { loginAsDistAdmin, loginAsFinance, loginAsInventory, loginAsSuperAdmin, getSeedData } from './helpers.js';
 import type { Express } from 'express';
 
@@ -166,6 +167,21 @@ describe('GST Credentials', () => {
       });
 
     expect([403, 401]).toContain(res.status);
+  });
+
+  // WI-058: tests above intentionally write bogus credentials to the
+  // caller's distributor (dist-001). Without this cleanup the row
+  // leaks into the shared dev DB and hijacks every lookupGstin call
+  // (anti-pattern #13 / WI-058). Delete by sentinel client_id values.
+  afterAll(async () => {
+    await prisma.gstCredential.deleteMany({
+      where: {
+        OR: [
+          { clientId: 'test-client-id' },
+          { clientId: 'test' },
+        ],
+      },
+    });
   });
 });
 

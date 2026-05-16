@@ -27,7 +27,14 @@ router.get(
     if (!gstin || gstin.length !== 15 || !/^[0-9]{2}[A-Z0-9]{13}$/.test(gstin)) {
       return sendError(res, 'Invalid GSTIN format. Must be 15 characters.', 400);
     }
-    const details = await lookupGstin(gstin);
+    // WI-058: lookupGstin is tenant-scoped — passes the caller's
+    // distributorId so we use their own WhiteBooks credentials rather
+    // than picking the first row Prisma happens to return.
+    const callerDistributorId = req.user?.distributorId;
+    if (!callerDistributorId) {
+      return sendError(res, 'Distributor context required to look up GSTIN', 400, 'NO_DISTRIBUTOR_SELECTED');
+    }
+    const details = await lookupGstin(gstin, callerDistributorId);
 
     // Attempt geocoding for the registered address (non-blocking)
     let coordinates: { latitude: number; longitude: number } | null = null;
