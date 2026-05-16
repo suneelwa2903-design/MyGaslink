@@ -146,6 +146,93 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
     await prisma.creditNote.delete({ where: { id: cn.id } });
   });
 
+  it('writes "e-Invoice: Pending" to the PDF when no CRN gst_documents row exists', async () => {
+    // PDFKit deflate-compresses content streams, so the rendered text
+    // can't be regex-searched on the raw buffer. Spy on the prototype
+    // `text` method instead — captures every string the service draws
+    // BEFORE compression, which is what we actually want to assert.
+    const PDFDocument = (await import('pdfkit')).default;
+    const drawnStrings: string[] = [];
+    const originalText = PDFDocument.prototype.text;
+    const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
+      function (this: any, str: any, ...rest: any[]) {
+        if (typeof str === 'string') drawnStrings.push(str);
+        return originalText.call(this, str, ...rest);
+      },
+    );
+
+    const inv = await getValuedInvoice();
+    const cn = await prisma.creditNote.create({
+      data: {
+        invoiceId: inv.id,
+        creditNoteNumber: `CN-PEND-${Date.now().toString(36)}`,
+        totalAmount: 10,
+        reason: 'pdf pending text',
+        status: 'pending_cn',
+      },
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/invoices/credit-notes/${cn.id}/pdf`)
+        .set(auth(sharmaAdminToken));
+
+      expect(res.status).toBe(200);
+      expect(drawnStrings.some((s) => /e-Invoice: Pending/.test(s))).toBe(true);
+      expect(drawnStrings.some((s) => /e-Invoice: Failed/.test(s))).toBe(false);
+    } finally {
+      spy.mockRestore();
+      await prisma.creditNote.delete({ where: { id: cn.id } });
+    }
+  });
+
+  it('writes "e-Invoice: Failed — retry from Billing page" when a CRN row exists with irnStatus=failed', async () => {
+    const PDFDocument = (await import('pdfkit')).default;
+    const drawnStrings: string[] = [];
+    const originalText = PDFDocument.prototype.text;
+    const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
+      function (this: any, str: any, ...rest: any[]) {
+        if (typeof str === 'string') drawnStrings.push(str);
+        return originalText.call(this, str, ...rest);
+      },
+    );
+
+    const inv = await getValuedInvoice();
+    const cn = await prisma.creditNote.create({
+      data: {
+        invoiceId: inv.id,
+        creditNoteNumber: `CN-FAIL-${Date.now().toString(36)}`,
+        totalAmount: 10,
+        reason: 'pdf failed text',
+        status: 'pending_cn',
+      },
+    });
+    // gst_documents row with irnStatus='failed' AND no irn/ackNo/signedQr
+    // — exactly the shape processCreditNoteGst writes after NIC rejects.
+    const crnDoc = await prisma.gstDocument.create({
+      data: {
+        invoiceId: inv.id,
+        distributorId: 'dist-002',
+        docType: 'CRN',
+        gstDocNo: cn.creditNoteNumber!,
+        irnStatus: 'failed',
+        isLatest: true,
+      },
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/invoices/credit-notes/${cn.id}/pdf`)
+        .set(auth(sharmaAdminToken));
+
+      expect(res.status).toBe(200);
+      expect(drawnStrings.some((s) => /e-Invoice: Failed/.test(s))).toBe(true);
+      expect(drawnStrings.some((s) => /retry from Billing page/.test(s))).toBe(true);
+    } finally {
+      spy.mockRestore();
+      await prisma.gstDocument.delete({ where: { id: crnDoc.id } });
+      await prisma.creditNote.delete({ where: { id: cn.id } });
+    }
+  });
+
   it('renders IRN block when a CRN gst_documents row exists', async () => {
     const inv = await getValuedInvoice();
     const cn = await prisma.creditNote.create({

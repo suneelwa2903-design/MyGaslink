@@ -37,6 +37,7 @@ import {
   UserRole,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
+import { formatNoteCountLabel } from '@/utils/noteBadge';
 import { useAuthStore, selectDistributorId, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -267,15 +268,19 @@ function InvoicesTab() {
                   <tr key={inv.invoiceId}>
                     <td className="font-medium text-surface-900 dark:text-white">
                       <span>{inv.invoiceNumber}</span>
-                      {/* WI-056: pills indicate how many credit/debit notes have
-                          been raised against this invoice — quick visual cue
-                          without opening the View modal. */}
+                      {/* WI-056 pills + cleanup-fix label format:
+                          1 note → "CN" / "DN" (cleaner when most invoices
+                                  only have one)
+                          N >= 2 → "CN ×N" / "DN ×N" (multiplication-sign
+                                  reads as "times", scannable in a busy list).
+                          Hover title keeps the verbose phrasing for
+                          screen-reader / accessibility. */}
                       {(inv.creditNotesCount ?? 0) > 0 && (
                         <span
                           className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
                           title={`${inv.creditNotesCount} credit note${(inv.creditNotesCount ?? 0) > 1 ? 's' : ''}`}
                         >
-                          CN&nbsp;{inv.creditNotesCount}
+                          {formatNoteCountLabel(inv.creditNotesCount ?? 0, 'CN')}
                         </span>
                       )}
                       {(inv.debitNotesCount ?? 0) > 0 && (
@@ -283,7 +288,7 @@ function InvoicesTab() {
                           className="ml-1 inline-flex items-center rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
                           title={`${inv.debitNotesCount} debit note${(inv.debitNotesCount ?? 0) > 1 ? 's' : ''}`}
                         >
-                          DN&nbsp;{inv.debitNotesCount}
+                          {formatNoteCountLabel(inv.debitNotesCount ?? 0, 'DN')}
                         </span>
                       )}
                     </td>

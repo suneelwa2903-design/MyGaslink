@@ -309,6 +309,30 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId:
       irnStatus: crnDoc.irnStatus,
     }, y);
     y += crnH;
+  } else {
+    // No usable CRN row OR a row exists but IRN failed at NIC. Drop a
+    // short status line on the PDF so the recipient (finance / customer)
+    // doesn't think the credit note is already on the GST portal when it
+    // isn't. Two distinct states:
+    //
+    //   no row OR irnStatus='not_attempted'  → grey "e-Invoice: Pending"
+    //   irnStatus='failed'                   → red "e-Invoice: Failed —
+    //                                                retry from Billing page"
+    //
+    // A successful IRN renders the full CRN block above and never reaches
+    // this branch.
+    const failed =
+      crnDoc?.irnStatus === 'failed';
+    const label = failed
+      ? 'e-Invoice: Failed — retry from Billing page'
+      : 'e-Invoice: Pending';
+    const color = failed ? '#dc2626' : LAYOUT.THEME.MUTED;
+    doc.fontSize(LAYOUT.TYPO.LABEL).fillColor(color).font('Helvetica-Bold');
+    doc.text(label, LAYOUT.MARGIN.left, y, {
+      width: A4_WIDTH - LAYOUT.MARGIN.left - LAYOUT.MARGIN.right,
+    });
+    y += 16;
+    doc.fillColor(LAYOUT.THEME.TEXT).font('Helvetica');
   }
 
   // Footer at bottom of page
