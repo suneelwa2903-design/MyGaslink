@@ -32,11 +32,12 @@ export default function FinanceInvoicesScreen() {
   const [tab, setTab] = useState<InvoiceFilter>('all');
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
 
-  const { data: invoices, isLoading, refetch } = useApiQuery<Invoice[]>(
+  const { data: invoicesResponse, isLoading, refetch } = useApiQuery<{ invoices: Invoice[] }>(
     ['fin-invoices', tab],
     '/invoices',
     tab === 'all' ? {} : { status: tab },
   );
+  const invoices: Invoice[] = invoicesResponse?.invoices ?? [];
 
   const totalOutstanding = (invoices ?? []).reduce((s, inv) => s + (inv.outstandingAmount ?? 0), 0);
   const overdueCount = (invoices ?? []).filter((inv) => (inv.status || '') === 'overdue').length;

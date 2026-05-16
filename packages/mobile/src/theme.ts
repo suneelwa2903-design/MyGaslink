@@ -28,7 +28,7 @@ export const COLORS = {
 } as const;
 
 export const ACCENT = {
-  red: '#dc2626',
+  red: '#e11d1d', /* flame-500, matches web tailwind.config.js */
   navy: '#1e3a5f',
   green: '#10b981',
   orange: '#f59e0b',
@@ -64,6 +64,24 @@ export function useTheme() {
 
 // ─── Tab bar config helper ──────────────────────────────────────────────────
 
+/**
+ * Shared tab-bar / header style config for every role layout.
+ *
+ * IMPORTANT: this intentionally does NOT set `headerTitle`. Earlier versions
+ * embedded `headerTitle: () => createElement(AppHeader)` here, which forced
+ * `theme.ts → AppHeader.tsx → theme.ts` to be a circular import that Metro
+ * loaded in indeterminate order — `ACCENT` could read as `undefined` inside
+ * AppHeader on first render and the brand colors fell back to black/white.
+ *
+ * Each role's `_layout.tsx` is the right place to wire the title:
+ *   import { AppHeader } from '../../src/components/AppHeader';
+ *   <Tabs screenOptions={{
+ *     ...getTabBarConfig(dark),
+ *     headerTitle: () => <AppHeader />,
+ *     headerTitleAlign: 'center',
+ *   }}>
+ * That keeps the import graph one-way (AppHeader → theme), which is fine.
+ */
 export function getTabBarConfig(dark: boolean) {
   const colors = dark ? COLORS.dark : COLORS.light;
   const activeColor = ACCENT.red;
@@ -106,6 +124,34 @@ export function getTabBarConfig(dark: boolean) {
 
 export function formatINR(value: number | null | undefined): string {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value ?? 0);
+}
+
+// ─── Date formatter ─────────────────────────────────────────────────────────
+
+/**
+ * Render an API date as a human-readable IST date.
+ *
+ * The API serializes `orders.delivery_date` (Prisma `@db.Date`) as a full ISO
+ * string like `"2026-05-16T00:00:00.000Z"`. Showing that raw on a driver's
+ * delivery screen is meaningless — and "2026-05-16T00:00:00.000Z" actively
+ * mis-reads as a timestamp in some timezones.
+ *
+ * We accept either a `string` (the typical wire shape) or a `Date` object
+ * (in case a screen ever passes one), parse it via the JS Date constructor,
+ * and format it through Intl in `en-IN`. Output: `"16 May 2026"`.
+ *
+ * Returns the empty string for null/undefined/unparseable input so calling
+ * `<Text>{formatDate(maybe)}</Text>` is always safe.
+ */
+export function formatDate(value: string | Date | null | undefined): string {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
 }
 
 // ─── Badge helper ───────────────────────────────────────────────────────────

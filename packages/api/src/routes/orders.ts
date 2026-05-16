@@ -13,6 +13,7 @@ import * as orderService from '../services/orderService.js';
 import { preflightDispatch, PreflightError } from '../services/gst/gstPreflightService.js';
 import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
 import { mapOrder, mapOrders } from '../utils/mappers.js';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 
 const preflightDispatchSchema = z.object({
@@ -28,7 +29,33 @@ router.get('/',
   validateQuery(orderFilterSchema),
   async (req, res) => {
     try {
-      const result = await orderService.listOrders(req.user!.distributorId!, (req.validated?.query || req.query) as any);
+      const filters = { ...((req.validated?.query || req.query) as any) };
+
+      // Driver role auto-scoping. The Driver model has no user_id FK — the
+      // convention (mirrored in driversVehicles.ts /me/* endpoints) is to
+      // resolve the driver by phone + distributor_id. Without this, a driver
+      // hitting /orders would see every other driver's orders in the same
+      // distributor (multi-tenant within-tenant leak).
+      //
+      // If the user has the driver role but no matching driver record exists
+      // in their distributor's roster, return an empty list rather than 403 —
+      // a 403 would block legitimate users mid-app and look like a bug.
+      if (req.user!.role === 'driver') {
+        const user = await prisma.user.findUnique({
+          where: { id: req.user!.userId },
+          select: { phone: true },
+        });
+        const driver = user?.phone ? await prisma.driver.findFirst({
+          where: { distributorId: req.user!.distributorId!, phone: user.phone, deletedAt: null },
+          select: { id: true },
+        }) : null;
+        if (!driver) {
+          return sendSuccess(res, { orders: [] }, 200, { page: 1, pageSize: 0, total: 0, totalPages: 0 });
+        }
+        filters.driverId = driver.id;
+      }
+
+      const result = await orderService.listOrders(req.user!.distributorId!, filters);
       return sendSuccess(res, { orders: mapOrders(result.data) }, 200, result.meta);
     } catch (err) {
       return sendError(res, (err as Error).message);

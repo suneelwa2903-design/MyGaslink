@@ -22,11 +22,12 @@ export default function DriverAnalyticsScreen() {
     '/analytics/header-metrics',
   );
 
-  const { data: recentOrders, isLoading: ordersLoading, refetch: refetchOrders } = useApiQuery<Order[]>(
+  const { data: recentOrdersResponse, isLoading: ordersLoading, refetch: refetchOrders } = useApiQuery<{ orders: Order[] }>(
     ['driver-recent-deliveries'],
     '/orders',
     { limit: 10 },
   );
+  const recentOrders: Order[] = recentOrdersResponse?.orders ?? [];
 
   const isLoading = metricsLoading || ordersLoading;
 
@@ -84,14 +85,15 @@ export default function DriverAnalyticsScreen() {
           My Performance
         </Text>
 
-        {/* Metric cards - 2 column grid */}
+        {/* Metric cards - 2 column grid. Icons dropped: MetricCard expects
+            React.ReactNode but metricCards holds Ionicons name strings —
+            passing a string into a <View> trips RN's text-in-view guard. */}
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <MetricCard
               title={metricCards[0].title}
               value={metricCards[0].value}
               color={metricCards[0].color}
-              icon={metricCards[0].icon}
             />
           </View>
           <View style={{ flex: 1 }}>
@@ -99,7 +101,6 @@ export default function DriverAnalyticsScreen() {
               title={metricCards[1].title}
               value={metricCards[1].value}
               color={metricCards[1].color}
-              icon={metricCards[1].icon}
             />
           </View>
         </View>
@@ -109,7 +110,6 @@ export default function DriverAnalyticsScreen() {
               title={metricCards[2].title}
               value={metricCards[2].value}
               color={metricCards[2].color}
-              icon={metricCards[2].icon}
             />
           </View>
           <View style={{ flex: 1 }}>
@@ -117,7 +117,6 @@ export default function DriverAnalyticsScreen() {
               title={metricCards[3].title}
               value={metricCards[3].value}
               color={metricCards[3].color}
-              icon={metricCards[3].icon}
             />
           </View>
         </View>

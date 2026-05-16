@@ -4,11 +4,12 @@ import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, MetricCard, EmptyState } from '../../src/components/ui';
 import { useTheme, ACCENT } from '../../src/theme';
 
-interface VehicleStock {
+interface TripStockItem {
   cylinderTypeId: string;
   cylinderTypeName: string;
-  fullQuantity: number;
-  emptyQuantity: number;
+  fullQuantity: number;       // still to deliver
+  deliveredQuantity: number;  // delivered today
+  emptyQuantity: number;      // empties collected today
 }
 
 interface CancelledItem {
@@ -21,18 +22,22 @@ interface CancelledItem {
 export default function DriverInventoryScreen() {
   const { dark, colors } = useTheme();
 
-  const { data: stock, isLoading, refetch } = useApiQuery<VehicleStock[]>(
-    ['driver-vehicle-stock'],
-    '/drivers-vehicles/my-vehicle-inventory',
+  // /me/trip-stock derives the truck cargo from orders assigned to this
+  // driver for today (not the static admin-managed vehicle_inventory
+  // table). Envelope per anti-pattern #9: `{ items: [...] }`.
+  const { data: stockResponse, isLoading, refetch } = useApiQuery<{ items: TripStockItem[] }>(
+    ['driver-trip-stock'],
+    '/drivers/me/trip-stock',
   );
+  const stock: TripStockItem[] = stockResponse?.items ?? [];
 
   const { data: cancelled } = useApiQuery<CancelledItem[]>(
     ['driver-cancelled-stock'],
-    '/drivers-vehicles/my-cancelled-stock',
+    '/drivers/me/cancelled-stock',
   );
 
-  const totalFulls = stock?.reduce((s, item) => s + (item.fullQuantity ?? 0), 0) ?? 0;
-  const totalEmpties = stock?.reduce((s, item) => s + (item.emptyQuantity ?? 0), 0) ?? 0;
+  const totalFulls = stock.reduce((s, item) => s + (item.fullQuantity ?? 0), 0);
+  const totalEmpties = stock.reduce((s, item) => s + (item.emptyQuantity ?? 0), 0);
   const totalCancelled = cancelled?.reduce((s, item) => s + (item.quantity ?? 0), 0) ?? 0;
 
   return (

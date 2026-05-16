@@ -2,6 +2,7 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
+import { AppHeader } from '../../src/components/AppHeader';
 
 const TAB_CONFIG: Array<{
   name: string;
@@ -20,7 +21,11 @@ export default function CustomerLayout() {
   const dark = useIsDark();
 
   return (
-    <Tabs screenOptions={getTabBarConfig(dark)}>
+    <Tabs screenOptions={{
+      ...getTabBarConfig(dark),
+      headerTitle: () => <AppHeader />,
+      headerTitleAlign: 'center',
+    }}>
       {TAB_CONFIG.map((tab) => (
         <Tabs.Screen
           key={tab.name}

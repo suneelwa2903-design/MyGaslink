@@ -45,10 +45,11 @@ export default function FinancePaymentsScreen() {
   const [showCreateNote, setShowCreateNote] = useState(false);
   const [screenTab, setScreenTab] = useState<ScreenTab>('payments');
 
-  const { data: payments, isLoading, refetch } = useApiQuery<Payment[]>(
+  const { data: paymentsResponse, isLoading, refetch } = useApiQuery<{ payments: Payment[] }>(
     ['fin-payments'],
     '/payments',
   );
+  const payments: Payment[] = paymentsResponse?.payments ?? [];
 
   const { data: creditNotes, isLoading: notesLoading, refetch: refetchNotes } = useApiQuery<CreditNote[]>(
     ['credit-notes'],
@@ -259,12 +260,13 @@ function RecordPaymentModal({ visible, dark, colors, accent, onClose, onSuccess 
   const [notes, setNotes] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
 
-  const { data: customers } = useApiQuery<Customer[]>(
+  const { data: customersResponse } = useApiQuery<{ customers: Customer[] }>(
     ['customers-for-payment'],
     '/customers',
     { pageSize: 100 },
     { enabled: visible },
   );
+  const customers: Customer[] = customersResponse?.customers ?? [];
 
   const mutation = useApiMutation<Payment, any>(
     'post', '/payments',
@@ -491,12 +493,13 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
   const [reason, setReason] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
 
-  const { data: customers } = useApiQuery<Customer[]>(
+  const { data: customersResponse } = useApiQuery<{ customers: Customer[] }>(
     ['customers-for-note'],
     '/customers',
     { pageSize: 100 },
     { enabled: visible },
   );
+  const customers: Customer[] = customersResponse?.customers ?? [];
 
   const mutation = useApiMutation<CreditNote, any>(
     'post', '/credit-notes',

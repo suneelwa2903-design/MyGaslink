@@ -27,10 +27,11 @@ export default function CustomerOrdersScreen() {
   const [modifyOrder, setModifyOrder] = useState<Order | null>(null);
   const [modifyItems, setModifyItems] = useState<Record<string, number>>({});
 
-  const { data: orders, isLoading, refetch } = useApiQuery<Order[]>(
+  const { data: ordersResponse, isLoading, refetch } = useApiQuery<{ orders: Order[] }>(
     ['customer-orders'],
     '/customer-portal/orders',
   );
+  const orders: Order[] = ordersResponse?.orders ?? [];
 
   const { data: dashboard } = useApiQuery<any>(
     ['customer-dashboard'],

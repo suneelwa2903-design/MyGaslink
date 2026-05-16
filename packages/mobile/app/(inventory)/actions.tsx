@@ -19,16 +19,18 @@ export default function InventoryActionsScreen() {
   const { dark, colors, accent } = useTheme();
   const [activeAction, setActiveAction] = useState<ActionType | null>(null);
 
-  const { data: cylinderTypes } = useApiQuery<CylinderType[]>(
+  const { data: cylinderTypesResponse } = useApiQuery<{ cylinderTypes: CylinderType[] }>(
     ['cylinder-types'],
     '/cylinder-types',
   );
+  const cylinderTypes: CylinderType[] = cylinderTypesResponse?.cylinderTypes ?? [];
 
-  const { data: recentEvents, isLoading, refetch: refetchEvents } = useApiQuery<InventoryEvent[]>(
+  const { data: recentEventsResponse, isLoading, refetch: refetchEvents } = useApiQuery<{ events: InventoryEvent[] }>(
     ['depot-history-recent'],
     '/inventory/depot-history',
     { pageSize: 10 },
   );
+  const recentEvents: InventoryEvent[] = recentEventsResponse?.events ?? [];
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
