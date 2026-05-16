@@ -14,6 +14,52 @@ const SANDBOX_BASE = 'https://apisandbox.whitebooks.in';
 const PROD_BASE = 'https://api.whitebooks.in';
 const TOKEN_SAFETY_MARGIN_MS = 5 * 60 * 1000; // 5 minutes before expiry
 const DEFAULT_IP = '127.0.0.1';
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000; // UTC+5:30
+
+/**
+ * WI-060 — Parse a WhiteBooks/NIC datetime string as IST regardless of
+ * the host process timezone.
+ *
+ * NIC returns TokenExpiry / AckDt / EwbDt / etc. as naive
+ * `YYYY-MM-DD HH:MM:SS` strings with NO timezone suffix. The values are
+ * wall-clock IST (NIC infrastructure is in India). The JS `Date()`
+ * constructor parses such strings as the host's LOCAL time:
+ *
+ *   - On an IST host: 09:00:19 IST → correct (03:30:19 UTC)
+ *   - On a UTC host:  09:00:19 UTC → 5.5 h AHEAD of the real expiry
+ *
+ * The UTC case (which is most cloud VMs in default config) would cache
+ * a token as valid for 5.5 hours after NIC actually expired it, and
+ * every call after real expiry would return NIC's generic 5002 — easy
+ * to misdiagnose as a NIC outage when it's our parse. This helper
+ * removes the host-TZ dependency entirely by building the absolute
+ * UTC instant explicitly from the IST wall-clock parts.
+ *
+ * Tolerant of both " " and "T" separators (the few different shapes
+ * WhiteBooks has returned over time).
+ */
+export function parseNicDateTime(str: string): Date {
+  // If the input carries an explicit timezone — trailing "Z" (UTC) or
+  // "+HH:MM" / "-HH:MM" — it's already unambiguous; let JS parse it.
+  // The IST-offset trick below is ONLY needed for the naive shape NIC
+  // emits ("YYYY-MM-DD HH:MM:SS" with no zone). Mocks and any caller
+  // that already passes ISO 8601 should round-trip correctly.
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(str)) {
+    return new Date(str);
+  }
+  const [datePart, timePart] = str.split(/[ T]/);
+  const [year, month, day] = datePart.split('-').map(Number);
+  // The seconds component can be `SS` or `SS.SSS`. Use parseFloat so a
+  // fractional value still parses; we drop the fractional millis since
+  // NIC only emits whole seconds and the cache safety margin is minutes.
+  const [hStr = '0', mStr = '0', sStr = '0'] = (timePart || '0:0:0').split(':');
+  const hours = Number(hStr);
+  const minutes = Number(mStr);
+  const seconds = Math.floor(parseFloat(sStr));
+  const utcMs =
+    Date.UTC(year, month - 1, day, hours, minutes, seconds) - IST_OFFSET_MS;
+  return new Date(utcMs);
+}
 
 interface WhiteBooksCredentials {
   clientId: string;
@@ -195,10 +241,21 @@ async function doAuthFetch(
     throw new GstError('No auth token in response', 'AUTH_FAILED');
   }
 
-  // Parse expiry
-  let expiresAt = new Date(Date.now() + 14 * 60 * 1000); // Default 14 minutes
+  // Parse expiry.
+  //
+  // WI-060: fallback widened from 14 min → 28 min. WhiteBooks support
+  // confirmed the token lifetime is 30 min, and we already re-auth
+  // 5 min before expiry (TOKEN_SAFETY_MARGIN_MS). A 14-min fallback
+  // forced unnecessary re-auths every ~9 min when the upstream
+  // happened to omit TokenExpiry (observed occasionally). 28 keeps a
+  // 2-min cushion under the documented 30-min cap.
+  //
+  // TokenExpiry parsing goes through parseNicDateTime so the result is
+  // correct on UTC production hosts. Plain `new Date(naiveStr)` is
+  // host-TZ-dependent — see the helper's docstring for the failure mode.
+  let expiresAt = new Date(Date.now() + 28 * 60 * 1000);
   if (json.data?.TokenExpiry) {
-    expiresAt = new Date(json.data.TokenExpiry);
+    expiresAt = parseNicDateTime(json.data.TokenExpiry);
   }
 
   tokenCache.set(cacheKey, { token, expiresAt, scope });

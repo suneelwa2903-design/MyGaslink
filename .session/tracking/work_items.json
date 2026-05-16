@@ -464,6 +464,17 @@
       "description": "On 2026-05-16 09:00:28 IST, dispatch fired 4 orders through preflight. Logs showed two of the first auth requests returned 'fetch failed' at 49ms and 91ms — too fast for DNS, too slow for connection-refused; consistent with WhiteBooks dropping a concurrent TLS handshake on cold cache. Direct curl always succeeds, so the failure mode was concurrency-driven on our side. Fixes: (1) New module-level `authInFlight` Map<string, Promise<string>> in whitebooksClient.ts. getAuthToken now returns the in-flight Promise when one already exists for the same (distributorId, scope) cacheKey, so N parallel callers share ONE underlying fetch. The Promise body was extracted into a private doAuthFetch helper. (2) The in-flight slot is released via .finally so a rejected fetch doesn't permanently lock the key. (3) gstPreflightService.preflightDispatch now does a single auth pre-warm for both einvoice and ewaybill scopes BEFORE the per-order loop — covers the sequential-cold-cache case where each iteration was firing its own fetch and a transient TLS drop on the first attempt failed an entire order. Pre-warm errors are non-fatal — per-order calls surface them with their own forensic context. Tests: gst-auth-concurrency.test.ts +4 (10 concurrent callers → 1 fetch + identical tokens; serial calls after first hit cache; einvoice + ewaybill scopes don't collapse; rejected fetch releases slot for retry). Suite: 378 → 382 (+4). Spec: .session/specs/WI-059-auth-concurrency-dedup.md."
     },
     {
+      "id": "WI-060",
+      "title": "TZ-safe parsing of WhiteBooks/NIC TokenExpiry — production landmine fix",
+      "type": "fix",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-16",
+      "blocksLaunch": true,
+      "dependencies": [],
+      "description": "WhiteBooks returns NIC TokenExpiry as a naive datetime string ('2026-05-16 09:00:19') with NO timezone — the value is wall-clock IST. Our old code did `new Date(json.data.TokenExpiry)` which interprets the string as host-local time. Dev box (IST): parses correctly. UTC production server (most cloud VMs): parses as 09:00:19 UTC = 14:30:19 IST — 5.5 HOURS AHEAD of real expiry. Every call between real expiry and our fake-cached expiry would have used a NIC-expired token and returned 5002 (NIC's generic catch-all). Would have been a perfect storm post-deploy: 5002s on UTC prod that nobody could reproduce in dev, indistinguishable from a NIC outage. Fix: new exported `parseNicDateTime(str)` helper in whitebooksClient.ts. Strings with a timezone suffix (Z or ±HH:MM) delegate to native Date. Naive strings are parsed by extracting Y/M/D/H/M/S and computing `Date.UTC(...) - 5:30h` — TZ-immune by construction. Also widened the no-TokenExpiry fallback from 14 min → 28 min (WhiteBooks confirmed 30-min lifetime; 28 keeps a 2-min cushion). Tests: gst-token-expiry.test.ts +6 (UTC correctness, host-TZ independence, ISO 'T' separator, midnight boundary, getAuthToken caches the parsed UTC, fallback ~28 min). Suite: 384 → 390 (+6). Spec: .session/specs/WI-060-tz-safe-token-expiry.md."
+    },
+    {
       "id": "WI-045",
       "title": "Mobile — Driver smoke test + fixes",
       "type": "testing",
