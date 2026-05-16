@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -9,8 +9,6 @@ import {
   HiOutlinePlusCircle,
   HiOutlineMinusCircle,
   HiOutlineBanknotes,
-  HiOutlinePlus,
-  HiOutlineTrash,
   HiOutlineArrowPath,
   HiOutlineShieldCheck,
   HiOutlineXCircle,
@@ -19,7 +17,6 @@ import {
 import {
   type Invoice,
   type PaginationMeta,
-  type CylinderType,
   type DistributorSettings,
   InvoiceStatus,
   IrnStatus,
@@ -126,12 +123,9 @@ export default function InvoicesPage() {
     queryFn: () => apiGet<{ invoices: Invoice[]; meta: PaginationMeta }>('/invoices', queryParams),
   });
 
-  const { data: cylinderTypes } = useQuery({
-    queryKey: ['cylinder-types'],
-    queryFn: () => apiGet<{ cylinderTypes: CylinderType[] }>('/cylinder-types'),
-    select: (data) => data.cylinderTypes,
-    staleTime: 10 * 60 * 1000,
-  });
+  // WI-055: the cylinder-types query previously fed the CN/DN items grid.
+  // The amount-based redesign drops that dependency entirely — no need
+  // to fetch the list from this page anymore.
 
   const invoices = data?.invoices ?? [];
   const meta = data?.meta;
@@ -292,23 +286,21 @@ export default function InvoicesPage() {
         />
       )}
 
-      {/* Credit Note Modal */}
+      {/* Credit Note Modal — WI-055 amount-based, no items */}
       {creditNoteInvoice && (
         <CreditNoteModal
           open={!!creditNoteInvoice}
           onClose={() => setCreditNoteInvoice(null)}
           invoice={creditNoteInvoice}
-          cylinderTypes={cylinderTypes ?? []}
         />
       )}
 
-      {/* Debit Note Modal */}
+      {/* Debit Note Modal — WI-055 amount-based, no items */}
       {debitNoteInvoice && (
         <DebitNoteModal
           open={!!debitNoteInvoice}
           onClose={() => setDebitNoteInvoice(null)}
           invoice={debitNoteInvoice}
-          cylinderTypes={cylinderTypes ?? []}
         />
       )}
 
@@ -608,14 +600,18 @@ function CancelGstModal({ open, onClose, invoice, type }: { open: boolean; onClo
 }
 
 // ─── Credit Note Modal ──────────────────────────────────────────────────────
+//
+// WI-055: amount-based form (Reason + Amount + Note). Mirrors the modal in
+// BillingPaymentsPage.tsx so both entry points stay in sync. See spec at
+// .session/specs/WI-055-credit-note-modal-redesign.md.
 
-function CreditNoteModal({ open, onClose, invoice, cylinderTypes }: { open: boolean; onClose: () => void; invoice: Invoice; cylinderTypes: CylinderType[] }) {
+function CreditNoteModal({ open, onClose, invoice }: { open: boolean; onClose: () => void; invoice: Invoice }) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit, control, formState: { errors } } = useForm<CreateCreditNoteInput>({
+  const invoiceTotal = Number(invoice.totalAmount ?? 0);
+  const { register, handleSubmit, formState: { errors } } = useForm<CreateCreditNoteInput>({
     resolver: zodResolver(createCreditNoteSchema),
-    defaultValues: { invoiceId: invoice.invoiceId, reason: '', items: [{ cylinderTypeId: '', quantity: 1, unitPrice: 0, gstRate: 18 }] },
+    defaultValues: { invoiceId: invoice.invoiceId, reason: '', amount: 0, note: '' },
   });
-  const { fields, append, remove } = useFieldArray({ control, name: 'items' });
 
   const mutation = useMutation({
     mutationFn: (data: CreateCreditNoteInput) => apiPost('/invoices/credit-notes', data),
@@ -623,29 +619,44 @@ function CreditNoteModal({ open, onClose, invoice, cylinderTypes }: { open: bool
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
-
   return (
-    <Modal open={open} onClose={onClose} title={`Credit Note for ${invoice.invoiceNumber}`} size="lg">
+    <Modal open={open} onClose={onClose} title={`Credit Note — ${invoice.invoiceNumber}`} size="md">
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
         <input type="hidden" {...register('invoiceId')} />
-        <Input label="Reason" required error={errors.reason?.message} {...register('reason')} />
+        <Input
+          label="Reason"
+          required
+          placeholder="e.g. Price correction, returned cylinders, billing error"
+          error={errors.reason?.message}
+          {...register('reason')}
+        />
         <div>
-          <label className="label">Items</label>
-          {fields.map((field, index) => (
-            <div key={field.id} className="grid grid-cols-4 gap-2 mb-2">
-              <Select options={cylinderOptions} placeholder="Type" required {...register(`items.${index}.cylinderTypeId`)} />
-              <Input type="number" placeholder="Qty" required {...register(`items.${index}.quantity`, { valueAsNumber: true })} />
-              <Input type="number" placeholder="Price" step="0.01" required {...register(`items.${index}.unitPrice`, { valueAsNumber: true })} />
-              <div className="flex gap-1">
-                <Input type="number" placeholder="GST%" required {...register(`items.${index}.gstRate`, { valueAsNumber: true })} />
-                {fields.length > 1 && <button type="button" onClick={() => remove(index)} className="p-1 text-red-500"><HiOutlineTrash className="h-4 w-4" /></button>}
-              </div>
-            </div>
-          ))}
-          <Button type="button" variant="ghost" size="sm" onClick={() => append({ cylinderTypeId: '', quantity: 1, unitPrice: 0, gstRate: 18 })}>
-            <HiOutlinePlus className="h-3 w-3" />Add Item
-          </Button>
+          <Input
+            label="Credit Amount (₹)"
+            type="number"
+            step="0.01"
+            min={0.01}
+            max={invoiceTotal}
+            required
+            error={errors.amount?.message}
+            {...register('amount', { valueAsNumber: true })}
+          />
+          <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+            Invoice total: ₹{invoiceTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+        </div>
+        <div>
+          <label className="label">Note <span className="text-xs text-surface-400">(optional)</span></label>
+          <textarea
+            rows={3}
+            placeholder="Additional details for the customer"
+            maxLength={500}
+            className="w-full rounded-md border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 p-2 text-sm"
+            {...register('note')}
+          />
+          {errors.note?.message && (
+            <p className="mt-1 text-xs text-red-500">{errors.note.message}</p>
+          )}
         </div>
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
@@ -657,44 +668,62 @@ function CreditNoteModal({ open, onClose, invoice, cylinderTypes }: { open: bool
 }
 
 // ─── Debit Note Modal ───────────────────────────────────────────────────────
+//
+// WI-055: amount-based. No upper bound — surcharges legitimately exceed
+// the invoice total.
 
-function DebitNoteModal({ open, onClose, invoice, cylinderTypes }: { open: boolean; onClose: () => void; invoice: Invoice; cylinderTypes: CylinderType[] }) {
+function DebitNoteModal({ open, onClose, invoice }: { open: boolean; onClose: () => void; invoice: Invoice }) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit, control, formState: { errors } } = useForm<CreateDebitNoteInput>({
+  const invoiceTotal = Number(invoice.totalAmount ?? 0);
+  const { register, handleSubmit, formState: { errors } } = useForm<CreateDebitNoteInput>({
     resolver: zodResolver(createDebitNoteSchema),
-    defaultValues: { invoiceId: invoice.invoiceId, reason: '', items: [{ cylinderTypeId: '', quantity: 1, unitPrice: 0, gstRate: 18 }] },
+    defaultValues: { invoiceId: invoice.invoiceId, reason: '', amount: 0, note: '' },
   });
-  const { fields, append, remove } = useFieldArray({ control, name: 'items' });
 
   const mutation = useMutation({
-    mutationFn: (data: CreateDebitNoteInput) => apiPost('/debit-notes', data),
+    mutationFn: (data: CreateDebitNoteInput) => apiPost('/invoices/debit-notes', data),
     onSuccess: () => { toast.success('Debit note created'); queryClient.invalidateQueries({ queryKey: ['invoices'] }); onClose(); },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
-
   return (
-    <Modal open={open} onClose={onClose} title={`Debit Note for ${invoice.invoiceNumber}`} size="lg">
+    <Modal open={open} onClose={onClose} title={`Debit Note — ${invoice.invoiceNumber}`} size="md">
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
         <input type="hidden" {...register('invoiceId')} />
-        <Input label="Reason" required error={errors.reason?.message} {...register('reason')} />
+        <Input
+          label="Reason"
+          required
+          placeholder="e.g. Delivery surcharge, fuel adjustment, post-billing correction"
+          error={errors.reason?.message}
+          {...register('reason')}
+        />
         <div>
-          <label className="label">Items</label>
-          {fields.map((field, index) => (
-            <div key={field.id} className="grid grid-cols-4 gap-2 mb-2">
-              <Select options={cylinderOptions} placeholder="Type" required {...register(`items.${index}.cylinderTypeId`)} />
-              <Input type="number" placeholder="Qty" required {...register(`items.${index}.quantity`, { valueAsNumber: true })} />
-              <Input type="number" placeholder="Price" step="0.01" required {...register(`items.${index}.unitPrice`, { valueAsNumber: true })} />
-              <div className="flex gap-1">
-                <Input type="number" placeholder="GST%" required {...register(`items.${index}.gstRate`, { valueAsNumber: true })} />
-                {fields.length > 1 && <button type="button" onClick={() => remove(index)} className="p-1 text-red-500"><HiOutlineTrash className="h-4 w-4" /></button>}
-              </div>
-            </div>
-          ))}
-          <Button type="button" variant="ghost" size="sm" onClick={() => append({ cylinderTypeId: '', quantity: 1, unitPrice: 0, gstRate: 18 })}>
-            <HiOutlinePlus className="h-3 w-3" />Add Item
-          </Button>
+          <Input
+            label="Debit Amount (₹)"
+            type="number"
+            step="0.01"
+            min={0.01}
+            required
+            error={errors.amount?.message}
+            {...register('amount', { valueAsNumber: true })}
+          />
+          <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+            Invoice total: ₹{invoiceTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <span className="ml-2 text-surface-400">(debits can exceed this)</span>
+          </p>
+        </div>
+        <div>
+          <label className="label">Note <span className="text-xs text-surface-400">(optional)</span></label>
+          <textarea
+            rows={3}
+            placeholder="Additional details for the customer"
+            maxLength={500}
+            className="w-full rounded-md border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 p-2 text-sm"
+            {...register('note')}
+          />
+          {errors.note?.message && (
+            <p className="mt-1 text-xs text-red-500">{errors.note.message}</p>
+          )}
         </div>
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>

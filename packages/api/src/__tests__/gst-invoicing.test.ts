@@ -301,18 +301,14 @@ describe('Credit Notes', () => {
     const item = invRes.body.data?.items?.[0];
     if (!item) return;
 
+    // WI-055: amount-based shape (was items[] grid pre-2026-05-16).
     const res = await request(app)
       .post('/api/invoices/credit-notes')
       .set(auth(financeToken))
       .send({
         invoiceId,
         reason: 'Quantity adjustment - test',
-        items: [{
-          cylinderTypeId: item.cylinderTypeId,
-          quantity: 1,
-          unitPrice: item.unitPrice,
-          gstRate: item.gstRate ?? 0,
-        }],
+        amount: 50,
       });
 
     expect(res.status).toBe(201);
@@ -325,7 +321,7 @@ describe('Credit Notes', () => {
       .set(auth(financeToken))
       .send({
         invoiceId: 'some-id',
-        items: [],
+        amount: 10,
       });
 
     expect(res.status).toBe(400);
@@ -345,7 +341,7 @@ describe('Credit Notes', () => {
       .set(auth(financeToken))
       .send({
         invoiceId, reason: 'WI-039 list test',
-        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: item.unitPrice, gstRate: item.gstRate ?? 0 }],
+        amount: 50,
       });
 
     const list = await request(app)
@@ -368,7 +364,7 @@ describe('Credit Notes', () => {
       .set(auth(financeToken))
       .send({
         invoiceId, reason: 'WI-039 approve test',
-        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: item.unitPrice, gstRate: item.gstRate ?? 0 }],
+        amount: 50,
       });
     const creditNoteId = createRes.body.data?.creditNoteId;
     if (!creditNoteId) return;
@@ -396,7 +392,7 @@ describe('Credit Notes', () => {
       .set(auth(financeToken))
       .send({
         invoiceId, reason: 'WI-039 reject test',
-        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: item.unitPrice, gstRate: item.gstRate ?? 0 }],
+        amount: 50,
       });
     const creditNoteId = createRes.body.data?.creditNoteId;
     if (!creditNoteId) return;
@@ -423,18 +419,14 @@ describe('Debit Notes', () => {
     const item = invRes.body.data?.items?.[0];
     if (!item) return;
 
+    // WI-055: amount-based shape (was items[] grid).
     const res = await request(app)
       .post('/api/invoices/debit-notes')
       .set(auth(financeToken))
       .send({
         invoiceId,
         reason: 'Additional charges - test',
-        items: [{
-          cylinderTypeId: item.cylinderTypeId,
-          quantity: 1,
-          unitPrice: 50,
-          gstRate: item.gstRate ?? 0,
-        }],
+        amount: 50,
       });
 
     expect(res.status).toBe(201);
@@ -453,7 +445,7 @@ describe('Debit Notes', () => {
       .set(auth(financeToken))
       .send({
         invoiceId, reason: 'WI-039 DN list test',
-        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: 50, gstRate: item.gstRate ?? 0 }],
+        amount: 50,
       });
     const list = await request(app)
       .get(`/api/invoices/${invoiceId}/debit-notes`)
@@ -474,7 +466,7 @@ describe('Debit Notes', () => {
       .set(auth(financeToken))
       .send({
         invoiceId, reason: 'WI-039 DN PDF test',
-        items: [{ cylinderTypeId: item.cylinderTypeId, quantity: 1, unitPrice: 50, gstRate: item.gstRate ?? 0 }],
+        amount: 50,
       });
     const debitNoteId = createRes.body.data?.debitNoteId;
     if (!debitNoteId) return;

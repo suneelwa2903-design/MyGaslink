@@ -412,14 +412,14 @@ describe('Credit Note', () => {
     const firstItem = invDetail.body.data?.items?.[0];
     const cylTypeId = firstItem?.cylinderTypeId || seedData.cylinderTypes.find(ct => ct.typeName === '19 KG')!.id;
 
-    // Create credit note
+    // Create credit note — WI-055 amount-based shape.
     const cnRes = await request(app)
       .post('/api/invoices/credit-notes')
       .set(auth(financeToken))
       .send({
         invoiceId,
         reason: 'Damaged cylinder returned',
-        items: [{ cylinderTypeId: cylTypeId, quantity: 1, unitPrice: 1800, gstRate: 5 }],
+        amount: 1890,
       });
 
     if (cnRes.status !== 201) console.log('Credit note error:', cnRes.body);

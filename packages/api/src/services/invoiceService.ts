@@ -313,6 +313,11 @@ export async function createManualInvoice(
 
 /**
  * Create credit note with approval workflow.
+ *
+ * WI-055: amount-based — the request carries a single `amount` and an
+ * optional `note` instead of the prior items[] grid. Credit notes are
+ * bounded to the invoice total because crediting more than was billed
+ * has no real-world meaning (use a debit/credit reversal pair instead).
  */
 export async function createCreditNote(
   distributorId: string,
@@ -320,7 +325,8 @@ export async function createCreditNote(
   data: {
     invoiceId: string;
     reason: string;
-    items: { cylinderTypeId: string; quantity: number; unitPrice: number; gstRate: number }[];
+    amount: number;
+    note?: string;
   }
 ) {
   const invoice = await prisma.invoice.findFirst({
@@ -328,9 +334,15 @@ export async function createCreditNote(
   });
   if (!invoice) throw new InvoiceError('Invoice not found', 404);
 
-  const totalAmount = data.items.reduce((sum, item) => {
-    return sum + (item.unitPrice * item.quantity * (1 + item.gstRate / 100));
-  }, 0);
+  if (data.amount <= 0) {
+    throw new InvoiceError('Credit amount must be greater than 0', 400);
+  }
+  if (data.amount > toNum(invoice.totalAmount)) {
+    throw new InvoiceError(
+      `Credit amount (₹${data.amount}) cannot exceed invoice total (₹${toNum(invoice.totalAmount)})`,
+      400,
+    );
+  }
 
   const creditNoteNumber = `CN-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
 
@@ -338,8 +350,9 @@ export async function createCreditNote(
     data: {
       invoiceId: data.invoiceId,
       creditNoteNumber,
-      totalAmount,
+      totalAmount: data.amount,
       reason: data.reason,
+      note: data.note ?? null,
       status: 'pending_cn',
       issuedBy: userId,
     },
@@ -422,6 +435,10 @@ export async function rejectCreditNote(creditNoteId: string, distributorId: stri
 
 /**
  * Create debit note with approval workflow.
+ *
+ * WI-055: amount-based — see createCreditNote(). Unlike credit notes,
+ * debit notes are NOT bounded by the invoice total: surcharges, delivery
+ * fees, or fuel adjustments can legitimately exceed the original bill.
  */
 export async function createDebitNote(
   distributorId: string,
@@ -429,7 +446,8 @@ export async function createDebitNote(
   data: {
     invoiceId: string;
     reason: string;
-    items: { cylinderTypeId: string; quantity: number; unitPrice: number; gstRate: number }[];
+    amount: number;
+    note?: string;
   }
 ) {
   const invoice = await prisma.invoice.findFirst({
@@ -437,9 +455,9 @@ export async function createDebitNote(
   });
   if (!invoice) throw new InvoiceError('Invoice not found', 404);
 
-  const totalAmount = data.items.reduce((sum, item) => {
-    return sum + (item.unitPrice * item.quantity * (1 + item.gstRate / 100));
-  }, 0);
+  if (data.amount <= 0) {
+    throw new InvoiceError('Debit amount must be greater than 0', 400);
+  }
 
   const debitNoteNumber = `DN-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
 
@@ -447,8 +465,9 @@ export async function createDebitNote(
     data: {
       invoiceId: data.invoiceId,
       debitNoteNumber,
-      totalAmount,
+      totalAmount: data.amount,
       reason: data.reason,
+      note: data.note ?? null,
       status: 'pending_dn',
       issuedBy: userId,
     },

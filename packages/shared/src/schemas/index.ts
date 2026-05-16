@@ -182,26 +182,24 @@ export const createPaymentSchema = z.object({
 
 // ─── Credit / Debit Note Schemas ─────────────────────────────────────────────
 
+// WI-055: CN/DN modal redesigned from items-grid → single amount field.
+// Items-based create path removed from the request schema; existing
+// items rows in the DB are preserved for legacy notes (read path
+// unchanged). The amount is bounded ≤ invoice total for credit notes
+// in the service layer (debit notes have no upper bound — surcharges
+// can legitimately exceed the original invoice).
 export const createCreditNoteSchema = z.object({
   invoiceId: uuid,
   reason: z.string().min(1, 'Reason is required').max(500),
-  items: z.array(z.object({
-    cylinderTypeId: uuid,
-    quantity: z.number().int().positive(),
-    unitPrice: positiveNumber,
-    gstRate: nonNegativeNumber,
-  })).min(1),
+  amount: positiveNumber,
+  note: z.string().max(500).optional(),
 });
 
 export const createDebitNoteSchema = z.object({
   invoiceId: uuid,
   reason: z.string().min(1, 'Reason is required').max(500),
-  items: z.array(z.object({
-    cylinderTypeId: uuid,
-    quantity: z.number().int().positive(),
-    unitPrice: positiveNumber,
-    gstRate: nonNegativeNumber,
-  })).min(1),
+  amount: positiveNumber,
+  note: z.string().max(500).optional(),
 });
 
 // ─── Inventory Schemas ───────────────────────────────────────────────────────

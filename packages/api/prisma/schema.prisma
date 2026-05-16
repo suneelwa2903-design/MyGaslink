@@ -933,6 +933,9 @@ model CreditNote {
   creditNoteNumber String?     @unique @map("credit_note_number")
   totalAmount Decimal          @map("total_amount") @db.Decimal(18, 4)
   reason      String
+  // WI-055: free-text customer-visible explanation. Optional, separate
+  // from `reason` which stays a single-line summary used in audit logs.
+  note        String?
   status      CreditNoteStatus @default(pending_cn)
   issueDate   DateTime?        @map("issue_date") @db.Date
   issuedBy    String?          @map("issued_by")
@@ -952,6 +955,8 @@ model DebitNote {
   debitNoteNumber String?        @unique @map("debit_note_number")
   totalAmount    Decimal         @map("total_amount") @db.Decimal(18, 4)
   reason         String
+  // WI-055: same as CreditNote.note above.
+  note           String?
   status         DebitNoteStatus @default(pending_dn)
   issueDate      DateTime?       @map("issue_date") @db.Date
   issuedBy       String?         @map("issued_by")
