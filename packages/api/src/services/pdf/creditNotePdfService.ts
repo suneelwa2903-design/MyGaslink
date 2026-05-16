@@ -126,9 +126,9 @@ function drawParties(
   return Math.max(billFromH, billToH);
 }
 
-async function drawCrnDetailsBox(
+export async function drawCrnDetailsBox(
   doc: PDFKit.PDFDocument,
-  data: { irn?: string | null; ackNo?: string | null; ackDate?: Date | null; signedQr?: string | null; irnStatus?: string },
+  data: { irn?: string | null; ackNo?: string | null; ackDate?: Date | null; signedQr?: string | null; irnStatus?: string; label?: string },
   startY: number,
 ): Promise<number> {
   const T = LAYOUT.THEME;
@@ -147,7 +147,9 @@ async function drawCrnDetailsBox(
     drawPill(doc, leftX + fullWidth - pad - 70, cy - 2, 'SUCCESS', T.PILL_SUCCESS);
   }
   doc.fontSize(F.H2).fillColor(T.PRIMARY).font('Helvetica-Bold');
-  doc.text('CRN Details - IRN', leftX + pad, cy, { width: textWidth });
+  // WI-061: label is parameterised so debitNotePdfService can reuse this
+  // helper. Default keeps the CN-side phrasing.
+  doc.text(data.label ?? 'CRN Details - IRN', leftX + pad, cy, { width: textWidth });
   cy += 16;
 
   doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');

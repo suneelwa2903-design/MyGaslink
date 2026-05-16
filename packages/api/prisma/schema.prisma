@@ -798,6 +798,13 @@ model DriverVehicleAssignment {
 
   @@index([distributorId, assignmentDate])
   @@index([driverId, assignmentDate])
+  // WI-061: prevent duplicate DVA rows for the same driver+date+trip.
+  // The dev DB accumulated 4 rows for one driver/date because nothing
+  // enforced uniqueness; trip-sheet UX picks whichever row the user
+  // clicks, producing inconsistent output. preflightDispatch reuses
+  // the same DVA row across trips (increments tripNumber in place),
+  // so the natural key is (driverId, assignmentDate, tripNumber).
+  @@unique([driverId, assignmentDate, tripNumber])
   @@map("driver_vehicle_assignments")
 }
 

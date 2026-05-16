@@ -1,11 +1,16 @@
 /**
- * Debit Note PDF Service (WI-039).
+ * Debit Note PDF Service (WI-039 → WI-061).
  *
- * Mirror of creditNotePdfService.ts. We deliberately keep this as a
- * sibling file rather than refactoring the credit-note layout into a
- * shared "note" generator — the layouts will diverge as soon as DN
- * gets its own IRN/QR section (DebitNote table doesn't carry those
- * columns yet). Sharing layout primitives via pdfLayoutUtils.
+ * WI-061 brought the DN renderer to parity with the CN renderer:
+ *   - Reads the `gst_documents` row with `docType='DBN'` for the parent
+ *     invoice and renders the IRN / Ack / QR block when present.
+ *   - Falls back to "Pending generation" (grey) when no row exists, and
+ *     "Generation failed — retry from Billing page" (red) when the row
+ *     exists with irnStatus='failed'. Matches CN behaviour after WI-056
+ *     + the same-session cleanup-fix.
+ *   - Footer text aligned with the CN footer ("computer generated …")
+ *     so a recipient holding both PDFs side-by-side sees consistent
+ *     wording.
  */
 
 import PDFDocument from 'pdfkit';
@@ -14,6 +19,9 @@ import { toNum } from '../../utils/decimal.js';
 import {
   formatMoney, drawBox, drawTextBlock,
 } from './pdfLayoutUtils.js';
+// drawCrnDetailsBox is the IRN/QR card from the CN renderer. WI-061
+// parameterised its title so DN can reuse it verbatim — no DRY copy.
+import { drawCrnDetailsBox } from './creditNotePdfService.js';
 
 const A4_WIDTH = 595;
 const A4_HEIGHT = 842;
@@ -118,8 +126,9 @@ function drawFooter(doc: PDFKit.PDFDocument, startY: number): void {
   const boxH = 36;
   drawBox(doc, leftX, startY, fullWidth, boxH, T.BORDER);
   doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
+  // WI-061: footer wording aligned with the CN PDF for visual consistency.
   doc.text(
-    'This is a computer-generated debit note and does not require a signature.',
+    'This is a computer generated debit note.',
     leftX + 10, startY + 12, { width: fullWidth - 20, align: 'center' },
   );
 }
@@ -174,6 +183,45 @@ export async function generateDebitNotePdf(debitNoteId: string, distributorId: s
 
   doc.fontSize(LAYOUT.TYPO.H2).fillColor(LAYOUT.THEME.PRIMARY).font('Helvetica-Bold');
   doc.text(`Amount: ${formatMoney(toNum(debitNote.totalAmount))}`, LAYOUT.MARGIN.left, y); y += 24;
+
+  // WI-061: DBN IRN block — mirrors the CN renderer's CRN block. The
+  // DBN IRN is written by processDebitNoteGst() to a gst_documents row
+  // with docType='DBN' and invoiceId=this DN's invoice. Three states:
+  //   row exists + irnStatus='success'  → full IRN/Ack/QR card
+  //   no row OR irnStatus='not_attempted' → grey "Pending generation"
+  //   irnStatus='failed'                  → red "Generation failed …"
+  const dbnDoc = await prisma.gstDocument.findFirst({
+    where: {
+      invoiceId: inv.id,
+      docType: 'DBN',
+      isLatest: true,
+      deletedAt: null,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (dbnDoc && (dbnDoc.irn || dbnDoc.ackNo || dbnDoc.signedQr)) {
+    const dbnH = await drawCrnDetailsBox(doc, {
+      irn: dbnDoc.irn,
+      ackNo: dbnDoc.ackNo,
+      ackDate: dbnDoc.ackDate,
+      signedQr: dbnDoc.signedQr,
+      irnStatus: dbnDoc.irnStatus,
+      label: 'DBN Details - IRN',
+    }, y);
+    y += dbnH;
+  } else {
+    const failed = dbnDoc?.irnStatus === 'failed';
+    const label = failed
+      ? 'e-Invoice (IRN): Generation failed — retry from Billing page'
+      : 'e-Invoice (IRN): Pending generation';
+    const color = failed ? '#dc2626' : LAYOUT.THEME.MUTED;
+    doc.fontSize(LAYOUT.TYPO.LABEL).fillColor(color).font('Helvetica-Bold');
+    doc.text(label, LAYOUT.MARGIN.left, y, {
+      width: A4_WIDTH - LAYOUT.MARGIN.left - LAYOUT.MARGIN.right,
+    });
+    y += 16;
+    doc.fillColor(LAYOUT.THEME.TEXT).font('Helvetica');
+  }
 
   const footerY = A4_HEIGHT - LAYOUT.MARGIN.bottom - 50;
   if (y < footerY) y = footerY;

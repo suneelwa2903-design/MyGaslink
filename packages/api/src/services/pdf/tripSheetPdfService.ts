@@ -43,13 +43,29 @@ export async function generateTripSheetPdf(
   // EWBs and label the doc accordingly — see below. We only hard-fail
   // when there's no usable EWB anywhere on the route.
 
+  // WI-061: the trip sheet is a TRANSIT document for orders currently
+  // on the truck. The prior query swept up `delivered` /
+  // `modified_delivered` too, which leaked finished morning-trip
+  // orders into the afternoon-trip sheet on multi-trip days. Two
+  // tightenings:
+  //   1. Status set narrows to `pending_delivery` only — orders that
+  //      have been dispatched but not yet confirmed delivered.
+  //   2. `updatedAt >= assignment.updatedAt` lower bound. Preflight
+  //      reuses the same DVA row across trips and bumps `updatedAt`
+  //      on each trip increment (see preflightDispatch:146 — sets
+  //      tripNumber: { increment: 1 }, which Prisma's @updatedAt
+  //      handler refreshes). So trip-1 orders whose pending_delivery
+  //      transition predates the current DVA.updatedAt are excluded.
+  //      Defense in depth — the status guard already covers the
+  //      common case, this catches the rare manual rollback.
   const orders = await prisma.order.findMany({
     where: {
       distributorId,
       driverId: assignment.driverId,
       deliveryDate: assignment.assignmentDate,
       deletedAt: null,
-      status: { in: ['pending_delivery', 'delivered', 'modified_delivered'] },
+      status: 'pending_delivery',
+      updatedAt: { gte: assignment.updatedAt },
     },
     include: {
       customer: { select: { customerName: true, billingAddressLine1: true, billingCity: true } },
