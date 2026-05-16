@@ -265,7 +265,28 @@ function InvoicesTab() {
               <tbody>
                 {invoices.map((inv) => (
                   <tr key={inv.invoiceId}>
-                    <td className="font-medium text-surface-900 dark:text-white">{inv.invoiceNumber}</td>
+                    <td className="font-medium text-surface-900 dark:text-white">
+                      <span>{inv.invoiceNumber}</span>
+                      {/* WI-056: pills indicate how many credit/debit notes have
+                          been raised against this invoice — quick visual cue
+                          without opening the View modal. */}
+                      {(inv.creditNotesCount ?? 0) > 0 && (
+                        <span
+                          className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                          title={`${inv.creditNotesCount} credit note${(inv.creditNotesCount ?? 0) > 1 ? 's' : ''}`}
+                        >
+                          CN&nbsp;{inv.creditNotesCount}
+                        </span>
+                      )}
+                      {(inv.debitNotesCount ?? 0) > 0 && (
+                        <span
+                          className="ml-1 inline-flex items-center rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+                          title={`${inv.debitNotesCount} debit note${(inv.debitNotesCount ?? 0) > 1 ? 's' : ''}`}
+                        >
+                          DN&nbsp;{inv.debitNotesCount}
+                        </span>
+                      )}
+                    </td>
                     <td>{inv.customerName || 'N/A'}</td>
                     <td>{new Date(inv.issueDate).toLocaleDateString('en-IN')}</td>
                     <td>{new Date(inv.dueDate).toLocaleDateString('en-IN')}</td>

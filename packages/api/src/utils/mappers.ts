@@ -111,6 +111,14 @@ export function mapInvoice(inv: any): any {
   if (mapped.debitNotes) {
     mapped.debitNotes = mapped.debitNotes.map((n: any) => renameId(n, 'debitNoteId'));
   }
+  // WI-056: list responses use Prisma's `_count` aggregator; surface the
+  // counts as flat numeric fields so the web can drop CN/DN pills onto
+  // each row without iterating the (now-absent) full arrays.
+  if (mapped._count) {
+    mapped.creditNotesCount = mapped._count.creditNotes ?? 0;
+    mapped.debitNotesCount = mapped._count.debitNotes ?? 0;
+    delete mapped._count;
+  }
   return mapped;
 }
 

@@ -284,18 +284,29 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId:
   doc.fontSize(LAYOUT.TYPO.H2).fillColor(LAYOUT.THEME.PRIMARY).font('Helvetica-Bold');
   doc.text(`Amount: ${formatMoney(toNum(creditNote.totalAmount))}`, LAYOUT.MARGIN.left, y); y += 24;
 
-  // CRN Details box (IRN/QR) — credit notes do not have gstDocuments directly,
-  // but we check for future expansion; for now, skip if no IRN data.
-  // (The old service stored IRN/signedQr on the credit_notes table. If your Prisma
-  //  model does not have those fields yet, this section is safely skipped.)
-  const cnAny = creditNote as any;
-  if (cnAny.irn || cnAny.ackNo || cnAny.signedQrCode) {
+  // WI-056: CRN Details box — sourced from gst_documents.
+  //
+  // Pre-WI-056 this section read phantom columns off the CreditNote row
+  // (`irn` / `ackNo` / `signedQrCode`) that never existed. processCreditNoteGst
+  // actually writes the IRN to a `gst_documents` row with docType=CRN and
+  // invoiceId=cn.invoice. Look that up instead so the CN PDF renders the
+  // real IRN block + QR code when the credit note went through NIC.
+  const crnDoc = await prisma.gstDocument.findFirst({
+    where: {
+      invoiceId: inv.id,
+      docType: 'CRN',
+      isLatest: true,
+      deletedAt: null,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (crnDoc && (crnDoc.irn || crnDoc.ackNo || crnDoc.signedQr)) {
     const crnH = await drawCrnDetailsBox(doc, {
-      irn: cnAny.irn,
-      ackNo: cnAny.ackNo,
-      ackDate: cnAny.ackDate,
-      signedQr: cnAny.signedQrCode || cnAny.signed_qr_code,
-      irnStatus: cnAny.einvoiceStatus || cnAny.einvoice_status,
+      irn: crnDoc.irn,
+      ackNo: crnDoc.ackNo,
+      ackDate: crnDoc.ackDate,
+      signedQr: crnDoc.signedQr,
+      irnStatus: crnDoc.irnStatus,
     }, y);
     y += crnH;
   }

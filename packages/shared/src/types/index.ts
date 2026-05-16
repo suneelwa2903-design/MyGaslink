@@ -308,6 +308,11 @@ export interface Invoice {
   igstValue: number;
   isGaslinkBilling: boolean;
   items: InvoiceItem[];
+  // WI-056: list responses carry these as derived counts (Prisma _count).
+  // Detail responses (GET /invoices/:id) instead carry full creditNotes /
+  // debitNotes arrays via a separate type extension on the consumer side.
+  creditNotesCount?: number;
+  debitNotesCount?: number;
   createdAt: string;
   updatedAt: string;
 }

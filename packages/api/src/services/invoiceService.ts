@@ -5,7 +5,19 @@ import { toNum } from '../utils/decimal.js';
 
 type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
-const invoiceInclude = {
+// WI-056: list responses now ship counts, not full CN/DN arrays. The View
+// modal fetches the full lists from /invoices/:id/credit-notes when needed.
+// listInvoiceInclude → bandwidth-conscious shape for the table view.
+// detailInvoiceInclude → keeps the existing full arrays for /invoices/:id.
+const listInvoiceInclude = {
+  customer: { select: { id: true, customerName: true, gstin: true, billingState: true } },
+  items: { include: { cylinderType: { select: { typeName: true } } } },
+  order: { select: { id: true, orderNumber: true } },
+  paymentAllocations: { include: { payment: { select: { id: true, paymentMethod: true } } } },
+  _count: { select: { creditNotes: true, debitNotes: true } },
+} satisfies Prisma.InvoiceInclude;
+
+const detailInvoiceInclude = {
   customer: { select: { id: true, customerName: true, gstin: true, billingState: true } },
   items: { include: { cylinderType: { select: { typeName: true } } } },
   order: { select: { id: true, orderNumber: true } },
@@ -13,6 +25,9 @@ const invoiceInclude = {
   creditNotes: true,
   debitNotes: true,
 } satisfies Prisma.InvoiceInclude;
+
+// Compat alias for any imports that still reference the old name.
+const invoiceInclude = detailInvoiceInclude;
 
 export async function listInvoices(
   distributorId: string,
@@ -38,7 +53,7 @@ export async function listInvoices(
   const [invoices, total] = await Promise.all([
     prisma.invoice.findMany({
       where,
-      include: invoiceInclude,
+      include: listInvoiceInclude,
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * pageSize,
       take: pageSize,
