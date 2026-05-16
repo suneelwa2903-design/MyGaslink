@@ -368,6 +368,21 @@ driverRouter.get('/me/trip-ewbs',
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      // WI-063 follow-up — current-trip scoping. Mirrors the WI-061 fix
+      // in tripSheetPdfService: preflightDispatch reuses the same DVA
+      // row across trips and bumps updatedAt on each tripNumber++.
+      // Combining (a) status='pending_delivery' and (b) order.updatedAt
+      // >= dva.updatedAt cleanly partitions trip 2's in-transit orders
+      // from trip 1's already-delivered ones on a multi-trip day.
+      // Without this, the afternoon-trip EWB list would inherit the
+      // morning batch's EWBs even though those orders are off the truck.
+      const assignment = await prisma.driverVehicleAssignment.findFirst({
+        where: { driverId: driver.id, distributorId, assignmentDate: today },
+        orderBy: { tripNumber: 'desc' },
+        select: { updatedAt: true },
+      });
+      if (!assignment) return sendSuccess(res, { items: [] });
+
       // We need order_id + ewb_no + ewb_status + valid_till, joined to
       // orders for the customer name and order number. doc_type='INV'
       // filters out CN/DN docs which carry separate EWBs on the same
@@ -381,6 +396,8 @@ driverRouter.get('/me/trip-ewbs',
             driverId: driver.id,
             deliveryDate: today,
             deletedAt: null,
+            status: 'pending_delivery',
+            updatedAt: { gte: assignment.updatedAt },
           },
         },
         select: {
@@ -459,8 +476,15 @@ driverRouter.get('/me/trip-sheet-pdf',
         res.setHeader('Content-Disposition', `inline; filename="trip-sheet-${assignment.id.substring(0, 8)}.pdf"`);
         return res.send(pdf);
       } catch (svcErr: any) {
+        // WI-063 follow-up — map inner TripSheetError to a clean 404 for
+        // the driver-scoped wrapper. The service throws 400 with
+        // "No EWB available for trip sheet — no orders on this route
+        // have an e-Way Bill yet" when the route is empty (post-WI-061
+        // this also fires when all orders are delivered). Either way,
+        // the mobile UI wants "no document" semantics → 404 → empty
+        // state, not a generic 400 error toast.
         if (svcErr instanceof TripSheetError) {
-          return sendError(res, svcErr.message, svcErr.statusCode);
+          return sendNotFound(res, svcErr.message);
         }
         throw svcErr;
       }
