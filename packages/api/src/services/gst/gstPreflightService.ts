@@ -175,6 +175,32 @@ export async function preflightDispatch(params: {
     );
   }
 
+  // WI-059 pre-warm: do a single auth fetch BEFORE the per-order loop
+  // so the token cache is hot before any IRN/EWB call runs. Without this,
+  // sequential per-order iterations on a cold cache each fire their
+  // own auth fetch (slower) and a transient TLS drop on the very first
+  // attempt fails an entire order. The in-flight dedup map in
+  // whitebooksClient covers the parallel case; this covers the
+  // sequential-cold-cache case. Pre-warm errors are non-fatal — per-order
+  // calls will surface them with their own forensic context.
+  if (distributor.gstMode !== 'disabled') {
+    const { getAuthToken } = await import('./whitebooksClient.js');
+    try {
+      await getAuthToken(distributorId, 'einvoice');
+    } catch (warmErr) {
+      logger.warn('einvoice auth pre-warm failed; per-order calls will retry', {
+        distributorId, err: (warmErr as Error).message,
+      });
+    }
+    try {
+      await getAuthToken(distributorId, 'ewaybill');
+    } catch (warmErr) {
+      logger.warn('ewaybill auth pre-warm failed; per-order calls will retry', {
+        distributorId, err: (warmErr as Error).message,
+      });
+    }
+  }
+
   const results: PreflightResult[] = [];
   for (const order of orders) {
     const r = await preflightOne({

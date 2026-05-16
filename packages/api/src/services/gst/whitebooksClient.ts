@@ -34,6 +34,20 @@ interface CachedToken {
 // In-memory token cache (per distributor + scope)
 const tokenCache = new Map<string, CachedToken>();
 
+// WI-059: in-flight auth promise dedup. When N parallel callers ask
+// for a token on a cold cache, only ONE underlying /authenticate
+// request hits WhiteBooks — the others `await` the same promise.
+//
+// Without this, runDispatchPreflight kicked off N concurrent
+// auth fetches and 1-2 of them got dropped at the TLS layer by
+// WhiteBooks with a generic "fetch failed", bouncing orders back
+// to pending_dispatch. See logs from 2026-05-16 09:00:28 IST and
+// spec at [.session/specs/WI-059-auth-concurrency-dedup.md].
+//
+// Entry is set BEFORE the fetch begins and cleared in `.finally()` so
+// a rejected fetch doesn't permanently lock the key.
+const authInFlight = new Map<string, Promise<string>>();
+
 function getCacheKey(distributorId: string | null, scope: string): string {
   return `${distributorId || 'gaslink'}_${scope}`;
 }
@@ -78,8 +92,13 @@ export async function getCredentials(distributorId: string | null, scope: 'einvo
 }
 
 /**
- * Authenticate with WhiteBooks for e-Invoice API
- * Returns auth token (cached in memory)
+ * Authenticate with WhiteBooks for e-Invoice / EWB API.
+ *
+ * Returns the auth token (cached in memory). WI-059 adds in-flight
+ * promise dedup: concurrent callers for the same `(distributorId, scope)`
+ * share one underlying `/authenticate` request instead of stampeding
+ * WhiteBooks with N parallel TLS handshakes — see the comment on
+ * `authInFlight` above for context.
  */
 export async function getAuthToken(
   distributorId: string | null,
@@ -92,6 +111,34 @@ export async function getAuthToken(
     return cached.token;
   }
 
+  // Dedup: if another caller is already fetching this key, await its
+  // Promise. This is the single source of the "fetch failed" elimination —
+  // without it, 4 parallel preflight orders → 4 parallel TLS handshakes,
+  // and 1-2 of them got dropped by WhiteBooks on cold cache.
+  const inFlight = authInFlight.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const fetchPromise = doAuthFetch(distributorId, scope, cacheKey)
+    // Always release the slot when the promise settles. Without this a
+    // rejected fetch would permanently lock the key for this process.
+    .finally(() => {
+      authInFlight.delete(cacheKey);
+    });
+
+  authInFlight.set(cacheKey, fetchPromise);
+  return fetchPromise;
+}
+
+/**
+ * The body of the WhiteBooks `/authenticate` call. Split out from
+ * `getAuthToken` so the public function can wrap it in the in-flight
+ * dedup map without bloating the cache-hit fast path.
+ */
+async function doAuthFetch(
+  distributorId: string | null,
+  scope: 'einvoice' | 'ewaybill',
+  cacheKey: string,
+): Promise<string> {
   const creds = await getCredentials(distributorId, scope);
   if (!creds) throw new GstError('GST credentials not configured', 'NO_CREDENTIALS');
 
