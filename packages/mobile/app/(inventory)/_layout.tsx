@@ -2,6 +2,7 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
+import { AppHeader } from '../../src/components/AppHeader';
 
 const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
   analytics: { outline: 'bar-chart-outline', filled: 'bar-chart' },
@@ -16,7 +17,11 @@ export default function InventoryLayout() {
   const tabBarConfig = getTabBarConfig(dark);
 
   return (
-    <Tabs screenOptions={tabBarConfig}>
+    <Tabs screenOptions={{
+      ...tabBarConfig,
+      headerTitle: () => <AppHeader />,
+      headerTitleAlign: 'center',
+    }}>
       <Tabs.Screen name="analytics" options={{
         title: 'Analytics',
         tabBarIcon: ({ focused, color }) => (

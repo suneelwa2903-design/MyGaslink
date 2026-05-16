@@ -4,6 +4,7 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
+import { AppHeader } from '../../src/components/AppHeader';
 import { attachAutoSync, startNetworkListener, subscribePendingDeliveries } from '../../src/services/deliveryQueue';
 
 function PendingBadge({ count }: { count: number }) {
@@ -33,7 +34,11 @@ export default function DriverLayout() {
   }, []);
 
   return (
-    <Tabs screenOptions={getTabBarConfig(dark)}>
+    <Tabs screenOptions={{
+      ...getTabBarConfig(dark),
+      headerTitle: () => <AppHeader />,
+      headerTitleAlign: 'center',
+    }}>
       <Tabs.Screen name="analytics" options={{
         title: 'Analytics',
         tabBarIcon: ({ focused, color }) => (

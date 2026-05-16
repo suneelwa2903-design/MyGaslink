@@ -1,8 +1,9 @@
-import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
+import { useThemeStore } from '../../src/stores/themeStore';
 import { useTheme, ACCENT } from '../../src/theme';
 
 interface MenuItem {
@@ -17,6 +18,7 @@ export default function DriverMoreScreen() {
   const { dark, colors } = useTheme();
   const router = useRouter();
   const { user, logout } = useAuthStore();
+  const toggleMode = useThemeStore((s) => s.toggleMode);
 
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -91,6 +93,41 @@ export default function DriverMoreScreen() {
               DRIVER
             </Text>
           </View>
+        </View>
+
+        {/* Appearance */}
+        <View style={{
+          backgroundColor: colors.cardBg,
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: colors.cardBorder,
+          padding: 16,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 14,
+        }}>
+          <View style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: dark ? `${ACCENT.purple}22` : `${ACCENT.purple}15`,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <Ionicons name={dark ? 'moon' : 'sunny'} size={20} color={ACCENT.purple} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>Appearance</Text>
+            <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+              {dark ? 'Dark mode' : 'Light mode'}
+            </Text>
+          </View>
+          <Switch
+            value={dark}
+            onValueChange={toggleMode}
+            trackColor={{ false: '#cbd5e1', true: ACCENT.purple }}
+            thumbColor="#ffffff"
+          />
         </View>
 
         {/* Menu Items */}

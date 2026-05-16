@@ -436,12 +436,13 @@ function CustomersModal({
   const [formType, setFormType] = useState<'B2B' | 'B2C'>('B2C');
   const [formCredit, setFormCredit] = useState('');
 
-  const { data: customers, isLoading, refetch } = useApiQuery<Customer[]>(
+  const { data: customersResponse, isLoading, refetch } = useApiQuery<{ customers: Customer[] }>(
     ['customers'],
     '/customers?limit=200',
     undefined,
     { enabled: visible },
   );
+  const customers: Customer[] = customersResponse?.customers ?? [];
 
   const createMutation = useApiMutation<Customer, any>(
     'post',
@@ -804,19 +805,21 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
   const [vehType, setVehType] = useState('');
   const [vehCapacity, setVehCapacity] = useState('');
 
-  const { data: drivers, isLoading: driversLoading, refetch: refetchDrivers } = useApiQuery<Driver[]>(
+  const { data: driversResponse, isLoading: driversLoading, refetch: refetchDrivers } = useApiQuery<{ drivers: Driver[] }>(
     ['drivers'],
     '/drivers',
     undefined,
     { enabled: visible },
   );
+  const drivers: Driver[] = driversResponse?.drivers ?? [];
 
-  const { data: vehicles, isLoading: vehiclesLoading, refetch: refetchVehicles } = useApiQuery<Vehicle[]>(
+  const { data: vehiclesResponse, isLoading: vehiclesLoading, refetch: refetchVehicles } = useApiQuery<{ vehicles: Vehicle[] }>(
     ['vehicles'],
     '/vehicles',
     undefined,
     { enabled: visible },
   );
+  const vehicles: Vehicle[] = vehiclesResponse?.vehicles ?? [];
 
   const { data: assignments, isLoading: assignmentsLoading, refetch: refetchAssignments } = useApiQuery<VehicleMapping[]>(
     ['assignments'],
@@ -1302,19 +1305,21 @@ function ReportsModal({ visible, onClose }: { visible: boolean; onClose: () => v
     { enabled: visible },
   );
 
-  const { data: customers } = useApiQuery<Customer[]>(
+  const { data: customersResponse } = useApiQuery<{ customers: Customer[] }>(
     ['customers-reports'],
     '/customers?limit=200',
     undefined,
     { enabled: visible },
   );
+  const customers: Customer[] = customersResponse?.customers ?? [];
 
-  const { data: drivers } = useApiQuery<Driver[]>(
+  const { data: driversResponse } = useApiQuery<{ drivers: Driver[] }>(
     ['drivers-reports'],
     '/drivers',
     undefined,
     { enabled: visible },
   );
+  const drivers: Driver[] = driversResponse?.drivers ?? [];
 
   const topCustomers = useMemo(() => {
     if (!customers) return [];
@@ -1800,12 +1805,13 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
 
   const ROLES = ['admin', 'manager', 'driver', 'customer'];
 
-  const { data: users, isLoading, refetch } = useApiQuery<UserRecord[]>(
+  const { data: usersResponse, isLoading, refetch } = useApiQuery<{ users: UserRecord[] }>(
     ['users'],
     '/auth/users',
     undefined,
     { enabled: visible },
   );
+  const users: UserRecord[] = usersResponse?.users ?? [];
 
   const createMutation = useApiMutation<any, any>('post', '/auth/register', {
     invalidateKeys: [['users']],

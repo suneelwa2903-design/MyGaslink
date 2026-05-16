@@ -47,10 +47,11 @@ export default function CustomerInvoicesScreen() {
   const { dark, colors, accent } = useTheme();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const { data: invoices, isLoading, refetch } = useApiQuery<Invoice[]>(
+  const { data: invoicesResponse, isLoading, refetch } = useApiQuery<{ invoices: Invoice[] }>(
     ['customer-invoices'],
     '/customer-portal/invoices',
   );
+  const invoices: Invoice[] = invoicesResponse?.invoices ?? [];
 
   const { data: invoiceDetail } = useApiQuery<InvoiceDetail>(
     ['invoice-detail', selectedId!],

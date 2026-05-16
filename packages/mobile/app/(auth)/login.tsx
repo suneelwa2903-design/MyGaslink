@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, Alert, Image, FlatList } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, Alert, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +14,8 @@ const FEATURE_HIGHLIGHTS = [
   { key: 'tracking', icon: 'location-outline' as const, label: 'Real-time Tracking' },
   { key: 'analytics', icon: 'bar-chart-outline' as const, label: 'Smart Analytics' },
   { key: 'fleet', icon: 'car-outline' as const, label: 'Fleet Management' },
+  { key: 'invoices', icon: 'receipt-outline' as const, label: 'Digital Invoices' },
+  { key: 'gst', icon: 'shield-checkmark-outline' as const, label: 'GST Compliant' },
 ];
 
 export default function LoginScreen() {
@@ -76,8 +78,10 @@ export default function LoginScreen() {
         style={{ flex: 1 }}
       >
         <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24 }}>
-          {/* Logo + Brand */}
-          <View style={{ alignItems: 'center', marginBottom: 32 }}>
+          {/* Logo + Brand — marginTop: 60 keeps the logo off the status bar
+              even on phones with short notches. 16px gap between logo image
+              and the wordmark, then a slim subtitle. */}
+          <View style={{ alignItems: 'center', marginTop: 60, marginBottom: 32 }}>
             <Image
               source={require('../../assets/logo.png')}
               style={{
@@ -94,21 +98,24 @@ export default function LoginScreen() {
             </Text>
           </View>
 
-          {/* Login Card */}
+          {/* Login Card — modernised: bigger radius, softer shadow, 8px
+              vertical rhythm between form elements (via parent gap). */}
           <View style={{
-            backgroundColor: dark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)', borderRadius: 20, padding: 24,
-            shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: dark ? 0.3 : 0.08, shadowRadius: 16, elevation: 3,
-            borderWidth: 1, borderColor: colors.cardBorder,
+            backgroundColor: dark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+            borderRadius: 24,
+            paddingHorizontal: 24,
+            paddingVertical: 32,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.08,
+            shadowRadius: 16,
+            elevation: 8,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            gap: 8,
           }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
-              Welcome back
-            </Text>
-            <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 24 }}>
-              Sign in to your account
-            </Text>
-
             {/* Email */}
-            <View style={{ marginBottom: 16 }}>
+            <View>
               <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Email</Text>
               <TextInput
                 value={email}
@@ -122,16 +129,16 @@ export default function LoginScreen() {
                 selectionColor={ACCENT.red}
                 style={{
                   borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12,
-                  paddingHorizontal: 16, paddingVertical: 14, fontSize: 16,
-                  backgroundColor: colors.inputBg, color: colors.text,
+                  height: 52, paddingHorizontal: 16, fontSize: 16,
+                  backgroundColor: dark ? colors.inputBg : '#f8fafc', color: colors.text,
                 }}
               />
             </View>
 
             {/* Password */}
-            <View style={{ marginBottom: 20 }}>
+            <View>
               <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Password</Text>
-              <View style={{ position: 'relative' }}>
+              <View style={{ position: 'relative', justifyContent: 'center' }}>
                 <TextInput
                   value={password}
                   onChangeText={setPassword}
@@ -142,13 +149,14 @@ export default function LoginScreen() {
                   selectionColor={ACCENT.red}
                   style={{
                     borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12,
-                    paddingHorizontal: 16, paddingVertical: 14, fontSize: 16,
-                    backgroundColor: colors.inputBg, paddingRight: 56, color: colors.text,
+                    height: 52, paddingHorizontal: 16, fontSize: 16,
+                    backgroundColor: dark ? colors.inputBg : '#f8fafc',
+                    paddingRight: 56, color: colors.text,
                   }}
                 />
                 <TouchableOpacity
                   onPress={() => setShowPassword(!showPassword)}
-                  style={{ position: 'absolute', right: 16, top: 14 }}
+                  style={{ position: 'absolute', right: 16 }}
                 >
                   <Text style={{ color: flame, fontSize: 13, fontWeight: '600' }}>
                     {showPassword ? 'Hide' : 'Show'}
@@ -160,20 +168,26 @@ export default function LoginScreen() {
             {/* Forgot Password */}
             <TouchableOpacity
               onPress={() => router.push('/(auth)/forgot-password')}
-              style={{ alignSelf: 'flex-end', marginBottom: 16, marginTop: -12 }}
+              style={{ alignSelf: 'flex-end' }}
             >
               <Text style={{ color: flame, fontSize: 13, fontWeight: '600' }}>
                 Forgot Password?
               </Text>
             </TouchableOpacity>
 
-            {/* Sign In Button */}
+            {/* Sign In Button — solid flame red (#e11d1d via ACCENT.red),
+                52px tall, 14px radius. No gradient library; the solid brand
+                colour reads "primary action" on its own. */}
             <TouchableOpacity
               onPress={handleLogin}
               disabled={loading}
               style={{
-                backgroundColor: flame, borderRadius: 12, paddingVertical: 16,
-                alignItems: 'center', opacity: loading ? 0.7 : 1,
+                backgroundColor: flame,
+                borderRadius: 14,
+                height: 52,
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: loading ? 0.7 : 1,
               }}
             >
               <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
@@ -182,9 +196,12 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Footer with theme toggle */}
-          <View style={{ alignItems: 'center', marginTop: 32, gap: 12 }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+          {/* Footer: small "Powered by" caption + theme toggle pill,
+              sitting just above the feature strip. The toggle pill uses
+              the same surface/border tokens as the rest of the chrome so
+              it doesn't read as a separate UI region. */}
+          <View style={{ alignItems: 'center', marginTop: 28, gap: 10 }}>
+            <Text style={{ color: colors.textMuted, fontSize: 11 }}>
               Powered by MyGasLink
             </Text>
 
@@ -194,49 +211,60 @@ export default function LoginScreen() {
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 6,
-                paddingHorizontal: 12,
+                paddingHorizontal: 16,
                 paddingVertical: 6,
                 borderRadius: 20,
-                backgroundColor: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+                backgroundColor: colors.cardBg,
+                borderWidth: 1,
+                borderColor: colors.cardBorder,
               }}
             >
+              {/* Show the action — i.e. what tapping will switch TO —
+                  not the current state. Sun icon = "tap to go light",
+                  moon icon = "tap to go dark". */}
               <Ionicons
-                name={dark ? 'moon' : 'sunny'}
+                name={dark ? 'sunny' : 'moon'}
                 size={14}
                 color={colors.textSecondary}
               />
               <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-                {dark ? 'Dark' : 'Light'}
+                {dark ? 'Light' : 'Dark'}
               </Text>
             </TouchableOpacity>
           </View>
 
-          {/* Feature highlights slider */}
-          <FlatList
-            data={FEATURE_HIGHLIGHTS}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 20, paddingBottom: 16, gap: 10 }}
-            keyExtractor={(item) => item.key}
-            renderItem={({ item }) => (
+          {/* Feature highlights — vertical stack of full-width rows. Icon
+              on the left, label on the right; 8px gap between rows. The
+              horizontal carousel didn't justify its own scroll affordance
+              for only 5 items, so we lay them out vertically and let the
+              outer ScrollView handle the page scroll. */}
+          <View style={{ gap: 8, paddingTop: 16, paddingBottom: 16 }}>
+            {FEATURE_HIGHLIGHTS.map((item) => (
               <View
+                key={item.key}
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
-                  gap: 6,
-                  backgroundColor: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
-                  paddingHorizontal: 14,
-                  paddingVertical: 8,
-                  borderRadius: 20,
+                  gap: 12,
+                  borderRadius: 16,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  backgroundColor: colors.cardBg,
+                  borderWidth: 1,
+                  borderColor: colors.cardBorder,
                 }}
               >
-                <Ionicons name={item.icon} size={14} color={flame} />
-                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary }}>
+                <Ionicons name={item.icon} size={22} color={flame} />
+                <Text style={{
+                  fontSize: 14,
+                  fontWeight: '500',
+                  color: colors.text,
+                }}>
                   {item.label}
                 </Text>
               </View>
-            )}
-          />
+            ))}
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsDark } from '../../src/stores/themeStore';
+import { AppHeader } from '../../src/components/AppHeader';
 
 const TAB_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   dashboard: 'grid-outline',
@@ -31,6 +32,8 @@ export default function AdminLayout() {
 
   return (
     <Tabs screenOptions={{
+      headerTitle: () => <AppHeader />,
+      headerTitleAlign: 'center',
       headerStyle: { backgroundColor: headerBg, elevation: 0, shadowOpacity: 0, borderBottomWidth: 1, borderBottomColor: borderColor },
       headerTitleStyle: { fontWeight: '700', fontSize: 18, color: headerText },
       tabBarActiveTintColor: activeColor,

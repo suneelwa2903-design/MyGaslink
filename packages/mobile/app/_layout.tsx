@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { View } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../src/stores/authStore';
-import { useIsDark } from '../src/stores/themeStore';
+import { useIsDark, useThemeHasHydrated } from '../src/stores/themeStore';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { NetworkIndicator } from '../src/components/NetworkIndicator';
 import { initCrashReporting, setUser as setCrashUser } from '../src/services/crashReporting';
@@ -23,6 +23,7 @@ export default function RootLayout() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const router = useRouter();
   const isDark = useIsDark();
+  const themeHasHydrated = useThemeHasHydrated();
   const notificationResponseListener = useRef<{ remove: () => void } | null>(null);
 
   useEffect(() => {
@@ -66,6 +67,17 @@ export default function RootLayout() {
       notificationResponseListener.current?.remove();
     };
   }, [router]);
+
+  // Gate first render until the persisted theme is restored from SecureStore.
+  // Without this gate, users who picked dark would briefly see light on
+  // every cold launch before persist finishes (~50ms async read).
+  if (!themeHasHydrated) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff' }}>
+        <ActivityIndicator size="large" color="#338dff" />
+      </View>
+    );
+  }
 
   return (
     <ErrorBoundary>

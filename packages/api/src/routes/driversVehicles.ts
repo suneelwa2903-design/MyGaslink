@@ -7,8 +7,33 @@ import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiR
 import { prisma } from '../lib/prisma.js';
 import * as driverService from '../services/driverService.js';
 import * as vehicleService from '../services/vehicleService.js';
-import { mapDriver, mapDrivers, mapVehicle, mapVehicles, mapAssignment, mapAssignments } from '../utils/mappers.js';
+import { mapDriver, mapDrivers, mapVehicle, mapVehicles, mapAssignment, mapAssignments, mapOrders } from '../utils/mappers.js';
 import { z } from 'zod';
+
+/**
+ * Resolve the Driver record for the requesting user.
+ *
+ * The Driver model has NO `user_id` FK — the convention (also used in
+ * orders.ts driver-scoping and the /me/* endpoints below) is shared phone
+ * + distributor_id. We centralise the lookup here so all five callers
+ * stay in sync if the rule ever changes.
+ *
+ * Returns null when (a) the user has no phone on file or (b) no driver
+ * row matches that phone in their distributor's roster. Callers must
+ * handle null gracefully — typically by returning an empty result, NOT
+ * a 403 (a 403 on a legitimate driver mid-app would read as a generic bug).
+ */
+async function resolveDriverFromUser(userId: string, distributorId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { phone: true },
+  });
+  if (!user?.phone) return null;
+  return prisma.driver.findFirst({
+    where: { distributorId, phone: user.phone, deletedAt: null },
+    select: { id: true },
+  });
+}
 
 // We export two routers: one for drivers, one for vehicles
 const driverRouter = Router();
@@ -182,49 +207,281 @@ driverRouter.put('/assignments/:id/status',
 // ─── Driver "My" Endpoints (for mobile app) ────────────────────────────────
 
 // GET /api/drivers/me/assignment - Get current driver's today assignment
+// Returns the DriverVehicleAssignment for the requesting driver on today's
+// date, with the day's orders (and order items) attached so the mobile
+// Trip screen can render Customer, Items, Status in one round-trip.
+// Returns `null` (HTTP 200) when the driver has no assignment for today —
+// the mobile UI shows an "No active trip" empty state on null.
 driverRouter.get('/me/assignment',
   requireRole('driver'),
   async (req, res) => {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const assignments = await driverService.listAssignments(
-        req.user!.distributorId!, today, undefined
-      );
-      // Find assignment for this driver's userId
-      const myAssignment = assignments.find((a: any) =>
-        a.driver?.userId === req.user!.userId
-      );
-      if (!myAssignment) {
-        // Fallback: look up driver by userId, then find assignment
-        const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { phone: true } });
-        const driver = user?.phone ? await prisma.driver.findFirst({
-          where: { distributorId: req.user!.distributorId!, phone: user.phone, deletedAt: null },
-        }) : null;
-        if (driver) {
-          const driverAssignment = assignments.find((a: any) => a.driverId === driver.id);
-          if (driverAssignment) return sendSuccess(res, mapAssignment(driverAssignment));
-        }
-        return sendSuccess(res, null);
-      }
-      return sendSuccess(res, mapAssignment(myAssignment));
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
+      if (!driver) return sendSuccess(res, null);
+
+      // Date math: use start-of-today as the date column is `@db.Date`.
+      // Prisma equality on a `Date` column matches by the calendar day.
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const assignment = await prisma.driverVehicleAssignment.findFirst({
+        where: { driverId: driver.id, distributorId, assignmentDate: today },
+        include: {
+          driver: { select: { id: true, driverName: true, phone: true } },
+          vehicle: { select: { id: true, vehicleNumber: true } },
+        },
+        orderBy: { tripNumber: 'desc' }, // multiple trips same day: pick latest
+      });
+      if (!assignment) return sendSuccess(res, null);
+
+      // Pull today's orders separately so mapAssignment stays a pure
+      // shape transform and the orders query can opt into the heavier
+      // orderInclude (items + cylinderType + customer). We scope to the
+      // driver to keep the EW within-tenant + within-driver guarantee.
+      const orders = await prisma.order.findMany({
+        where: {
+          distributorId,
+          driverId: driver.id,
+          deliveryDate: today,
+          deletedAt: null,
+        },
+        include: {
+          customer: { select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true } },
+          items: { include: { cylinderType: { select: { typeName: true } } } },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      const mapped = mapAssignment(assignment);
+      mapped.orders = mapOrders(orders);
+      return sendSuccess(res, mapped);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }
   }
 );
 
-// GET /api/drivers/me/vehicle-inventory - Get current driver's vehicle inventory
+// GET /api/drivers/me/trip-stock - Aggregated cylinder cargo for the
+// driver's trip today, derived from the orders assigned to them. We do
+// NOT read `vehicle_inventory` (admin-managed static table; never written
+// on dispatch). Instead we sum per cylinder type across this driver's
+// today orders:
+//   - totalFulls   = sum of item.quantity across pending_dispatch /
+//                    pending_delivery orders
+//   - deliveredFulls = sum of item.deliveredQuantity for already-
+//                      delivered orders (visibility on what's gone)
+//   - emptiesCollected = sum of item.emptiesCollected across delivered
+//                        orders (what's now riding back to the depot)
+// For GST-disabled tenants this is the only stock view the driver gets.
+driverRouter.get('/me/trip-stock',
+  requireRole('driver'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
+      if (!driver) return sendSuccess(res, { items: [] });
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const orders = await prisma.order.findMany({
+        where: {
+          distributorId,
+          driverId: driver.id,
+          deliveryDate: today,
+          deletedAt: null,
+          // Exclude cancelled — those aren't on the truck.
+          status: { not: 'cancelled' },
+        },
+        include: {
+          items: { include: { cylinderType: { select: { id: true, typeName: true } } } },
+        },
+      });
+
+      // Aggregate per cylinder type. Use a Map for deterministic insertion
+      // order; we serialise to an array at the end so the mobile UI can
+      // .map directly (anti-pattern #9: every list response shape is the
+      // envelope `{ items: [...] }`).
+      type Row = {
+        cylinderTypeId: string;
+        cylinderTypeName: string;
+        fullQuantity: number;     // still to deliver
+        deliveredQuantity: number; // already handed over today
+        emptyQuantity: number;     // returned by customers, on truck
+      };
+      const rows = new Map<string, Row>();
+
+      for (const order of orders) {
+        const isDelivered = order.status === 'delivered' || order.status === 'modified_delivered';
+        for (const item of order.items) {
+          const key = item.cylinderTypeId;
+          const existing = rows.get(key) ?? {
+            cylinderTypeId: key,
+            cylinderTypeName: item.cylinderType?.typeName ?? 'Unknown',
+            fullQuantity: 0,
+            deliveredQuantity: 0,
+            emptyQuantity: 0,
+          };
+          if (isDelivered) {
+            existing.deliveredQuantity += item.deliveredQuantity ?? 0;
+            existing.emptyQuantity += item.emptiesCollected ?? 0;
+          } else {
+            existing.fullQuantity += item.quantity ?? 0;
+          }
+          rows.set(key, existing);
+        }
+      }
+
+      return sendSuccess(res, { items: Array.from(rows.values()) });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// GET /api/drivers/me/trip-ewbs - List of EWB compliance docs for today's
+// orders, scoped to this driver. Joins gst_documents to orders so the
+// driver can read out / share the EWB number at the customer site (NIC
+// rule: the EWB must accompany the goods, not just the invoice).
+//
+// For GST-disabled tenants, returns `{ items: [] }` without querying — no
+// gst_documents rows exist for those distributors anyway, but skipping the
+// query keeps the response O(1) and the intent obvious.
+driverRouter.get('/me/trip-ewbs',
+  requireRole('driver'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
+      if (!driver) return sendSuccess(res, { items: [] });
+
+      // Short-circuit for GST-disabled tenants.
+      const distributor = await prisma.distributor.findUnique({
+        where: { id: distributorId },
+        select: { gstMode: true },
+      });
+      if (!distributor || distributor.gstMode === 'disabled') {
+        return sendSuccess(res, { items: [] });
+      }
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // We need order_id + ewb_no + ewb_status + valid_till, joined to
+      // orders for the customer name and order number. doc_type='INV'
+      // filters out CN/DN docs which carry separate EWBs on the same
+      // gst_documents table.
+      const docs = await prisma.gstDocument.findMany({
+        where: {
+          distributorId,
+          docType: 'INV',
+          ewbNo: { not: null },
+          order: {
+            driverId: driver.id,
+            deliveryDate: today,
+            deletedAt: null,
+          },
+        },
+        select: {
+          orderId: true,
+          ewbNo: true,
+          ewbDate: true,
+          ewbValidTill: true,
+          ewbStatus: true,
+          order: {
+            select: {
+              orderNumber: true,
+              customer: { select: { customerName: true } },
+            },
+          },
+          invoice: { select: { invoiceNumber: true } },
+        },
+        orderBy: { ewbDate: 'desc' },
+      });
+
+      const items = docs.map((d) => ({
+        orderId: d.orderId,
+        orderNumber: d.order?.orderNumber ?? null,
+        customerName: d.order?.customer?.customerName ?? null,
+        invoiceNumber: d.invoice?.invoiceNumber ?? null,
+        ewbNo: d.ewbNo,
+        ewbDate: d.ewbDate,
+        ewbValidTill: d.ewbValidTill,
+        ewbStatus: d.ewbStatus,
+      }));
+      return sendSuccess(res, { items });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// GET /api/drivers/me/trip-sheet-pdf - Driver-scoped wrapper around the
+// existing trip-sheet PDF service (WI-038). We find the requesting driver's
+// today DVA and stream the same PDF the admin already gets at
+// /api/orders/trip-sheet/:assignmentId. Returns 404 when there's no DVA
+// for today (no trip → no sheet). GST-disabled tenants are blocked at the
+// PDF service level (it requires at least one EWB to render), but we also
+// short-circuit here for a cleaner error.
+driverRouter.get('/me/trip-sheet-pdf',
+  requireRole('driver'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
+      if (!driver) return sendNotFound(res, 'Trip sheet');
+
+      // Short-circuit for GST-disabled tenants — no EWBs ever exist.
+      const distributor = await prisma.distributor.findUnique({
+        where: { id: distributorId },
+        select: { gstMode: true },
+      });
+      if (!distributor || distributor.gstMode === 'disabled') {
+        return sendNotFound(res, 'Trip sheet');
+      }
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const assignment = await prisma.driverVehicleAssignment.findFirst({
+        where: { driverId: driver.id, distributorId, assignmentDate: today },
+        select: { id: true },
+        orderBy: { tripNumber: 'desc' },
+      });
+      if (!assignment) return sendNotFound(res, 'Trip sheet');
+
+      // Reuse the existing service. Dynamic import keeps the pdfkit cold
+      // path out of the cold-start path of this hot driver router.
+      const { generateTripSheetPdf, TripSheetError } = await import('../services/pdf/tripSheetPdfService.js');
+      try {
+        const pdf = await generateTripSheetPdf(assignment.id, distributorId);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="trip-sheet-${assignment.id.substring(0, 8)}.pdf"`);
+        return res.send(pdf);
+      } catch (svcErr: any) {
+        if (svcErr instanceof TripSheetError) {
+          return sendError(res, svcErr.message, svcErr.statusCode);
+        }
+        throw svcErr;
+      }
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// GET /api/drivers/me/vehicle-inventory - Static vehicle inventory (admin-
+// managed via PUT /api/vehicles/:id/inventory). Useful when a tenant
+// chooses to maintain per-vehicle stock manually. For per-trip cargo
+// derived from orders, use /me/trip-stock above.
 driverRouter.get('/me/vehicle-inventory',
   requireRole('driver'),
   async (req, res) => {
     try {
-      const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { phone: true } });
-      const driver = user?.phone ? await prisma.driver.findFirst({
-        where: { distributorId: req.user!.distributorId!, phone: user.phone, deletedAt: null },
-      }) : null;
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
       if (!driver) return sendSuccess(res, []);
 
-      // Find today's assignment to get vehicle
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const assignment = await prisma.driverVehicleAssignment.findFirst({
@@ -233,7 +490,7 @@ driverRouter.get('/me/vehicle-inventory',
       });
       if (!assignment) return sendSuccess(res, []);
 
-      const inv = await vehicleService.getVehicleInventory(assignment.vehicleId, req.user!.distributorId!);
+      const inv = await vehicleService.getVehicleInventory(assignment.vehicleId, distributorId);
       return sendSuccess(res, inv);
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -246,10 +503,8 @@ driverRouter.get('/me/cancelled-stock',
   requireRole('driver'),
   async (req, res) => {
     try {
-      const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { phone: true } });
-      const driver = user?.phone ? await prisma.driver.findFirst({
-        where: { distributorId: req.user!.distributorId!, phone: user.phone, deletedAt: null },
-      }) : null;
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
       if (!driver) return sendSuccess(res, []);
 
       const today = new Date();
@@ -261,7 +516,7 @@ driverRouter.get('/me/cancelled-stock',
       if (!assignment) return sendSuccess(res, []);
 
       const events = await vehicleService.getCancelledStockByVehicle(
-        req.user!.distributorId!, assignment.vehicleId
+        distributorId, assignment.vehicleId
       );
       return sendSuccess(res, events);
     } catch (err) {

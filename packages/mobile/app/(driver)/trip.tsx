@@ -1,21 +1,122 @@
-import { useEffect } from 'react';
-import { View, Text, ScrollView, RefreshControl, Alert } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, ScrollView, RefreshControl, Alert, Linking, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Card, MetricCard, Button, Badge } from '../../src/components/ui';
 import { startLocationTracking, stopLocationTracking } from '../../src/services/location';
 import { useAuthStore } from '../../src/stores/authStore';
-import { useTheme, ACCENT } from '../../src/theme';
+import { useTheme, ACCENT, formatDate } from '../../src/theme';
+import { api, getErrorMessage } from '../../src/lib/api';
 import type { DriverVehicleAssignment } from '@gaslink/shared';
+
+/**
+ * Distributor settings response — minimal slice we read here. The full
+ * shape lives in @gaslink/shared `DistributorSettings`. We only need
+ * gstMode to know whether the EWB section should render.
+ */
+interface DistributorSettings {
+  gstMode: 'disabled' | 'sandbox' | 'live' | null;
+}
+
+/**
+ * One row of the /me/trip-ewbs response. Mirrors the columns we project
+ * server-side. `ewbNo` is the 12-digit NIC EWB number the driver reads
+ * out at the customer site / shows the road inspector.
+ */
+interface TripEwb {
+  orderId: string;
+  orderNumber: string | null;
+  customerName: string | null;
+  invoiceNumber: string | null;
+  ewbNo: string | null;
+  ewbDate: string | null;
+  ewbValidTill: string | null;
+  ewbStatus: 'not_attempted' | 'pending' | 'active' | 'failed' | 'cancelled';
+}
 
 export default function DriverTripScreen() {
   const { dark, colors } = useTheme();
   const user = useAuthStore((s) => s.user);
 
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+
   const { data: assignment, isLoading, refetch } = useApiQuery<DriverVehicleAssignment | null>(
     ['driver-active-trip'],
-    '/drivers-vehicles/my-assignment',
+    '/drivers/me/assignment',
   );
+
+  // Distributor settings drive the conditional EWB section. For GST-disabled
+  // tenants gstMode === 'disabled' and we hide the entire compliance block.
+  const { data: settings } = useApiQuery<DistributorSettings>(
+    ['distributor-settings'],
+    '/settings',
+  );
+  const gstEnabled = !!settings?.gstMode && settings.gstMode !== 'disabled';
+
+  // Only fetch EWBs when GST is on. TanStack's `enabled` skips the call
+  // entirely otherwise — no wasted round-trip, no 200 + [] spinner flash.
+  const { data: ewbsResponse } = useApiQuery<{ items: TripEwb[] }>(
+    ['driver-trip-ewbs'],
+    '/drivers/me/trip-ewbs',
+    undefined,
+    { enabled: gstEnabled },
+  );
+  const ewbs: TripEwb[] = ewbsResponse?.items ?? [];
+
+  /**
+   * Download the consolidated trip-sheet PDF, save to the app's cache
+   * directory, then hand to the OS share sheet (WhatsApp / Save to Files
+   * / etc.). Uses the shared axios instance per CLAUDE.md mobile rule —
+   * raw fetch() would drop the Authorization header and 401.
+   *
+   * expo-file-system v55 dropped the legacy `writeAsStringAsync` +
+   * `cacheDirectory` API in favour of `new File(Paths.cache, name).write(bytes)`.
+   * The new API takes a Uint8Array directly so we skip the base64 detour
+   * the old API needed.
+   */
+  const handleDownloadTripSheet = async () => {
+    setDownloadingPdf(true);
+    try {
+      const res = await api.get('/drivers/me/trip-sheet-pdf', {
+        responseType: 'arraybuffer',
+      });
+      const bytes = new Uint8Array(res.data);
+
+      const file = new File(Paths.cache, `trip-sheet-${Date.now()}.pdf`);
+      // `create()` is a no-op if the file exists; `write()` overwrites.
+      try { file.create(); } catch { /* already exists, fine */ }
+      file.write(bytes);
+
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Trip Sheet',
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (err) {
+      Alert.alert('Could not load trip sheet', getErrorMessage(err));
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  /**
+   * Open the NIC e-Way Bill public lookup for a given EWB number. This is
+   * the official portal; the driver / inspector can verify validity here.
+   */
+  const handleShareEwb = (ewb: TripEwb) => {
+    if (!ewb.ewbNo) return;
+    const url = `https://docs.ewaybillgst.gov.in/ewbnatval.aspx?ewbno=${encodeURIComponent(ewb.ewbNo)}`;
+    Linking.openURL(url).catch(() =>
+      Alert.alert('Could not open browser', 'Copy the EWB number manually if needed.'),
+    );
+  };
 
   // Auto-start location tracking when trip is dispatched
   useEffect(() => {
@@ -31,8 +132,10 @@ export default function DriverTripScreen() {
     return () => stopLocationTracking();
   }, [assignment?.status, assignment?.assignmentId, user?.userId]);
 
-  const updateStatus = useApiMutation<unknown, { status: string }>('patch',
-    () => `/drivers-vehicles/assignments/${assignment?.assignmentId}/status`,
+  // PUT (not PATCH): the API exposes /assignments/:id/status via PUT —
+  // we send the full status field, not a partial diff.
+  const updateStatus = useApiMutation<unknown, { status: string }>('put',
+    () => `/drivers/assignments/${assignment?.assignmentId}/status`,
     {
       invalidateKeys: [['driver-active-trip'], ['driver-orders']],
       successMessage: 'Trip status updated!',
@@ -160,6 +263,86 @@ export default function DriverTripScreen() {
                 </View>
               </Card>
             ))}
+
+            {/* Compliance Docs — only rendered when this distributor has
+                GST enabled (sandbox / live). For GST-disabled tenants
+                (e.g. dist-001 in dev) there's nothing to show. */}
+            {gstEnabled && (
+              <>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
+                  Compliance Docs
+                </Text>
+
+                {/* Trip Sheet PDF — single button. Saves to cache then
+                    opens the OS share sheet so the driver can WhatsApp /
+                    save / print it. Disabled while the download is in
+                    flight. */}
+                <Button
+                  title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet (PDF)'}
+                  onPress={handleDownloadTripSheet}
+                  loading={downloadingPdf}
+                  variant="secondary"
+                />
+
+                {/* Per-order EWB list. Each row shows the 12-digit NIC
+                    number, customer, valid-till, and a Share button that
+                    opens the official NIC public lookup for verification. */}
+                {ewbs.length === 0 ? (
+                  <Card>
+                    <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
+                      No EWB documents yet — they appear here once dispatch preflight completes.
+                    </Text>
+                  </Card>
+                ) : (
+                  ewbs.map((ewb) => (
+                    <Card key={ewb.orderId}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontWeight: '700', color: colors.text }}>{ewb.orderNumber}</Text>
+                          {ewb.customerName && (
+                            <Text style={{ fontSize: 13, color: ACCENT.blue, marginTop: 2 }}>
+                              {ewb.customerName}
+                            </Text>
+                          )}
+                          <Text style={{ fontSize: 13, color: colors.text, marginTop: 6 }}>
+                            <Text style={{ color: colors.textSecondary }}>EWB: </Text>
+                            <Text style={{ fontWeight: '700' }}>{ewb.ewbNo}</Text>
+                          </Text>
+                          {ewb.ewbValidTill && (
+                            <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                              Valid till {formatDate(ewb.ewbValidTill)}
+                            </Text>
+                          )}
+                        </View>
+                        <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                          <Badge
+                            label={ewb.ewbStatus}
+                            variant={ewb.ewbStatus === 'active' ? 'success' : ewb.ewbStatus === 'cancelled' || ewb.ewbStatus === 'failed' ? 'danger' : 'warning'}
+                          />
+                          <TouchableOpacity
+                            onPress={() => handleShareEwb(ewb)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              paddingHorizontal: 10,
+                              paddingVertical: 6,
+                              borderRadius: 8,
+                              backgroundColor: dark ? 'rgba(59,130,246,0.15)' : '#eef7ff',
+                            }}
+                          >
+                            <Ionicons name="open-outline" size={14} color={ACCENT.blue} />
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: ACCENT.blue }}>
+                              Verify
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </Card>
+                  ))
+                )}
+              </>
+            )}
           </>
         )}
       </ScrollView>

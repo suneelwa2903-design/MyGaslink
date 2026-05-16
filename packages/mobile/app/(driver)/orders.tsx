@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
 import { DeliveryProofCamera } from '../../src/components/DeliveryProofCamera';
-import { useTheme, ACCENT, formatINR } from '../../src/theme';
+import { useTheme, ACCENT, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 import { apiPost, getErrorMessage } from '../../src/lib/api';
 import {
@@ -16,6 +16,15 @@ import {
   type QueuedDelivery,
 } from '../../src/services/deliveryQueue';
 
+/**
+ * Per-item delivery state — what the driver actually entered for delivered
+ * count and empties returned. Keyed by cylinderTypeId so we can look it up
+ * when rendering each row. Kept as strings (not numbers) so the TextInput
+ * binding doesn't fight an empty field while the driver is mid-typing —
+ * we coerce to number only at submit time.
+ */
+type DeliveryItemEntry = { delivered: string; empties: string };
+
 export default function DriverOrdersScreen() {
   const { dark, colors } = useTheme();
   const queryClient = useQueryClient();
@@ -25,19 +34,41 @@ export default function DriverOrdersScreen() {
   const [proofPhoto, setProofPhoto] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [pendingQueue, setPendingQueue] = useState<QueuedDelivery[]>([]);
+  const [deliveryItems, setDeliveryItems] = useState<Record<string, DeliveryItemEntry>>({});
 
   useEffect(() => {
     const unsub = subscribePendingDeliveries(setPendingQueue);
     return () => { unsub(); };
   }, []);
 
+  // Seed editable qty state when the modal opens. We default delivered to
+  // the ordered quantity (the most common case — full delivery) and empties
+  // to 0 (the driver explicitly fills this in based on what the customer
+  // handed back). When the modal closes (selectedOrder → null) the state
+  // is wiped so a stale entry from order A can't leak into order B.
+  useEffect(() => {
+    if (!selectedOrder) {
+      setDeliveryItems({});
+      return;
+    }
+    const seed: Record<string, DeliveryItemEntry> = {};
+    for (const item of selectedOrder.items ?? []) {
+      seed[item.cylinderTypeId] = {
+        delivered: String(item.quantity ?? 0),
+        empties: '0',
+      };
+    }
+    setDeliveryItems(seed);
+  }, [selectedOrder]);
+
   const pendingOrderIds = new Set(pendingQueue.map((p) => p.orderId));
 
-  const { data: orders, isLoading, refetch } = useApiQuery<Order[]>(
+  const { data: ordersResponse, isLoading, refetch } = useApiQuery<{ orders: Order[] }>(
     ['driver-orders'],
     '/orders',
     { status: 'pending_delivery' },
   );
+  const orders: Order[] = ordersResponse?.orders ?? [];
 
   const submitDelivery = async (orderId: string, items: { cylinderTypeId: string; deliveredQuantity: number; emptiesCollected: number }[]) => {
     setConfirming(true);
@@ -81,24 +112,42 @@ export default function DriverOrdersScreen() {
     }
   };
 
+  /**
+   * Open the modal for an order. The inline "Deliver" button on the card
+   * used to fire a quick Alert that submitted ordered-qty + 0 empties, but
+   * that path is gone now: every delivery flows through the modal so the
+   * driver can correct the delivered count *and* enter empties — the
+   * field the API already supports but the UI never exposed.
+   */
   const handleDelivery = (order: Order) => {
-    Alert.alert(
-      'Confirm Delivery',
-      `Mark order ${order.orderNumber} as delivered?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm', onPress: () => {
-            const items = (order.items ?? []).map((item) => ({
-              cylinderTypeId: item.cylinderTypeId,
-              deliveredQuantity: item.quantity,
-              emptiesCollected: 0,
-            }));
-            submitDelivery(order.orderId, items);
-          },
-        },
-      ],
-    );
+    setSelectedOrder(order);
+  };
+
+  /**
+   * Read the driver-entered qty/empties from state, validate, and submit.
+   * Validation is intentionally light — match the API's Zod schema
+   * (`min(0)`, integer) and stop there. We don't enforce
+   * `delivered <= ordered`: short deliveries are legal (the service writes
+   * a cancelled_stock_event for the difference, see orderService.ts).
+   */
+  const handleConfirmFromModal = () => {
+    if (!selectedOrder) return;
+    const items: { cylinderTypeId: string; deliveredQuantity: number; emptiesCollected: number }[] = [];
+    for (const orderItem of selectedOrder.items ?? []) {
+      const entry = deliveryItems[orderItem.cylinderTypeId];
+      const delivered = Number.parseInt(entry?.delivered ?? '0', 10);
+      const empties = Number.parseInt(entry?.empties ?? '0', 10);
+      if (Number.isNaN(delivered) || delivered < 0 || Number.isNaN(empties) || empties < 0) {
+        Alert.alert('Invalid quantity', `Check "${orderItem.cylinderTypeName}" — quantities must be 0 or higher.`);
+        return;
+      }
+      items.push({
+        cylinderTypeId: orderItem.cylinderTypeId,
+        deliveredQuantity: delivered,
+        emptiesCollected: empties,
+      });
+    }
+    submitDelivery(selectedOrder.orderId, items);
   };
 
   return (
@@ -184,8 +233,22 @@ export default function DriverOrdersScreen() {
         )}
       </ScrollView>
 
-      {/* Delivery Detail Modal */}
-      <Modal visible={!!selectedOrder} animationType="slide" transparent>
+      {/* Delivery Detail Modal.
+          Why the extra props:
+          - `presentationStyle="overFullScreen"` is the iOS knob that lets a
+            transparent modal cover the full window including the tab bar;
+            without it the modal renders inside the screen frame and the
+            bottom tab strip bleeds through under the sheet.
+          - `statusBarTranslucent` is the Android equivalent for the status
+            bar — needed for the dark overlay to paint edge-to-edge on
+            Android 11+ edge-to-edge layouts. */}
+      <Modal
+        visible={!!selectedOrder}
+        animationType="slide"
+        transparent
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+      >
         <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <View style={{
             backgroundColor: colors.cardBg,
@@ -204,7 +267,7 @@ export default function DriverOrdersScreen() {
               </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: colors.textSecondary }}>Delivery Date</Text>
-                <Text style={{ fontWeight: '600', color: colors.text }}>{selectedOrder?.deliveryDate}</Text>
+                <Text style={{ fontWeight: '600', color: colors.text }}>{formatDate(selectedOrder?.deliveryDate)}</Text>
               </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: colors.textSecondary }}>Total</Text>
@@ -215,14 +278,72 @@ export default function DriverOrdersScreen() {
             </View>
 
             <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text, marginTop: 16, marginBottom: 8 }}>Items</Text>
-            {selectedOrder?.items?.map((item, i) => (
-              <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                <Text style={{ color: colors.textSecondary }}>{item.cylinderTypeName}</Text>
-                <Text style={{ fontWeight: '600', color: colors.text }}>
-                  Qty: {item.quantity} | {formatINR(item.unitPrice)}/unit
-                </Text>
-              </View>
-            ))}
+            {selectedOrder?.status === 'pending_delivery' ? (
+              // Editable rows — driver enters delivered count + empties
+              // returned per cylinder type. Defaults seeded in the effect
+              // above (ordered qty / 0).
+              selectedOrder?.items?.map((item) => {
+                const entry = deliveryItems[item.cylinderTypeId] ?? { delivered: String(item.quantity ?? 0), empties: '0' };
+                return (
+                  <View key={item.cylinderTypeId} style={{ marginBottom: 10 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>
+                      {item.cylinderTypeName}
+                      <Text style={{ fontWeight: '400', color: colors.textMuted }}> (ordered: {item.quantity})</Text>
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>Delivered Qty</Text>
+                        <TextInput
+                          value={entry.delivered}
+                          onChangeText={(v) =>
+                            setDeliveryItems((prev) => ({
+                              ...prev,
+                              [item.cylinderTypeId]: { ...prev[item.cylinderTypeId], delivered: v.replace(/[^0-9]/g, '') },
+                            }))
+                          }
+                          keyboardType="number-pad"
+                          selectionColor={ACCENT.red}
+                          style={{
+                            borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10,
+                            paddingHorizontal: 12, paddingVertical: 10, fontSize: 15,
+                            backgroundColor: colors.inputBg, color: colors.text,
+                          }}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>Empties Collected</Text>
+                        <TextInput
+                          value={entry.empties}
+                          onChangeText={(v) =>
+                            setDeliveryItems((prev) => ({
+                              ...prev,
+                              [item.cylinderTypeId]: { ...prev[item.cylinderTypeId], empties: v.replace(/[^0-9]/g, '') },
+                            }))
+                          }
+                          keyboardType="number-pad"
+                          selectionColor={ACCENT.red}
+                          style={{
+                            borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10,
+                            paddingHorizontal: 12, paddingVertical: 10, fontSize: 15,
+                            backgroundColor: colors.inputBg, color: colors.text,
+                          }}
+                        />
+                      </View>
+                    </View>
+                  </View>
+                );
+              })
+            ) : (
+              // Read-only for already-delivered / cancelled orders.
+              selectedOrder?.items?.map((item, i) => (
+                <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+                  <Text style={{ color: colors.textSecondary }}>{item.cylinderTypeName}</Text>
+                  <Text style={{ fontWeight: '600', color: colors.text }}>
+                    Qty: {item.quantity} | {formatINR(item.unitPrice)}/unit
+                  </Text>
+                </View>
+              ))
+            )}
 
             {/* Delivery Proof Photo */}
             <View style={{ marginTop: 16 }}>
@@ -275,9 +396,12 @@ export default function DriverOrdersScreen() {
               </View>
               {selectedOrder?.status === 'pending_delivery' && (
                 <View style={{ flex: 1 }}>
-                  <Button title="Confirm Delivery" variant="accent" onPress={() => {
-                    if (selectedOrder) handleDelivery(selectedOrder);
-                  }} />
+                  <Button
+                    title={confirming ? 'Confirming…' : 'Confirm Delivery'}
+                    variant="accent"
+                    onPress={handleConfirmFromModal}
+                    loading={confirming}
+                  />
                 </View>
               )}
             </View>
