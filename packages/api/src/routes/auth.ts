@@ -18,6 +18,17 @@ const loginLimiter = rateLimit({
   message: { success: false, data: null, error: 'Too many login attempts. Please try again later.', code: 'RATE_LIMITED' },
 });
 
+// Refresh-token endpoint is unauthenticated and accepts a body credential —
+// rate-limit the same shape as login (per-IP, 15-min window). Keeps brute-force
+// against captured refresh tokens infeasible.
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 30 : 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, data: null, error: 'Too many refresh attempts. Please try again later.', code: 'RATE_LIMITED' },
+});
+
 /**
  * POST /api/auth/login
  * Public — authenticate user with email + password
@@ -47,7 +58,7 @@ router.post('/login', loginLimiter, validate(loginSchema), async (req, res) => {
  * POST /api/auth/refresh
  * Public — exchange refresh token for new token pair
  */
-router.post('/refresh', async (req, res) => {
+router.post('/refresh', refreshLimiter, async (req, res) => {
   try {
     const { refreshToken } = req.body;
     if (!refreshToken) {

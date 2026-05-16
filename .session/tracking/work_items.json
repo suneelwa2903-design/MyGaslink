@@ -396,6 +396,97 @@
       "blocksLaunch": false,
       "dependencies": [],
       "description": "Pre-existing contract mismatch — route returned raw DistributorSetting[] but every web consumer typed it as DistributorSettings object (gstMode + gstCredentials + cylinderThresholds + …). Surface: gstEnabled was silently false everywhere, so inline CN/DN icons, View Invoice modal's GST sections, and WI-039's new CN/DN section never rendered. Fixed by synthesizing the envelope server-side from the distributor row + einvoice credential + rawSettings[]. Surfaced + fixed during WI-039/042 UI verification. Commit: fa838f6."
+    },
+    {
+      "id": "WI-045",
+      "title": "Mobile — Driver smoke test + fixes",
+      "type": "testing",
+      "priority": "P0",
+      "status": "pending",
+      "blocksLaunch": true,
+      "dependencies": ["WI-052"],
+      "description": "Smoke test driver flow on Android via Expo Go (raju@gasagency.com / Driver@123). Test all 4 tabs (Analytics, My Deliveries, Trip, Vehicle Stock). Verify offline delivery queue (turn Wi-Fi off, confirm a delivery, see 'pending sync' badge, turn Wi-Fi on, watch auto-sync). Fix any broken endpoints, field mismatches, or layout issues found. Reference: docs/MANUAL-TESTING-GUIDE.md SESSION 9. Driver flow is the most polished mobile path (95% per ARCHITECTURE §21) so expect minor bugs only."
+    },
+    {
+      "id": "WI-046",
+      "title": "Mobile — Distributor Admin smoke test + fixes",
+      "type": "testing",
+      "priority": "P0",
+      "status": "pending",
+      "blocksLaunch": true,
+      "dependencies": ["WI-052"],
+      "description": "Smoke test admin mobile (sharma@gasdist.com / Gstadmin@123 for GST flows; bhargava@gasagency.com / Distadmin@123 for non-GST). Test orders, dispatch, inventory, finance screens. Fix the known TODO at packages/mobile/app/(admin)/finance.tsx:496 (PDF download not wired). Audit the 1976-line more.tsx and 1783-line orders.tsx for endpoint drift vs current API contract. Reference: docs/MANUAL-TESTING-GUIDE.md SESSION 10."
+    },
+    {
+      "id": "WI-047",
+      "title": "Mobile — Inventory smoke test + fixes",
+      "type": "testing",
+      "priority": "P0",
+      "status": "pending",
+      "blocksLaunch": true,
+      "dependencies": ["WI-052"],
+      "description": "Smoke test inventory role on mobile (inventory@gasagency.com / Inventory@123). Test summary, actions (incoming fulls / outgoing empties / manual adjustment), reconciliation, alerts, fleet screens. The 809-line inventory.tsx with 4-tab inner navigation is the largest single mobile screen and the highest-risk audit target. Reference: docs/MANUAL-TESTING-GUIDE.md SESSION 12."
+    },
+    {
+      "id": "WI-048",
+      "title": "Mobile — Customer app smoke test + fixes",
+      "type": "testing",
+      "priority": "P0",
+      "status": "pending",
+      "blocksLaunch": true,
+      "dependencies": ["WI-052"],
+      "description": "Smoke test customer portal on mobile (royal@kitchen.com / Customer@123). Test dashboard, orders (list + place new), invoices (list + download), payments (list + record), account screens. Verify customer can ONLY see Royal Kitchen's data (tenant isolation). Reference: docs/MANUAL-TESTING-GUIDE.md SESSION 11."
+    },
+    {
+      "id": "WI-049",
+      "title": "Mobile — Finance smoke test + fixes",
+      "type": "testing",
+      "priority": "P1",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": ["WI-052"],
+      "description": "Smoke test finance role on mobile (finance@gasagency.com / Finance@123). Test dashboard, payments (record payment, allocations), invoices (view + download), collections. Lower priority because finance staff usually work from web — mobile is a complement, not the primary surface. Reference: docs/MANUAL-TESTING-GUIDE.md SESSION 13."
+    },
+    {
+      "id": "WI-050",
+      "title": "Mobile — Super Admin smoke test + fixes",
+      "type": "testing",
+      "priority": "P2",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": ["WI-052"],
+      "description": "Smoke test super admin on mobile (admin@mygaslink.com / Admin@123). 12 screens — broadest surface, but lowest priority because super_admin is internal-only. Most super_admin work happens on web. Verify cold-launch routing lands on (super-admin)/dashboard."
+    },
+    {
+      "id": "WI-051",
+      "title": "Mobile — Add role guards to layout files",
+      "type": "fix",
+      "priority": "P1",
+      "status": "pending",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "Each role _layout.tsx (admin/customer/driver/finance/inventory/super-admin) must verify user.role matches the group on mount and redirect to /(auth)/login (or the user's correct role group) if mismatch. Currently only app/index.tsx checks role on COLD LAUNCH — once the user is in the app, deep-linking or a stale navigation state can land them on a screen that looks empty (the API rejects all calls 403). Defense-in-depth, not the primary security control (the API gate is still authoritative). Estimate ~15 LOC per layout × 6 = ~90 LOC. Pattern: useAuthStore + useRouter + Redirect on mismatch."
+    },
+    {
+      "id": "WI-052",
+      "title": "Mobile — Setup guide + env config",
+      "type": "docs",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-16",
+      "blocksLaunch": true,
+      "dependencies": [],
+      "description": "Document EXPO_PUBLIC_API_URL setup for phone testing. API binds to 0.0.0.0 in dev (FIX B of WI-053) so phones on the same Wi-Fi can reach it. Added .env.local.example with filled-in instructions, expanded .env.example with the LAN-IP discovery commands per OS, and added SESSION 9 (Mobile Setup) to docs/MANUAL-TESTING-GUIDE.md. WI-045 → WI-050 all depend on this being done before someone can scan the QR. Commits to come on this branch."
+    },
+    {
+      "id": "WI-053",
+      "title": "Mobile — Security hardening pre-pilot",
+      "type": "security",
+      "priority": "P0",
+      "status": "in_progress",
+      "blocksLaunch": true,
+      "dependencies": [],
+      "description": "Five-part hardening pass before any user pilot. (1) Rate limiting on auth endpoints — DONE 2026-05-16: refreshLimiter added next to existing loginLimiter / forgotPasswordLimiter, all three windowed at 15 min with prod-strict / dev-relaxed counts (packages/api/src/routes/auth.ts). (2) HTTPS in production eas.json — VERIFIED: preview + production both use https://api.mygaslink.com/api. (3) 0.0.0.0 binding gated to dev only — DONE 2026-05-16: server.ts now binds 127.0.0.1 in production, 0.0.0.0 in dev, overridable via HOST env var. (4) SSL pinning — PENDING, requires production cert chain to be settled; documented as full-launch requirement in CLAUDE.md mobile rules and ARCHITECTURE §22. (5) Client-side role guards — tracked separately as WI-051 (P1, doesn't block this WI's pilot-level closure). This WI flips to 'done' once the pilot decision sign-off accepts SSL-pinning and role-guards as post-pilot work."
     }
   ]
 }

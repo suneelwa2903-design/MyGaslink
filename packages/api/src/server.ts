@@ -38,8 +38,15 @@ process.on('uncaughtException', (error: Error) => {
 const app = createApp();
 const port = config.port;
 
-const server = app.listen(port, () => {
-  logger.info(`GasLink API server running on port ${port}`, {
+// Host binding: 0.0.0.0 in dev so phones on the LAN can reach the API for
+// Expo Go testing. 127.0.0.1 in production — NGINX / reverse proxy on the
+// same host handles all external traffic, so the Node process must never be
+// world-reachable. Override with HOST env var only if you know what you're doing.
+const host = process.env.HOST
+  ?? (config.nodeEnv === 'production' ? '127.0.0.1' : '0.0.0.0');
+
+const server = app.listen(port, host, () => {
+  logger.info(`GasLink API server running on ${host}:${port}`, {
     env: config.nodeEnv,
     cors: config.cors.origins,
   });
