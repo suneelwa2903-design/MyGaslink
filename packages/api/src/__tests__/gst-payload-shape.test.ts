@@ -201,4 +201,65 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
     expect(ewb.vehicleNo).toMatch(/^[A-Z0-9]+$/);
     expect(ewb.vehicleNo.length).toBeLessThanOrEqual(15);
   });
+
+  // ─── WI-057 payload-shape guards ──────────────────────────────────────────
+  //
+  // The fixes in WI-057 close two NIC-rejection paths that mock tests
+  // had no way to catch (anti-pattern #6). Pin them here so a future
+  // edit that re-introduces the bug fails CI before it can ship.
+
+  it('WI-057 G1 — transactionType is always 1 (Regular) for B2B', () => {
+    const irn = buildIrnPayload(b2bFixture());
+    const ewb = buildEwbPayload(irn, {
+      vehicleNumber: 'KA01MN9999', transportMode: '1', distance: 1,
+    });
+    expect(ewb.transactionType).toBe(1);
+  });
+
+  it('WI-057 G1 — transactionType is always 1 (Regular) for B2C too', () => {
+    // B2C fixture: drop buyer GSTIN so buildIrnPayload picks SupTyp=B2C.
+    const irn = buildIrnPayload(b2bFixture({
+      buyer: { ...b2bFixture().buyer, gstin: null },
+    }));
+    expect(irn.TranDtls.SupTyp).toBe('B2C');
+    const ewb = buildEwbPayload(irn, {
+      vehicleNumber: 'KA01MN9999', transportMode: '1', distance: 1,
+    });
+    // Prior bug: B2C set transactionType=2 ("Bill To ≠ Ship To") which
+    // tripped NIC 611. For LPG the same customer is always both, so
+    // Regular=1 is the only correct value regardless of B2B/B2C.
+    expect(ewb.transactionType).toBe(1);
+  });
+
+  it('WI-057 — vehicleNo strips hyphens / slashes / spaces (NIC regex disallows them)', () => {
+    const irn = buildIrnPayload(b2bFixture());
+    const ewb = buildEwbPayload(irn, {
+      vehicleNumber: 'KA01-MN-9999',
+      transportMode: '1',
+      distance: 1,
+    });
+    expect(ewb.vehicleNo).toBe('KA01MN9999');
+    expect(ewb.vehicleNo).not.toMatch(/[-\s/]/);
+  });
+
+  it('WI-057 — vehicleNo uppercase regardless of input case', () => {
+    const irn = buildIrnPayload(b2bFixture());
+    const ewb = buildEwbPayload(irn, {
+      vehicleNumber: 'ka01mn9999',
+      transportMode: '1',
+      distance: 1,
+    });
+    expect(ewb.vehicleNo).toBe('KA01MN9999');
+  });
+
+  it('WI-057 — transDistance is "1" minimum even when caller passes 0', () => {
+    const irn = buildIrnPayload(b2bFixture());
+    const ewb = buildEwbPayload(irn, {
+      vehicleNumber: 'KA01MN9999', transportMode: '1', distance: 0,
+    });
+    // NIC rejects "0" with error 721 on the live sandbox. Even though
+    // WhiteBooks Postman shows "0" as auto-calc, we clamp to 1 because
+    // the sandbox doesn't honour the auto-calc sentinel.
+    expect(ewb.transDistance).toBe('1');
+  });
 });

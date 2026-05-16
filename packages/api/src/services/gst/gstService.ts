@@ -367,8 +367,85 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
 
       // Handle duplicate IRN (already exists on portal)
       if (irnErr.code === '2150') {
-        await prisma.invoice.update({ where: { id: invoiceId }, data: { irnStatus: 'success' } });
-        result.irn = { status: 'duplicate', message: 'IRN already exists on portal' };
+        // WI-057 gap G2 — recover the existing IRN from the portal
+        // instead of leaving invoice.irn NULL. Without this every
+        // downstream feature (PDF, EWB recovery, CN/DN linkage) that
+        // reads invoice.irn silently breaks despite irnStatus='success'.
+        let recoveredIrn: string | null = null;
+        try {
+          const recovered = await getIrnByDocDetails(
+            distributorId,
+            'INV',
+            invoice.invoiceNumber,
+            invoice.issueDate ?? invoice.createdAt,
+          );
+          if (recovered?.irn) {
+            recoveredIrn = recovered.irn;
+            await prisma.invoice.update({
+              where: { id: invoiceId },
+              data: {
+                irn: recovered.irn,
+                ackNo: recovered.ackNo,
+                ackDate: recovered.ackDate ?? null,
+                irnStatus: 'success',
+              },
+            });
+            // Also persist a gst_documents row so PDF + EWB recovery
+            // can read the IRN from there. If a row already exists
+            // (race), upsert via gstDocNo uniqueness on the index.
+            const existingDoc = await prisma.gstDocument.findFirst({
+              where: { invoiceId, isLatest: true, deletedAt: null },
+            });
+            if (existingDoc) {
+              await prisma.gstDocument.update({
+                where: { id: existingDoc.id },
+                data: {
+                  irn: recovered.irn,
+                  ackNo: recovered.ackNo,
+                  ackDate: recovered.ackDate ?? null,
+                  signedQr: recovered.signedQr,
+                  irnStatus: 'success',
+                },
+              });
+            } else {
+              await prisma.gstDocument.create({
+                data: {
+                  invoiceId,
+                  orderId: invoice.orderId,
+                  distributorId,
+                  docType: 'INV',
+                  gstDocNo: invoice.invoiceNumber,
+                  irnStatus: 'success',
+                  irn: recovered.irn,
+                  ackNo: recovered.ackNo,
+                  ackDate: recovered.ackDate ?? null,
+                  signedQr: recovered.signedQr,
+                  isLatest: true,
+                },
+              });
+            }
+            irnPersisted = true;
+          } else {
+            // Couldn't recover — portal accepts the doc but we have no
+            // local IRN. Mark success so the dispatch isn't blocked but
+            // flag a pending action so an admin can chase it.
+            await prisma.invoice.update({ where: { id: invoiceId }, data: { irnStatus: 'success' } });
+            await createPendingAction(
+              distributorId, invoiceId, 'IRN_GENERATION',
+              `2150 duplicate but GETIRNBYDOCDETAILS returned no IRN — manual lookup needed`,
+            );
+          }
+        } catch (recoverErr: any) {
+          logger.error('2150 recovery: GETIRNBYDOCDETAILS itself threw', {
+            invoiceId, err: recoverErr.message,
+          });
+          await prisma.invoice.update({ where: { id: invoiceId }, data: { irnStatus: 'success' } });
+        }
+        result.irn = {
+          status: 'duplicate',
+          message: 'IRN already exists on portal',
+          recoveredIrn,
+        };
 
         // Still try to generate EWB even if IRN is duplicate
         if (invoice.order?.vehicle) {
@@ -985,6 +1062,71 @@ export async function validateGstin(distributorId: string, gstin: string) {
     };
   } catch (err: any) {
     return { valid: false, source: 'whitebooks', error: err.message };
+  }
+}
+
+/**
+ * WI-057 gap G2 — recover an IRN by document details after error 2150.
+ *
+ * NIC returns 2150 ("duplicate IRN — already exists on portal") when we
+ * try to GENERATE an IRN for a docNo/docType/docDate that's already been
+ * issued. The error response does NOT echo back the existing IRN value,
+ * so without this lookup we set irnStatus='success' but leave invoice.irn
+ * NULL — every downstream feature (PDF, EWB recovery, CN/DN linkage)
+ * silently breaks.
+ *
+ * GETIRNBYDOCDETAILS returns the existing IRN + ack metadata so we can
+ * persist them as if the GENERATE call had succeeded.
+ *
+ * `docDate` is formatted as DD/MM/YYYY per NIC convention.
+ */
+export async function getIrnByDocDetails(
+  distributorId: string,
+  docType: 'INV' | 'CRN' | 'DBN',
+  docNo: string,
+  docDate: Date,
+): Promise<{ irn?: string; ackNo?: string; ackDate?: Date; signedQr?: string } | null> {
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { email: true },
+  });
+  const email =
+    (await getCredentials(distributorId, 'einvoice'))?.email ||
+    distributor?.email ||
+    'info@mygaslink.com';
+
+  const dd = docDate.getUTCDate().toString().padStart(2, '0');
+  const mm = (docDate.getUTCMonth() + 1).toString().padStart(2, '0');
+  const yyyy = docDate.getUTCFullYear();
+  const param1 = `${docType}:${docNo}:${dd}/${mm}/${yyyy}`;
+
+  try {
+    const response = await callWithLog<any>(
+      distributorId,
+      'GET',
+      `/einvoice/type/GETIRNBYDOCDETAILS/version/V1_03?param1=${encodeURIComponent(param1)}&email=${encodeURIComponent(email)}`,
+      undefined,
+      'einvoice',
+      { apiType: 'IRN_GET_BY_DOC' },
+    );
+    const d = response?.data ?? response ?? {};
+    const irn = d.Irn ?? d.irn;
+    if (!irn) return null;
+    return {
+      irn,
+      ackNo: (d.AckNo ?? d.ackNo)?.toString(),
+      ackDate: d.AckDt
+        ? new Date(d.AckDt)
+        : d.ackDate
+          ? new Date(d.ackDate)
+          : undefined,
+      signedQr: d.SignedQRCode ?? d.signedQr,
+    };
+  } catch (err: any) {
+    logger.warn('GETIRNBYDOCDETAILS lookup failed', {
+      distributorId, docType, docNo, err: err?.message,
+    });
+    return null;
   }
 }
 

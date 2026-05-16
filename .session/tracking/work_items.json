@@ -431,6 +431,17 @@
       "description": "Two improvements bundled: (1) GET /api/invoices was shipping the full creditNotes[] + debitNotes[] arrays on every row — bandwidth waste plus no visual signal that CNs/DNs existed. Split the include into list (uses Prisma _count → numeric counts only) and detail (still full arrays for the View modal). Shared Invoice type gains creditNotesCount / debitNotesCount. Web renders small `CN N` / `DN N` pills next to the invoice number. (2) CN PDF's IRN block was dead code — gated on cnAny.irn / cnAny.ackNo / cnAny.signedQrCode, fields the CreditNote Prisma model never had. PDF generator now reads the latest CRN-type gst_documents row joined to the invoice (where processCreditNoteGst actually writes IRN data) and renders the existing CRN box from it. Spec: .session/specs/WI-056-cn-dn-badge-and-pdf.md. Commit: 4560a46. +6 tests."
     },
     {
+      "id": "WI-057",
+      "title": "Close GST payload gaps G1+G2; pin vehicleNo / transDistance guards",
+      "type": "fix",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-16",
+      "blocksLaunch": false,
+      "dependencies": [],
+      "description": "Closes two payload gaps from docs/Whitebooks/REFERENCE_NOTES.md. G1 (CRITICAL): EWB transactionType was `isB2C ? 2 : 1`. Per REFERENCE_NOTES §4, 1 = Regular (Bill To = Ship To, single recipient) and 2 = Bill To different from Ship To. LPG distribution always ships from depot to a single customer, so the only correct value is 1. The prior `2` for B2C tripped NIC error 611 on every B2C dispatch. Now hardcoded to 1, `isB2C` retained for SupTyp / GSTIN branches that DO legitimately diverge. G2 (HIGH): on NIC error 2150 (duplicate IRN), we used to mark irnStatus='success' but leave invoice.irn NULL, breaking every downstream feature that reads it. Added getIrnByDocDetails() calling GET /einvoice/type/GETIRNBYDOCDETAILS to recover the existing IRN + AckNo + AckDate + signedQR; persisted to both invoice and gst_documents rows; pending action raised only when the recovery call itself returns no IRN. Also pinned existing guards as regression tests: vehicleNo already strips hyphens / spaces / slashes and uppercases (KA01-MN-9999 → KA01MN9999), transDistance already clamps to min 1 (0 triggers NIC 721). Tests: gst-payload-shape.test.ts +5 (transactionType always 1 for B2B & B2C, vehicleNo hyphen-strip, vehicleNo uppercase, transDistance min-1); gst-2150-recovery.test.ts +5 (param1 format, partial-data null, exception-swallowed null, recovery happy path, recovery fail → pending action). Spec: .session/specs/WI-057-payload-gaps-g1-g2.md. Suite: 366 → 376 (+10)."
+    },
+    {
       "id": "WI-045",
       "title": "Mobile — Driver smoke test + fixes",
       "type": "testing",

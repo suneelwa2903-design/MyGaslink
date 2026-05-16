@@ -353,7 +353,17 @@ export function buildEwbPayload(
 
     actFromStateCode: parseInt(seller.Stcd),
     actToStateCode: parseInt(buyer.Stcd),
-    transactionType: isB2C ? 2 : 1,
+    // WI-057 gap G1 (REFERENCE_NOTES §4): transactionType values are
+    //   1 = Regular (Bill To = Ship To, single recipient)
+    //   2 = Bill To different from Ship To
+    //   3 = Bill From different from Dispatch
+    //   4 = Both 2 and 3
+    // LPG distribution always ships from depot to a single recipient
+    // (or URP customer), so it's always 1. The prior `isB2C ? 2 : 1`
+    // tripped NIC error 611 ("invalid document type for the given
+    // supply type") on every B2C dispatch because B2C is still a
+    // single-recipient flow, not a separate Bill-To/Ship-To address.
+    transactionType: 1,
     subSupplyDesc: sanitize(doc.Typ === 'INV' ? 'Supply of LPG' : 'Return of LPG', 20, 'Supply'),
 
     dispatchFromGSTIN: seller.Gstin,
