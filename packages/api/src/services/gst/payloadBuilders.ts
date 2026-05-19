@@ -389,24 +389,38 @@ export function buildEwbPayload(
     transactionType: 1,
     subSupplyDesc: sanitize(doc.Typ === 'INV' ? 'Supply of LPG' : 'Return of LPG', 20, 'Supply'),
 
-    dispatchFromGSTIN: seller.Gstin,
-    dispatchFromTradeName: seller.TrdNm || seller.LglNm,
-    // WI-072: NIC's EWB schema validates shipToGSTIN with a strict
-    // 15-char GSTIN regex ([0-9]{2}[0-9|A-Z]{13}), and rejects 'URP'
-    // here even though toGstin accepts it. Live failure 2026-05-19
-    // ORD-MPCFG9LCQ3W: error 0 "JSON validation failed due to -
-    // [#/shipToGSTIN: expected minLength: 15, actual: 3, ...
-    // string [URP] does not match pattern [0-9]{2}[0-9|A-Z]{13}]".
+    // WI-073: under transactionType=1 (Regular), NIC's EWB
+    // preparation tools spec explicitly says:
+    //   "Ship to GSTIN cannot be sent as the transaction type
+    //    selected is Regular"
+    //   "Dispatch From GSTIN cannot be sent as the transaction type
+    //    selected is Regular"
+    // The fields are redundant — Regular means Bill-To == Ship-To
+    // and Bill-From == Dispatch-From, so shipToGSTIN is implicit
+    // from toGstin and dispatchFromGSTIN is implicit from fromGstin.
     //
-    // For transactionType=1 (Bill-To == Ship-To, single recipient),
-    // a B2C dispatch has no separate ship-to-party — the depot ships
-    // to the customer's address but there's no registered "ship-to"
-    // GSTIN distinct from the dispatcher's. NIC's convention in
-    // this case is to fall back to the dispatcher's GSTIN here.
-    // The Defect A 611 trigger (toGstin == fromGstin) stays
-    // resolved because toGstin still carries 'URP' for B2C.
-    shipToGSTIN: isB2C ? seller.Gstin : buyer.Gstin,
-    shipToTradeName: buyer.TrdNm || buyer.LglNm,
+    // For B2B (toGstin === shipToGSTIN === real customer GSTIN),
+    // NIC has historically been lenient and accepted the redundant
+    // fields when their values match — that's why our B2B dispatches
+    // succeeded today. For B2C, toGstin='URP' (WI-071) and any
+    // shipToGSTIN we send necessarily differs, so NIC strictly
+    // rejects with error 616 (live 2026-05-19 ORD-MPCFG9LCQ3W).
+    // Pre-WI-072: shipToGSTIN='URP' → schema regex error 0.
+    // WI-072:     shipToGSTIN=seller.Gstin → 616.
+    // WI-073:     omit all four ship-to/dispatch-from fields for B2C.
+    //
+    // B2B retained as-is (proven working) — future tightening could
+    // omit these for B2B too, but the win is small and the risk of
+    // breaking the working flow isn't justified without a fresh live
+    // sandbox confirmation.
+    ...(isB2C
+      ? {}
+      : {
+          dispatchFromGSTIN: seller.Gstin,
+          dispatchFromTradeName: seller.TrdNm || seller.LglNm,
+          shipToGSTIN: buyer.Gstin,
+          shipToTradeName: buyer.TrdNm || buyer.LglNm,
+        }),
 
     // NIC EWB validator rule: totInvValue must be >= totalValue + cgstValue +
     // sgstValue + igstValue + cessValue. Violating it returns error 620:
