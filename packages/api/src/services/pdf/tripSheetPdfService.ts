@@ -43,29 +43,41 @@ export async function generateTripSheetPdf(
   // EWBs and label the doc accordingly — see below. We only hard-fail
   // when there's no usable EWB anywhere on the route.
 
-  // WI-061: the trip sheet is a TRANSIT document for orders currently
-  // on the truck. The prior query swept up `delivered` /
-  // `modified_delivered` too, which leaked finished morning-trip
-  // orders into the afternoon-trip sheet on multi-trip days. Two
-  // tightenings:
-  //   1. Status set narrows to `pending_delivery` only — orders that
-  //      have been dispatched but not yet confirmed delivered.
-  //   2. `updatedAt >= assignment.updatedAt` lower bound. Preflight
-  //      reuses the same DVA row across trips and bumps `updatedAt`
-  //      on each trip increment (see preflightDispatch:146 — sets
-  //      tripNumber: { increment: 1 }, which Prisma's @updatedAt
-  //      handler refreshes). So trip-1 orders whose pending_delivery
-  //      transition predates the current DVA.updatedAt are excluded.
-  //      Defense in depth — the status guard already covers the
-  //      common case, this catches the rare manual rollback.
+  // WI-065 redesign of trip identification:
+  //
+  // Primary path — `order.tripNumber === DVA.tripNumber`. Each
+  // preflightOne/preflightAddToTrip call stamps this field atomically
+  // with the pending_delivery transition (see transitionToPendingDelivery
+  // in gstPreflightService.ts). Status filter widens to include
+  // delivered / modified_delivered so the PDF stays downloadable after
+  // the driver returns — the doc is useful BOTH in transit (checkpoint
+  // proof) and post-trip (delivery audit).
+  //
+  // Legacy fallback — orders dispatched BEFORE WI-065 shipped have
+  // tripNumber = NULL. For those, we fall back to the old
+  // `updatedAt >= assignment.updatedAt` window with the original
+  // pending_delivery-only filter so historical trip-sheet PDFs keep
+  // working. Two-path OR keeps the query single-shot.
+  const orderStatusInTrip = ['pending_delivery', 'delivered', 'modified_delivered'] as const;
   const orders = await prisma.order.findMany({
     where: {
       distributorId,
       driverId: assignment.driverId,
       deliveryDate: assignment.assignmentDate,
       deletedAt: null,
-      status: 'pending_delivery',
-      updatedAt: { gte: assignment.updatedAt },
+      OR: [
+        // New path: explicit tripNumber match
+        {
+          tripNumber: assignment.tripNumber,
+          status: { in: [...orderStatusInTrip] },
+        },
+        // Legacy path: tripNumber not stamped (pre-WI-065 row)
+        {
+          tripNumber: null,
+          status: 'pending_delivery',
+          updatedAt: { gte: assignment.updatedAt },
+        },
+      ],
     },
     include: {
       customer: { select: { customerName: true, billingAddressLine1: true, billingCity: true } },
@@ -84,41 +96,48 @@ export async function generateTripSheetPdf(
   }) : [];
   const ewbByOrder = new Map(gstDocs.map((d) => [d.orderId, d.ewbNo]));
 
-  // Fallback rules (WI-038 + post-launch fix):
+  // Fallback rules (WI-038 + WI-065):
   //   - tripSheetNo present                       → "Consolidated Trip Sheet"
   //   - tripSheetNo null + ≥2 EWBs across orders → "Trip Sheet (Per-Order EWBs)"
   //     (gencewb either wasn't called or failed; per-order EWBs are still valid)
   //   - tripSheetNo null + exactly 1 EWB         → "Single Order Trip Sheet"
-  //   - tripSheetNo null + 0 EWBs                → 400 "No EWB available"
+  //   - tripSheetNo null + 0 EWBs                → "Trip Summary — EWB Pending"
+  //     (WI-065: was a hard 400 before, now downgraded — the doc is still
+  //      useful as a driver checklist even without compliance numbers,
+  //      and the trip sheet button on web + mobile is now always visible
+  //      post-dispatch, so we should always have *something* to show.)
+  // WI-065 also surfaces a SECOND consolidated EWB (tripSheetNo2) when
+  // Add-to-Trip generated one — header lists both.
   const ewbCount = ewbByOrder.size;
-  if (!assignment.tripSheetNo && ewbCount === 0) {
-    throw new TripSheetError(
-      'No EWB available for trip sheet — no orders on this route have an e-Way Bill yet',
-      400,
-    );
-  }
-  const docTitle = assignment.tripSheetNo
+  const hasAnyCewb = !!assignment.tripSheetNo || !!assignment.tripSheetNo2;
+  const docTitle = hasAnyCewb
     ? 'DELIVERY TRIP SHEET'
     : ewbCount === 1
     ? 'SINGLE ORDER TRIP SHEET'
-    : 'DELIVERY TRIP SHEET (PER-ORDER EWBs)';
-  const headerEwbLabel = assignment.tripSheetNo
-    ? 'Consolidated EWB:'
-    : 'EWB References:';
-  // For the fallback paths, surface either the single EWB number or
-  // "(see per-order column below)". Avoids a blank line in the metadata.
-  const headerEwbValue = assignment.tripSheetNo
-    ? assignment.tripSheetNo
+    : ewbCount >= 2
+    ? 'DELIVERY TRIP SHEET (PER-ORDER EWBs)'
+    : 'TRIP SUMMARY — EWB PENDING';
+  const headerEwbLabel = hasAnyCewb
+    ? assignment.tripSheetNo2 ? 'Consolidated EWBs:' : 'Consolidated EWB:'
+    : ewbCount > 0 ? 'EWB References:' : 'EWB Status:';
+  const headerEwbValue = hasAnyCewb
+    ? [assignment.tripSheetNo, assignment.tripSheetNo2].filter(Boolean).join(' + ')
     : ewbCount === 1
     ? String([...ewbByOrder.values()][0])
-    : `${ewbCount} per-order EWBs (listed below)`;
-  const footerText = assignment.tripSheetNo
-    ? 'This is a legally valid trip document. The consolidated e-Way Bill above covers ' +
+    : ewbCount >= 2
+    ? `${ewbCount} per-order EWBs (listed below)`
+    : 'EWB generation pending — see per-order column below';
+  const footerText = hasAnyCewb
+    ? 'This is a legally valid trip document. The consolidated e-Way Bill(s) above cover ' +
       'all per-order EWBs listed in this trip sheet for the date shown. Carry this ' +
       'document during transit and present at NIC checkpoints on request.'
-    : 'This is a legally valid trip document. Each order below carries its own ' +
+    : ewbCount > 0
+    ? 'This is a legally valid trip document. Each order below carries its own ' +
       'e-Way Bill (no consolidated EWB was generated for this route). Carry this ' +
-      'document during transit and present at NIC checkpoints on request.';
+      'document during transit and present at NIC checkpoints on request.'
+    : 'EWB generation has not completed for this trip. Carry this document as a ' +
+      'route checklist; an updated trip sheet with EWB numbers will be available ' +
+      'once preflight succeeds.';
 
   const distributor = await prisma.distributor.findUniqueOrThrow({
     where: { id: distributorId },

@@ -113,48 +113,12 @@ export async function preflightDispatch(params: {
       400,
     );
   }
-  if (mapping?.status === 'loaded_and_dispatched') {
-    // The assignment row says "vehicle on the road". That's the right
-    // block when orders are genuinely in flight — refuse the second
-    // dispatch. But the old behaviour also blocked the legitimate case
-    // where all the morning's orders have already been delivered: the
-    // driver returned, new orders piled up for trip 2, but the
-    // assignment status was never advanced (no auto-transition from
-    // loaded_and_dispatched → returned_inventory after deliveries
-    // complete). Gate on actual in-flight orders instead.
-    const inFlightCount = await prisma.order.count({
-      where: {
-        distributorId,
-        driverId,
-        deliveryDate: targetDate,
-        status: { in: ['pending_delivery', 'preflight_in_progress'] },
-        deletedAt: null,
-      },
-    });
-    if (inFlightCount > 0) {
-      throw new PreflightError(
-        `Driver still has ${inFlightCount} order${inFlightCount === 1 ? '' : 's'} in flight — wait for delivery confirmation before dispatching another trip`,
-        'ALREADY_DISPATCHED',
-        409,
-      );
-    }
-    // Previous trip is complete. Bump tripNumber for the audit trail,
-    // reset the row to dispatch_ready so the standard flow can write a
-    // fresh consolidated EWB for the new batch. The prior tripSheetNo
-    // is intentionally cleared — the driver already downloaded that
-    // PDF; the new trip needs its own gencewb result.
-    await prisma.driverVehicleAssignment.update({
-      where: { id: mapping.id },
-      data: {
-        tripNumber: { increment: 1 },
-        status: 'dispatch_ready',
-        tripSheetNo: null,
-        tripSheetGeneratedAt: null,
-      },
-    });
-    mapping.status = 'dispatch_ready';
-  }
-
+  // WI-065 (fix 2): fetch pending_dispatch orders BEFORE any DVA mutation.
+  // The legacy order was (a) check loaded_and_dispatched → reset DVA, then
+  // (b) query pending_dispatch. A stale or no-op Dispatch click on a fully
+  // delivered DVA destroyed the previous trip's metadata (tripSheetNo, etc)
+  // before discovering there were no orders to dispatch. Order the work so
+  // that any non-trivial state change requires real orders to act on.
   const orders = await prisma.order.findMany({
     where: {
       distributorId,
@@ -174,6 +138,61 @@ export async function preflightDispatch(params: {
       400,
     );
   }
+
+  if (mapping?.status === 'loaded_and_dispatched') {
+    // The assignment row says "vehicle on the road". That's the right
+    // block when orders are genuinely in flight — refuse the second
+    // dispatch. But the old behaviour also blocked the legitimate case
+    // where all the morning's orders have already been delivered: the
+    // driver returned, new orders piled up for trip 2, but the
+    // assignment status was never advanced (no auto-transition from
+    // loaded_and_dispatched → returned_inventory after deliveries
+    // complete). Gate on actual in-flight orders instead.
+    //
+    // WI-065 note: when this gate fires, the caller likely wanted Add to
+    // Trip — they have a live trip AND new orders ready. Surface that as
+    // an actionable error rather than a flat refusal.
+    const inFlightCount = await prisma.order.count({
+      where: {
+        distributorId,
+        driverId,
+        deliveryDate: targetDate,
+        status: { in: ['pending_delivery', 'preflight_in_progress'] },
+        deletedAt: null,
+      },
+    });
+    if (inFlightCount > 0) {
+      throw new PreflightError(
+        `Driver has an active trip with ${inFlightCount} order${inFlightCount === 1 ? '' : 's'} in flight. Use "Add to Trip" to dispatch the new orders on the same trip, or wait for delivery confirmation before starting a new trip.`,
+        'ALREADY_DISPATCHED',
+        409,
+      );
+    }
+    // Previous trip is complete. Bump tripNumber for the audit trail,
+    // reset the row to dispatch_ready so the standard flow can write a
+    // fresh consolidated EWB for the new batch. The prior tripSheetNo
+    // is intentionally cleared — the driver already downloaded that
+    // PDF; the new trip needs its own gencewb result.
+    await prisma.driverVehicleAssignment.update({
+      where: { id: mapping.id },
+      data: {
+        tripNumber: { increment: 1 },
+        status: 'dispatch_ready',
+        tripSheetNo: null,
+        tripSheetGeneratedAt: null,
+        tripSheetNo2: null,
+        tripSheetNo2GeneratedAt: null,
+      },
+    });
+    mapping.status = 'dispatch_ready';
+  }
+
+  // Re-fetch DVA to get the post-reset tripNumber so we stamp the right
+  // value on each order. Cheap — single row.
+  const dvaForStamp = mapping?.id ? await prisma.driverVehicleAssignment.findUnique({
+    where: { id: mapping.id }, select: { tripNumber: true },
+  }) : null;
+  const currentTripNumber = dvaForStamp?.tripNumber ?? 1;
 
   // WI-059 pre-warm: do a single auth fetch BEFORE the per-order loop
   // so the token cache is hot before any IRN/EWB call runs. Without this,
@@ -208,6 +227,7 @@ export async function preflightDispatch(params: {
       distributor,
       vehicleNumber: mapping?.vehicle?.vehicleNumber ?? null,
       userId,
+      tripNumber: currentTripNumber,
     });
     results.push(r);
   }
@@ -252,6 +272,165 @@ export async function preflightDispatch(params: {
           distributorId, mapping.id,
           'CONSOLIDATED_EWB_FAILED',
           `gencewb failed for assignment ${mapping.id}: ${err.message ?? 'unknown'}`,
+          'low',
+        );
+      }
+    }
+  }
+
+  return {
+    summary: { total: results.length, succeeded, failed },
+    results,
+    dispatched: failed === 0,
+  };
+}
+
+/**
+ * WI-065: Add to Trip — dispatch NEW orders onto an already-dispatched
+ * DriverVehicleAssignment WITHOUT bumping tripNumber or clearing the
+ * existing tripSheetNo. The trip identity carried by `DVA.tripNumber`
+ * is preserved; each new order is stamped with the SAME tripNumber so
+ * the trip sheet PDF picks them up alongside the original batch.
+ *
+ * Hard requirements (founder Q&A inside WI-065 investigation report):
+ *   - DVA.status MUST be 'loaded_and_dispatched'. Anything else: 400
+ *     "No active trip". A fresh trip uses preflightDispatch.
+ *   - At least one pending_dispatch order must exist for the driver+date.
+ *     0 orders → 400 NO_ORDERS, DVA untouched.
+ *   - DVA.tripNumber, tripSheetNo, tripSheetGeneratedAt stay frozen.
+ *   - If 2+ new orders generated EWBs, a SECOND gencewb call produces
+ *     tripSheetNo2 (NIC has no "append to consolidated" — sealed at gen).
+ *
+ * Same response envelope as preflightDispatch so the UI can reuse the
+ * Dispatch Progress modal verbatim.
+ */
+export async function preflightAddToTrip(params: {
+  distributorId: string;
+  driverId: string;
+  assignmentDate: string;
+  userId: string;
+}): Promise<PreflightResponse> {
+  const { distributorId, driverId, assignmentDate, userId } = params;
+  const targetDate = new Date(assignmentDate);
+
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { id: true, gstMode: true, gstin: true, legalName: true, businessName: true, address: true, city: true, state: true, pincode: true, phone: true, email: true },
+  });
+  if (!distributor) throw new PreflightError('Distributor not found', 'NOT_FOUND', 404);
+
+  const driver = await prisma.driver.findFirst({
+    where: { id: driverId, distributorId, deletedAt: null },
+    select: { id: true, driverName: true, status: true },
+  });
+  if (!driver) throw new PreflightError('Driver not found', 'NOT_FOUND', 404);
+  if (driver.status !== 'active') {
+    throw new PreflightError('Driver is not active', 'DRIVER_INACTIVE', 400);
+  }
+
+  const mapping = await prisma.driverVehicleAssignment.findFirst({
+    where: {
+      driverId, distributorId,
+      assignmentDate: targetDate,
+      status: { not: 'cancelled' },
+    },
+    select: {
+      id: true, vehicleId: true, status: true, tripNumber: true,
+      vehicle: { select: { vehicleNumber: true } },
+    },
+  });
+  if (!mapping) {
+    throw new PreflightError(
+      `No driver-vehicle assignment for ${assignmentDate}. Assign a vehicle in Fleet → Vehicle Mapping first.`,
+      'NO_VEHICLE_MAPPING',
+      400,
+    );
+  }
+  if (mapping.status !== 'loaded_and_dispatched') {
+    throw new PreflightError(
+      'No active trip found. Use "Dispatch" to start a new trip.',
+      'NO_ACTIVE_TRIP',
+      400,
+    );
+  }
+  if (distributor.gstMode !== 'disabled' && !mapping.vehicleId) {
+    throw new PreflightError(
+      `Driver has no confirmed vehicle mapping for ${assignmentDate}. Assign a vehicle in Fleet → Vehicle Mapping first.`,
+      'NO_VEHICLE_MAPPING',
+      400,
+    );
+  }
+
+  const orders = await prisma.order.findMany({
+    where: {
+      distributorId,
+      driverId,
+      deliveryDate: targetDate,
+      status: 'pending_dispatch',
+      deletedAt: null,
+    },
+    include: orderInclude,
+    orderBy: { createdAt: 'asc' },
+  });
+  if (orders.length === 0) {
+    throw new PreflightError(
+      'No new orders to add. Assign orders to driver first.',
+      'NO_ORDERS',
+      400,
+    );
+  }
+
+  // Pre-warm auth tokens (same rationale as preflightDispatch).
+  if (distributor.gstMode !== 'disabled') {
+    const { getAuthToken } = await import('./whitebooksClient.js');
+    try { await getAuthToken(distributorId, 'einvoice'); } catch { /* per-call retry */ }
+    try { await getAuthToken(distributorId, 'ewaybill'); } catch { /* per-call retry */ }
+  }
+
+  const results: PreflightResult[] = [];
+  for (const order of orders) {
+    const r = await preflightOne({
+      order,
+      distributor,
+      vehicleNumber: mapping.vehicle?.vehicleNumber ?? null,
+      userId,
+      tripNumber: mapping.tripNumber, // preserve existing trip identity
+    });
+    results.push(r);
+  }
+
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.length - succeeded;
+
+  // Generate a SECOND consolidated EWB if at least 2 new orders got
+  // EWBs. NIC's gencewb has no append semantics — the existing
+  // tripSheetNo stays valid for the original batch; tripSheetNo2 covers
+  // the add-to-trip batch. Driver carries both.
+  if (failed === 0 && succeeded > 0 && mapping.vehicle?.vehicleNumber) {
+    const newEwbNumbers = results
+      .map((r) => r.ewbNo)
+      .filter((n): n is string => !!n);
+    if (newEwbNumbers.length >= 2) {
+      try {
+        const tripSheetNo2 = await generateConsolidatedEwb({
+          distributorId,
+          distributor,
+          ewbNumbers: newEwbNumbers,
+          vehicleNumber: mapping.vehicle.vehicleNumber,
+        });
+        await prisma.driverVehicleAssignment.update({
+          where: { id: mapping.id },
+          data: { tripSheetNo2, tripSheetNo2GeneratedAt: new Date() },
+        });
+        logger.info('Add-to-Trip consolidated EWB generated', { assignmentId: mapping.id, tripSheetNo2, count: newEwbNumbers.length });
+      } catch (err: any) {
+        logger.warn('Add-to-Trip consolidated EWB (gencewb) failed — orders already dispatched', {
+          assignmentId: mapping.id, err: err.message,
+        });
+        await createPendingAction(
+          distributorId, mapping.id,
+          'CONSOLIDATED_EWB_FAILED',
+          `Add-to-Trip gencewb failed for assignment ${mapping.id}: ${err.message ?? 'unknown'}`,
           'low',
         );
       }
@@ -324,8 +503,9 @@ async function preflightOne(params: {
   distributor: any;
   vehicleNumber: string | null;
   userId: string;
+  tripNumber: number; // WI-065: stamped on the order at pending_delivery transition
 }): Promise<PreflightResult> {
-  const { order, distributor, vehicleNumber, userId } = params;
+  const { order, distributor, vehicleNumber, userId, tripNumber } = params;
   const orderId: string = order.id;
   const customerName: string | null = order.customer?.customerName ?? null;
 
@@ -351,7 +531,7 @@ async function preflightOne(params: {
 
     // GST-disabled tenants: just transition to pending_delivery.
     if (distributor.gstMode === 'disabled') {
-      await transitionToPendingDelivery(orderId, userId, 'GST disabled — preflight skipped');
+      await transitionToPendingDelivery(orderId, userId, 'GST disabled — preflight skipped', tripNumber);
       return {
         orderId,
         orderNumber: order.orderNumber,
@@ -387,12 +567,12 @@ async function preflightOne(params: {
     // B2B: IRN + EWB (inline preferred).
     if (!isB2C) {
       return await runB2bPreflight({
-        order, invoice, distributor, vehicleNumber, userId, customerName,
+        order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber,
       });
     }
     // B2C / URP: EWB only (standalone) — always, regardless of invoice value.
     return await runB2cPreflight({
-      order, invoice, distributor, vehicleNumber, userId, customerName,
+      order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber,
     });
   } catch (err: any) {
     logger.error('Preflight unexpected error', { orderId, error: err.message });
@@ -413,11 +593,28 @@ async function preflightOne(params: {
   }
 }
 
-async function transitionToPendingDelivery(orderId: string, userId: string, notes: string) {
+/**
+ * Promote an order from preflight_in_progress → pending_delivery and write
+ * the matching OrderStatusLog row in a single transaction.
+ *
+ * WI-065: the optional `tripNumber` arg lets preflightDispatch and
+ * preflightAddToTrip stamp the per-order trip identifier here, atomic
+ * with the status change. NULL trip numbers stay possible for any future
+ * caller that wants the legacy behaviour (e.g. a one-off recovery).
+ */
+async function transitionToPendingDelivery(
+  orderId: string,
+  userId: string,
+  notes: string,
+  tripNumber?: number,
+) {
   await prisma.$transaction(async (tx) => {
     await tx.order.update({
       where: { id: orderId },
-      data: { status: 'pending_delivery' },
+      data: {
+        status: 'pending_delivery',
+        ...(typeof tripNumber === 'number' ? { tripNumber } : {}),
+      },
     });
     await tx.orderStatusLog.create({
       data: {
@@ -573,8 +770,9 @@ async function runB2bPreflight(params: {
   vehicleNumber: string;
   userId: string;
   customerName: string | null;
+  tripNumber: number;
 }): Promise<PreflightResult> {
-  const { order, invoice, distributor, vehicleNumber, userId, customerName } = params;
+  const { order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber } = params;
   const distributorId: string = distributor.id;
   const invoiceId = invoice.id;
   const orderId: string = order.id;
@@ -730,6 +928,7 @@ async function runB2bPreflight(params: {
     await transitionToPendingDelivery(
       orderId, userId,
       `Preflight succeeded: IRN=${irn?.substring(0, 16)}… EWB=${ewbNo ?? 'n/a'}`,
+      tripNumber,
     );
 
     return {
@@ -753,6 +952,7 @@ async function runB2bPreflight(params: {
       });
       await transitionToPendingDelivery(
         orderId, userId, 'Preflight: duplicate IRN (2150) — accepted',
+        tripNumber,
       );
       return {
         orderId, orderNumber: order.orderNumber, customerName,
@@ -800,8 +1000,9 @@ async function runB2cPreflight(params: {
   vehicleNumber: string;
   userId: string;
   customerName: string | null;
+  tripNumber: number;
 }): Promise<PreflightResult> {
-  const { order, invoice, distributor, vehicleNumber, userId, customerName } = params;
+  const { order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber } = params;
   const distributorId: string = distributor.id;
   const invoiceId = invoice.id;
   const orderId: string = order.id;
@@ -852,6 +1053,7 @@ async function runB2cPreflight(params: {
     await transitionToPendingDelivery(
       orderId, userId,
       `B2C preflight succeeded: EWB=${parsed.ewbNo}`,
+      tripNumber,
     );
 
     return {

@@ -665,6 +665,13 @@ model Order {
   customerConfirmed     Boolean?    @map("customer_confirmed")
   customerConfirmedAt   DateTime?   @map("customer_confirmed_at")
   customerDisputeReason String?     @map("customer_dispute_reason")
+  // WI-065: per-order trip number. Stamped by preflightOne when the
+  // order transitions to pending_delivery, mirrors DVA.tripNumber at
+  // dispatch time. Replaces the fragile `updatedAt >= dva.updatedAt`
+  // filter the trip-sheet PDF used to rely on. NULL for legacy orders
+  // dispatched before this column existed — the trip-sheet service
+  // falls back to the legacy filter for those.
+  tripNumber          Int?        @map("trip_number")
   createdAt           DateTime    @default(now()) @map("created_at")
   updatedAt           DateTime    @updatedAt @map("updated_at")
   deletedAt           DateTime?   @map("deleted_at")
@@ -790,6 +797,12 @@ model DriverVehicleAssignment {
   // successful gencewb call at the end of pre-dispatch preflight.
   tripSheetNo          String?   @map("trip_sheet_no")
   tripSheetGeneratedAt DateTime? @map("trip_sheet_generated_at")
+  // WI-065: Add-to-Trip generates a SECOND consolidated EWB covering the
+  // mid-trip batch (NIC has no "append" endpoint on gencewb — once
+  // generated a CEWB is sealed; new orders need a fresh CEWB). The driver
+  // carries both. Stays NULL when only one batch was dispatched.
+  tripSheetNo2          String?  @map("trip_sheet_no_2")
+  tripSheetNo2GeneratedAt DateTime? @map("trip_sheet_no_2_generated_at")
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
 

@@ -176,7 +176,11 @@ describe('WI-061 — Trip sheet only includes current trip pending_delivery', ()
     }
   });
 
-  it('returns 400 when the route has no in-transit orders at all', async () => {
+  it('returns 200 with "EWB Pending" Trip Summary PDF when the route has no in-transit orders (WI-065)', async () => {
+    // WI-065: the hard 400 here was demoted to a "Trip Summary — EWB
+    // Pending" PDF. The web Driver Assignment tab's "📄 Trip Sheet"
+    // button is now always actionable post-dispatch; producing a
+    // checklist-style PDF beats an opaque 400.
     const { driver, vehicle } = await getDriverAndVehicle();
     const tripNumber = 1000 + Math.floor(Math.random() * 9000);
     const dva = await prisma.driverVehicleAssignment.create({
@@ -193,7 +197,9 @@ describe('WI-061 — Trip sheet only includes current trip pending_delivery', ()
       const res = await request(app)
         .get(`/api/orders/trip-sheet/${dva.id}`)
         .set(auth(sharmaAdminToken));
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/application\/pdf/);
+      expect(res.body.slice(0, 4).toString()).toBe('%PDF');
     } finally {
       await prisma.driverVehicleAssignment.delete({ where: { id: dva.id } });
     }

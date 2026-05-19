@@ -481,11 +481,13 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
         userId: 'test-user',
       });
       expect(result1.summary.succeeded).toBe(1);
-      // Second call: the first success flipped the assignment to
-      // loaded_and_dispatched, so the batch-level guard fires with
-      // ALREADY_DISPATCHED. Per-order, the conditional UPDATE on
-      // status='pending_dispatch' is also a hard lock — multi-layer
-      // protection against double-dispatch.
+      // WI-065: second call from the SAME state — no new
+      // pending_dispatch orders, the original is now pending_delivery.
+      // The dispatch gate now runs the pending_dispatch order count
+      // BEFORE touching DVA (premature-reset fix), so the failure is
+      // NO_ORDERS, not ALREADY_DISPATCHED. The ALREADY_DISPATCHED
+      // 409 path is exercised by the dedicated test at line 609 below
+      // (active trip + 1 new pending_dispatch order).
       await expect(
         preflightDispatch({
           distributorId: 'dist-002',
@@ -493,7 +495,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
           assignmentDate: today(),
           userId: 'test-user',
         }),
-      ).rejects.toMatchObject({ code: 'ALREADY_DISPATCHED' });
+      ).rejects.toMatchObject({ code: 'NO_ORDERS' });
     } finally {
       await prisma.driverVehicleAssignment.update({
         where: { id: ctx.mapping.id },
@@ -923,15 +925,18 @@ describe('POST /api/orders/preflight-dispatch — integration', () => {
         .send({ driverId: ctx.driver.id, assignmentDate: today() });
       expect(ok.status).toBe(200);
 
-      // Second call: the assignment is now loaded_and_dispatched, so
-      // the batch-level guard fires before the per-order lock check —
-      // 409 ALREADY_DISPATCHED is the expected outcome.
+      // WI-065: second call has no new pending_dispatch orders (the
+      // original is now pending_delivery). The dispatch gate runs the
+      // pending_dispatch order count BEFORE touching DVA, so the
+      // failure is NO_ORDERS (400), not ALREADY_DISPATCHED (409). The
+      // 409 path is exercised by the dedicated test above
+      // ("Already-dispatched assignment WITH in-flight orders").
       const retry = await request(app)
         .post('/api/orders/preflight-dispatch')
         .set(auth(sharmaAdminToken))
         .send({ driverId: ctx.driver.id, assignmentDate: today() });
-      expect(retry.status).toBe(409);
-      expect(retry.body.code).toBe('ALREADY_DISPATCHED');
+      expect(retry.status).toBe(400);
+      expect(retry.body.code).toBe('NO_ORDERS');
     } finally {
       await prisma.driverVehicleAssignment.update({
         where: { id: ctx.mapping.id },

@@ -71,6 +71,13 @@ export function mapOrder(o: any): any {
   // driver was assigned. null when genuinely unassigned.
   mapped.driverName = mapped.driver?.driverName ?? null;
   if (mapped.vehicle) mapped.vehicle = mapVehicle(mapped.vehicle);
+  // WI-065: flat vehicleNumber alias, mirroring the driverName flat
+  // alias above. The shared Order type declares vehicleNumber at the
+  // root; the OrdersPage View modal reads `order.vehicleNumber` (line
+  // 626) directly. Without this the modal rendered '—' for every order
+  // even when the underlying vehicle relation was correctly populated
+  // — pure mapper omission, no DB or service-layer issue.
+  mapped.vehicleNumber = mapped.vehicle?.vehicleNumber ?? null;
   if (mapped.invoice) mapped.invoice = mapInvoice(mapped.invoice);
   if (mapped.statusLogs) {
     mapped.statusLogs = mapped.statusLogs.map((l: any) => renameId(l, 'logId'));

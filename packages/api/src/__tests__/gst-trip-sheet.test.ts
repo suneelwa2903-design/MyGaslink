@@ -312,18 +312,21 @@ describe('GET /api/orders/trip-sheet/:assignmentId — integration', () => {
     expect(res.status).toBe(404);
   });
 
-  it('Returns 400 when no EWB exists anywhere on the route', async () => {
-    // Fresh mapping, no tripSheetNo, no orders with EWB → 400.
-    // gst-trip-sheet currently runs with TEST_DATE = '2099-12-31', so
-    // there will be no real-world orders on the same driver/date to
-    // accidentally satisfy this. Mapping created in getSharmaContext
-    // starts without tripSheetNo.
+  it('Returns 200 PDF with "EWB Pending" header when no EWB exists on the route (WI-065)', async () => {
+    // WI-065: the trip sheet used to hard-fail with 400 when there were
+    // no per-order EWBs and no consolidated EWB. The new behaviour
+    // returns a "Trip Summary — EWB Pending" PDF so the button on the
+    // web/mobile dispatch UI is always actionable. The 400 was the
+    // worst-of-both: confusing message + dead button.
     const ctx = await getSharmaContext();
     const res = await request(app)
       .get(`/api/orders/trip-sheet/${ctx.mapping.id}`)
       .set(auth(sharmaAdminToken));
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/No EWB available/i);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/pdf/);
+    // PDF magic bytes — confirms a real document was emitted, not an
+    // error page.
+    expect(res.body.slice(0, 4).toString()).toBe('%PDF');
   });
 
   it('Returns 200 PDF when tripSheetNo is null but orders carry per-order EWBs (fallback)', async () => {

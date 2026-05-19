@@ -1181,6 +1181,11 @@ function AssignmentsTab() {
     vehicleNumber: string | null;
     assignmentId: string | null;
     orders: any[];
+    // WI-065: when this dispatch represents an Add-to-Trip flow, the
+    // progress modal hits /preflight-add-to-trip instead of
+    // /preflight-dispatch. The two endpoints share the same response
+    // shape so the modal body is identical.
+    mode?: 'new_trip' | 'add_to_trip';
   } | null>(null);
 
   const { data: pendingOrders, isLoading } = useQuery({
@@ -1201,6 +1206,33 @@ function AssignmentsTab() {
         pageSize: 100,
       }),
   });
+
+  // WI-065: drivers currently in transit — DVA.status='loaded_and_dispatched'
+  // with at least one order still in pending_delivery. Drives the new
+  // "In Transit" section. Each row carries the per-driver in-flight /
+  // delivered / pending counters so the admin can see the live picture
+  // at a glance and use [+ Add to Trip] instead of clicking Dispatch
+  // (which would 409 with ALREADY_DISPATCHED).
+  type InTransitRow = {
+    driverId: string;
+    driverName: string | null;
+    vehicleId: string | null;
+    vehicleNumber: string | null;
+    assignmentId: string;
+    tripNumber: number;
+    tripSheetNo: string | null;
+    tripSheetNo2: string | null;
+    inTransitCount: number;
+    deliveredCount: number;
+    pendingCount: number;
+  };
+  const { data: inTransitData } = useQuery({
+    queryKey: ['in-transit-drivers'],
+    queryFn: () => apiGet<{ drivers: InTransitRow[] }>('/orders/in-transit'),
+    refetchInterval: 30_000, // light auto-refresh so counts stay current
+  });
+  const inTransitDrivers: InTransitRow[] = inTransitData?.drivers ?? [];
+  const inTransitDriverIds = new Set(inTransitDrivers.map((d) => d.driverId));
 
   // Only drivers with a confirmed vehicle mapping for TODAY may be assigned
   // — both for the inline per-row dropdown and the bulk toolbar. This mirrors
@@ -1238,6 +1270,7 @@ function AssignmentsTab() {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['pending-orders'] });
     queryClient.invalidateQueries({ queryKey: ['pending-dispatch-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['in-transit-drivers'] });
     queryClient.invalidateQueries({ queryKey: ['orders'] });
   };
 
@@ -1258,6 +1291,11 @@ function AssignmentsTab() {
     const byDriver = new Map<string, any[]>();
     for (const order of pendingDispatch?.orders ?? []) {
       if (!order.driverId) continue;
+      // WI-065: drivers with an active trip surface in the new "In
+      // Transit" section above with [+ Add to Trip]. Skip them here so
+      // the "Ready to Dispatch" section only ever shows drivers whose
+      // next click would be a brand-new trip dispatch.
+      if (inTransitDriverIds.has(order.driverId)) continue;
       if (!byDriver.has(order.driverId)) byDriver.set(order.driverId, []);
       byDriver.get(order.driverId)!.push(order);
     }
@@ -1437,6 +1475,97 @@ function AssignmentsTab() {
         </div>
       )}
 
+      {/* WI-065: In-Transit section — drivers with an active trip
+          (DVA.status='loaded_and_dispatched'). Sits ABOVE "Ready to
+          Dispatch" so the admin always sees the live picture before
+          deciding whether to start a new trip or extend the current one.
+          Each row's [+ Add to Trip] button is gated on pendingCount>0
+          (new orders assigned to this driver since dispatch). */}
+      {inTransitDrivers.length > 0 && (
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-lg font-semibold text-surface-900 dark:text-white">
+              In Transit
+            </h3>
+            <p className="text-sm text-surface-500 dark:text-surface-400">
+              Drivers currently on a route. Use “+ Add to Trip” to dispatch newly assigned orders on the existing trip.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            {inTransitDrivers.map((d) => {
+              const tripSheetParts = [d.tripSheetNo, d.tripSheetNo2].filter(Boolean);
+              const tripSheetLine = tripSheetParts.length > 0
+                ? `Consolidated EWB: ${tripSheetParts.join(' + ')}`
+                : 'No consolidated EWB yet';
+              return (
+                <div key={d.driverId} className="card p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-surface-900 dark:text-white">
+                      {d.driverName ?? 'Driver'}
+                      <span className="ml-2 text-sm text-surface-500 dark:text-surface-400">
+                        {d.vehicleNumber ?? '(no vehicle)'}
+                      </span>
+                      <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                        Trip {d.tripNumber}
+                      </span>
+                    </div>
+                    <div className="text-sm text-surface-500 dark:text-surface-400">
+                      {d.inTransitCount} in transit · {d.deliveredCount} delivered
+                      {d.pendingCount > 0 && (
+                        <>
+                          {' · '}
+                          <span className="text-brand-600 dark:text-brand-400 font-medium">
+                            {d.pendingCount} pending
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div className="text-xs text-surface-400 mt-1">{tripSheetLine}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={async () => {
+                        try {
+                          const resp = await api.get(`/orders/trip-sheet/${d.assignmentId}`, {
+                            responseType: 'blob',
+                          });
+                          const url = window.URL.createObjectURL(resp.data);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `trip-sheet-${(d.driverName ?? 'driver').replace(/\s+/g, '-')}.pdf`;
+                          a.click();
+                          window.URL.revokeObjectURL(url);
+                        } catch (err) {
+                          toast.error(getErrorMessage(err));
+                        }
+                      }}
+                    >
+                      📄 Trip Sheet
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={d.pendingCount === 0}
+                      onClick={() => setDispatchDriver({
+                        driverId: d.driverId,
+                        driverName: d.driverName ?? 'Driver',
+                        vehicleNumber: d.vehicleNumber,
+                        assignmentId: d.assignmentId,
+                        orders: (pendingDispatch?.orders ?? []).filter((o: any) => o.driverId === d.driverId),
+                        mode: 'add_to_trip',
+                      })}
+                    >
+                      + Add to Trip
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* WI-036: Ready-to-dispatch section — one card per driver with pending_dispatch orders. */}
       {dispatchGroups.length > 0 && (
         <div className="space-y-3">
@@ -1521,6 +1650,10 @@ type DispatchDriverContext = {
   vehicleNumber: string | null;
   assignmentId: string | null;
   orders: any[];
+  // WI-065: 'add_to_trip' → POST /preflight-add-to-trip (keep trip
+  // number, dispatch only new orders). Anything else / undefined →
+  // POST /preflight-dispatch (start a new trip).
+  mode?: 'new_trip' | 'add_to_trip';
 };
 
 type PreflightResultRow = {
@@ -1553,11 +1686,18 @@ function DispatchProgressModal({
   const [result, setResult] = useState<PreflightResponseEnvelope | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // WI-065: route to the right preflight endpoint based on mode. Both
+  // endpoints share the same response shape, so the rest of the modal
+  // body is unchanged.
+  const endpoint = driver.mode === 'add_to_trip'
+    ? '/orders/preflight-add-to-trip'
+    : '/orders/preflight-dispatch';
+
   const run = async () => {
     setPhase('running');
     setError(null);
     try {
-      const resp = await apiPost<PreflightResponseEnvelope>('/orders/preflight-dispatch', {
+      const resp = await apiPost<PreflightResponseEnvelope>(endpoint, {
         driverId: driver.driverId,
         assignmentDate: today,
       });
@@ -1603,7 +1743,7 @@ function DispatchProgressModal({
     <Modal
       open
       onClose={onClose}
-      title={`Dispatching ${driver.driverName}'s orders`}
+      title={`${driver.mode === 'add_to_trip' ? 'Adding to' : 'Dispatching'} ${driver.driverName}'s orders`}
       size="md"
     >
       <div className="space-y-4">

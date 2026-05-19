@@ -10,7 +10,7 @@ import {
   returnsOnlyOrderSchema, returnsConfirmationSchema,
 } from '@gaslink/shared';
 import * as orderService from '../services/orderService.js';
-import { preflightDispatch, PreflightError } from '../services/gst/gstPreflightService.js';
+import { preflightDispatch, preflightAddToTrip, PreflightError } from '../services/gst/gstPreflightService.js';
 import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
 import { mapOrder, mapOrders } from '../utils/mappers.js';
 import { prisma } from '../lib/prisma.js';
@@ -96,6 +96,83 @@ router.post('/from-cancelled-stock',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapOrder(order));
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// GET /api/orders/in-transit
+// WI-065: per-driver summary of trips that have been dispatched but
+// not yet fully returned. Drives the new "In Transit" section on the
+// web Driver Assignment tab — gives the admin visibility into existing
+// trips before clicking Dispatch (so the 409 trap surfaces as a
+// contextualised "+ Add to Trip" affordance instead of an opaque error).
+//
+// Route MUST be registered before GET /:id, otherwise "in-transit"
+// would be caught by the `:id` route and 404 as a not-found order.
+router.get('/in-transit',
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const dateParam = (req.query.date as string | undefined) ?? new Date().toISOString().split('T')[0];
+      const targetDate = new Date(dateParam);
+
+      // Every DVA in flight today, scoped to (distributor, date,
+      // loaded_and_dispatched). Drivers whose trip already advanced to
+      // returned_inventory or that haven't yet dispatched don't appear.
+      const dvas = await prisma.driverVehicleAssignment.findMany({
+        where: {
+          distributorId,
+          assignmentDate: targetDate,
+          status: 'loaded_and_dispatched',
+        },
+        include: {
+          driver: { select: { id: true, driverName: true } },
+          vehicle: { select: { id: true, vehicleNumber: true } },
+        },
+        orderBy: { tripNumber: 'asc' },
+      });
+
+      const rows = await Promise.all(dvas.map(async (dva) => {
+        const [inTransitCount, deliveredCount, pendingCount] = await Promise.all([
+          prisma.order.count({
+            where: {
+              distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
+              status: { in: ['pending_delivery', 'preflight_in_progress'] },
+            },
+          }),
+          prisma.order.count({
+            where: {
+              distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
+              tripNumber: dva.tripNumber,
+              status: { in: ['delivered', 'modified_delivered'] },
+            },
+          }),
+          prisma.order.count({
+            where: {
+              distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
+              status: 'pending_dispatch',
+            },
+          }),
+        ]);
+        return {
+          driverId: dva.driverId,
+          driverName: dva.driver?.driverName ?? null,
+          vehicleId: dva.vehicleId,
+          vehicleNumber: dva.vehicle?.vehicleNumber ?? null,
+          assignmentId: dva.id,
+          tripNumber: dva.tripNumber,
+          tripSheetNo: dva.tripSheetNo,
+          tripSheetNo2: dva.tripSheetNo2,
+          inTransitCount,
+          deliveredCount,
+          pendingCount,
+        };
+      }));
+
+      return sendSuccess(res, { drivers: rows });
     } catch (err: any) {
       return sendError(res, err.message, err.statusCode || 500);
     }
@@ -229,6 +306,34 @@ router.post('/preflight-dispatch',
       // 207 Multi-Status when at least one order succeeded AND at least
       // one failed — surfaces partial-success to clients without
       // overloading 200. Pure success or pure failure still gets 200.
+      const status = result.summary.failed > 0 && result.summary.succeeded > 0 ? 207 : 200;
+      return res.status(status).json({ success: true, data: result, error: null });
+    } catch (err: any) {
+      if (err instanceof PreflightError) {
+        return sendError(res, err.message, err.statusCode, err.code);
+      }
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// POST /api/orders/preflight-add-to-trip
+// WI-065: Add NEW orders to a driver's already-dispatched trip without
+// bumping tripNumber or clearing the existing trip sheet. Generates a
+// second consolidated EWB for the new batch (NIC's gencewb has no
+// "append" semantics — a fresh CEWB per batch is the only legal path).
+router.post('/preflight-add-to-trip',
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  validate(preflightDispatchSchema),
+  auditLog('preflight_add_to_trip', 'order'),
+  async (req, res) => {
+    try {
+      const result = await preflightAddToTrip({
+        distributorId: req.user!.distributorId!,
+        driverId: req.body.driverId,
+        assignmentDate: req.body.assignmentDate,
+        userId: req.user!.userId,
+      });
       const status = result.summary.failed > 0 && result.summary.succeeded > 0 ? 207 : 200;
       return res.status(status).json({ success: true, data: result, error: null });
     } catch (err: any) {
