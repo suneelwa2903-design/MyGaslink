@@ -562,20 +562,37 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
         );
 
         const ewbNo = ewbResponse.data?.ewayBillNo;
-        await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
+        if (!ewbNo) {
+          // WI-071 Defect B — WhiteBooks/NIC sandbox occasionally returns
+          // `{status_cd:'1', status_desc:'Sucess'}` with NO data block /
+          // NO ewayBillNo. The old code wrote `ewb_status='active'` +
+          // `ewb_no=NULL` to gst_documents (phantom EWB), the UI then
+          // displayed a green "active" badge with no real e-Way Bill
+          // behind it. Live case: INV-MPCDW7DR6F7, 2026-05-19 08:42:58.
+          // Treat as failure — pending action + ewb_status='failed'.
+          await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'failed' } });
+          await createPendingAction(
+            distributorId, invoiceId, 'EWB_GENERATION',
+            'EWB generation returned status_cd=1 but no ewayBillNo — retry from Billing',
+          );
+          result.errors.push('B2C EWB: success response without ewayBillNo');
+          logger.warn('B2C EWB phantom-success (no ewayBillNo) — marked failed', { invoiceId });
+        } else {
+          await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
 
-        await prisma.gstDocument.create({
-          data: {
-            invoiceId, orderId: invoice.orderId, distributorId,
-            docType: 'INV', gstDocNo: invoice.invoiceNumber,
-            ewbStatus: 'active', ewbNo: ewbNo?.toString(),
-            requestPayload: ewbPayload, responsePayload: ewbResponse,
-            isLatest: true,
-          },
-        });
+          await prisma.gstDocument.create({
+            data: {
+              invoiceId, orderId: invoice.orderId, distributorId,
+              docType: 'INV', gstDocNo: invoice.invoiceNumber,
+              ewbStatus: 'active', ewbNo: ewbNo.toString(),
+              requestPayload: ewbPayload, responsePayload: ewbResponse,
+              isLatest: true,
+            },
+          });
 
-        result.ewb = { ewbNo, status: 'active' };
-        logger.info('B2C EWB generated', { invoiceId, ewbNo });
+          result.ewb = { ewbNo, status: 'active' };
+          logger.info('B2C EWB generated', { invoiceId, ewbNo });
+        }
       } catch (ewbErr: any) {
         if (ewbErr.code === '620' || ewbErr.message?.includes('620')) {
           await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
