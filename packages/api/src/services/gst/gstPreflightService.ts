@@ -1066,12 +1066,28 @@ async function runB2cPreflight(params: {
       vehicleNumber, transportMode: '1', distance: 1,
     });
 
+    // WI-074 debug: log full payload BEFORE the WhiteBooks call so the
+    // actual wire shape is visible in the dev console. gst_api_logs
+    // also persists this row; the dev-console log is for immediate
+    // visibility during the WI-074 live verification.
+    logger.info('[WI-074-DEBUG] B2C preflight EWB request payload', {
+      invoiceId, orderId,
+      payload: JSON.stringify(ewbPayload, null, 2),
+    });
+
     const ewbResponse: any = await callWithLog<any>(
       distributorId, 'POST',
       `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
       ewbPayload, 'ewaybill',
       { apiType: 'EWB_GENERATE_STANDALONE', invoiceId, orderId },
     );
+
+    // WI-074 debug: log full NIC response (including any info[] array
+    // NIC sometimes includes) BEFORE parseEwbResponse normalises it.
+    logger.info('[WI-074-DEBUG] B2C preflight EWB response', {
+      invoiceId, orderId,
+      response: JSON.stringify(ewbResponse, null, 2),
+    });
 
     const parsed = parseEwbResponse(ewbResponse);
 

@@ -352,9 +352,19 @@ export function buildEwbPayload(
 
     transMode: transportDetails.transportMode || '1', // Road
     transDistance,
-    // Only include transporterName/Id if provided (empty string causes validation error)
-    ...(transportDetails.transporterName ? { transporterName: transportDetails.transporterName } : {}),
-    ...(transportDetails.transporterId ? { transporterId: transportDetails.transporterId } : {}),
+    // transporterName / transporterId precedence:
+    //   1. Caller-passed values (any caller that has explicit transporter info)
+    //   2. For B2C: fall back to seller (depot acts as its own transporter) —
+    //      WI-074 re-introduced from the production-proven legacy New_GasLink
+    //      builder (line 690-691). Required for NIC to issue a Part-A-capable
+    //      e-Way Bill when no third-party transporter is involved.
+    //   3. For B2B: omit (current working behaviour preserved).
+    ...(transportDetails.transporterName
+      ? { transporterName: transportDetails.transporterName }
+      : (isB2C ? { transporterName: seller.TrdNm || seller.LglNm } : {})),
+    ...(transportDetails.transporterId
+      ? { transporterId: transportDetails.transporterId }
+      : (isB2C ? { transporterId: seller.Gstin } : {})),
 
     transDocNo: vehicleNo,
     transDocDate: doc.Dt,
@@ -376,45 +386,56 @@ export function buildEwbPayload(
 
     actFromStateCode: parseInt(seller.Stcd),
     actToStateCode: parseInt(buyer.Stcd),
-    // WI-057 gap G1 (REFERENCE_NOTES §4): transactionType values are
-    //   1 = Regular (Bill To = Ship To, single recipient)
-    //   2 = Bill To different from Ship To
-    //   3 = Bill From different from Dispatch
-    //   4 = Both 2 and 3
-    // LPG distribution always ships from depot to a single recipient
-    // (or URP customer), so it's always 1. The prior `isB2C ? 2 : 1`
-    // tripped NIC error 611 ("invalid document type for the given
-    // supply type") on every B2C dispatch because B2C is still a
-    // single-recipient flow, not a separate Bill-To/Ship-To address.
-    transactionType: 1,
+    // WI-074 — transactionType semantics (NIC EWB spec):
+    //   1 = Regular: Bill-To party and Ship-To party are the SAME
+    //                registered legal entity (same GSTIN).
+    //   2 = Bill-To different from Ship-To (different registered
+    //                entities).
+    //   3 = Bill-From different from Dispatch-From.
+    //   4 = Both 2 and 3.
+    //
+    // WI-057 forced this to always 1 on the misreading that "single
+    // recipient" = type 1. The correct criterion is "are Bill-To and
+    // Ship-To the same registered entity?" A URP customer (no GSTIN)
+    // can never be a registered Ship-To — so a B2C dispatch with
+    // toGstin='URP' is structurally NOT type 1. NIC's catch-all 240
+    // on B2C dispatches with type=1 + URP toGstin (live 2026-05-19
+    // ORD-MPCFG9LCQ3W, codes 240 and 240_3) was the symptom.
+    //
+    // For B2C: URP customer is the Bill-To party, depot/distributor
+    // is the Ship-To party (registered entity receiving the goods on
+    // behalf of the delivery chain). Two distinct entities → type=2.
+    // Bill-From and Dispatch-From remain the same depot → we do NOT
+    // claim type=3 or 4, so dispatchFromGSTIN/dispatchFromTradeName
+    // are correctly OMITTED.
+    //
+    // For B2B (real customer GSTIN): Bill-To == Ship-To == customer
+    // GSTIN, one registered entity → type=1 (matches NIC's lenient
+    // acceptance of the redundant ship-to/dispatch-from fields when
+    // they match). Currently working in production — preserved.
+    //
+    // The legacy New_GasLink/.../gstEwayPayloadBuilder.js used the
+    // same type-2 mapping for B2C (line 664) and was production
+    // validated. WI-074 brings our payload back in line with that
+    // mapping after the WI-057/071/072/073 detour.
+    transactionType: isB2C ? 2 : 1,
     subSupplyDesc: sanitize(doc.Typ === 'INV' ? 'Supply of LPG' : 'Return of LPG', 20, 'Supply'),
 
-    // WI-073: under transactionType=1 (Regular), NIC's EWB
-    // preparation tools spec explicitly says:
-    //   "Ship to GSTIN cannot be sent as the transaction type
-    //    selected is Regular"
-    //   "Dispatch From GSTIN cannot be sent as the transaction type
-    //    selected is Regular"
-    // The fields are redundant — Regular means Bill-To == Ship-To
-    // and Bill-From == Dispatch-From, so shipToGSTIN is implicit
-    // from toGstin and dispatchFromGSTIN is implicit from fromGstin.
-    //
-    // For B2B (toGstin === shipToGSTIN === real customer GSTIN),
-    // NIC has historically been lenient and accepted the redundant
-    // fields when their values match — that's why our B2B dispatches
-    // succeeded today. For B2C, toGstin='URP' (WI-071) and any
-    // shipToGSTIN we send necessarily differs, so NIC strictly
-    // rejects with error 616 (live 2026-05-19 ORD-MPCFG9LCQ3W).
-    // Pre-WI-072: shipToGSTIN='URP' → schema regex error 0.
-    // WI-072:     shipToGSTIN=seller.Gstin → 616.
-    // WI-073:     omit all four ship-to/dispatch-from fields for B2C.
-    //
-    // B2B retained as-is (proven working) — future tightening could
-    // omit these for B2B too, but the win is small and the risk of
-    // breaking the working flow isn't justified without a fresh live
-    // sandbox confirmation.
+    // Ship-To / Dispatch-From field handling — WI-074:
+    //   B2C (type=2): MUST send shipToGSTIN/shipToTradeName. Use the
+    //                 depot's own GSTIN — the depot is the registered
+    //                 entity receiving the goods (URP customer has no
+    //                 GSTIN). dispatchFromGSTIN omitted (Bill-From ==
+    //                 Dispatch-From, no type-3 claim).
+    //                 shipToTradeName is the DEPOT'S name, not the
+    //                 customer's — the Ship-To entity is the depot.
+    //   B2B (type=1): legacy behaviour. Both shipTo and dispatchFrom
+    //                 sent with matching values; NIC has been lenient.
     ...(isB2C
-      ? {}
+      ? {
+          shipToGSTIN: seller.Gstin,
+          shipToTradeName: seller.TrdNm || seller.LglNm,
+        }
       : {
           dispatchFromGSTIN: seller.Gstin,
           dispatchFromTradeName: seller.TrdNm || seller.LglNm,
