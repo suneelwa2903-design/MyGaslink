@@ -302,7 +302,13 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId:
     },
     orderBy: { createdAt: 'desc' },
   });
-  if (crnDoc && (crnDoc.irn || crnDoc.ackNo || crnDoc.signedQr)) {
+  // WI-077: render the IRN block only when there's an actual IRN or EWB
+  // on the gst_documents row. Mirrors the invoice PDF pattern
+  // ([invoicePdfService.ts:489-491](../pdf/invoicePdfService.ts)): if
+  // nothing real exists, the compliance section is omitted entirely
+  // rather than printing "e-Invoice: Pending" — which was confusing on
+  // B2C credit notes that never get an IRN to begin with.
+  if (crnDoc && (crnDoc.irn || crnDoc.ackNo || crnDoc.signedQr || crnDoc.ewbNo)) {
     const crnH = await drawCrnDetailsBox(doc, {
       irn: crnDoc.irn,
       ackNo: crnDoc.ackNo,
@@ -311,30 +317,6 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId:
       irnStatus: crnDoc.irnStatus,
     }, y);
     y += crnH;
-  } else {
-    // No usable CRN row OR a row exists but IRN failed at NIC. Drop a
-    // short status line on the PDF so the recipient (finance / customer)
-    // doesn't think the credit note is already on the GST portal when it
-    // isn't. Two distinct states:
-    //
-    //   no row OR irnStatus='not_attempted'  → grey "e-Invoice: Pending"
-    //   irnStatus='failed'                   → red "e-Invoice: Failed —
-    //                                                retry from Billing page"
-    //
-    // A successful IRN renders the full CRN block above and never reaches
-    // this branch.
-    const failed =
-      crnDoc?.irnStatus === 'failed';
-    const label = failed
-      ? 'e-Invoice: Failed — retry from Billing page'
-      : 'e-Invoice: Pending';
-    const color = failed ? '#dc2626' : LAYOUT.THEME.MUTED;
-    doc.fontSize(LAYOUT.TYPO.LABEL).fillColor(color).font('Helvetica-Bold');
-    doc.text(label, LAYOUT.MARGIN.left, y, {
-      width: A4_WIDTH - LAYOUT.MARGIN.left - LAYOUT.MARGIN.right,
-    });
-    y += 16;
-    doc.fillColor(LAYOUT.THEME.TEXT).font('Helvetica');
   }
 
   // Footer at bottom of page

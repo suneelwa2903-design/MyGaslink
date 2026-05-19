@@ -10,7 +10,7 @@ type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transa
 // listInvoiceInclude → bandwidth-conscious shape for the table view.
 // detailInvoiceInclude → keeps the existing full arrays for /invoices/:id.
 const listInvoiceInclude = {
-  customer: { select: { id: true, customerName: true, gstin: true, billingState: true } },
+  customer: { select: { id: true, customerName: true, gstin: true, billingState: true, customerType: true } },
   items: { include: { cylinderType: { select: { typeName: true } } } },
   order: { select: { id: true, orderNumber: true } },
   paymentAllocations: { include: { payment: { select: { id: true, paymentMethod: true } } } },

@@ -146,7 +146,12 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
     await prisma.creditNote.delete({ where: { id: cn.id } });
   });
 
-  it('writes "e-Invoice: Pending" to the PDF when no CRN gst_documents row exists', async () => {
+  it('WI-077 — skips the IRN block entirely when no CRN gst_documents row exists (B2C credit note)', async () => {
+    // WI-077: B2C credit notes never get an IRN — the recipient
+    // shouldn't see a "Pending" status line on the PDF that will never
+    // resolve. The CN PDF mirrors the invoice PDF pattern and omits the
+    // compliance section entirely when no IRN/EWB exists on the row.
+    //
     // PDFKit deflate-compresses content streams, so the rendered text
     // can't be regex-searched on the raw buffer. Spy on the prototype
     // `text` method instead — captures every string the service draws
@@ -165,9 +170,9 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
     const cn = await prisma.creditNote.create({
       data: {
         invoiceId: inv.id,
-        creditNoteNumber: `CN-PEND-${Date.now().toString(36)}`,
+        creditNoteNumber: `CN-NOIRN-${Date.now().toString(36)}`,
         totalAmount: 10,
-        reason: 'pdf pending text',
+        reason: 'WI-077 b2c-no-irn-block',
         status: 'pending_cn',
       },
     });
@@ -177,15 +182,18 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
         .set(auth(sharmaAdminToken));
 
       expect(res.status).toBe(200);
-      expect(drawnStrings.some((s) => /e-Invoice: Pending/.test(s))).toBe(true);
+      // No "Pending", no "Failed" — the compliance block is gone.
+      expect(drawnStrings.some((s) => /e-Invoice: Pending/.test(s))).toBe(false);
       expect(drawnStrings.some((s) => /e-Invoice: Failed/.test(s))).toBe(false);
+      // CRN-Details / IRN labels from drawCrnDetailsBox also absent.
+      expect(drawnStrings.some((s) => /CRN Details/i.test(s))).toBe(false);
     } finally {
       spy.mockRestore();
       await prisma.creditNote.delete({ where: { id: cn.id } });
     }
   });
 
-  it('writes "e-Invoice: Failed — retry from Billing page" when a CRN row exists with irnStatus=failed', async () => {
+  it('WI-077 — skips the IRN block entirely when a CRN row exists with irnStatus=failed and no IRN/EWB on it', async () => {
     const PDFDocument = (await import('pdfkit')).default;
     const drawnStrings: string[] = [];
     const originalText = PDFDocument.prototype.text;
@@ -224,8 +232,11 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
         .set(auth(sharmaAdminToken));
 
       expect(res.status).toBe(200);
-      expect(drawnStrings.some((s) => /e-Invoice: Failed/.test(s))).toBe(true);
-      expect(drawnStrings.some((s) => /retry from Billing page/.test(s))).toBe(true);
+      // WI-077: the failed-IRN status line is no longer rendered. The
+      // recipient PDF stays clean; the issuer learns about the failure
+      // via the Billing page badge + pending action, not the PDF.
+      expect(drawnStrings.some((s) => /e-Invoice: Failed/.test(s))).toBe(false);
+      expect(drawnStrings.some((s) => /retry from Billing page/.test(s))).toBe(false);
     } finally {
       spy.mockRestore();
       await prisma.gstDocument.delete({ where: { id: crnDoc.id } });
@@ -272,5 +283,94 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
 
     await prisma.gstDocument.delete({ where: { id: crnDoc.id } });
     await prisma.creditNote.delete({ where: { id: cn.id } });
+  });
+});
+
+describe('WI-077 — Debit Note PDF skips IRN block for B2C-style (no IRN/EWB) DBN', () => {
+  it('skips the IRN block on the DN PDF when no DBN gst_documents row exists', async () => {
+    const PDFDocument = (await import('pdfkit')).default;
+    const drawnStrings: string[] = [];
+    const originalText = PDFDocument.prototype.text;
+    const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
+      function (this: any, str: any, ...rest: any[]) {
+        if (typeof str === 'string') drawnStrings.push(str);
+        return originalText.call(this, str, ...rest);
+      },
+    );
+
+    const inv = await getValuedInvoice();
+    const dn = await prisma.debitNote.create({
+      data: {
+        invoiceId: inv.id,
+        debitNoteNumber: `DN-NOIRN-${Date.now().toString(36)}`,
+        totalAmount: 10,
+        reason: 'WI-077 b2c-no-irn-block',
+        status: 'pending_dn',
+      },
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/invoices/debit-notes/${dn.id}/pdf`)
+        .set(auth(sharmaAdminToken));
+
+      expect(res.status).toBe(200);
+      // "Pending generation" / "Generation failed" labels gone.
+      expect(drawnStrings.some((s) => /Pending generation/.test(s))).toBe(false);
+      expect(drawnStrings.some((s) => /Generation failed/.test(s))).toBe(false);
+      // "DBN Details - IRN" header from drawCrnDetailsBox also absent.
+      expect(drawnStrings.some((s) => /DBN Details/i.test(s))).toBe(false);
+    } finally {
+      spy.mockRestore();
+      await prisma.debitNote.delete({ where: { id: dn.id } });
+    }
+  });
+
+  it('still renders the DBN IRN block when a DBN gst_documents row carries a real IRN (B2B parity)', async () => {
+    const PDFDocument = (await import('pdfkit')).default;
+    const drawnStrings: string[] = [];
+    const originalText = PDFDocument.prototype.text;
+    const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
+      function (this: any, str: any, ...rest: any[]) {
+        if (typeof str === 'string') drawnStrings.push(str);
+        return originalText.call(this, str, ...rest);
+      },
+    );
+
+    const inv = await getValuedInvoice();
+    const dn = await prisma.debitNote.create({
+      data: {
+        invoiceId: inv.id,
+        debitNoteNumber: `DN-IRN-${Date.now().toString(36)}`,
+        totalAmount: 10,
+        reason: 'WI-077 b2b-irn-block-present',
+        status: 'pending_dn',
+      },
+    });
+    const dbnDoc = await prisma.gstDocument.create({
+      data: {
+        invoiceId: inv.id,
+        distributorId: 'dist-002',
+        docType: 'DBN',
+        gstDocNo: dn.debitNoteNumber!,
+        irnStatus: 'success',
+        irn: 'b'.repeat(64),
+        ackNo: '112610251234999',
+        ackDate: new Date(),
+        isLatest: true,
+      },
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/invoices/debit-notes/${dn.id}/pdf`)
+        .set(auth(sharmaAdminToken));
+
+      expect(res.status).toBe(200);
+      // drawCrnDetailsBox renders this header when invoked with label='DBN Details - IRN'.
+      expect(drawnStrings.some((s) => /DBN Details/i.test(s))).toBe(true);
+    } finally {
+      spy.mockRestore();
+      await prisma.gstDocument.delete({ where: { id: dbnDoc.id } });
+      await prisma.debitNote.delete({ where: { id: dn.id } });
+    }
   });
 });

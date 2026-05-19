@@ -222,7 +222,19 @@ export default function InvoicesPage() {
                     </td>
                     <td><Badge variant={STATUS_VARIANTS[inv.status] || 'neutral'}>{inv.status.replace(/_/g, ' ')}</Badge></td>
                     {gstEnabled && (
-                      <td><Badge variant={IRN_VARIANTS[inv.irnStatus] || 'neutral'}>{inv.irnStatus.replace(/_/g, ' ')}</Badge></td>
+                      <td>
+                        {/* WI-077: B2B shows IRN + EWB pills, B2C shows EWB
+                            only — B2C never gets an IRN so the old single
+                            "NOT ATTEMPTED" IRN pill was misleading. Colour
+                            encodes status (success=green, failed=red,
+                            not_attempted=grey, pending=yellow). */}
+                        <div className="flex gap-1">
+                          {inv.customerType === 'B2B' && (
+                            <Badge variant={IRN_VARIANTS[inv.irnStatus] || 'neutral'}>IRN</Badge>
+                          )}
+                          <Badge variant={EWB_VARIANTS[inv.ewbStatus] || 'neutral'}>EWB</Badge>
+                        </div>
+                      </td>
                     )}
                     <td>
                       <div className="flex items-center gap-1">

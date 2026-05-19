@@ -291,6 +291,10 @@ export interface Invoice {
   distributorId: string;
   customerId: string | null;
   customerName: string | null;
+  // WI-077: surfaced on list responses so the billing GST column can render
+  // a B2B IRN+EWB pill pair vs a B2C-only EWB pill. Null when the customer
+  // has been deleted.
+  customerType: 'B2B' | 'B2C' | null;
   orderId: string | null;
   issueDate: string;
   dueDate: string;

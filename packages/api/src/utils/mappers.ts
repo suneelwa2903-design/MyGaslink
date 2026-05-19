@@ -104,8 +104,13 @@ export function mapInvoice(inv: any): any {
   // Flat customerName for invoice list tables. Mirrors mapOrder. Without
   // this the frontend reads inv.customerName as undefined and displays
   // "N/A" for every row.
+  //
+  // WI-077: also surface customerType so the billing list can render a
+  // B2B EWB pill alongside the IRN pill and skip the IRN pill entirely
+  // for B2C (URP) rows where no IRN exists.
   if (inv.customer) {
     mapped.customerName = inv.customer.customerName ?? 'Deleted Customer';
+    mapped.customerType = inv.customer.customerType ?? null;
   }
   if (mapped.customer) mapped.customer = mapCustomer(mapped.customer);
   if (mapped.order) mapped.order = mapOrder(mapped.order);
