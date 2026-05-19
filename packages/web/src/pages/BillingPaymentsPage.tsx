@@ -257,18 +257,16 @@ function InvoicesTab() {
                   <th>Issue Date</th>
                   <th>Due Date</th>
                   {/*
-                    WI-064: when GST is on, invoice.totalAmount currently
-                    stores GST-INCLUSIVE for fresh invoices but GST-BASE
-                    for revised invoices (gstReissueService rebuilds line
-                    totals from item.unitPrice, which is the BASE price
-                    for GST-enabled invoices per invoiceService line 143).
-                    Label the column explicitly so the math in the View
-                    modal (base + CGST + SGST = this total) is not
-                    surprising. Tooltip clarifies the split.
+                    WI-066: invoice.totalAmount is the GST-inclusive grand
+                    total for both fresh AND revised invoices now. The
+                    WI-064 'excl. GST' qualifier was an interim safety
+                    net while gstReissueService had a unit-mismatch bug
+                    (was multiplying base unitPrice × qty instead of
+                    deriving inclusive total from original item.totalPrice).
+                    The service-layer fix in WI-066 removed the
+                    discrepancy, so this column is plain 'Total' again.
                   */}
-                  <th title={gstEnabled ? 'GST-base for revised invoices, GST-inclusive for fresh invoices' : undefined}>
-                    Total{gstEnabled ? ' (excl. GST)' : ''}
-                  </th>
+                  <th>Total</th>
                   <th>Outstanding</th>
                   <th>Status</th>
                   {gstEnabled && <th>GST</th>}
@@ -654,12 +652,12 @@ function InvoiceDetailModal({
           <div><p className="text-xs text-surface-400">CGST</p><p className="font-medium">{formatCurrency(invoice.cgstValue)}</p></div>
           <div><p className="text-xs text-surface-400">SGST</p><p className="font-medium">{formatCurrency(invoice.sgstValue)}</p></div>
           <div><p className="text-xs text-surface-400">IGST</p><p className="font-medium">{formatCurrency(invoice.igstValue)}</p></div>
-          {/* WI-064: see invoice list header for the "excl. GST"
-              qualifier rationale. */}
+          {/* WI-066: invoice.totalAmount is the GST-inclusive grand
+              total (matches what the customer pays). The WI-064
+              'excl. GST' label was an interim workaround for the
+              now-fixed reissue unit-mismatch bug. */}
           <div>
-            <p className="text-xs text-surface-400">
-              Total Amount{gstEnabled ? ' (excl. GST)' : ''}
-            </p>
+            <p className="text-xs text-surface-400">Total Amount</p>
             <p className="font-bold text-lg">{formatCurrency(invoice.totalAmount)}</p>
           </div>
         </div>

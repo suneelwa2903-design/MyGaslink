@@ -148,6 +148,23 @@ export async function reissueForDeliveryMismatch(args: {
   // Step 3 — update invoice items + totals to delivered quantities. We
   // pull delivered quantities from the linked order (confirmDelivery has
   // already written them) by matching on cylinderTypeId.
+  //
+  // WI-066: lineTotal is derived PROPORTIONALLY from the existing
+  // item.totalPrice (which is the GST-inclusive line total that
+  // invoiceService.createInvoiceFromOrder wrote at issue time) rather
+  // than recomputed as `qty × unitPrice`. Reason: for GST-enabled
+  // tenants, invoiceService stores item.unitPrice as the GST-BASE price
+  // (it reverse-calculates `basePrice = inclusivePrice / 1.18`, see
+  // invoiceService line 143). Multiplying that base unitPrice by qty
+  // produces a BASE total — which the legacy reissue code then wrote
+  // to invoice.totalAmount, making the customer-facing grand total
+  // mysteriously shrink by 1/1.18 after every modified delivery
+  // (₹84,000 → ₹71,186 was the symptom that surfaced this).
+  //
+  // Per-unit-from-original: `item.totalPrice / item.quantity` is the
+  // INCLUSIVE per-cylinder figure regardless of what convention
+  // unitPrice follows. Scale by newQty to keep totalPrice inclusive
+  // through the reissue.
   const orderItems = invoice.order?.items ?? [];
   const orderItemByCylinder = new Map(orderItems.map((oi) => [oi.cylinderTypeId, oi]));
   let revisedSubtotal = 0;
@@ -161,10 +178,17 @@ export async function reissueForDeliveryMismatch(args: {
     const newQty = orderItem?.deliveredQuantity ?? item.quantity;
     const unitPrice = toNum(item.unitPrice);
     const discountPerUnit = toNum(item.discountPerUnit);
-    // unitPrice in the schema is already GST-inclusive at the per-unit
-    // discounted price (see invoiceService.createInvoiceFromOrder), so
-    // line total stays consistent with the original computation.
-    const lineTotal = round2(newQty * Math.max(unitPrice - discountPerUnit, 0));
+    const originalTotalPrice = toNum(item.totalPrice);
+    const originalQty = item.quantity;
+    // Per-cylinder INCLUSIVE figure: pulled from the original totalPrice
+    // so the unit convention used at issue time is preserved. Fall back
+    // to `unitPrice - discount` for the (defensive) zero-original-qty
+    // case — that path shouldn't occur in practice because invoiceItems
+    // are created with qty >= 1.
+    const perUnitInclusive = originalQty > 0
+      ? originalTotalPrice / originalQty
+      : Math.max(unitPrice - discountPerUnit, 0);
+    const lineTotal = round2(newQty * perUnitInclusive);
     revisedSubtotal += lineTotal;
     revisedItems.push({
       id: item.id,
