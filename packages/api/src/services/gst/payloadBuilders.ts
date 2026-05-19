@@ -334,7 +334,15 @@ export function buildEwbPayload(
     fromAddr2: seller.Addr2,
     fromPlace: seller.Loc,
 
-    toGstin: isB2C ? seller.Gstin : buyer.Gstin, // B2C: use seller GSTIN
+    // WI-071: for B2C / URP customers, NIC expects the literal 'URP'
+    // sentinel here — NOT the seller's own GSTIN. The IRN payload
+    // (line 228 — `BuyerDtls.Gstin: isB2C ? 'URP' : ...`) already
+    // uses this convention; the EWB builder was inconsistent and
+    // sent the seller's GSTIN, producing `toGstin === fromGstin`.
+    // Under transactionType=1 ("Regular = single distinct recipient"),
+    // NIC's sandbox intermittently rejects that with error 611
+    // (live failure ORD-MPCDVUO1USY, 2026-05-19 08:41:40).
+    toGstin: isB2C ? 'URP' : buyer.Gstin,
     toPincode: buyer.Pin,
     toStateCode: parseInt(buyer.Stcd),
     toTrdName: buyer.TrdNm || buyer.LglNm,
@@ -383,7 +391,7 @@ export function buildEwbPayload(
 
     dispatchFromGSTIN: seller.Gstin,
     dispatchFromTradeName: seller.TrdNm || seller.LglNm,
-    shipToGSTIN: isB2C ? seller.Gstin : buyer.Gstin,
+    shipToGSTIN: isB2C ? 'URP' : buyer.Gstin, // WI-071 — see toGstin note above
     shipToTradeName: buyer.TrdNm || buyer.LglNm,
 
     // NIC EWB validator rule: totInvValue must be >= totalValue + cgstValue +
