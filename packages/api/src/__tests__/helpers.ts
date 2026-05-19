@@ -164,3 +164,59 @@ export async function cleanupTestOrders(distributorId: string) {
 export function today(): string {
   return new Date().toISOString().split('T')[0];
 }
+
+/**
+ * WI-064 follow-up: ensure a confirmed (non-cancelled) DriverVehicleAssignment
+ * exists for the given driver + date. orderService.assignDriver now requires
+ * one — without it the assign-driver call 400s with
+ *   "Driver has no confirmed vehicle mapping for the order delivery date".
+ *
+ * Idempotent. Safe to call from multiple tests / beforeAll blocks. Uses
+ * the model's `(driverId, assignmentDate, tripNumber)` unique key so
+ * reruns don't violate the constraint — we look up first, only create
+ * when missing, and never touch tripNumber.
+ *
+ * Returns the assignment row. If the test needs a different vehicle, it
+ * can update the row afterwards — but the typical pattern is one driver,
+ * one vehicle, one date.
+ */
+export async function ensureDriverVehicleMapping(opts: {
+  distributorId: string;
+  driverId: string;
+  vehicleId: string;
+  date: string; // YYYY-MM-DD
+}) {
+  const existing = await prisma.driverVehicleAssignment.findFirst({
+    where: {
+      driverId: opts.driverId,
+      distributorId: opts.distributorId,
+      assignmentDate: new Date(opts.date),
+    },
+    orderBy: { tripNumber: 'desc' },
+  });
+  if (existing) {
+    // If the existing row is cancelled or points at a different vehicle,
+    // bring it back online for this test run. We never delete it — that
+    // would force a unique-constraint dance for no benefit.
+    if (existing.status === 'cancelled' || existing.vehicleId !== opts.vehicleId) {
+      return prisma.driverVehicleAssignment.update({
+        where: { id: existing.id },
+        data: {
+          status: 'dispatch_ready',
+          vehicleId: opts.vehicleId,
+        },
+      });
+    }
+    return existing;
+  }
+  return prisma.driverVehicleAssignment.create({
+    data: {
+      driverId: opts.driverId,
+      vehicleId: opts.vehicleId,
+      distributorId: opts.distributorId,
+      assignmentDate: new Date(opts.date),
+      tripNumber: 1,
+      status: 'dispatch_ready',
+    },
+  });
+}

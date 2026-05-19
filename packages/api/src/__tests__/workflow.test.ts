@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
-import { loginAsDistAdmin, loginAsFinance, getSeedData, cleanupTestOrders, today } from './helpers.js';
+import { loginAsDistAdmin, loginAsFinance, getSeedData, cleanupTestOrders, ensureDriverVehicleMapping, today } from './helpers.js';
 import type { Express } from 'express';
 
 let app: Express;
@@ -18,6 +18,17 @@ beforeAll(async () => {
   seedData = await getSeedData();
   // Clean any existing test data
   await cleanupTestOrders('dist-001');
+
+  // WI-064 follow-up: orderService.assignDriver now requires a
+  // confirmed driver-vehicle mapping for the delivery date. Seed one
+  // for drivers[0] (used by Step 4 + Returns + Bulk Assignment) so the
+  // assign-driver call doesn't 400 with the missing-mapping error.
+  await ensureDriverVehicleMapping({
+    distributorId: 'dist-001',
+    driverId: seedData.drivers[0].id,
+    vehicleId: seedData.vehicles[0].id,
+    date: today(),
+  });
 });
 
 afterAll(async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
-import { loginAsDistAdmin, loginAsFinance, getSeedData, cleanupTestOrders, today } from './helpers.js';
+import { loginAsDistAdmin, loginAsFinance, getSeedData, cleanupTestOrders, ensureDriverVehicleMapping, today } from './helpers.js';
 import type { Express } from 'express';
 
 let app: Express;
@@ -17,6 +17,16 @@ beforeAll(async () => {
   financeToken = finance.token;
   seedData = await getSeedData();
   await cleanupTestOrders('dist-001');
+
+  // WI-064 follow-up: orderService.assignDriver now requires a
+  // confirmed driver-vehicle mapping for the delivery date. Seed one
+  // for drivers[0] (used by createDeliveredOrderWithInvoice helper).
+  await ensureDriverVehicleMapping({
+    distributorId: 'dist-001',
+    driverId: seedData.drivers[0].id,
+    vehicleId: seedData.vehicles[0].id,
+    date: today(),
+  });
 });
 
 afterAll(async () => {

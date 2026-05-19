@@ -7,6 +7,7 @@ import {
   loginAsFinance,
   getSeedData,
   cleanupTestOrders,
+  ensureDriverVehicleMapping,
   today,
 } from './helpers.js';
 import type { Express } from 'express';
@@ -55,6 +56,26 @@ beforeAll(async () => {
     },
   });
   testOrderId = order.id;
+
+  // WI-064 follow-up: orderService.assignDriver now requires a
+  // confirmed driver-vehicle mapping for the delivery date. Seed one
+  // for every driver this file touches (assign + reassign exercise
+  // drivers[0] and drivers[1]).
+  const vehicle = seedData.vehicles[0];
+  await ensureDriverVehicleMapping({
+    distributorId: 'dist-001',
+    driverId: seedData.drivers[0].id,
+    vehicleId: vehicle.id,
+    date: today(),
+  });
+  if (seedData.drivers[1]) {
+    await ensureDriverVehicleMapping({
+      distributorId: 'dist-001',
+      driverId: seedData.drivers[1].id,
+      vehicleId: seedData.vehicles[1]?.id ?? vehicle.id,
+      date: today(),
+    });
+  }
 });
 
 afterAll(async () => {
