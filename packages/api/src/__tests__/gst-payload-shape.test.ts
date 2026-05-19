@@ -216,7 +216,7 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
     expect(ewb.transactionType).toBe(1);
   });
 
-  it('WI-057 G1 — transactionType is always 1 (Regular) for B2C too', () => {
+  it('WI-074 — transactionType is 2 (Bill-To ≠ Ship-To) for B2C / URP', () => {
     // B2C fixture: drop buyer GSTIN so buildIrnPayload picks SupTyp=B2C.
     const irn = buildIrnPayload(b2bFixture({
       buyer: { ...b2bFixture().buyer, gstin: null },
@@ -225,10 +225,22 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
     const ewb = buildEwbPayload(irn, {
       vehicleNumber: 'KA01MN9999', transportMode: '1', distance: 1,
     });
-    // Prior bug: B2C set transactionType=2 ("Bill To ≠ Ship To") which
-    // tripped NIC 611. For LPG the same customer is always both, so
-    // Regular=1 is the only correct value regardless of B2B/B2C.
-    expect(ewb.transactionType).toBe(1);
+    // WI-057 forced type=1 for B2C on the misreading that "single
+    // recipient" = type 1. The correct criterion is "are Bill-To and
+    // Ship-To the same REGISTERED entity?" A URP customer (no GSTIN)
+    // can never be a registered Ship-To, so a URP Bill-To plus a
+    // depot Ship-To are two distinct registered entities — that maps
+    // to type=2. Live failures 240 / 240_3 under WI-073's type=1
+    // payload (2026-05-19 ORD-MPCFG9LCQ3W) were the symptom of the
+    // type=1 + URP semantic mismatch.
+    //
+    // Also pins Bill-From == Dispatch-From (no type=3/4 claim):
+    // dispatchFromGSTIN must be ABSENT for B2C.
+    expect(ewb.transactionType).toBe(2);
+    expect('dispatchFromGSTIN' in ewb).toBe(false);
+    // B2C ship-to party is the depot (registered Ship-To entity for
+    // a URP customer): shipToGSTIN === seller.Gstin.
+    expect(ewb.shipToGSTIN).toBe('29AAGCB1286Q000');
   });
 
   it('WI-057 — vehicleNo strips hyphens / slashes / spaces (NIC regex disallows them)', () => {

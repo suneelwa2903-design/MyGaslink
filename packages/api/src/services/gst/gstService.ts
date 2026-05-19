@@ -554,12 +554,28 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           distance: 1,
         });
 
+        // WI-074 debug: log full payload BEFORE the WhiteBooks call so
+        // the actual wire shape is visible in the dev console (not just
+        // in gst_api_logs). Strip on next iteration if WI-074 verifies.
+        logger.info('[WI-074-DEBUG] B2C post-delivery EWB request payload', {
+          invoiceId, orderId: invoice.orderId,
+          payload: JSON.stringify(ewbPayload, null, 2),
+        });
+
         const ewbResponse = await callWithLog<any>(
           distributorId, 'POST',
           `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
           ewbPayload, 'ewaybill',
           { apiType: 'EWB_GENERATE_B2C', invoiceId, orderId: invoice.orderId },
         );
+
+        // WI-074 debug: log full NIC response (including any info[]
+        // array that NIC sometimes includes with field-level details)
+        // BEFORE any error handling swallows or normalises it.
+        logger.info('[WI-074-DEBUG] B2C post-delivery EWB response', {
+          invoiceId, orderId: invoice.orderId,
+          response: JSON.stringify(ewbResponse, null, 2),
+        });
 
         const ewbNo = ewbResponse.data?.ewayBillNo;
         if (!ewbNo) {
