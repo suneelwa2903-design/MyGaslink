@@ -343,4 +343,59 @@ Read Section 9 #1 above. Concrete file/line references included.
 
 ---
 
+## SECTION 11 — Session 3 Addendum (2026-05-19, later same day)
+
+Session 3 took over from Session 2's `recursing-goldwasser` worktree. Worktree: `inspiring-solomon-664ac9`. One WI shipped: **WI-076**.
+
+### Updated current state
+
+| Item | Value |
+|---|---|
+| Master SHA | **WI-076 merge `47c0f34`** plus docs/handoff updates landed on top — final SHA reported in commit log after Session 3 merge |
+| API test suite | **450 passed / 450 total** (36 test files) |
+| B2B EWB | ✅ working live on dist-002 (Maruthi + Hyderabad Caterers) |
+| B2C EWB | ✅ working live on dist-002 (Bangalore Foods URP) |
+
+### WI-076 — B2B EWB returns NIC 616 ("JSON validation failed")
+
+**Symptom.** Four live B2B dispatches on dist-002 the morning of 2026-05-19 (Maruthi Agencies ×2, Hyderabad Caterers ×2) all returned NIC error 616 on `EWB_GENERATE_BY_IRN` while their IRNs succeeded. Every B2B invoice ended up with a valid IRN but no EWB number on the PDF or trip sheet. B2C dispatches in the same window worked fine.
+
+**Root cause.** Under NIC's EWB `transactionType: 1` ("Bill-To party and Ship-To party are the SAME registered legal entity"), `toGstin` IS already the Ship-To and `fromGstin` IS already the Dispatch-From. The redundant `shipToGSTIN` / `shipToTradeName` / `dispatchFromGSTIN` / `dispatchFromTradeName` fields had been tolerated by NIC's sandbox historically but at some point on or before 2026-05-19 the validator started hard-rejecting them with 616. WI-073 had already made the same observation for B2C; the B2B branch in [payloadBuilders.ts buildEwbPayload()](packages/api/src/services/gst/payloadBuilders.ts) still sent all four fields with matching values.
+
+**Live A/B proof (sandbox).** On a fresh docNo NIC had never seen (`INV-MPCJV99K`), same auth, same payload otherwise byte-identical, sequential calls:
+  - Variant A — with the 4 fields → `status_cd=0`, `errorCodes=616`
+  - Variant B — 4 fields removed → `status_cd=1`, `ewayBillNo=101012061787`
+
+**Fix.** [payloadBuilders.ts:434-444](packages/api/src/services/gst/payloadBuilders.ts) — the B2B branch of the `...(isB2C ? { ... } : { ... })` spread now resolves to `{}`. All four fields are omitted under `transactionType: 1`. Comment block on lines 424-433 updated with the WI-076 docNo as evidence trail.
+
+**Latent bugs identified during the RCA, NOT fixed in this WI** (they are no longer exercised by the success path; deferred to a follow-up WI):
+  - `runB2bPreflight` silent-failure path when `parsed.ewbNo` is null after `status_cd=1` ([gstPreflightService.ts:929-950](packages/api/src/services/gst/gstPreflightService.ts:929))
+  - `processInvoiceGst` phantom-active row when `parseEwbResponse` returns null in the B2B catch ([gstService.ts:307-332](packages/api/src/services/gst/gstService.ts:307))
+  - Two `isLatest=true` rows possible when a dispatch EWB pre-exists and the post-delivery `genewaybill` fails ([gstService.ts:280-291](packages/api/src/services/gst/gstService.ts:280))
+
+**End-to-end verification (post-merge, fresh DB after a scoped dist-002 wipe).** Single preflight dispatch with three orders:
+
+| Order | Customer | Mode | IRN | EWB |
+|---|---|---|---|---|
+| INV-MPCKWDW2WL4 | Maruthi Agencies (B2B intra-state KA→KA) | B2B | ✅ | ✅ `171012061832` |
+| INV-MPCKWEGS0DC | Hyderabad Caterers (B2B inter-state KA→TS) | B2B | ✅ | ✅ `141012061833` |
+| INV-MPCKWEYOSY9 | Bangalore Foods (B2C URP) | B2C | n/a | ✅ `111012061834` |
+
+3/3 succeeded. All `irn_status` / `ewb_status` rows consistent across `invoices` and `gst_documents`.
+
+### Tooling added
+
+- [packages/api/scripts/smoke-test-ewb.ts](packages/api/scripts/smoke-test-ewb.ts) — reusable manual verification harness. Creates one B2B intra + one B2B inter + one B2C order via the live API, runs preflight, prints `gst_documents` and the last few `gst_api_logs` rows per order. Use for future GST regressions before/after a fix.
+
+### Anti-pattern added to CLAUDE.md
+
+  - **#14**: Sending `shipToGSTIN` or `dispatchFromGSTIN` on an EWB payload with `transactionType: 1` causes NIC 616. These fields are only valid for transactionType 2, 3, or 4. Guard test in [gst-b2c-urp-investigation.test.ts](packages/api/src/__tests__/gst-b2c-urp-investigation.test.ts).
+
+### Outstanding for Session 4
+
+- Address the three latent bugs above (silent-failure null `ewbNo`, phantom-active row, two `isLatest` rows). All are dead code on the success path but real risk if NIC's validator changes again. Recommend bundling under a single WI-077.
+- Consider whether the test suite needs a `*-payload-shape.test.ts` guard that fails if any of the four redundant fields ever sneak back into the B2B EWB output. (Current guard only covers the `gst-b2c-urp-investigation.test.ts` B2B assertion — strengthen to a dedicated shape test.)
+
+---
+
 **End of handoff.**
