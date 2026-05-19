@@ -168,11 +168,25 @@ export async function preflightDispatch(params: {
         409,
       );
     }
-    // Previous trip is complete. Bump tripNumber for the audit trail,
-    // reset the row to dispatch_ready so the standard flow can write a
-    // fresh consolidated EWB for the new batch. The prior tripSheetNo
+    // WI-070 legacy recovery: a DVA shouldn't normally reach this
+    // branch any more — confirmDelivery (orderService.ts, WI-068/070)
+    // now auto-resets the DVA to dispatch_ready AND bumps tripNumber
+    // when the last in-flight order is delivered. This block fires
+    // only for DVAs that escaped that path: pre-WI-068 historical
+    // rows, a future non-transactional confirmDelivery variant, a
+    // crash that committed orders but skipped the auto-reset, etc.
+    //
+    // Bump tripNumber for the audit trail, reset the row to
+    // dispatch_ready so the standard flow can write a fresh
+    // consolidated EWB for the new batch. The prior tripSheetNo
     // is intentionally cleared — the driver already downloaded that
     // PDF; the new trip needs its own gencewb result.
+    //
+    // No double-increment risk: confirmDelivery's auto-reset is the
+    // ONLY non-failure path out of loaded_and_dispatched, and it
+    // leaves the DVA in dispatch_ready (not loaded_and_dispatched),
+    // so this branch is genuinely mutually exclusive with the WI-070
+    // increment in orderService.
     await prisma.driverVehicleAssignment.update({
       where: { id: mapping.id },
       data: {

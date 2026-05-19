@@ -140,10 +140,14 @@ export function __resetPincodeCache(): void {
 }
 
 /**
- * Distance in km between two Indian pincodes via Haversine. Returns
- * null when either pincode is missing from the lookup table — the
- * caller is expected to fall back to NIC's auto-calc by sending
+ * Straight-line Haversine distance in km between two Indian pincodes.
+ * Returns null when either pincode is missing from the lookup table —
+ * the caller is expected to fall back to NIC's auto-calc by sending
  * `'0'` for transDistance.
+ *
+ * NOTE: this is straight-line (great-circle) only. Callers building a
+ * NIC EWB transDistance value must apply a road-circuity factor —
+ * see `getTransDistance` below for the right wrapper.
  */
 export function getDistanceKm(fromPin: string | null | undefined, toPin: string | null | undefined): number | null {
   if (!fromPin || !toPin) return null;
@@ -157,10 +161,42 @@ export function getDistanceKm(fromPin: string | null | undefined, toPin: string 
 }
 
 /**
+ * Road circuity factor — multiplier from Haversine straight-line to
+ * estimated road distance. WI-067 sent the raw Haversine value, but
+ * NIC validates transDistance within ±10% of its internal ROAD
+ * distance calculation, and road distance in India is empirically
+ * ~15% longer than great-circle for inter-metro pairs. Concrete:
+ *
+ *   Bangalore (560001) → Hyderabad (500016)
+ *     Haversine straight-line  ≈ 500 km
+ *     Real road distance       ≈ 575 km
+ *     NIC ±10% window          ≈ 517 – 632 km
+ *     Sending raw 500          → 702 (below window) — observed live 2026-05-19
+ *     500 × 1.15 = 575         → inside window ✓
+ *
+ * 4000 km is NIC's hard upper bound for transDistance.
+ */
+const ROAD_CIRCUITY_FACTOR = 1.15;
+const NIC_MAX_TRANS_DISTANCE_KM = 4000;
+
+/**
+ * Convert a Haversine straight-line distance to a NIC-ready road
+ * distance estimate, clamped to [1, 4000].
+ *
+ * Exported separately so the cap and circuity math are unit-testable
+ * without having to mock the CSV table (the real bundled CSV maxes
+ * out at ~1750 km / 2010 km post-circuity — nowhere near the cap).
+ */
+export function _roadDistanceFromHaversine(haversineKm: number): number {
+  const roadEstimate = Math.ceil(haversineKm * ROAD_CIRCUITY_FACTOR);
+  return Math.max(1, Math.min(roadEstimate, NIC_MAX_TRANS_DISTANCE_KM));
+}
+
+/**
  * NIC-ready transDistance value.
  *   missing pin / unknown pin → "0"  (NIC auto-calc)
  *   same pincode              → "1"  (NIC minimum non-zero)
- *   known pin pair            → ceil(haversine_km) as string
+ *   known pin pair            → ceil(haversine_km × 1.15) clamped to [1, 4000]
  */
 export function getTransDistance(
   fromPin: string | null | undefined,
@@ -168,10 +204,10 @@ export function getTransDistance(
 ): string {
   if (!fromPin || !toPin) return '0';
   if (fromPin.trim() === toPin.trim()) return '1';
-  const km = getDistanceKm(fromPin, toPin);
-  if (km === null) {
+  const straightLine = getDistanceKm(fromPin, toPin);
+  if (straightLine === null) {
     logger.warn('[pincodeDistance] Unknown pincode pair, falling back to NIC auto-calc', { fromPin, toPin });
     return '0';
   }
-  return String(km);
+  return String(_roadDistanceFromHaversine(straightLine));
 }

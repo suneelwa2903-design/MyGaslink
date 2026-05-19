@@ -252,15 +252,26 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
     expect(ewb.vehicleNo).toBe('KA01MN9999');
   });
 
-  it('WI-057 — transDistance is "1" minimum even when caller passes 0', () => {
+  it('WI-070 — transDistance comes from pincode lookup; caller-passed distance is a no-op', () => {
+    // Historical context: WI-057 introduced a `Math.max(1, distance || 1)`
+    // clamp on the caller-supplied `distance` argument. WI-067 replaced
+    // that with a pincode-derived value (`getTransDistance(fromPin, toPin)`)
+    // so `transportDetails.distance` is now unused. WI-070 added a 1.15×
+    // road-circuity factor on top.
+    //
+    // The fixture has seller.pincode=560001 and buyer.pincode=560041 —
+    // both Bangalore, both share the city centroid in our table, so
+    // Haversine ≈ 0 km → getDistanceKm floors to 1 → × 1.15 → ceil → 2.
+    // What matters is NOT the exact number; it's the contract: the
+    // caller's `distance: 0` argument has zero influence, and the
+    // result is a positive integer string.
     const irn = buildIrnPayload(b2bFixture());
     const ewb = buildEwbPayload(irn, {
       vehicleNumber: 'KA01MN9999', transportMode: '1', distance: 0,
     });
-    // NIC rejects "0" with error 721 on the live sandbox. Even though
-    // WhiteBooks Postman shows "0" as auto-calc, we clamp to 1 because
-    // the sandbox doesn't honour the auto-calc sentinel.
-    expect(ewb.transDistance).toBe('1');
+    expect(typeof ewb.transDistance).toBe('string');
+    expect(parseInt(ewb.transDistance, 10)).toBeGreaterThanOrEqual(1);
+    expect(parseInt(ewb.transDistance, 10)).toBeLessThanOrEqual(4000);
   });
 
   it('WI-064 — DocDtls.No surfaces the bumped doc number, never silently reuses the burned original', () => {

@@ -497,16 +497,19 @@ describe('WI-067 — pincode-derived transDistance', () => {
     pinUtil.__resetPincodeCache();
   });
 
-  it('Bangalore → Hyderabad returns a real inter-state distance (not "1")', () => {
+  it('Bangalore → Hyderabad returns a road-distance estimate inside NIC tolerance', () => {
     // Bangalore (560001, 12.97N 77.59E) to Hyderabad (500016, 17.38N
-    // 78.48E) is ~500km straight-line / ~575km by road. NIC accepts
-    // ±10% tolerance vs road distance. Anything in the 400-700 band
-    // proves we're no longer sending the legacy "1" that tripped
-    // error 702 on the live dispatch.
+    // 78.48E). Haversine straight-line ≈ 500km. WI-070 multiplies by
+    // 1.15 (road circuity factor) → ≈ 575km. NIC's internal road
+    // distance for this pincode pair is ~575km; ±10% window is
+    // 517-632km. The post-WI-070 value falls squarely inside.
+    //
+    // The 2026-05-19 live failure (ORD-MPCCQW4XHLJ) sent 500km on
+    // WI-067 code and got NIC 702 because 500 < 517 (below window).
     const km = pinUtil.getTransDistance('560001', '500016');
     const n = parseInt(km, 10);
-    expect(n).toBeGreaterThan(400);
-    expect(n).toBeLessThan(700);
+    expect(n).toBeGreaterThanOrEqual(517);
+    expect(n).toBeLessThanOrEqual(632);
   });
 
   it('Same pincode returns "1" (NIC minimum non-zero)', () => {
@@ -839,6 +842,192 @@ describe('WI-069 — /in-transit excludes stale DVAs (0 in-flight orders)', () =
       expect(oldOrder.status).toBe('delivered');
     } finally {
       await teardown([oldDelivered, ...newOrderIds], [dva.id]);
+    }
+  });
+});
+
+// ─── WI-070 ──────────────────────────────────────────────────────────────────
+
+describe('WI-070 — confirmDelivery bumps tripNumber + EWB road circuity', () => {
+  let distributorId: string;
+  let driverId: string;
+  let vehicleId: string;
+  let orderService: typeof import('../services/orderService.js');
+
+  beforeAll(async () => {
+    distributorId = 'dist-002';
+    const driver = await prisma.driver.findFirstOrThrow({
+      where: { distributorId, status: 'active', deletedAt: null },
+      orderBy: { driverName: 'asc' },
+    });
+    driverId = driver.id;
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId } });
+    vehicleId = vehicle.id;
+    orderService = await import('../services/orderService.js');
+  });
+
+  async function seedInFlight(tripNumber: number) {
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId, customerType: 'B2C', deletedAt: null },
+    });
+    const cyl = await prisma.cylinderType.findFirstOrThrow({
+      where: { distributorId, typeName: '19 KG' },
+    });
+    const order = await prisma.order.create({
+      data: {
+        distributorId,
+        customerId: customer.id,
+        driverId,
+        vehicleId,
+        orderNumber: `WI70-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'pending_delivery',
+        orderType: 'delivery',
+        tripNumber,
+        totalAmount: 2000,
+        items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 2000, totalPrice: 2000 }] },
+      },
+    });
+    return { orderId: order.id, cylinderTypeId: cyl.id };
+  }
+
+  it('Test 1 — tripNumber + trip-sheet fields update on last delivery (auto-reset)', async () => {
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'loaded_and_dispatched', tripNumber: 1,
+    });
+    // Pre-stamp the trip sheet so the auto-reset clear is observable.
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dva.id },
+      data: {
+        tripSheetNo: 'CEWB-TRIP-1',
+        tripSheetGeneratedAt: new Date(),
+        tripSheetNo2: 'CEWB-TRIP-1-ADDITION',
+        tripSheetNo2GeneratedAt: new Date(),
+      },
+    });
+    const o1 = await seedInFlight(1);
+    const o2 = await seedInFlight(1);
+    try {
+      // Deliver order 1 — DVA stays loaded_and_dispatched (still 1 in flight)
+      await orderService.confirmDelivery(o1.orderId, distributorId, 'test-user', {
+        items: [{ cylinderTypeId: o1.cylinderTypeId, deliveredQuantity: 1, emptiesCollected: 0 }],
+      });
+      const dvaMid = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+      expect(dvaMid.status).toBe('loaded_and_dispatched');
+      expect(dvaMid.tripNumber).toBe(1);
+      expect(dvaMid.tripSheetNo).toBe('CEWB-TRIP-1');
+
+      // Deliver order 2 (the last) — auto-reset must bump tripNumber AND clear trip sheets
+      await orderService.confirmDelivery(o2.orderId, distributorId, 'test-user', {
+        items: [{ cylinderTypeId: o2.cylinderTypeId, deliveredQuantity: 1, emptiesCollected: 0 }],
+      });
+      const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+      expect(after.status).toBe('dispatch_ready');
+      expect(after.tripNumber).toBe(2);
+      expect(after.tripSheetNo).toBeNull();
+      expect(after.tripSheetGeneratedAt).toBeNull();
+      expect(after.tripSheetNo2).toBeNull();
+      expect(after.tripSheetNo2GeneratedAt).toBeNull();
+    } finally {
+      await teardown([o1.orderId, o2.orderId], [dva.id]);
+    }
+  });
+
+  it('Test 2 — next dispatch uses the bumped tripNumber (no double-increment)', async () => {
+    // Setup: DVA already at tripNumber=5, dispatch_ready (as if WI-070
+    // auto-reset just fired on the previous trip).
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'dispatch_ready', tripNumber: 5,
+    });
+    const newOrderIds = await seedB2cOrders({
+      distributorId, driverId, vehicleId, date: TEST_DATE, count: 1,
+    });
+    try {
+      apiCallMock.mockResolvedValueOnce(ewbGenOk('181012-T5-A'));
+      await preflightDispatch({
+        distributorId, driverId, assignmentDate: TEST_DATE, userId: 'test-user',
+      });
+
+      // The new order should be stamped with the CURRENT tripNumber (5),
+      // not a bumped one (6). The bump already happened on the prior
+      // trip's last delivery.
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: newOrderIds[0] } });
+      expect(order.tripNumber).toBe(5);
+      expect(order.status).toBe('pending_delivery');
+
+      // DVA holds at 5 (loaded_and_dispatched for the live trip). No
+      // second increment from preflightDispatch's legacy branch — that
+      // branch is gated on `status === 'loaded_and_dispatched'` and
+      // the row was `dispatch_ready` at call time.
+      const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+      expect(after.tripNumber).toBe(5);
+      expect(after.status).toBe('loaded_and_dispatched');
+    } finally {
+      await teardown(newOrderIds, [dva.id]);
+    }
+  });
+
+  it('Test 3 — Bangalore → Hyderabad transDistance sits inside NIC tolerance window', async () => {
+    // Pre-WI-067: '1' → NIC 702 (way below window)
+    // WI-067:     '500' (raw Haversine) → NIC 702 (still below 517km window)
+    // WI-070:     '575' (Haversine × 1.15) → INSIDE 517-632km window
+    const pinUtil = await import('../utils/pincodeDistance.js');
+    pinUtil.__resetPincodeCache();
+    const km = pinUtil.getTransDistance('560001', '500016');
+    const n = parseInt(km, 10);
+    expect(n).toBeGreaterThanOrEqual(517);
+    expect(n).toBeLessThanOrEqual(632);
+  });
+
+  it('Test 4 — transDistance road-circuity caps at 4000 km (NIC hard max)', async () => {
+    const { _roadDistanceFromHaversine } = await import('../utils/pincodeDistance.js');
+    // 1km Haversine → ceil(1.15) = 2 (cleared the floor-at-1)
+    expect(_roadDistanceFromHaversine(1)).toBe(2);
+    // 500km Haversine → 575 (Bangalore-Hyderabad shape)
+    expect(_roadDistanceFromHaversine(500)).toBe(575);
+    // 3000km Haversine → 3450 (real-world reachable in India: e.g. Trivandrum-Srinagar)
+    expect(_roadDistanceFromHaversine(3000)).toBe(3450);
+    // 4000km Haversine → 4600 raw, capped to 4000
+    expect(_roadDistanceFromHaversine(4000)).toBe(4000);
+    // 5000km Haversine (synthetic) → capped to 4000
+    expect(_roadDistanceFromHaversine(5000)).toBe(4000);
+    // Floor at 1 still applies
+    expect(_roadDistanceFromHaversine(0)).toBe(1);
+  });
+
+  it('Test 5 — legacy recovery branch increments by exactly 1 (no double-bump)', async () => {
+    // Simulate a stuck DVA: status=loaded_and_dispatched but 0 in-flight
+    // orders. This branch should fire and bump tripNumber by 1 — NOT 2.
+    // Critical regression guard: the WI-070 confirmDelivery auto-reset
+    // does NOT fire on this path because we don't go through
+    // confirmDelivery — we go straight to preflightDispatch on a stuck
+    // row. Only the legacy branch in gstPreflightService should bump.
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'loaded_and_dispatched', tripNumber: 9,
+    });
+    // No in-flight orders. New pending_dispatch order ready.
+    const newOrderIds = await seedB2cOrders({
+      distributorId, driverId, vehicleId, date: TEST_DATE, count: 1,
+    });
+    try {
+      apiCallMock.mockResolvedValueOnce(ewbGenOk('181012-LEGACY-1'));
+      await preflightDispatch({
+        distributorId, driverId, assignmentDate: TEST_DATE, userId: 'test-user',
+      });
+
+      // The legacy branch fired exactly once: 9 → 10. Order stamped with 10.
+      const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+      expect(after.tripNumber).toBe(10);
+      expect(after.status).toBe('loaded_and_dispatched');
+
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: newOrderIds[0] } });
+      expect(order.tripNumber).toBe(10);
+    } finally {
+      await teardown(newOrderIds, [dva.id]);
     }
   });
 });

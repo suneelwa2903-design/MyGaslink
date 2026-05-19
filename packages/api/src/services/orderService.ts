@@ -838,6 +838,23 @@ export async function confirmDelivery(
         },
       });
       if (remainingInFlight === 0) {
+        // WI-070: also bump tripNumber and clear trip-sheet fields
+        // here. WI-065 originally lived the increment inside
+        // preflightDispatch's `if (mapping.status ===
+        // loaded_and_dispatched)` branch — but WI-068 split the trip
+        // lifecycle so the DVA reaches dispatch_ready BEFORE the next
+        // dispatch click, which left the increment unreachable. Every
+        // dispatch after the first then stamped orders with the same
+        // tripNumber=1 forever (live evidence: dist-002 2026-05-19,
+        // 9 orders all tripNumber=1 across 4 dispatch cycles).
+        //
+        // The next preflightDispatch picks the already-incremented
+        // tripNumber up from the dispatch_ready DVA. The legacy
+        // increment branch in gstPreflightService.ts:171-188 is
+        // retained as defence-in-depth for any DVA that ends up stuck
+        // in loaded_and_dispatched without going through this path
+        // (historical pre-WI-068 rows, a future non-transactional
+        // confirmDelivery variant, etc.).
         await tx.driverVehicleAssignment.updateMany({
           where: {
             distributorId,
@@ -845,7 +862,14 @@ export async function confirmDelivery(
             assignmentDate: order.deliveryDate,
             status: 'loaded_and_dispatched',
           },
-          data: { status: 'dispatch_ready' },
+          data: {
+            status: 'dispatch_ready',
+            tripNumber: { increment: 1 },
+            tripSheetNo: null,
+            tripSheetGeneratedAt: null,
+            tripSheetNo2: null,
+            tripSheetNo2GeneratedAt: null,
+          },
         });
       }
     }
