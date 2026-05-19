@@ -658,3 +658,187 @@ describe('WI-068 — DVA auto-reset + Add-to-Trip in-flight gate', () => {
     }
   });
 });
+
+// ─── WI-069 ──────────────────────────────────────────────────────────────────
+
+describe('WI-069 — /in-transit excludes stale DVAs (0 in-flight orders)', () => {
+  let distributorId: string;
+  let driverId: string;
+  let vehicleId: string;
+  let sharmaToken: string;
+
+  beforeAll(async () => {
+    distributorId = 'dist-002';
+    const driver = await prisma.driver.findFirstOrThrow({
+      where: { distributorId, status: 'active', deletedAt: null },
+      orderBy: { driverName: 'asc' },
+    });
+    driverId = driver.id;
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId } });
+    vehicleId = vehicle.id;
+    const sharma = await prisma.user.findUniqueOrThrow({ where: { email: 'sharma@gasdist.com' } });
+    const { generateToken } = await import('./helpers.js');
+    sharmaToken = generateToken({
+      userId: sharma.id, email: sharma.email,
+      role: sharma.role as any, distributorId: sharma.distributorId,
+    });
+  });
+
+  /**
+   * Build a delivered order (no in-flight effect) stamped with a tripNumber.
+   * Models the post-WI-068-merge scenario: DVA stuck loaded_and_dispatched
+   * from pre-WI-068 deliveries, all orders already at delivered/modified_delivered.
+   */
+  async function seedDeliveredOrder(tripNumber: number) {
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId, customerType: 'B2C', deletedAt: null },
+    });
+    const cyl = await prisma.cylinderType.findFirstOrThrow({
+      where: { distributorId, typeName: '19 KG' },
+    });
+    const order = await prisma.order.create({
+      data: {
+        distributorId,
+        customerId: customer.id,
+        driverId,
+        vehicleId,
+        orderNumber: `WI69-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'delivered',
+        orderType: 'delivery',
+        tripNumber,
+        deliveredAt: new Date(),
+        totalAmount: 2000,
+        items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 2000, totalPrice: 2000 }] },
+      },
+    });
+    return order.id;
+  }
+
+  async function seedPendingDeliveryOrder(tripNumber: number) {
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId, customerType: 'B2C', deletedAt: null },
+    });
+    const cyl = await prisma.cylinderType.findFirstOrThrow({
+      where: { distributorId, typeName: '19 KG' },
+    });
+    const order = await prisma.order.create({
+      data: {
+        distributorId,
+        customerId: customer.id,
+        driverId,
+        vehicleId,
+        orderNumber: `WI69P-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'pending_delivery',
+        orderType: 'delivery',
+        tripNumber,
+        totalAmount: 2000,
+        items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 2000, totalPrice: 2000 }] },
+      },
+    });
+    return order.id;
+  }
+
+  it('Test 1 — /in-transit excludes stale DVA where all orders already delivered', async () => {
+    // Simulates the live 2026-05-19 incident: DVA stuck loaded_and_dispatched
+    // from deliveries that ran on code pre-dating WI-068's auto-reset block.
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'loaded_and_dispatched', tripNumber: 10,
+    });
+    const d1 = await seedDeliveredOrder(10);
+    const d2 = await seedDeliveredOrder(10);
+    try {
+      const app = createApp();
+      const res = await request(app)
+        .get(`/api/orders/in-transit?date=${TEST_DATE}`)
+        .set({ Authorization: `Bearer ${sharmaToken}` });
+
+      expect(res.status).toBe(200);
+      const drivers = res.body.data.drivers;
+      const row = drivers.find((d: any) => d.driverId === driverId);
+      expect(row).toBeUndefined();
+    } finally {
+      await teardown([d1, d2], [dva.id]);
+    }
+  });
+
+  it('Test 2 — /in-transit includes active DVA with at least one order in flight', async () => {
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'loaded_and_dispatched', tripNumber: 11,
+    });
+    const delivered = await seedDeliveredOrder(11);
+    const inFlight = await seedPendingDeliveryOrder(11);
+    try {
+      const app = createApp();
+      const res = await request(app)
+        .get(`/api/orders/in-transit?date=${TEST_DATE}`)
+        .set({ Authorization: `Bearer ${sharmaToken}` });
+
+      expect(res.status).toBe(200);
+      const drivers = res.body.data.drivers;
+      const row = drivers.find((d: any) => d.driverId === driverId);
+      expect(row).toBeDefined();
+      expect(row.inTransitCount).toBe(1);
+      expect(row.deliveredCount).toBeGreaterThanOrEqual(1);
+      expect(row.tripNumber).toBe(11);
+    } finally {
+      await teardown([delivered, inFlight], [dva.id]);
+    }
+  });
+
+  it('Test 3 — stale DVA + new pending_dispatch: Dispatch self-heals (bumps tripNumber, stamps new order)', async () => {
+    // After WI-069's /in-transit filter hides this stuck driver, the
+    // Ready-to-Dispatch UI surfaces them. Admin clicks Dispatch ▶ → the
+    // existing self-heal at gstPreflightService.ts:171-188 bumps
+    // tripNumber and dispatches the new order on the new trip.
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'loaded_and_dispatched', tripNumber: 12,
+    });
+    // Pre-stamp stale tripSheets to verify the self-heal clears them.
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dva.id },
+      data: {
+        tripSheetNo: 'CEWB-STALE-TRIP-12',
+        tripSheetGeneratedAt: new Date(),
+      },
+    });
+    const oldDelivered = await seedDeliveredOrder(12);
+    const newOrderIds = await seedB2cOrders({
+      distributorId, driverId, vehicleId, date: TEST_DATE, count: 1,
+    });
+    try {
+      apiCallMock.mockResolvedValueOnce(ewbGenOk('181012-HEAL-1'));
+      const result = await preflightDispatch({
+        distributorId, driverId, assignmentDate: TEST_DATE, userId: 'test-user',
+      });
+      expect(result.summary.succeeded).toBe(1);
+      expect(result.dispatched).toBe(true);
+
+      // DVA: bumped tripNumber, stale trip sheet cleared, status back to
+      // loaded_and_dispatched for the FRESH trip.
+      const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+      expect(after.tripNumber).toBe(13);
+      expect(after.status).toBe('loaded_and_dispatched');
+      expect(after.tripSheetNo).toBeNull();
+
+      // New order stamped with the BUMPED tripNumber, transitioned to
+      // pending_delivery.
+      const newOrder = await prisma.order.findUniqueOrThrow({ where: { id: newOrderIds[0] } });
+      expect(newOrder.tripNumber).toBe(13);
+      expect(newOrder.status).toBe('pending_delivery');
+
+      // Old delivered order untouched at tripNumber=12
+      const oldOrder = await prisma.order.findUniqueOrThrow({ where: { id: oldDelivered } });
+      expect(oldOrder.tripNumber).toBe(12);
+      expect(oldOrder.status).toBe('delivered');
+    } finally {
+      await teardown([oldDelivered, ...newOrderIds], [dva.id]);
+    }
+  });
+});

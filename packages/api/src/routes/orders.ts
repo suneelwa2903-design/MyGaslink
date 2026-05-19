@@ -135,42 +135,58 @@ router.get('/in-transit',
         orderBy: { tripNumber: 'asc' },
       });
 
-      const rows = await Promise.all(dvas.map(async (dva) => {
-        const [inTransitCount, deliveredCount, pendingCount] = await Promise.all([
-          prisma.order.count({
-            where: {
-              distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
-              status: { in: ['pending_delivery', 'preflight_in_progress'] },
-            },
-          }),
-          prisma.order.count({
-            where: {
-              distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
-              tripNumber: dva.tripNumber,
-              status: { in: ['delivered', 'modified_delivered'] },
-            },
-          }),
-          prisma.order.count({
-            where: {
-              distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
-              status: 'pending_dispatch',
-            },
-          }),
-        ]);
-        return {
-          driverId: dva.driverId,
-          driverName: dva.driver?.driverName ?? null,
-          vehicleId: dva.vehicleId,
-          vehicleNumber: dva.vehicle?.vehicleNumber ?? null,
-          assignmentId: dva.id,
-          tripNumber: dva.tripNumber,
-          tripSheetNo: dva.tripSheetNo,
-          tripSheetNo2: dva.tripSheetNo2,
-          inTransitCount,
-          deliveredCount,
-          pendingCount,
-        };
-      }));
+      // WI-069: a DVA can sit at status=loaded_and_dispatched indefinitely
+      // if the auto-reset block in confirmDelivery (WI-068) never had a
+      // chance to run — e.g. orders delivered on a code version that
+      // pre-dates WI-068, a non-transactional path that bypasses the
+      // reset, or any future edge case. Surfacing such a driver in the
+      // "In Transit" section is misleading: the trip is logically over,
+      // any new pending_dispatch order should start a FRESH trip, and
+      // the existing self-heal at gstPreflightService.ts (stale DVA →
+      // bump tripNumber + reset) handles it the moment the user clicks
+      // Dispatch ▶ from the Ready-to-Dispatch section.
+      //
+      // Filter on actual in-flight orders (pending_delivery /
+      // preflight_in_progress), not DVA.status alone.
+      const rows = (
+        await Promise.all(dvas.map(async (dva) => {
+          const [inTransitCount, deliveredCount, pendingCount] = await Promise.all([
+            prisma.order.count({
+              where: {
+                distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
+                status: { in: ['pending_delivery', 'preflight_in_progress'] },
+              },
+            }),
+            prisma.order.count({
+              where: {
+                distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
+                tripNumber: dva.tripNumber,
+                status: { in: ['delivered', 'modified_delivered'] },
+              },
+            }),
+            prisma.order.count({
+              where: {
+                distributorId, driverId: dva.driverId, deliveryDate: targetDate, deletedAt: null,
+                status: 'pending_dispatch',
+              },
+            }),
+          ]);
+          if (inTransitCount === 0) return null;
+          return {
+            driverId: dva.driverId,
+            driverName: dva.driver?.driverName ?? null,
+            vehicleId: dva.vehicleId,
+            vehicleNumber: dva.vehicle?.vehicleNumber ?? null,
+            assignmentId: dva.id,
+            tripNumber: dva.tripNumber,
+            tripSheetNo: dva.tripSheetNo,
+            tripSheetNo2: dva.tripSheetNo2,
+            inTransitCount,
+            deliveredCount,
+            pendingCount,
+          };
+        }))
+      ).filter((r): r is NonNullable<typeof r> => r !== null);
 
       return sendSuccess(res, { drivers: rows });
     } catch (err: any) {
