@@ -92,39 +92,50 @@ describe('WI-071 investigation — B2C EWB toGstin should be URP, not seller GST
     expect(irn.BuyerDtls.Gstin).toBe('URP');
   });
 
-  it('Defect A regression guard — B2C EWB toGstin = URP, shipToGSTIN = seller GSTIN (15-char)', () => {
-    // Pre-WI-071: toGstin/shipToGSTIN both contained seller.Gstin for
-    // B2C. That equals fromGstin, contradicting transactionType=1
-    // "Regular = distinct recipient" semantics, and NIC sandbox
-    // returned 611 intermittently.
+  it('B2C EWB payload — toGstin=URP, ship-to/dispatch-from fields omitted under transactionType=1', () => {
+    // Iterative history (all on 2026-05-19):
+    //   Pre-WI-071: toGstin=shipToGSTIN=seller.Gstin → NIC 611
+    //               (recipient GSTIN == dispatcher GSTIN inconsistent
+    //               with transactionType=1 single-distinct-recipient).
+    //   WI-071:     toGstin='URP', shipToGSTIN='URP' → NIC schema
+    //               error 0 (shipToGSTIN regex rejects 'URP').
+    //   WI-072:     toGstin='URP', shipToGSTIN=seller.Gstin → NIC 616
+    //               (per NIC EWB prep tools spec: "Ship to GSTIN
+    //               cannot be sent as the transaction type selected
+    //               is Regular"). 616 isn't in the published EWB
+    //               error codes table (codes jump 614→617) but the
+    //               prep tools spec describes the rule verbatim.
+    //   WI-073:     toGstin='URP', shipToGSTIN OMITTED entirely.
+    //               Also omit dispatchFromGSTIN/dispatchFromTradeName
+    //               for the same reason (parallel spec rule).
     //
-    // WI-071 first attempt set BOTH fields to 'URP' but NIC's EWB
-    // schema validator rejected shipToGSTIN='URP' (live error 0:
-    // "shipToGSTIN expected minLength: 15, actual: 3 ... does not
-    // match pattern [0-9]{2}[0-9|A-Z]{13}").
-    //
-    // WI-072 final shape: asymmetric — toGstin='URP' (NIC's accepted
-    // unregistered-party sentinel for that field) and shipToGSTIN
-    // keeps a real 15-char GSTIN. For B2C transactionType=1
-    // (Bill-To == Ship-To with no separate registered ship-to),
-    // shipToGSTIN falls back to the seller/dispatcher's own GSTIN —
-    // this passes NIC's schema and the Defect A 611 trigger
-    // (toGstin == fromGstin) stays resolved.
+    // The Defect A 611 trigger (toGstin == fromGstin) stays
+    // resolved because toGstin still carries 'URP' for B2C.
     const irn = buildIrnPayload(bangaloreFoodsB2cFixture());
     const ewb = buildEwbPayload(irn, {
       vehicleNumber: 'KA01MN9999',
       transportMode: '1',
       distance: 1,
     });
+
+    // Present fields
     expect(ewb.toGstin).toBe('URP');
-    expect(ewb.shipToGSTIN).toBe('29AAGCB1286Q000');
     expect(ewb.fromGstin).toBe('29AAGCB1286Q000');
-    expect(ewb.dispatchFromGSTIN).toBe('29AAGCB1286Q000');
+    expect(ewb.transactionType).toBe(1);
+
     // Defect A invariant: toGstin distinct from dispatcher GSTIN.
     expect(ewb.toGstin).not.toBe(ewb.fromGstin);
-    // WI-072 invariant: shipToGSTIN satisfies NIC's [0-9]{2}[0-9|A-Z]{13} regex.
-    expect(ewb.shipToGSTIN).toMatch(/^[0-9]{2}[0-9A-Z]{13}$/);
-    expect(ewb.shipToGSTIN.length).toBe(15);
+
+    // WI-073: under transactionType=1 (Regular), NIC requires these
+    // four redundant fields to be absent. Asserting both the
+    // property-not-present and the value-undefined guards against
+    // either form (object-key vs falsy value) regressing.
+    expect('shipToGSTIN' in ewb).toBe(false);
+    expect('shipToTradeName' in ewb).toBe(false);
+    expect('dispatchFromGSTIN' in ewb).toBe(false);
+    expect('dispatchFromTradeName' in ewb).toBe(false);
+    expect(ewb.shipToGSTIN).toBeUndefined();
+    expect(ewb.dispatchFromGSTIN).toBeUndefined();
   });
 
   it('B2B EWB is unchanged: toGstin = buyer GSTIN', () => {
