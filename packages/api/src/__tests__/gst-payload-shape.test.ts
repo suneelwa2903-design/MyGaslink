@@ -262,4 +262,27 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
     // the sandbox doesn't honour the auto-calc sentinel.
     expect(ewb.transDistance).toBe('1');
   });
+
+  it('WI-064 — DocDtls.No surfaces the bumped doc number, never silently reuses the burned original', () => {
+    // After a cancel + reissue cycle, gstReissueService passes the
+    // BUMPED invoice number (e.g. INV-XYZ-R1) as docNumber. The payload
+    // builder must surface that bumped value verbatim — NIC remembers
+    // the original as cancelled (2278) and will reject any payload that
+    // silently reverts to the pre-bump value. Guards against future
+    // refactors where docNumber might be re-derived from a different
+    // source (invoice row, order, etc).
+    //
+    // NIC caps DocDtls.No at 16 chars (truncateDocNumber). Both forms
+    // here fit within the cap so the test is deterministic.
+    const bumped = 'INV-MPC38K5-R1';   // 14 chars
+    const original = 'INV-MPC38K5';     // 11 chars — the "burned" pre-bump form
+    const payload = buildIrnPayload(b2bFixture({ docNumber: bumped }));
+    expect(payload.DocDtls.No).toBe(bumped);
+    // The original burned number does NOT appear in the payload as a
+    // standalone string value. Substring-search would match the base
+    // inside the bumped form, so we check for the quote-wrapped form
+    // JSON would emit if `original` were a value.
+    const flat = JSON.stringify(payload);
+    expect(flat).not.toContain(`"${original}"`);
+  });
 });

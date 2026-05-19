@@ -308,21 +308,25 @@ describe('gstReissueService — delivery mismatch flow', () => {
   });
 
   it('Duplicate IRN (2150) on regenerate: bumps invoice number, retries', async () => {
+    // WI-064: reissue now bumps the invoice number BEFORE the first
+    // regenerate call (cancelIrn retired the original; reuse would 2150
+    // or 2278). If the FIRST regen also collides with 2150, reissue
+    // bumps once more — taking the suffix from -R1 to -R2.
     const f = await seedReissueFixture({ isB2B: true, withActiveEwb: false });
     try {
       apiCallMock
         .mockResolvedValueOnce(irnCancelOk())                          // cancelIrn
-        .mockRejectedValueOnce(whitebooksError('2150', 'Duplicate IRN'))// first regen
-        .mockResolvedValueOnce(irnSuccess());                          // retry
+        .mockRejectedValueOnce(whitebooksError('2150', 'Duplicate IRN'))// first regen (against -R1)
+        .mockResolvedValueOnce(irnSuccess());                          // retry  (against -R2)
       const result = await reissue({
         invoiceId: f.invoiceId,
         distributorId: 'dist-002',
         userId: 'test-user',
       });
       expect(result.ok).toBe(true);
-      // Invoice number was bumped with -R1
+      // Two bumps: original → -R1 (pre-first-regen) → -R2 (after 2150 retry).
       const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
-      expect(inv.invoiceNumber).toMatch(/-R1$/);
+      expect(inv.invoiceNumber).toMatch(/-R2$/);
     } finally {
       await teardown(f.orderId);
     }
