@@ -361,6 +361,34 @@ export async function preflightAddToTrip(params: {
     );
   }
 
+  // WI-068: server-side guard against the "stale trip" Add-to-Trip path.
+  // DVA.status='loaded_and_dispatched' alone is no longer sufficient —
+  // we must ALSO have at least one order genuinely in transit. Without
+  // this, an admin who clicks "+ Add to Trip" after every previous
+  // order has been delivered ends up grafting new orders onto a
+  // logically-finished trip (the 3 orders on 2026-05-19 all stamped
+  // with tripNumber=1 trace back to exactly this hole). Defence in
+  // depth: confirmDelivery (WI-068 Fix A) is supposed to auto-reset
+  // the DVA to dispatch_ready when the last order delivers, but if
+  // that path is bypassed (e.g. some future non-transactional delivery
+  // confirmation), this gate is the second line of defence.
+  const inFlightCount = await prisma.order.count({
+    where: {
+      distributorId,
+      driverId,
+      deliveryDate: targetDate,
+      status: { in: ['pending_delivery', 'preflight_in_progress'] },
+      deletedAt: null,
+    },
+  });
+  if (inFlightCount === 0) {
+    throw new PreflightError(
+      'No orders currently in transit. All previous orders have been delivered. Use Dispatch to start a new trip.',
+      'NO_ACTIVE_TRIP',
+      409,
+    );
+  }
+
   const orders = await prisma.order.findMany({
     where: {
       distributorId,

@@ -485,3 +485,176 @@ describe('WI-065 — dispatch state machine + Add to Trip', () => {
     }
   });
 });
+
+// ─── WI-067 + WI-068 ─────────────────────────────────────────────────────────
+
+describe('WI-067 — pincode-derived transDistance', () => {
+  // Importing here keeps the suite isolated from the WhiteBooks mock
+  // (this util has no external dependencies).
+  let pinUtil: typeof import('../utils/pincodeDistance.js');
+  beforeAll(async () => {
+    pinUtil = await import('../utils/pincodeDistance.js');
+    pinUtil.__resetPincodeCache();
+  });
+
+  it('Bangalore → Hyderabad returns a real inter-state distance (not "1")', () => {
+    // Bangalore (560001, 12.97N 77.59E) to Hyderabad (500016, 17.38N
+    // 78.48E) is ~500km straight-line / ~575km by road. NIC accepts
+    // ±10% tolerance vs road distance. Anything in the 400-700 band
+    // proves we're no longer sending the legacy "1" that tripped
+    // error 702 on the live dispatch.
+    const km = pinUtil.getTransDistance('560001', '500016');
+    const n = parseInt(km, 10);
+    expect(n).toBeGreaterThan(400);
+    expect(n).toBeLessThan(700);
+  });
+
+  it('Same pincode returns "1" (NIC minimum non-zero)', () => {
+    expect(pinUtil.getTransDistance('560001', '560001')).toBe('1');
+  });
+
+  it('Unknown pincode pair returns "0" (NIC auto-calc fallback)', () => {
+    // 000000 / 999999 are not real Indian PINs — table miss → "0"
+    expect(pinUtil.getTransDistance('000000', '999999')).toBe('0');
+  });
+
+  it('Intra-city same-metro returns small distance (≤ 20 km)', () => {
+    // Both 560001 and 560041 are Bangalore — same centroid in our
+    // hand-curated table, so Haversine = 0, ceil = 0, floored at 1.
+    // Real road distance is ~5km. Test asserts the upper bound to
+    // catch regressions like sending an inter-state value here.
+    const km = pinUtil.getTransDistance('560001', '560041');
+    const n = parseInt(km, 10);
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect(n).toBeLessThanOrEqual(20);
+  });
+
+  it('Empty / null pincodes return "0" (defensive)', () => {
+    expect(pinUtil.getTransDistance('', '500016')).toBe('0');
+    expect(pinUtil.getTransDistance(null, '500016')).toBe('0');
+    expect(pinUtil.getTransDistance('560001', undefined)).toBe('0');
+  });
+});
+
+describe('WI-068 — DVA auto-reset + Add-to-Trip in-flight gate', () => {
+  let distributorId: string;
+  let driverId: string;
+  let vehicleId: string;
+  let orderService: typeof import('../services/orderService.js');
+
+  beforeAll(async () => {
+    distributorId = 'dist-002';
+    const driver = await prisma.driver.findFirstOrThrow({
+      where: { distributorId, status: 'active', deletedAt: null },
+      orderBy: { driverName: 'asc' },
+    });
+    driverId = driver.id;
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId } });
+    vehicleId = vehicle.id;
+    orderService = await import('../services/orderService.js');
+  });
+
+  /**
+   * Build an order already in pending_delivery with a stamped tripNumber.
+   * Skips the full dispatch flow because this suite only exercises
+   * confirmDelivery — whatever pre-delivery state we put the rows in
+   * is sufficient for the auto-reset path.
+   */
+  async function seedInFlightOrder(opts: { tripNumber: number; deliveredQty?: number }) {
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId, customerType: 'B2C', deletedAt: null },
+    });
+    const cyl = await prisma.cylinderType.findFirstOrThrow({
+      where: { distributorId, typeName: '19 KG' },
+    });
+    const order = await prisma.order.create({
+      data: {
+        distributorId,
+        customerId: customer.id,
+        driverId,
+        vehicleId,
+        orderNumber: `WI68-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'pending_delivery',
+        orderType: 'delivery',
+        tripNumber: opts.tripNumber,
+        totalAmount: 2000,
+        items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 2000, totalPrice: 2000 }] },
+      },
+    });
+    return { orderId: order.id, customerId: customer.id, cylinderTypeId: cyl.id };
+  }
+
+  it('Auto-reset: DVA flips to dispatch_ready when the LAST in-flight order is delivered', async () => {
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'loaded_and_dispatched', tripNumber: 5,
+    });
+    const o1 = await seedInFlightOrder({ tripNumber: 5 });
+    const o2 = await seedInFlightOrder({ tripNumber: 5 });
+    try {
+      // Deliver order 1 (one still in-flight)
+      await orderService.confirmDelivery(o1.orderId, distributorId, 'test-user', {
+        items: [{ cylinderTypeId: o1.cylinderTypeId, deliveredQuantity: 1, emptiesCollected: 0 }],
+      });
+      const dvaMid = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+      expect(dvaMid.status).toBe('loaded_and_dispatched');
+
+      // Deliver order 2 (the last one) → DVA should auto-reset
+      await orderService.confirmDelivery(o2.orderId, distributorId, 'test-user', {
+        items: [{ cylinderTypeId: o2.cylinderTypeId, deliveredQuantity: 1, emptiesCollected: 0 }],
+      });
+      const dvaAfter = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+      expect(dvaAfter.status).toBe('dispatch_ready');
+    } finally {
+      await teardown([o1.orderId, o2.orderId], [dva.id]);
+    }
+  });
+
+  it('Auto-reset: DVA stays loaded_and_dispatched when other orders remain in flight', async () => {
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'loaded_and_dispatched', tripNumber: 6,
+    });
+    const o1 = await seedInFlightOrder({ tripNumber: 6 });
+    const o2 = await seedInFlightOrder({ tripNumber: 6 });
+    const o3 = await seedInFlightOrder({ tripNumber: 6 });
+    try {
+      await orderService.confirmDelivery(o1.orderId, distributorId, 'test-user', {
+        items: [{ cylinderTypeId: o1.cylinderTypeId, deliveredQuantity: 1, emptiesCollected: 0 }],
+      });
+      // 2 orders still pending_delivery → DVA stays loaded_and_dispatched
+      const dvaAfter = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+      expect(dvaAfter.status).toBe('loaded_and_dispatched');
+    } finally {
+      await teardown([o1.orderId, o2.orderId, o3.orderId], [dva.id]);
+    }
+  });
+
+  it('Add-to-Trip is blocked (409 NO_ACTIVE_TRIP) when no orders are in flight', async () => {
+    const dva = await ensureDva({
+      distributorId, driverId, vehicleId, date: TEST_DATE,
+      status: 'loaded_and_dispatched', tripNumber: 7,
+    });
+    // No in-flight orders. Seed 1 pending_dispatch that the request
+    // wants to add. The gate must fire BEFORE the NO_ORDERS check —
+    // we have new orders, just no active trip to add them to.
+    const newIds = await seedB2cOrders({
+      distributorId, driverId, vehicleId, date: TEST_DATE, count: 1,
+    });
+    try {
+      await preflightAddToTrip({
+        distributorId, driverId, assignmentDate: TEST_DATE, userId: 'test-user',
+      });
+      throw new Error('Should have thrown NO_ACTIVE_TRIP');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(PreflightError);
+      expect(err.code).toBe('NO_ACTIVE_TRIP');
+      expect(err.statusCode).toBe(409);
+      expect(err.message).toMatch(/in transit/i);
+    } finally {
+      await teardown(newIds, [dva.id]);
+    }
+  });
+});

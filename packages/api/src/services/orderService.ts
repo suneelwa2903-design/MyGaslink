@@ -811,6 +811,45 @@ export async function confirmDelivery(
       // Non-blocking - log but don't fail delivery
     }
 
+    // WI-068: auto-reset DVA when this was the LAST in-flight order of
+    // the trip. Without this, the DVA sits in 'loaded_and_dispatched'
+    // forever after the last delivery, so the next dispatch click
+    // shows "+ Add to Trip" instead of "Dispatch ▶". The investigation
+    // report on 2026-05-19 traced today's 3 orders all stamped with
+    // tripNumber=1 to exactly this gap: each dispatch went through
+    // /preflight-add-to-trip because the DVA never advanced.
+    //
+    // Scope: count pending_delivery + preflight_in_progress for the
+    // SAME (driverId, distributorId, deliveryDate, tripNumber). If zero
+    // remain (i.e. this update we just committed was the last one),
+    // bump the DVA back to dispatch_ready inside the same transaction.
+    // tripNumber filter ensures we don't false-positive on a different
+    // trip on the same day (rare but possible if a driver does two
+    // trips on the same date).
+    if (order.driverId && updated.tripNumber != null) {
+      const remainingInFlight = await tx.order.count({
+        where: {
+          distributorId,
+          driverId: order.driverId,
+          deliveryDate: order.deliveryDate,
+          tripNumber: updated.tripNumber,
+          status: { in: ['pending_delivery', 'preflight_in_progress'] },
+          deletedAt: null,
+        },
+      });
+      if (remainingInFlight === 0) {
+        await tx.driverVehicleAssignment.updateMany({
+          where: {
+            distributorId,
+            driverId: order.driverId,
+            assignmentDate: order.deliveryDate,
+            status: 'loaded_and_dispatched',
+          },
+          data: { status: 'dispatch_ready' },
+        });
+      }
+    }
+
     return updated;
   });
 

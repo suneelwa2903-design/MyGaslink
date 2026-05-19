@@ -1544,20 +1544,28 @@ function AssignmentsTab() {
                     >
                       📄 Trip Sheet
                     </Button>
-                    <Button
-                      size="sm"
-                      disabled={d.pendingCount === 0}
-                      onClick={() => setDispatchDriver({
-                        driverId: d.driverId,
-                        driverName: d.driverName ?? 'Driver',
-                        vehicleNumber: d.vehicleNumber,
-                        assignmentId: d.assignmentId,
-                        orders: (pendingDispatch?.orders ?? []).filter((o: any) => o.driverId === d.driverId),
-                        mode: 'add_to_trip',
-                      })}
-                    >
-                      + Add to Trip
-                    </Button>
+                    {/* WI-068: hide (rather than disable) the Add to
+                        Trip button when there are no new orders. The
+                        disabled state used to render even when
+                        pendingCount=0, inviting a click that the
+                        server-side gate would 409 anyway. Also surface
+                        the count in the label so the admin knows
+                        exactly how many orders the click will dispatch. */}
+                    {d.pendingCount > 0 && (
+                      <Button
+                        size="sm"
+                        onClick={() => setDispatchDriver({
+                          driverId: d.driverId,
+                          driverName: d.driverName ?? 'Driver',
+                          vehicleNumber: d.vehicleNumber,
+                          assignmentId: d.assignmentId,
+                          orders: (pendingDispatch?.orders ?? []).filter((o: any) => o.driverId === d.driverId),
+                          mode: 'add_to_trip',
+                        })}
+                      >
+                        + Add {d.pendingCount} to Trip
+                      </Button>
+                    )}
                   </div>
                 </div>
               );

@@ -7,6 +7,7 @@
  */
 
 import { format } from 'date-fns';
+import { getTransDistance } from '../../utils/pincodeDistance.js';
 
 const GST_RATE = 18;
 const CGST_RATE = 9;
@@ -283,7 +284,11 @@ export function buildEwbPayload(
   transportDetails: {
     vehicleNumber: string;
     transportMode?: string; // 1=Road, 2=Rail, 3=Air, 4=Ship
-    distance?: number;      // km
+    /** @deprecated WI-067: distance is now derived from the seller/buyer
+     *  pincode pair via Haversine; this field is ignored. Kept on the
+     *  signature for backward compatibility — callers can be cleaned up
+     *  separately. */
+    distance?: number;
     transporterName?: string;
     transporterId?: string;
   }
@@ -300,9 +305,19 @@ export function buildEwbPayload(
     .toUpperCase()
     .substring(0, 15);
 
-  // EWB API requires distance >= 1 (0 causes error 721)
-  // Use 1 as minimum — EWB system rounds up based on PIN codes
-  const distance = Math.max(1, Math.min(4000, transportDetails.distance || 1));
+  // WI-067: derive transDistance from the actual pincode pair instead
+  // of the legacy `Math.max(1, distance || 1)` clamp. Sending '1' for
+  // every dispatch tripped NIC error 702 on inter-state routes
+  // (Bangalore 560001 → Hyderabad 500016 in the live failure).
+  // getTransDistance handles three cases:
+  //   same pincode               → '1' (NIC minimum)
+  //   known pair                 → ceil(haversine_km) as a string
+  //   missing or unknown pincode → '0' (NIC auto-calc fallback)
+  // seller.Pin / buyer.Pin are numbers (sanitizePin); String() them.
+  const transDistance = getTransDistance(
+    seller.Pin != null ? String(seller.Pin) : null,
+    buyer.Pin != null ? String(buyer.Pin) : null,
+  );
 
   return {
     supplyType: 'O',        // Outward
@@ -328,7 +343,7 @@ export function buildEwbPayload(
     toPlace: buyer.Loc,
 
     transMode: transportDetails.transportMode || '1', // Road
-    transDistance: String(distance),
+    transDistance,
     // Only include transporterName/Id if provided (empty string causes validation error)
     ...(transportDetails.transporterName ? { transporterName: transportDetails.transporterName } : {}),
     ...(transportDetails.transporterId ? { transporterId: transportDetails.transporterId } : {}),
