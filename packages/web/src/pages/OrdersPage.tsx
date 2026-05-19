@@ -630,28 +630,70 @@ function OrderDetailModal({
         <div>
           <p className="text-xs uppercase tracking-wide text-surface-500 mb-2">Items</p>
           <div className="rounded-lg border border-surface-200 dark:border-surface-700 overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-surface-50 dark:bg-surface-700">
-                <tr>
-                  <th className="px-3 py-2 text-left text-xs font-medium">Cylinder</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">Qty</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">Unit Price</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">Line Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
-                {order.items.map((item, idx) => (
-                  <tr key={idx}>
-                    <td className="px-3 py-2">{item.cylinderTypeName ?? item.cylinderTypeId}</td>
-                    <td className="px-3 py-2 text-right">{item.quantity}</td>
-                    <td className="px-3 py-2 text-right">{formatCurrency(item.unitPrice ?? 0)}</td>
-                    <td className="px-3 py-2 text-right font-medium">
-                      {formatCurrency((item.unitPrice ?? 0) * item.quantity)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {/*
+              WI-064: for delivered / modified_delivered orders the
+              legacy Line Total read `unitPrice × quantity (ordered)`
+              while the bottom Total showed delivered totalAmount —
+              the two numbers contradicted each other when the driver
+              picked up empties or handed over fewer cylinders. Expand
+              to Ordered / Delivered / Empties / Line Total columns
+              for completed orders so the math is internally consistent.
+            */}
+            {(() => {
+              const showDelivered =
+                order.status === 'delivered' || order.status === 'modified_delivered';
+              return (
+                <table className="w-full">
+                  <thead className="bg-surface-50 dark:bg-surface-700">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-medium">Cylinder</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium">
+                        {showDelivered ? 'Ordered' : 'Qty'}
+                      </th>
+                      {showDelivered && (
+                        <>
+                          <th className="px-3 py-2 text-right text-xs font-medium">Delivered</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium">Empties</th>
+                        </>
+                      )}
+                      <th className="px-3 py-2 text-right text-xs font-medium">Unit Price</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium">Line Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
+                    {order.items.map((item, idx) => {
+                      // confirmDelivery writes deliveredQuantity on
+                      // delivered orders; the fallback to `quantity` is
+                      // a safety net for in-flight orders previewed in
+                      // this same modal.
+                      const deliveredQty = item.deliveredQuantity ?? item.quantity;
+                      const empties = item.emptiesCollected ?? 0;
+                      const unit = item.unitPrice ?? 0;
+                      const billedQty = showDelivered ? deliveredQty : item.quantity;
+                      const lineTotal = unit * billedQty;
+                      return (
+                        <tr key={idx}>
+                          <td className="px-3 py-2">
+                            {item.cylinderTypeName ?? item.cylinderTypeId}
+                          </td>
+                          <td className="px-3 py-2 text-right">{item.quantity}</td>
+                          {showDelivered && (
+                            <>
+                              <td className="px-3 py-2 text-right">{deliveredQty}</td>
+                              <td className="px-3 py-2 text-right">{empties}</td>
+                            </>
+                          )}
+                          <td className="px-3 py-2 text-right">{formatCurrency(unit)}</td>
+                          <td className="px-3 py-2 text-right font-medium">
+                            {formatCurrency(lineTotal)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              );
+            })()}
           </div>
         </div>
 
@@ -1639,9 +1681,15 @@ function DispatchProgressModal({
             standalone EWB (B2C success). If every order failed or only
             GST-disabled / no-EWB results came back, the trip-sheet
             endpoint will return 400 anyway, so hide the button.
+            WI-064: also require `result.dispatched` (envelope-level
+            "every order succeeded"). If the admin re-opens the modal
+            after the driver has already delivered every order,
+            `dispatched` is false and we must NOT show a button that
+            will hit a 400 from tripSheetPdfService — that service
+            requires at least one in-transit (pending_delivery) order.
           */}
           {phase === 'done' && result && driver.assignmentId &&
-            result.results.some((r) => !!r.ewbNo) && (
+            result.dispatched && result.results.some((r) => !!r.ewbNo) && (
             <Button variant="secondary" onClick={downloadTripSheet}>
               Download Trip Sheet
             </Button>
