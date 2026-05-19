@@ -254,14 +254,17 @@ describe('WI-061 — Debit Note PDF renders IRN block from gst_documents', () =>
     }
   });
 
-  it('writes "Pending generation" when no DBN row exists', async () => {
+  it('WI-077 — skips the IRN block on the DN PDF when no DBN row exists', async () => {
+    // WI-077: B2C debit notes never get an IRN — the PDF should not
+    // emit the legacy "Pending generation" status line. Mirror invoice
+    // PDF behaviour and omit the compliance section entirely.
     const inv = await getValuedInvoice();
     const dn = await prisma.debitNote.create({
       data: {
         invoiceId: inv.id,
-        debitNoteNumber: `WI061-DN-PEND-${Date.now().toString(36)}`,
+        debitNoteNumber: `WI077-DN-NOIRN-${Date.now().toString(36)}`,
         totalAmount: 100,
-        reason: 'DN PDF pending path',
+        reason: 'DN PDF WI-077 no-irn path',
         status: 'pending_dn',
       },
     });
@@ -273,22 +276,28 @@ describe('WI-061 — Debit Note PDF renders IRN block from gst_documents', () =>
         .get(`/api/invoices/debit-notes/${dn.id}/pdf`)
         .set(auth(sharmaAdminToken));
       expect(res.status).toBe(200);
-      expect(drawn.some((s) => /e-Invoice \(IRN\): Pending generation/.test(s))).toBe(true);
-      expect(drawn.some((s) => /e-Invoice \(IRN\): Generation failed/.test(s))).toBe(false);
+      // "Pending generation" / "Generation failed" labels are gone.
+      expect(drawn.some((s) => /Pending generation/.test(s))).toBe(false);
+      expect(drawn.some((s) => /Generation failed/.test(s))).toBe(false);
+      // The DBN-Details header from drawCrnDetailsBox is also absent.
+      expect(drawn.some((s) => /DBN Details/i.test(s))).toBe(false);
     } finally {
       spy.mockRestore();
       await prisma.debitNote.delete({ where: { id: dn.id } });
     }
   });
 
-  it('writes "Generation failed — retry from Billing page" when DBN row has irnStatus=failed', async () => {
+  it('WI-077 — skips the IRN block when DBN row has irnStatus=failed and no IRN/EWB on it', async () => {
+    // WI-077: a failed-status row with no IRN/EWB no longer renders the
+    // red "retry from Billing page" line. Issuer sees the failure in
+    // the Billing list + pending actions; the recipient PDF stays clean.
     const inv = await getValuedInvoice();
     const dn = await prisma.debitNote.create({
       data: {
         invoiceId: inv.id,
-        debitNoteNumber: `WI061-DN-FAIL-${Date.now().toString(36)}`,
+        debitNoteNumber: `WI077-DN-FAIL-${Date.now().toString(36)}`,
         totalAmount: 100,
-        reason: 'DN PDF failed path',
+        reason: 'DN PDF WI-077 failed-no-irn path',
         status: 'pending_dn',
       },
     });
@@ -297,7 +306,7 @@ describe('WI-061 — Debit Note PDF renders IRN block from gst_documents', () =>
         invoiceId: inv.id,
         distributorId: 'dist-002',
         docType: 'DBN',
-        gstDocNo: `WI061-DOC-FAIL-${Date.now().toString(36)}`,
+        gstDocNo: `WI077-DOC-FAIL-${Date.now().toString(36)}`,
         irnStatus: 'failed',
         isLatest: true,
       },
@@ -310,8 +319,9 @@ describe('WI-061 — Debit Note PDF renders IRN block from gst_documents', () =>
         .get(`/api/invoices/debit-notes/${dn.id}/pdf`)
         .set(auth(sharmaAdminToken));
       expect(res.status).toBe(200);
-      expect(drawn.some((s) => /e-Invoice \(IRN\): Generation failed/.test(s))).toBe(true);
-      expect(drawn.some((s) => /retry from Billing page/.test(s))).toBe(true);
+      expect(drawn.some((s) => /Generation failed/.test(s))).toBe(false);
+      expect(drawn.some((s) => /retry from Billing page/.test(s))).toBe(false);
+      expect(drawn.some((s) => /DBN Details/i.test(s))).toBe(false);
     } finally {
       spy.mockRestore();
       await prisma.gstDocument.delete({ where: { id: dbnDoc.id } });

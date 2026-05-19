@@ -199,7 +199,12 @@ export async function generateDebitNotePdf(debitNoteId: string, distributorId: s
     },
     orderBy: { createdAt: 'desc' },
   });
-  if (dbnDoc && (dbnDoc.irn || dbnDoc.ackNo || dbnDoc.signedQr)) {
+  // WI-077: render the IRN block only when there's an actual IRN or EWB
+  // on the gst_documents row. Mirrors the invoice PDF pattern
+  // ([invoicePdfService.ts:489-491](../pdf/invoicePdfService.ts)) so B2C
+  // debit notes that never go through NIC don't display a misleading
+  // "Pending generation" status line.
+  if (dbnDoc && (dbnDoc.irn || dbnDoc.ackNo || dbnDoc.signedQr || dbnDoc.ewbNo)) {
     const dbnH = await drawCrnDetailsBox(doc, {
       irn: dbnDoc.irn,
       ackNo: dbnDoc.ackNo,
@@ -209,18 +214,6 @@ export async function generateDebitNotePdf(debitNoteId: string, distributorId: s
       label: 'DBN Details - IRN',
     }, y);
     y += dbnH;
-  } else {
-    const failed = dbnDoc?.irnStatus === 'failed';
-    const label = failed
-      ? 'e-Invoice (IRN): Generation failed — retry from Billing page'
-      : 'e-Invoice (IRN): Pending generation';
-    const color = failed ? '#dc2626' : LAYOUT.THEME.MUTED;
-    doc.fontSize(LAYOUT.TYPO.LABEL).fillColor(color).font('Helvetica-Bold');
-    doc.text(label, LAYOUT.MARGIN.left, y, {
-      width: A4_WIDTH - LAYOUT.MARGIN.left - LAYOUT.MARGIN.right,
-    });
-    y += 16;
-    doc.fillColor(LAYOUT.THEME.TEXT).font('Helvetica');
   }
 
   const footerY = A4_HEIGHT - LAYOUT.MARGIN.bottom - 50;
