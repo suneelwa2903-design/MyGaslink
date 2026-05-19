@@ -152,6 +152,17 @@ export default function DriverTripScreen() {
   const currentStepIndex = statusSteps.findIndex((s) => s.status === assignment?.status);
   const nextStep = currentStepIndex < statusSteps.length - 1 ? statusSteps[currentStepIndex + 1] : null;
 
+  // WI-064: hide the "Download Trip Sheet" button once every order on
+  // the trip has been delivered (or modified-delivered). The trip-sheet
+  // PDF service requires at least one `pending_delivery` order so it
+  // can pin the row set to the current trip — without any in-flight
+  // orders the endpoint 400s with a confusing "No EWB available"
+  // message. The doc is a transit document anyway, so post-delivery
+  // there's nothing to print.
+  const hasInFlightOrder = !!assignment?.orders?.some(
+    (o: any) => o.status === 'pending_delivery',
+  );
+
   const handleAdvance = () => {
     if (!nextStep) return;
     Alert.alert(
@@ -275,14 +286,17 @@ export default function DriverTripScreen() {
 
                 {/* Trip Sheet PDF — single button. Saves to cache then
                     opens the OS share sheet so the driver can WhatsApp /
-                    save / print it. Disabled while the download is in
-                    flight. */}
-                <Button
-                  title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet (PDF)'}
-                  onPress={handleDownloadTripSheet}
-                  loading={downloadingPdf}
-                  variant="secondary"
-                />
+                    save / print it. WI-064: hidden after all orders are
+                    delivered — the underlying endpoint can't generate
+                    a useful sheet once nothing is in transit. */}
+                {hasInFlightOrder && (
+                  <Button
+                    title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet (PDF)'}
+                    onPress={handleDownloadTripSheet}
+                    loading={downloadingPdf}
+                    variant="secondary"
+                  />
+                )}
 
                 {/* Per-order EWB list. Each row shows the 12-digit NIC
                     number, customer, valid-till, and a Share button that

@@ -188,10 +188,18 @@ export async function reissueForDeliveryMismatch(args: {
   const newCgst = round2(toNum(invoice.cgstValue) * ratio);
   const newSgst = round2(toNum(invoice.sgstValue) * ratio);
   const newIgst = round2(toNum(invoice.igstValue) * ratio);
+  // WI-064: outstandingAmount used to be left at the ordered-quantity
+  // figure while totalAmount was refreshed to the delivered total. The
+  // ledger then drifted (e.g. INV-MPC38K5UZGB: total=₹16,271, outstanding
+  // =₹24,000). Reissue runs immediately after delivery confirmation, so
+  // no payment can have been recorded; the invariant outstanding=total
+  // holds.
+  const newTotal = round2(revisedSubtotal);
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: {
-      totalAmount: round2(revisedSubtotal),
+      totalAmount: newTotal,
+      outstandingAmount: newTotal,
       cgstValue: newCgst,
       sgstValue: newSgst,
       igstValue: newIgst,
@@ -264,15 +272,42 @@ function round2(n: number): number {
 }
 
 /**
- * Generate a fresh IRN for a B2B invoice that was just revised. Handles
- * the 2150 "duplicate IRN" branch by bumping the invoice number suffix
- * once before failing.
+ * Generate a fresh IRN for a B2B invoice that was just revised.
+ *
+ * WI-064: bump invoice number BEFORE the first regenerate call.
+ *
+ * After a cancel, NIC remembers the doc number as cancelled and returns
+ * 2278 ("IRN was generated and cancelled — doc number burned") for any
+ * reuse attempt. The legacy code only caught 2150 ("duplicate IRN, still
+ * active") and threw 2278 unhandled, leaving the invoice in a half-state
+ * (quantities revised but `irn`/`irnStatus` still pointing at the
+ * cancelled doc). Pre-bumping the invoice number unconditionally avoids
+ * the trap; on a rare collision the retry catch handles BOTH 2150 and
+ * 2278.
  */
 async function regenerateB2bIrn(
   invoiceId: string,
   distributorId: string,
   distributor: any,
 ): Promise<string | null> {
+  // WI-064: burn the cancelled doc number up front. The cancel step
+  // before this retired it on NIC's side, so any reuse attempt would
+  // come back as 2278 ("IRN already generated and cancelled"). The
+  // legacy code only caught 2150 — 2278 escaped unhandled and stranded
+  // the invoice in a half-state.
+  const inv0 = await prisma.invoice.findUniqueOrThrow({
+    where: { id: invoiceId },
+    select: { invoiceNumber: true },
+  });
+  const freshNumber = bumpInvoiceNumber(inv0.invoiceNumber);
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: { invoiceNumber: freshNumber },
+  });
+  logger.info('Reissue B2B: pre-bumped invoice number ahead of regenerate', {
+    invoiceId, oldNumber: inv0.invoiceNumber, newNumber: freshNumber,
+  });
+
   const invoiceData = await buildInvoiceDataForIrn(invoiceId, distributor);
   const credEmail =
     (await getCredentials(distributorId, 'einvoice'))?.email ||
@@ -291,10 +326,10 @@ async function regenerateB2bIrn(
     response = await callIrn(buildIrnPayload(invoiceData));
   } catch (err: any) {
     const code = String(err.code ?? '').replace(/[^0-9]/g, '');
-    if (code !== '2150') throw err;
-    // Bump invoice number suffix and retry once. Pure local-side change
-    // — WhiteBooks only sees the new doc number on the second call.
-    logger.warn('Reissue B2B: 2150 duplicate IRN, retrying with bumped invoice number', { invoiceId });
+    // 2150 = doc number has an active IRN; 2278 = doc number had an IRN
+    // that was cancelled. Both unblock by bumping the suffix once more.
+    if (code !== '2150' && code !== '2278') throw err;
+    logger.warn('Reissue B2B: NIC rejected first regen — bumping again', { invoiceId, code });
     const inv = await prisma.invoice.findUniqueOrThrow({
       where: { id: invoiceId },
       select: { invoiceNumber: true },
@@ -465,13 +500,23 @@ async function buildInvoiceDataForIrn(invoiceId: string, distributor: any): Prom
   };
 }
 
-/** Bump the last numeric suffix on the invoice number so NIC sees a fresh doc. */
+/**
+ * Bump the last numeric suffix on the invoice number so NIC sees a fresh doc.
+ *
+ * WI-064: cap the result at 16 chars (NIC's DocDtls.No limit per
+ * payloadBuilders.truncateDocNumber). If we let a long base name push
+ * the suffix past the cap, NIC silently truncates and two distinct DB
+ * invoice numbers can collapse to the same NIC document — re-tripping
+ * the 2278 trap. Trim the BASE (not the suffix) to keep the local DB
+ * row aligned with what NIC actually sees on the wire.
+ */
 function bumpInvoiceNumber(invoiceNumber: string): string {
-  // If the number already ends in "-RN" (where N is a digit), increment.
+  const MAX = 16;
   const m = invoiceNumber.match(/^(.*)-R(\d+)$/);
-  if (m) {
-    const next = parseInt(m[2], 10) + 1;
-    return `${m[1]}-R${next}`;
-  }
-  return `${invoiceNumber}-R1`;
+  const base = m ? m[1] : invoiceNumber;
+  const next = m ? parseInt(m[2], 10) + 1 : 1;
+  const suffix = `-R${next}`;
+  const room = Math.max(MAX - suffix.length, 1);
+  const baseTrimmed = base.length > room ? base.substring(0, room) : base;
+  return `${baseTrimmed}${suffix}`;
 }
