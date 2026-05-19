@@ -391,7 +391,21 @@ export function buildEwbPayload(
 
     dispatchFromGSTIN: seller.Gstin,
     dispatchFromTradeName: seller.TrdNm || seller.LglNm,
-    shipToGSTIN: isB2C ? 'URP' : buyer.Gstin, // WI-071 — see toGstin note above
+    // WI-072: NIC's EWB schema validates shipToGSTIN with a strict
+    // 15-char GSTIN regex ([0-9]{2}[0-9|A-Z]{13}), and rejects 'URP'
+    // here even though toGstin accepts it. Live failure 2026-05-19
+    // ORD-MPCFG9LCQ3W: error 0 "JSON validation failed due to -
+    // [#/shipToGSTIN: expected minLength: 15, actual: 3, ...
+    // string [URP] does not match pattern [0-9]{2}[0-9|A-Z]{13}]".
+    //
+    // For transactionType=1 (Bill-To == Ship-To, single recipient),
+    // a B2C dispatch has no separate ship-to-party — the depot ships
+    // to the customer's address but there's no registered "ship-to"
+    // GSTIN distinct from the dispatcher's. NIC's convention in
+    // this case is to fall back to the dispatcher's GSTIN here.
+    // The Defect A 611 trigger (toGstin == fromGstin) stays
+    // resolved because toGstin still carries 'URP' for B2C.
+    shipToGSTIN: isB2C ? seller.Gstin : buyer.Gstin,
     shipToTradeName: buyer.TrdNm || buyer.LglNm,
 
     // NIC EWB validator rule: totInvValue must be >= totalValue + cgstValue +

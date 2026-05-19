@@ -92,11 +92,24 @@ describe('WI-071 investigation — B2C EWB toGstin should be URP, not seller GST
     expect(irn.BuyerDtls.Gstin).toBe('URP');
   });
 
-  it('Defect A regression guard — B2C EWB toGstin must NEVER equal fromGstin', () => {
+  it('Defect A regression guard — B2C EWB toGstin = URP, shipToGSTIN = seller GSTIN (15-char)', () => {
     // Pre-WI-071: toGstin/shipToGSTIN both contained seller.Gstin for
     // B2C. That equals fromGstin, contradicting transactionType=1
     // "Regular = distinct recipient" semantics, and NIC sandbox
-    // returned 611 intermittently. This test pins the post-fix shape.
+    // returned 611 intermittently.
+    //
+    // WI-071 first attempt set BOTH fields to 'URP' but NIC's EWB
+    // schema validator rejected shipToGSTIN='URP' (live error 0:
+    // "shipToGSTIN expected minLength: 15, actual: 3 ... does not
+    // match pattern [0-9]{2}[0-9|A-Z]{13}").
+    //
+    // WI-072 final shape: asymmetric — toGstin='URP' (NIC's accepted
+    // unregistered-party sentinel for that field) and shipToGSTIN
+    // keeps a real 15-char GSTIN. For B2C transactionType=1
+    // (Bill-To == Ship-To with no separate registered ship-to),
+    // shipToGSTIN falls back to the seller/dispatcher's own GSTIN —
+    // this passes NIC's schema and the Defect A 611 trigger
+    // (toGstin == fromGstin) stays resolved.
     const irn = buildIrnPayload(bangaloreFoodsB2cFixture());
     const ewb = buildEwbPayload(irn, {
       vehicleNumber: 'KA01MN9999',
@@ -104,10 +117,14 @@ describe('WI-071 investigation — B2C EWB toGstin should be URP, not seller GST
       distance: 1,
     });
     expect(ewb.toGstin).toBe('URP');
-    expect(ewb.shipToGSTIN).toBe('URP');
+    expect(ewb.shipToGSTIN).toBe('29AAGCB1286Q000');
     expect(ewb.fromGstin).toBe('29AAGCB1286Q000');
     expect(ewb.dispatchFromGSTIN).toBe('29AAGCB1286Q000');
+    // Defect A invariant: toGstin distinct from dispatcher GSTIN.
     expect(ewb.toGstin).not.toBe(ewb.fromGstin);
+    // WI-072 invariant: shipToGSTIN satisfies NIC's [0-9]{2}[0-9|A-Z]{13} regex.
+    expect(ewb.shipToGSTIN).toMatch(/^[0-9]{2}[0-9A-Z]{13}$/);
+    expect(ewb.shipToGSTIN.length).toBe(15);
   });
 
   it('B2B EWB is unchanged: toGstin = buyer GSTIN', () => {
