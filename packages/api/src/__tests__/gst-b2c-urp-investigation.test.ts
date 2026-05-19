@@ -158,9 +158,14 @@ describe('WI-071 investigation — B2C EWB toGstin should be URP, not seller GST
     expect(ewb.toGstin).not.toBe(ewb.fromGstin);
   });
 
-  it('B2B EWB is unchanged: toGstin = buyer GSTIN', () => {
-    // Regression guard. The fix must touch B2C only; B2B routes a
-    // real customer GSTIN through to NIC.
+  it('B2B EWB: toGstin = buyer GSTIN, redundant ship-to/dispatch-from omitted (WI-076)', () => {
+    // WI-076: under transactionType=1 ("Bill-To == Ship-To, same
+    // registered entity"), shipToGSTIN/shipToTradeName/
+    // dispatchFromGSTIN/dispatchFromTradeName are redundant — toGstin
+    // already IS the ship-to, fromGstin already IS the dispatch-from.
+    // NIC sandbox now rejects payloads carrying these redundant
+    // fields with error 616. Live A/B proof on fresh docNo
+    // INV-MPCJV99K: stripped payload → ewayBillNo 101012061787.
     const b2bFixture = {
       ...bangaloreFoodsB2cFixture(),
       buyer: {
@@ -177,7 +182,11 @@ describe('WI-071 investigation — B2C EWB toGstin should be URP, not seller GST
       distance: 1,
     });
     expect(ewb.toGstin).toBe('36AAGCB1286Q004');
-    expect(ewb.shipToGSTIN).toBe('36AAGCB1286Q004');
+    expect(ewb.transactionType).toBe(1);
+    expect(ewb.shipToGSTIN).toBeUndefined();
+    expect(ewb.shipToTradeName).toBeUndefined();
+    expect(ewb.dispatchFromGSTIN).toBeUndefined();
+    expect(ewb.dispatchFromTradeName).toBeUndefined();
   });
 });
 

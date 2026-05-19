@@ -421,27 +421,29 @@ export function buildEwbPayload(
     transactionType: isB2C ? 2 : 1,
     subSupplyDesc: sanitize(doc.Typ === 'INV' ? 'Supply of LPG' : 'Return of LPG', 20, 'Supply'),
 
-    // Ship-To / Dispatch-From field handling — WI-074:
+    // Ship-To / Dispatch-From field handling:
     //   B2C (type=2): MUST send shipToGSTIN/shipToTradeName. Use the
     //                 depot's own GSTIN — the depot is the registered
     //                 entity receiving the goods (URP customer has no
     //                 GSTIN). dispatchFromGSTIN omitted (Bill-From ==
     //                 Dispatch-From, no type-3 claim).
-    //                 shipToTradeName is the DEPOT'S name, not the
-    //                 customer's — the Ship-To entity is the depot.
-    //   B2B (type=1): legacy behaviour. Both shipTo and dispatchFrom
-    //                 sent with matching values; NIC has been lenient.
+    //   B2B (type=1): OMIT all four fields. Under transactionType=1
+    //                 ("Bill-To == Ship-To, same registered entity"),
+    //                 these fields are redundant — toGstin already
+    //                 IS shipToGSTIN, fromGstin already IS
+    //                 dispatchFromGSTIN. WI-076 (2026-05-19): NIC's
+    //                 sandbox validator now rejects payloads carrying
+    //                 these redundant fields with error 616. Live A/B
+    //                 confirmed on fresh docNo INV-MPCJV99K: same
+    //                 payload minus the four fields → success
+    //                 (ewayBillNo 101012061787). WI-073 made the same
+    //                 omission for B2C; this extends it to B2B.
     ...(isB2C
       ? {
           shipToGSTIN: seller.Gstin,
           shipToTradeName: seller.TrdNm || seller.LglNm,
         }
-      : {
-          dispatchFromGSTIN: seller.Gstin,
-          dispatchFromTradeName: seller.TrdNm || seller.LglNm,
-          shipToGSTIN: buyer.Gstin,
-          shipToTradeName: buyer.TrdNm || buyer.LglNm,
-        }),
+      : {}),
 
     // NIC EWB validator rule: totInvValue must be >= totalValue + cgstValue +
     // sgstValue + igstValue + cessValue. Violating it returns error 620:
