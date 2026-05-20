@@ -12,7 +12,7 @@ const router = Router();
 
 // GET /api/payments
 router.get('/',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validateQuery(paymentFilterSchema),
   async (req, res) => {
     try {
@@ -43,7 +43,7 @@ router.post('/',
 
 // GET /api/payments/ledger/:customerId
 router.get('/ledger/:customerId',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const ledger = await paymentService.getCustomerLedger(
