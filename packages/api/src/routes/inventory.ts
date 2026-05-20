@@ -135,6 +135,19 @@ router.get('/depot-history',
   }
 });
 
+// GET /api/inventory/onboarding-stock — WI-080: opening stock recorded
+// at onboarding (initial_balance events). Read-only.
+router.get('/onboarding-stock',
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  async (req, res) => {
+    try {
+      const rows = await inventoryService.getOnboardingStock(req.user!.distributorId!);
+      return sendSuccess(res, rows);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  });
+
 // GET /api/inventory/cancelled-stock
 router.get('/cancelled-stock',
   requireRole('super_admin', 'distributor_admin', 'inventory'),

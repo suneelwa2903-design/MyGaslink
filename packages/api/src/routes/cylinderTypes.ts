@@ -51,7 +51,7 @@ router.get('/:id', async (req, res) => {
 });
 
 router.post('/',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   validate(createCylinderTypeSchema),
   auditLog('create', 'cylinder_type'),
   async (req, res) => {
@@ -66,7 +66,7 @@ router.post('/',
 );
 
 router.put('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   validate(createCylinderTypeSchema.partial()),
   auditLog('update', 'cylinder_type'),
   async (req, res) => {
@@ -109,7 +109,7 @@ router.get('/prices/list', async (req, res) => {
 });
 
 router.post('/prices',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   validate(createPriceSchema),
   auditLog('create', 'cylinder_price'),
   async (req, res) => {
@@ -123,7 +123,7 @@ router.post('/prices',
 );
 
 router.delete('/prices/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   auditLog('delete', 'cylinder_price'),
   async (req, res) => {
     try {
@@ -148,7 +148,7 @@ router.get('/empty-prices/list', async (req, res) => {
 });
 
 router.put('/empty-prices',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   validate(emptyPriceSchema),
   auditLog('upsert', 'empty_cylinder_price'),
   async (req, res) => {
@@ -164,7 +164,7 @@ router.put('/empty-prices',
 // ─── Thresholds ─────────────────────────────────────────────────────────────
 
 router.put('/thresholds',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   validate(cylinderThresholdSchema),
   auditLog('upsert', 'cylinder_threshold'),
   async (req, res) => {

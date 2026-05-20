@@ -119,7 +119,7 @@ const adminMenuItems: MenuItem[] = [
     labelKey: 'nav.settings',
     path: '/app/settings',
     icon: HiOutlineCog6Tooth,
-    roles: [UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR_ADMIN],
+    roles: [UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR_ADMIN, UserRole.INVENTORY, UserRole.FINANCE],
   },
   {
     label: 'Distributors',

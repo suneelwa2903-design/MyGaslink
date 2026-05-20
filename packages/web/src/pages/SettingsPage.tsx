@@ -39,23 +39,34 @@ import { OnboardingTab } from '@/components/OnboardingTab';
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
-  const showPrices = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DISTRIBUTOR_ADMIN;
-  const showOnboarding = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DISTRIBUTOR_ADMIN;
-  const initialTab = (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab')) as any;
-  const [tab, setTab] = useState<'onboarding' | 'general' | 'subscription' | 'gst' | 'cylinders' | 'prices' | 'thresholds' | 'approvals' | 'users' | 'licenses'>(initialTab && ['onboarding','general','subscription','gst','cylinders','prices','thresholds','approvals','users','licenses'].includes(initialTab) ? initialTab : 'general');
+  const isAdmin = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DISTRIBUTOR_ADMIN;
+  // WI-080: inventory + finance get full edit access to config tabs only
+  // (Cylinder Types, Cylinder Prices, Thresholds, Licenses). Admin-only
+  // tabs (Onboarding, General, Subscription, GST, Approvals, Users) stay
+  // hidden from them — the backend enforces the same split.
+  const isOps = user?.role === UserRole.INVENTORY || user?.role === UserRole.FINANCE;
+  const showPrices = isAdmin;
+  const showOnboarding = isAdmin;
 
   const tabs = [
     ...(showOnboarding ? [{ key: 'onboarding' as const, label: 'Onboarding', icon: HiOutlineCheckCircle }] : []),
-    { key: 'general' as const, label: 'General', icon: HiOutlineCog6Tooth },
+    ...(isAdmin ? [{ key: 'general' as const, label: 'General', icon: HiOutlineCog6Tooth }] : []),
     ...(showPrices ? [{ key: 'subscription' as const, label: 'Subscription', icon: HiOutlineCurrencyRupee }] : []),
-    { key: 'gst' as const, label: 'GST', icon: HiOutlineShieldCheck },
-    ...(showPrices ? [{ key: 'cylinders' as const, label: 'Cylinder Types', icon: HiOutlineCube }] : []),
-    ...(showPrices ? [{ key: 'prices' as const, label: 'Cylinder Prices', icon: HiOutlineCurrencyRupee }] : []),
-    { key: 'thresholds' as const, label: 'Thresholds', icon: HiOutlineExclamationTriangle },
-    { key: 'approvals' as const, label: 'Approvals', icon: HiOutlineCheckCircle },
-    { key: 'users' as const, label: 'Users', icon: HiOutlineUsers },
-    { key: 'licenses' as const, label: 'Licenses', icon: HiOutlineDocumentText },
+    ...(isAdmin ? [{ key: 'gst' as const, label: 'GST', icon: HiOutlineShieldCheck }] : []),
+    ...(isAdmin || isOps ? [{ key: 'cylinders' as const, label: 'Cylinder Types', icon: HiOutlineCube }] : []),
+    ...(isAdmin || isOps ? [{ key: 'prices' as const, label: 'Cylinder Prices', icon: HiOutlineCurrencyRupee }] : []),
+    ...(isAdmin || isOps ? [{ key: 'thresholds' as const, label: 'Thresholds', icon: HiOutlineExclamationTriangle }] : []),
+    ...(isAdmin ? [{ key: 'approvals' as const, label: 'Approvals', icon: HiOutlineCheckCircle }] : []),
+    ...(isAdmin ? [{ key: 'users' as const, label: 'Users', icon: HiOutlineUsers }] : []),
+    ...(isAdmin || isOps ? [{ key: 'licenses' as const, label: 'Licenses', icon: HiOutlineDocumentText }] : []),
   ];
+
+  const allowedTabs = tabs.map((t) => t.key);
+  const initialTab = (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab')) as any;
+  const defaultTab = isOps ? 'cylinders' : 'general';
+  const [tab, setTab] = useState<'onboarding' | 'general' | 'subscription' | 'gst' | 'cylinders' | 'prices' | 'thresholds' | 'approvals' | 'users' | 'licenses'>(
+    initialTab && allowedTabs.includes(initialTab) ? initialTab : defaultTab,
+  );
 
   return (
     <div className="space-y-6">

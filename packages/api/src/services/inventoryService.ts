@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { toNum } from '../utils/decimal.js';
 
 type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
@@ -568,6 +569,41 @@ export async function getCustomerBalances(distributorId: string, customerId?: st
     },
   });
 
+  // WI-080: enrich each row with (a) the current price for that cylinder
+  // type and (b) the date of the customer's most recent delivery, so the
+  // Customer Balances tab can value outstanding cylinders and show how
+  // long they've been held without extra round-trips.
+
+  // Latest price per cylinder type (effectiveDate desc → first wins).
+  const priceMap = new Map<string, number>();
+  {
+    const prices = await prisma.cylinderPrice.findMany({
+      where: { distributorId },
+      orderBy: { effectiveDate: 'desc' },
+      select: { cylinderTypeId: true, price: true },
+    });
+    for (const p of prices) {
+      if (!priceMap.has(p.cylinderTypeId)) priceMap.set(p.cylinderTypeId, toNum(p.price));
+    }
+  }
+
+  // Most recent delivered order per customer.
+  const lastDeliveryMap = new Map<string, Date | null>();
+  const customerIds = [...new Set(rows.map((r) => r.customerId))];
+  if (customerIds.length > 0) {
+    const deliveries = await prisma.order.groupBy({
+      by: ['customerId'],
+      where: {
+        distributorId,
+        customerId: { in: customerIds },
+        status: { in: ['delivered', 'modified_delivered'] },
+        deletedAt: null,
+      },
+      _max: { deliveryDate: true },
+    });
+    for (const d of deliveries) lastDeliveryMap.set(d.customerId, d._max.deliveryDate ?? null);
+  }
+
   // Flatten to the shared CustomerInventoryBalance shape — both the
   // Inventory > Customer Balances tab and the Customers detail modal
   // read flat customerName / cylinderTypeName, not the nested relations.
@@ -580,6 +616,9 @@ export async function getCustomerBalances(distributorId: string, customerId?: st
     pendingReturns: b.pendingReturns,
     missingQty: b.missingQty,
     lastUpdated: b.lastUpdated,
+    // WI-080 additions:
+    cylinderPrice: priceMap.get(b.cylinderTypeId) ?? null,
+    lastDeliveryDate: lastDeliveryMap.get(b.customerId) ?? null,
   }));
 }
 
@@ -733,6 +772,27 @@ export async function getInventoryForecast(distributorId: string) {
   }
 
   return forecasts;
+}
+
+/**
+ * WI-080: opening stock recorded at onboarding. Returns the
+ * `initial_balance` InventoryEvent rows for the distributor, flattened
+ * to { cylinderTypeName, openingFulls, openingEmpties, dateSet }.
+ * Read-only — drives the "Stock at Onboarding" tab.
+ */
+export async function getOnboardingStock(distributorId: string) {
+  const events = await prisma.inventoryEvent.findMany({
+    where: { distributorId, eventType: 'initial_balance' },
+    include: { cylinderType: { select: { typeName: true } } },
+    orderBy: [{ eventDate: 'asc' }, { createdAt: 'asc' }],
+  });
+  return events.map((e) => ({
+    cylinderTypeId: e.cylinderTypeId,
+    cylinderTypeName: e.cylinderType.typeName,
+    openingFulls: e.fullsChange,
+    openingEmpties: e.emptiesChange,
+    dateSet: e.eventDate,
+  }));
 }
 
 /**
