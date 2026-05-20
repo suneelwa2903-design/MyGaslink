@@ -6,9 +6,9 @@
 > - At the start of any Claude session, say: **"read docs/TESTING_PROGRESS.md and continue testing"**
 > - Detail is in `docs/E2E_Testing_Guide.xlsx` — this file is the running status summary
 
-**Last Updated:** 2026-04-07
+**Last Updated:** 2026-05-20
 **Baseline Commit:** `a72b25e` (2026-03-28)
-**Latest Commits:** `c9c6f3d` (P0 middleware fix), `7f2758f` (PDF download fix)
+**Latest Commits:** `1344406` (WI-083), `55c0db7` (WI-082), `ff84bbd` (WI-081)
 **Git Branch:** master
 
 ---
@@ -372,7 +372,7 @@ _Status: 0/30 — ⬜ Not started_
 | customer-portal.test.ts | ✅ | 94/94 pass (2026-04-07) |
 | workflow.test.ts | ✅ | 94/94 pass (2026-04-07) |
 
-**Total: 94/94 tests passing as of 2026-04-07**
+**Total: 479/479 tests passing as of 2026-05-20**
 
 ---
 
@@ -385,6 +385,12 @@ _Status: 0/30 — ⬜ Not started_
 | 3 | 2026-04-07 | Invoices / Billing / Analytics | PDF/Excel downloads missing X-Distributor-Id header — file was a JSON error response | ✅ Fixed (7f2758f) |
 | 4 | 2026-04-07 | Billing > Invoices | Credit note button visible when GST mode = DISABLED (should be hidden) | 🚧 Pending |
 | 5 | 2026-04-07 | Orders | Vehicle field shown in assign-driver modal (should not be there) | 🚧 Pending |
+| 6 | 2026-05-20 | Fleet/Dispatch | Mark as Returned button never appeared — vehicle.status not set to 'dispatched' on preflight success | ✅ Fixed (WI-082) |
+| 7 | 2026-05-20 | Orders > Cancel | Cancel modal showed GST warning even for pending_driver_assignment orders (no invoice yet) | ✅ Fixed (WI-082) |
+| 8 | 2026-05-20 | Inventory | Delivered and Outgoing Empties columns showed spurious minus signs | ✅ Fixed (WI-083) |
+| 9 | 2026-05-20 | Inventory | Opening Empties always 0 — initial_balance.emptiesChange not included in computeSummaryForDate | ✅ Fixed (WI-083) |
+| 10 | 2026-05-20 | Orders > Cancel | IRN cancel failure left invoice in ambiguous state (EWB cancelled, IRN still live, no status persisted) | ✅ Fixed (WI-083 — cancel_failed status + amber badge + retry button) |
+| 11 | 2026-05-20 | Fleet/Dispatch | DVA findFirst picked lowest-tripNumber (stale) row when multiple sessions ran without cleanup | ✅ Fixed (WI-083 — orderBy tripNumber desc) |
 
 ---
 
@@ -394,4 +400,5 @@ _Status: 0/30 — ⬜ Not started_
 |------|--------------|-----------|
 | 2026-03-28 | Baseline commit `a72b25e`. Created this tracker. 0 tests run. | Start Phase 1 Navigation Smoke Test |
 | 2026-04-07 | Fixed P0 null distributorId (c9c6f3d) + PDF download header bug (7f2758f). 94/94 API tests pass. Invoice PDF verified working. | Start Phase 1 Navigation Smoke Test (0/55 done) |
+| 2026-05-20 | WI-081: order cancellation + vehicle return workflow. WI-082: cancel modal context-aware messaging, Mark as Returned vehicle status fix, inventory tab spacing, undelivered stock tab date filter removed. WI-083: cancel_failed IRN status (schema + enum + service + PDF + UI), computeSummaryForDate empties fix, DVA tripNumber ordering fix, seed script fully working (Opening Fulls + Empties populated, Incoming Fulls = 0). 479/479 tests passing. dist-002 data clean-slated. | Phase 1 Navigation Smoke Test or Phase 2 E2E by module |
 
