@@ -8,7 +8,7 @@
 
 **Last Updated:** 2026-05-20
 **Baseline Commit:** `a72b25e` (2026-03-28)
-**Latest Commits:** `8aae463` (WI-084 IRN retry guard + cancel token refresh + trip sheet redesign), `a29b64d` (WI-083a2 gaps), `0471a29` (same-token-on-retry guard)
+**Latest Commits:** `5a14d26` (WI-085 stale token retry + mobile Mark as Returned + dev test helpers), `8aae463` (WI-084), `a29b64d` (WI-083a2 gaps)
 **Git Branch:** master
 
 ---
@@ -372,7 +372,7 @@ _Status: 0/30 — ⬜ Not started_
 | customer-portal.test.ts | ✅ | 94/94 pass (2026-04-07) |
 | workflow.test.ts | ✅ | 94/94 pass (2026-04-07) |
 
-**Total: 480/480 tests passing as of 2026-05-20**
+**Total: 481/481 tests passing as of 2026-05-20**
 
 ---
 
@@ -399,6 +399,8 @@ _Status: 0/30 — ⬜ Not started_
 | 17 | 2026-05-20 | Inventory > Daily Summary | `cancellation_return` events feed `incomingFulls` bucket instead of `cancelledStockQty` — Cancelled column always 0, Incoming falsely +1 | ✅ Fixed (WI-083a2) |
 | 18 | 2026-05-20 | GST > Dispatch | Re-dispatch after SESSION_EXPIRED stamped `irnStatus='failed'` even when IRN already committed — corrupted INV-MPE5ZM628T4 | ✅ Fixed (WI-084 — retry guard in processInvoiceGst outer catch; DB patched direct) |
 | 19 | 2026-05-20 | GST > Cancel | IRN/EWB cancel always returned SESSION_EXPIRED — stale token cached from dispatch session never cleared before cancel callWithLog | ✅ Fixed (WI-084 — clearTokenCache() before cancelIrn + cancelEwb) |
+| 20 | 2026-05-20 | GST > Auth | WhiteBooks sandbox returns stale TokenExpiry on EVERY auth call — WI-083 55-min fallback was correct but WI-085 initially changed it to throw SESSION_EXPIRED on double-stale, breaking dispatch | ✅ Fixed (WI-085 5a14d26 — retry once; if both stale use 55-min fallback; SESSION_EXPIRED only on NIC 1004/1005 rejection) |
+| 21 | 2026-05-20 | Mobile > Driver > Trip | "Mark Vehicle Returned" button never wired up — driver had to advance status via generic DVA PUT which bypassed vehicle status + inventory events | ✅ Fixed (WI-085 5a14d26 — POST /delivery/driver/vehicle-returned with confirmation alert) |
 
 ---
 
@@ -411,4 +413,5 @@ _Status: 0/30 — ⬜ Not started_
 | 2026-05-20 | WI-081: order cancellation + vehicle return workflow. WI-082: cancel modal context-aware messaging, Mark as Returned vehicle status fix, inventory tab spacing, undelivered stock tab date filter removed. WI-083: cancel_failed IRN status (schema + enum + service + PDF + UI), computeSummaryForDate empties fix, DVA tripNumber ordering fix, seed script fully working (Opening Fulls + Empties populated, Incoming Fulls = 0). 479/479 tests passing. dist-002 data clean-slated. | Phase 1 Navigation Smoke Test or Phase 2 E2E by module |
 | 2026-05-20 (session 2) | Live GST dispatch testing on dist-002 (Sharma Gas Distributors, sandbox). Fixed 3 auth/token bugs (d7aa5cf, f61861e, 0471a29). Successfully generated IRNs + EWBs: B2B intra-state (Maruthi), B2B inter-state IGST (Hyderabad Caterers), B2C (Bangalore Foods). Preflight dispatch: 2/2 orders succeeded (Kiran Reddy's trip). Identified 3 live-test gaps (bugs #15, #16, #17): trip sheet PDF column width, Undelivered Stock missing cancelled order, daily summary cancellation_return→incomingFulls misrouting. 480/480 tests passing. | Fix GAP 1 (trip sheet PDF), GAP 2 (Undelivered Stock), GAP 3 (daily summary cancelled column) |
 | 2026-05-20 (session 3) | WI-083a2: fixed trips #15/#16/#17 — Order# column width 45→85pt, CSE status on_vehicle for cancelOrder, cancellation_return→cancelledStockQty routing. WI-084: (1) IRN retry-corruption guard in processInvoiceGst outer catch (checks invoice.irn before stamping failed); (2) clearTokenCache() before cancelIrn + cancelEwb to fix SESSION_EXPIRED on every cancel; (3) full professional trip sheet PDF redesign — branded header, PRIMARY divider, 2-col info block, dark drawTableHeader, zebra rows, drawBox border, ellipsis on all cells, col widths Order#=90/Customer=115/Address=105/EWB=85/Items=55/Value=65. DB direct-patched INV-MPE5ZM628T4 irn_status failed→success. 480/480 tests passing, typecheck clean. Commit 8aae463. | Live-verify: (a) trip sheet PDF visually — no overflow; (b) cancel IRN/EWB — should succeed on first attempt; (c) Undelivered Stock tab shows on_vehicle cancelled orders |
+| 2026-05-20 (session 4) | Cancel E2E test (test-cancel-irn-ewb.ts): 20/20 PASS — EWB cancel status_cd=1, IRN cancel status_cd=1, both DB statuses=cancelled. WI-085: (1) getAuthToken retry-once on stale TokenExpiry — if retry also stale use 55-min fallback (WhiteBooks support confirmed sandbox tokens valid 1h regardless of TokenExpiry field); SESSION_EXPIRED only from NIC 1004/1005 guard. (2) Mobile trip.tsx: wired "Mark Vehicle Returned" button → POST /delivery/driver/vehicle-returned with vehicleId, shown only for loaded_and_dispatched→returned_inventory transition. (3) Dev-only test endpoints: POST /test/inject-stale-token + GET /test/token-cache-state. Live E2E (test-wi085-token-retry.ts): 29/29 PASS — stale inject confirmed, dispatch succeeded (ORD-MPE8JWU8KRF, IRN+EWB generated), no SESSION_EXPIRED in logs, cache=valid(55-min fallback), cancel succeeded (EWB+IRN both status_cd=1). 481/481 tests passing, typecheck clean. Commit 5a14d26. | Phase 1 Navigation Smoke Test (0/55 done) or Phase 2 E2E by module |
 
