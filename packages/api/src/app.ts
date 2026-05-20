@@ -35,6 +35,7 @@ import assignmentsRouter from './routes/assignments.js';
 import providerCatalogRoutes from './routes/providerCatalog.js';
 import pricingRoutes from './routes/pricing.js';
 import licensesRoutes from './routes/licenses.js';
+import testHelpersRouter from './routes/testHelpers.js';
 
 export function createApp() {
   const app = express();
@@ -104,6 +105,14 @@ export function createApp() {
   app.use('/api/provider-catalog', authenticate, providerCatalogRoutes);
   app.use('/api/pricing', authenticate, resolveDistributor, pricingRoutes);
   app.use('/api/licenses', authenticate, resolveDistributor, requireDistributor, licensesRoutes);
+
+  // ─── Dev / test helpers (never mounted in production) ─────────────────────
+  // Provides POST /test/inject-stale-token and GET /test/token-cache-state
+  // for integration test scripts. Mount guard is NODE_ENV; a runtime check
+  // inside the router itself provides belt-and-suspenders protection.
+  if (process.env.NODE_ENV !== 'production') {
+    app.use('/test', testHelpersRouter);
+  }
 
   // ─── API Documentation (super_admin only) ─────────────────────────────────
 

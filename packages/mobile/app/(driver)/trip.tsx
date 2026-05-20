@@ -142,6 +142,20 @@ export default function DriverTripScreen() {
     },
   );
 
+  // WI-085: Mark Vehicle Returned — calls the delivery workflow endpoint that
+  // sets vehicle.status = 'returned', creates inventory events, and releases
+  // the vehicle from the active trip. This is the correct "end of trip" action
+  // for drivers; it supersedes the generic DVA status advance for the
+  // loaded_and_dispatched → returned_inventory transition.
+  const markReturned = useApiMutation<unknown, { vehicleId: string }>(
+    'post',
+    () => '/delivery/driver/vehicle-returned',
+    {
+      invalidateKeys: [['driver-active-trip'], ['driver-orders']],
+      successMessage: 'Vehicle marked as returned!',
+    },
+  );
+
   const statusSteps = [
     { status: 'dispatch_ready', label: 'Ready', color: ACCENT.blue },
     { status: 'loaded_and_dispatched', label: 'Dispatched', color: ACCENT.orange },
@@ -163,16 +177,39 @@ export default function DriverTripScreen() {
     (o: any) => o.status === 'pending_delivery',
   );
 
+  // True when the next step is "returned_inventory" — i.e. the driver is
+  // currently dispatched and needs to mark the vehicle back at the depot.
+  // For this specific transition we call the delivery workflow endpoint
+  // (POST /delivery/driver/vehicle-returned) which handles vehicle status,
+  // inventory events, and the DVA transition atomically. All other
+  // status advances use the generic DVA status PUT.
+  const isReturnTransition =
+    assignment?.status === 'loaded_and_dispatched' && nextStep?.status === 'returned_inventory';
+
   const handleAdvance = () => {
     if (!nextStep) return;
-    Alert.alert(
-      'Update Trip Status',
-      `Move trip to "${nextStep.label}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Confirm', onPress: () => updateStatus.mutate({ status: nextStep.status }) },
-      ],
-    );
+    if (isReturnTransition) {
+      Alert.alert(
+        'Mark Vehicle Returned',
+        'Confirm that the vehicle has returned to the depot? This will update vehicle and inventory status.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Confirm',
+            onPress: () => markReturned.mutate({ vehicleId: assignment!.vehicleId }),
+          },
+        ],
+      );
+    } else {
+      Alert.alert(
+        'Update Trip Status',
+        `Move trip to "${nextStep.label}"?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Confirm', onPress: () => updateStatus.mutate({ status: nextStep.status }) },
+        ],
+      );
+    }
   };
 
   return (
@@ -248,9 +285,9 @@ export default function DriverTripScreen() {
             {/* Next Action */}
             {nextStep && (
               <Button
-                title={`Move to: ${nextStep.label}`}
+                title={isReturnTransition ? 'Mark Vehicle Returned' : `Move to: ${nextStep.label}`}
                 onPress={handleAdvance}
-                loading={updateStatus.isPending}
+                loading={isReturnTransition ? markReturned.isPending : updateStatus.isPending}
               />
             )}
 

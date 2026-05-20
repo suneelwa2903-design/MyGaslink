@@ -1,6 +1,7 @@
 /**
  * WI-060 — TZ-safe parsing of WhiteBooks/NIC `TokenExpiry` strings.
- * WI-083 amendment — stale-session guard (SESSION_EXPIRED).
+ * WI-083 amendment — stale-session guard.
+ * WI-085 amendment — replace 55-min fallback with retry-once strategy.
  *
  * Pins the contract:
  *   1. `parseNicDateTime("2026-05-16 09:00:19")` always returns the
@@ -12,13 +13,13 @@
  *   3. When the auth response omits `TokenExpiry`, the fallback is
  *      ~28 min from now, not the old 14 min (WhiteBooks docs say 30,
  *      we leave a 2 min cushion).
- *   4. (WI-083 revised) When TokenExpiry parses to a date already in the
- *      past, getAuthToken uses a 55-min fallback expiry and caches the
- *      token anyway. WhiteBooks sandbox confirmed: tokens are valid for
- *      1 hour from issuance; their backend echoes a stale expiry field
- *      from a previous session. The original hard SESSION_EXPIRED throw
- *      was blocking valid fresh tokens. If NIC truly rejects the token
- *      (1005), apiCall's retry logic evicts the cache and re-fetches.
+ *   4. (WI-085) When TokenExpiry parses to a date already in the past,
+ *      doAuthFetch retries the auth call ONCE. If the retry returns a
+ *      valid TokenExpiry the token is cached normally. If BOTH calls
+ *      return stale TokenExpiry, cache with a 55-min fallback (WB support
+ *      confirmed: sandbox tokens valid 1h from issuance regardless of
+ *      the TokenExpiry field). SESSION_EXPIRED is only thrown when NIC
+ *      actually rejects the token via the apiCall 1004/1005 guard.
  *
  * The TZ-independence test is the critical one: it's why this fix
  * exists. We don't actually mutate process.env.TZ at runtime (Node
@@ -132,41 +133,85 @@ describe('WI-060 — getAuthToken honours parsed expiry + fallback', () => {
     expect(row.tokenExpiresAt?.toISOString()).toBe(expectedExpiry.toISOString());
   });
 
-  it('WI-083: caches token with 55-min fallback when TokenExpiry is in the past (sandbox quirk)', async () => {
-    // WhiteBooks sandbox confirmed: tokens are valid for 1 hour from
-    // issuance regardless of what TokenExpiry says. Their backend echoes
-    // a cached expiry from a previous session even when issuing a fresh
-    // token. Observed on dist-002 2026-05-20: auth at 18:40 IST returned
-    // TokenExpiry="2026-05-20 16:45:00" (1h55m in past) — token itself
-    // worked on NIC. We fall back to 55 min instead of hard-rejecting.
+  it('WI-085: retries once when first auth returns stale TokenExpiry — caches fresh token on retry', async () => {
+    // WhiteBooks sandbox sometimes echoes a previous session's TokenExpiry
+    // even when issuing a brand-new token. WI-085 replaces the old 55-min
+    // fallback with a single retry: if the first call returns a stale
+    // TokenExpiry, evict the cache and call doAuthFetch once more.
+    // When the RETRY returns a valid TokenExpiry, cache that token and
+    // return it. fetch must be called exactly TWICE (initial + retry).
+    let fetchCall = 0;
+    globalThis.fetch = vi.fn(async () => {
+      fetchCall++;
+      const tokenExpiry = fetchCall === 1
+        // First call: stale (historical IST timestamp)
+        ? '2020-01-01 00:00:00'
+        // Second call (retry): valid far-future IST timestamp
+        : '2099-12-31 23:59:59';
+      const authToken = fetchCall === 1 ? 'STALE-FIRST-TOKEN' : 'FRESH-RETRY-TOKEN';
+      return {
+        ok: true, status: 200,
+        json: async () => ({ status_cd: 'Sucess', data: { AuthToken: authToken, TokenExpiry: tokenExpiry } }),
+      } as any;
+    });
+
+    const token = await getAuthToken('dist-002', 'einvoice');
+    // Must return the RETRY token, not the stale one.
+    expect(token).toBe('FRESH-RETRY-TOKEN');
+    // fetch called twice: first (stale) + retry (valid).
+    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
+
+    // Second getAuthToken call must be a cache HIT — no third fetch.
+    const token2 = await getAuthToken('dist-002', 'einvoice');
+    expect(token2).toBe('FRESH-RETRY-TOKEN');
+    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
+
+    // DB must be persisted with the fresh (2099) expiry, not a fallback.
+    const row = await prisma.gstCredential.findFirstOrThrow({
+      where: { distributorId: 'dist-002', scope: 'einvoice' },
+    });
+    expect(row.tokenCache).toBe('FRESH-RETRY-TOKEN');
+    const expectedExpiry = parseNicDateTime('2099-12-31 23:59:59');
+    expect(row.tokenExpiresAt?.toISOString()).toBe(expectedExpiry.toISOString());
+  });
+
+  it('WI-085: uses 55-min fallback when both auth attempts return stale TokenExpiry', async () => {
+    // WhiteBooks support confirmed (2026-05-20): sandbox tokens ARE valid
+    // for 1 hour from issuance regardless of what TokenExpiry says — their
+    // backend echoes a cached field from previous sessions. When BOTH the
+    // initial call AND the retry return a stale TokenExpiry, the token
+    // itself is still valid; we must accept it with a 55-min window rather
+    // than throwing SESSION_EXPIRED and breaking dispatch.
+    // SESSION_EXPIRED should only be surfaced when NIC actually rejects
+    // the token (1004/1005) via the apiCall same-token guard.
     const before = Date.now();
     globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
+      ok: true, status: 200,
       json: async () => ({
         status_cd: 'Sucess',
         data: {
-          AuthToken: 'STALE-EXPIRY-TOKEN',
-          // Fixed historical IST timestamp — always in the past.
-          TokenExpiry: '2020-01-01 00:00:00',
+          AuthToken: 'PERSISTENTLY-STALE-EXPIRY-TOKEN',
+          TokenExpiry: '2020-01-01 00:00:00',   // always in the past
         },
       }),
     } as any));
 
-    // Must succeed and return the token (not throw).
+    // Must succeed and return the retry token (not throw).
     const token = await getAuthToken('dist-002', 'einvoice');
-    expect(token).toBe('STALE-EXPIRY-TOKEN');
+    expect(token).toBe('PERSISTENTLY-STALE-EXPIRY-TOKEN');
+    // fetch called twice: initial (stale) + retry (also stale → fallback).
+    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
 
-    // Second call must be a cache hit — no second fetch.
+    // Second call must be a cache hit — no third fetch.
     const token2 = await getAuthToken('dist-002', 'einvoice');
-    expect(token2).toBe('STALE-EXPIRY-TOKEN');
-    expect(globalThis.fetch as any).toHaveBeenCalledTimes(1);
+    expect(token2).toBe('PERSISTENTLY-STALE-EXPIRY-TOKEN');
+    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
 
     // Token must be persisted to DB with a ~55-min fallback expiry.
     const row = await prisma.gstCredential.findFirstOrThrow({
       where: { distributorId: 'dist-002', scope: 'einvoice' },
     });
-    expect(row.tokenCache).toBe('STALE-EXPIRY-TOKEN');
+    expect(row.tokenCache).toBe('PERSISTENTLY-STALE-EXPIRY-TOKEN');
     const minsFromNow = (row.tokenExpiresAt!.getTime() - before) / 1000 / 60;
     expect(minsFromNow).toBeGreaterThanOrEqual(54);
     expect(minsFromNow).toBeLessThanOrEqual(56);

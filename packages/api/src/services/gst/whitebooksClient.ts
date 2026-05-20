@@ -184,6 +184,7 @@ async function doAuthFetch(
   distributorId: string | null,
   scope: 'einvoice' | 'ewaybill',
   cacheKey: string,
+  isRetry = false,
 ): Promise<string> {
   const creds = await getCredentials(distributorId, scope);
   if (!creds) throw new GstError('GST credentials not configured', 'NO_CREDENTIALS');
@@ -258,29 +259,45 @@ async function doAuthFetch(
     expiresAt = parseNicDateTime(json.data.TokenExpiry);
   }
 
-  // WI-083 amendment — stale TokenExpiry fallback.
+  // WI-085 — stale TokenExpiry: retry-once, then 55-min fallback.
   //
-  // WhiteBooks sandbox returns status_cd='Sucess' with a freshly-issued
-  // token, but the `TokenExpiry` field echoes a PREVIOUS session's expiry
-  // (a caching quirk on their backend). WhiteBooks confirmed: sandbox
-  // tokens are valid for 1 hour from issuance regardless of what
-  // TokenExpiry says.
+  // WhiteBooks sandbox consistently returns status_cd='Sucess' with a
+  // freshly-issued token BUT with a TokenExpiry that echoes a PREVIOUS
+  // session's expiry (confirmed by WhiteBooks support 2026-05-20:
+  // "authtoken is generating right — in sandbox authtoken is valid for
+  // 1 hour"). Their backend caches the expiry field independently of
+  // the token string, so the field is unreliable on sandbox.
   //
-  // Original guard (hard SESSION_EXPIRED throw) was too strict: it blocked
-  // the valid fresh token because the stale field made it LOOK expired.
-  // Fix: when TokenExpiry is in the past, log a warning and fall back to a
-  // 55-min window (1 h sandbox lifetime minus 5-min safety margin). If NIC
-  // actually rejects the token with 1005 (truly stale), apiCall's retry
-  // logic evicts the cache and re-fetches, surfacing the real error.
+  // WI-085 approach (hybrid):
+  //   1. First stale TokenExpiry: evict cache and retry auth once.
+  //      On a healthy production backend the retry returns a valid expiry
+  //      (the quirk is only a transient/sandbox phenomenon).
+  //   2. Retry also stale: accept the token with a 55-min window.
+  //      WhiteBooks confirmed the token IS valid for 1 hour from issuance
+  //      regardless of what the field says. If NIC actually rejects the
+  //      token later (error 1004/1005), apiCall's same-token guard will
+  //      surface SESSION_EXPIRED at that point — the right place.
   //
-  // Observed 2026-05-20 dist-002: auth at 18:40 IST returned
-  // TokenExpiry="2026-05-20 16:45:00" (1h55m in past) — token itself
-  // worked fine on NIC.
+  // isRetry=true prevents infinite recursion: the second doAuthFetch
+  // call passes true so the stale branch takes the fallback path.
   if (expiresAt.getTime() <= Date.now()) {
-    logger.warn('WhiteBooks TokenExpiry is in the past; using 55-min fallback (sandbox quirk)', {
-      distributorId, scope, tokenExpiry: json.data?.TokenExpiry, nowUtc: new Date().toISOString(),
-    });
-    expiresAt = new Date(Date.now() + 55 * 60 * 1000);
+    if (isRetry) {
+      // Retry also returned stale TokenExpiry (WhiteBooks sandbox quirk
+      // confirmed persistent). Token itself is valid — use 55-min window.
+      logger.warn(
+        'WhiteBooks returned stale TokenExpiry on retry — using 55-min fallback ' +
+        '(WB support confirmed tokens valid 1h from issuance regardless of TokenExpiry field)',
+        { distributorId, scope, tokenExpiry: json.data?.TokenExpiry, nowUtc: new Date().toISOString() },
+      );
+      expiresAt = new Date(Date.now() + 55 * 60 * 1000);
+    } else {
+      // First call stale — evict cache and retry once to get a fresh token.
+      logger.warn('WhiteBooks TokenExpiry is in the past; retrying auth once to get fresh token', {
+        distributorId, scope, tokenExpiry: json.data?.TokenExpiry, nowUtc: new Date().toISOString(),
+      });
+      tokenCache.delete(cacheKey);
+      return doAuthFetch(distributorId, scope, cacheKey, true);
+    }
   }
 
   tokenCache.set(cacheKey, { token, expiresAt, scope });
@@ -437,6 +454,41 @@ export async function apiCall<T = any>(
 export function clearTokenCache(distributorId: string | null) {
   tokenCache.delete(getCacheKey(distributorId, 'einvoice'));
   tokenCache.delete(getCacheKey(distributorId, 'ewaybill'));
+}
+
+// ─── Test helpers (dev / script use only — never call from production code) ───
+
+/**
+ * Inject a synthetic cache entry with an already-expired token.
+ * Allows integration test scripts to force the stale-token re-auth path
+ * without waiting for WhiteBooks to naturally return a stale TokenExpiry.
+ *
+ * Exposed via POST /test/inject-stale-token (mounted in non-production only).
+ * NEVER import or call this from application code.
+ */
+export function injectStaleCacheEntry(
+  distributorId: string | null,
+  scope: 'einvoice' | 'ewaybill',
+): void {
+  tokenCache.set(getCacheKey(distributorId, scope), {
+    token: `STALE_TEST_TOKEN_${Date.now()}`,
+    expiresAt: new Date(Date.now() - 60 * 60 * 1000), // 1 hour in the past
+    scope,
+  });
+}
+
+/**
+ * Read the current in-memory cache entry (token prefix + expiry) for a
+ * given scope. For use by test endpoints that assert post-auth state.
+ *
+ * Exposed via GET /test/token-cache-state (mounted in non-production only).
+ * NEVER import or call this from application code.
+ */
+export function getCacheEntry(
+  distributorId: string | null,
+  scope: 'einvoice' | 'ewaybill',
+): { token: string; expiresAt: Date; scope: string } | undefined {
+  return tokenCache.get(getCacheKey(distributorId, scope));
 }
 
 export class GstError extends Error {
