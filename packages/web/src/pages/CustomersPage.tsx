@@ -19,7 +19,6 @@ import {
   type Order,
   type Invoice,
   type Payment,
-  type CustomerInventoryBalance,
   type LedgerEntry,
   CustomerStatus,
   createCustomerSchema,
@@ -547,7 +546,7 @@ function CustomerDetailModal({
   onClose: () => void;
   customer: Customer;
 }) {
-  const [tab, setTab] = useState<'orders' | 'invoices' | 'payments' | 'inventory' | 'ledger'>('orders');
+  const [tab, setTab] = useState<'orders' | 'invoices' | 'payments' | 'ledger'>('orders');
 
   const { data: orders, isLoading: ordersLoading } = useQuery({
     queryKey: ['customer-orders', customer.customerId],
@@ -567,12 +566,6 @@ function CustomerDetailModal({
     enabled: tab === 'payments',
   });
 
-  const { data: balances, isLoading: balancesLoading } = useQuery({
-    queryKey: ['customer-balances', customer.customerId],
-    queryFn: () => apiGet<CustomerInventoryBalance[]>(`/inventory/customer-balances/${customer.customerId}`),
-    enabled: tab === 'inventory',
-  });
-
   const { data: ledgerEntries, isLoading: ledgerLoading } = useQuery({
     queryKey: ['customer-ledger', customer.customerId],
     queryFn: () => apiGet<LedgerEntry[]>(`/payments/ledger/${customer.customerId}`),
@@ -583,7 +576,6 @@ function CustomerDetailModal({
     { key: 'orders' as const, label: 'Orders' },
     { key: 'invoices' as const, label: 'Invoices' },
     { key: 'payments' as const, label: 'Payments' },
-    { key: 'inventory' as const, label: 'Inventory Balances' },
     { key: 'ledger' as const, label: 'Ledger' },
   ];
 
@@ -685,26 +677,6 @@ function CustomerDetailModal({
                     <td className="font-medium">{formatCurrency(p.amount)}</td>
                     <td><Badge variant="neutral">{p.paymentMethod}</Badge></td>
                     <td><Badge variant={p.allocationStatus === 'fully_allocated' ? 'success' : 'warning'}>{p.allocationStatus}</Badge></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {tab === 'inventory' && (
-          balancesLoading ? <div className="flex justify-center py-8"><Loader /></div> :
-          !balances?.length ? <EmptyState title="No inventory balances" /> :
-          <div className="table-container">
-            <table className="table">
-              <thead><tr><th>Cylinder Type</th><th>With Customer</th><th>Pending Returns</th><th>Missing</th></tr></thead>
-              <tbody>
-                {balances.map((b) => (
-                  <tr key={b.cylinderTypeId}>
-                    <td className="font-medium">{b.cylinderTypeName}</td>
-                    <td>{b.withCustomerQty}</td>
-                    <td>{b.pendingReturns}</td>
-                    <td>{b.missingQty > 0 ? <span className="text-red-500 font-medium">{b.missingQty}</span> : 0}</td>
                   </tr>
                 ))}
               </tbody>

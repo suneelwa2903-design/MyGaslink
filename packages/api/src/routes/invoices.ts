@@ -20,7 +20,7 @@ const router = Router();
 
 // GET /api/invoices
 router.get('/',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validateQuery(invoiceFilterSchema),
   async (req, res) => {
     try {
