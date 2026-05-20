@@ -502,6 +502,10 @@ export interface CustomerInventoryBalance {
   pendingReturns: number;
   missingQty: number;
   lastUpdated: string;
+  // WI-080: current price for the cylinder type (null if none set) and
+  // the date of this customer's most recent delivery (null if never).
+  cylinderPrice?: number | null;
+  lastDeliveryDate?: string | null;
 }
 
 export interface CancelledStock {

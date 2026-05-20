@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -10,6 +10,10 @@ import {
   HiOutlineLockOpen,
   HiOutlinePlus,
   HiOutlineArrowUturnLeft,
+  HiOutlineAdjustmentsHorizontal,
+  HiOutlineArrowTrendingUp,
+  HiOutlineArrowTrendingDown,
+  HiOutlineArrowRight,
 } from 'react-icons/hi2';
 import {
   type InventorySummary,
@@ -24,6 +28,7 @@ import {
   type IncomingFullsInput,
   outgoingEmptiesSchema,
   type OutgoingEmptiesInput,
+  type ManualAdjustmentInput,
   CancelledStockStatus,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
@@ -43,9 +48,10 @@ function addDays(dateStr: string, days: number): string {
 export default function InventoryPage() {
   const queryClient = useQueryClient();
   const [selectedDate, setSelectedDate] = useState(todayString());
-  const [tab, setTab] = useState<'daily' | 'depot' | 'cancelled' | 'forecast' | 'customer' | 'reconciliation'>('daily');
+  const [tab, setTab] = useState<'daily' | 'depot' | 'onboarding' | 'cancelled' | 'forecast' | 'customer' | 'reconciliation'>('daily');
   const [incomingOpen, setIncomingOpen] = useState(false);
   const [outgoingOpen, setOutgoingOpen] = useState(false);
+  const [adjustOpen, setAdjustOpen] = useState(false);
 
   // Depot History state
   const [depotPage, setDepotPage] = useState(1);
@@ -74,6 +80,13 @@ export default function InventoryPage() {
     queryKey: ['customer-balances'],
     queryFn: () => apiGet<CustomerInventoryBalance[]>('/inventory/customer-balances'),
     enabled: tab === 'customer',
+  });
+
+  // WI-080 F5: opening stock recorded at onboarding (read-only).
+  const { data: onboardingStock, isLoading: onboardingLoading } = useQuery({
+    queryKey: ['onboarding-stock'],
+    queryFn: () => apiGet<Array<{ cylinderTypeId: string; cylinderTypeName: string; openingFulls: number; openingEmpties: number; dateSet: string }>>('/inventory/onboarding-stock'),
+    enabled: tab === 'onboarding',
   });
 
   const depotQueryParams: Record<string, unknown> = { page: depotPage, pageSize: 20 };
@@ -155,16 +168,28 @@ export default function InventoryPage() {
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  const adjustMutation = useMutation({
+    mutationFn: (data: ManualAdjustmentInput) => apiPost('/inventory/manual-adjustment', data),
+    onSuccess: () => {
+      toast.success('Stock adjusted');
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setAdjustOpen(false);
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
   const isLocked = inventory?.[0]?.isLocked ?? false;
   const isToday = selectedDate === todayString();
 
+  // WI-080 F4 rename + F5 new tab (Stock at Onboarding, after Depot History).
   const tabs = [
     { key: 'daily' as const, label: 'Daily Summary' },
     { key: 'depot' as const, label: 'Depot History' },
-    { key: 'cancelled' as const, label: 'Cancelled Stock' },
+    { key: 'onboarding' as const, label: 'Stock at Onboarding' },
+    { key: 'cancelled' as const, label: 'Undelivered Stock' },
     { key: 'forecast' as const, label: 'Forecast' },
     { key: 'customer' as const, label: 'Customer Balances' },
-    { key: 'reconciliation' as const, label: 'Reconciliation' },
+    { key: 'reconciliation' as const, label: 'Vehicle Return' },
   ];
 
   return (
@@ -182,6 +207,9 @@ export default function InventoryPage() {
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setOutgoingOpen(true)}>
                 <HiOutlinePlus className="h-4 w-4" />Outgoing Empties
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setAdjustOpen(true)}>
+                <HiOutlineAdjustmentsHorizontal className="h-4 w-4" />Adjust Stock
               </Button>
             </>
           )}
@@ -271,41 +299,57 @@ export default function InventoryPage() {
         ) : !inventory?.length ? (
           <EmptyState title="No inventory data" description="No inventory data for this date." />
         ) : (
-          // WI-079: row/table layout — easier to scan across cylinder types than the previous card grid.
+          // WI-080: full ledger columns. The two depot-movement columns
+          // (Incoming Fulls / Outgoing Empties) are grouped under a pastel
+          // green "Depot" header. All numerics centre-aligned.
           <div className="table-container">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Cylinder Type</th>
-                  <th className="text-right">Opening Fulls</th>
-                  <th className="text-right">Incoming</th>
-                  <th className="text-right">Delivered</th>
-                  <th className="text-right">Cancelled</th>
-                  <th className="text-right">Closing Fulls</th>
-                  <th className="text-right">Closing Empties</th>
-                  <th>Status</th>
+                  <th rowSpan={2} className="align-bottom">Cylinder Type</th>
+                  <th colSpan={2} className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Depot</th>
+                  <th rowSpan={2} className="text-center align-bottom">Opening Fulls</th>
+                  <th rowSpan={2} className="text-center align-bottom">Opening Empties</th>
+                  <th rowSpan={2} className="text-center align-bottom">Delivered</th>
+                  <th rowSpan={2} className="text-center align-bottom">Collected Empties</th>
+                  <th rowSpan={2} className="text-center align-bottom">Cancelled</th>
+                  <th rowSpan={2} className="text-center align-bottom">Manual Adj</th>
+                  <th rowSpan={2} className="text-center align-bottom">Closing Fulls</th>
+                  <th rowSpan={2} className="text-center align-bottom">Closing Empties</th>
+                  <th rowSpan={2} className="align-bottom">Status</th>
+                </tr>
+                <tr>
+                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Incoming Fulls</th>
+                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Outgoing Empties</th>
                 </tr>
               </thead>
               <tbody>
                 {inventory.map((item) => {
                   const isWarning = item.thresholdWarning !== null && item.closingFulls <= item.thresholdWarning;
                   const isCritical = item.thresholdCritical !== null && item.closingFulls <= item.thresholdCritical;
+                  // Sign-guarded so a zero renders "0" (not "+0"/"-0").
+                  const signed = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `${n}` : '0');
                   return (
                     <tr key={item.cylinderTypeId}>
                       <td className="font-medium text-surface-900 dark:text-white">{item.cylinderTypeName}</td>
-                      <td className="text-right">{item.openingFulls}</td>
-                      {/* WI-079: guard the sign so a zero qty renders "0", not "+0" / "-0". */}
-                      <td className="text-right text-accent-600 dark:text-accent-400">
+                      <td className="text-center bg-[#dcfce7]/40 dark:bg-emerald-900/20 text-accent-700 dark:text-accent-400">
                         {item.incomingFulls > 0 ? `+${item.incomingFulls}` : '0'}
                       </td>
-                      <td className="text-right text-brand-600 dark:text-brand-400">
+                      <td className="text-center bg-[#dcfce7]/40 dark:bg-emerald-900/20">
+                        {item.outgoingEmpties > 0 ? `-${item.outgoingEmpties}` : '0'}
+                      </td>
+                      <td className="text-center">{item.openingFulls}</td>
+                      <td className="text-center">{item.openingEmpties}</td>
+                      <td className="text-center text-brand-600 dark:text-brand-400">
                         {item.deliveredQty > 0 ? `-${item.deliveredQty}` : '0'}
                       </td>
-                      <td className="text-right text-flame-600 dark:text-flame-400">{item.cancelledStockQty}</td>
-                      <td className={cn('text-right font-semibold', isCritical && 'text-red-500')}>
+                      <td className="text-center">{item.collectedEmpties}</td>
+                      <td className="text-center text-flame-600 dark:text-flame-400">{item.cancelledStockQty}</td>
+                      <td className="text-center">{signed(item.manualAdjustment)}</td>
+                      <td className={cn('text-center font-semibold', isCritical && 'text-red-500')}>
                         {item.closingFulls}
                       </td>
-                      <td className="text-right">{item.closingEmpties}</td>
+                      <td className="text-center">{item.closingEmpties}</td>
                       <td>
                         <div className="flex gap-1">
                           {isCritical && <Badge variant="danger">Critical</Badge>}
@@ -429,6 +473,38 @@ export default function InventoryPage() {
         </div>
       )}
 
+      {/* WI-080 F5: read-only opening stock recorded at onboarding. */}
+      {tab === 'onboarding' && (
+        onboardingLoading ? (
+          <div className="flex justify-center py-20"><Loader size="lg" /></div>
+        ) : !onboardingStock?.length ? (
+          <EmptyState title="No opening stock recorded at onboarding." description="Opening balances entered during onboarding will appear here." />
+        ) : (
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Cylinder Type</th>
+                  <th className="text-center">Opening Fulls</th>
+                  <th className="text-center">Opening Empties</th>
+                  <th>Date Set</th>
+                </tr>
+              </thead>
+              <tbody>
+                {onboardingStock.map((s) => (
+                  <tr key={s.cylinderTypeId}>
+                    <td className="font-medium text-surface-900 dark:text-white">{s.cylinderTypeName}</td>
+                    <td className="text-center">{s.openingFulls}</td>
+                    <td className="text-center">{s.openingEmpties}</td>
+                    <td className="text-surface-500 dark:text-surface-400">{new Date(s.dateSet).toLocaleDateString('en-IN')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
       {tab === 'cancelled' && (
         cancelledLoading ? (
           <div className="flex justify-center py-20"><Loader size="lg" /></div>
@@ -481,59 +557,63 @@ export default function InventoryPage() {
       )}
 
       {tab === 'forecast' && (
-        forecastLoading ? (
-          <div className="flex justify-center py-20"><Loader size="lg" /></div>
-        ) : !forecast?.length ? (
-          <EmptyState title="No forecast data" />
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {forecast.map((f) => (
-              <div key={f.cylinderTypeId} className="card p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-surface-900 dark:text-white">{f.cylinderTypeName}</h3>
-                  <Badge variant={f.trendDirection === 'increasing' ? 'danger' : f.trendDirection === 'decreasing' ? 'success' : 'neutral'}>
-                    {f.trendDirection}
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div><p className="text-xs text-surface-400">Current Stock</p><p className="font-bold text-lg text-surface-900 dark:text-white">{f.currentStock}</p></div>
-                  <div><p className="text-xs text-surface-400">Avg Daily Demand</p><p className="font-bold text-lg text-surface-900 dark:text-white">{f.averageDailyDemand.toFixed(1)}</p></div>
-                  <div><p className="text-xs text-surface-400">Days Remaining</p><p className="font-bold text-lg text-surface-900 dark:text-white">{f.daysOfStockRemaining}</p></div>
-                  <div><p className="text-xs text-surface-400">Reorder Qty</p><p className="font-bold text-lg text-brand-600 dark:text-brand-400">{f.recommendedReorderQty}</p></div>
-                  <div><p className="text-xs text-surface-400">7-Day Forecast</p><p className="font-medium">{f.forecastedDemand7Days}</p></div>
-                  <div><p className="text-xs text-surface-400">30-Day Forecast</p><p className="font-medium">{f.forecastedDemand30Days}</p></div>
-                </div>
-              </div>
-            ))}
+        <div className="space-y-4">
+          {/* WI-080 F3: always-visible advisory banner. */}
+          <div className="rounded-lg border border-brand-200 dark:border-brand-500/30 bg-brand-50 dark:bg-brand-500/10 px-4 py-3 text-sm text-brand-700 dark:text-brand-300">
+            <span className="font-semibold">AI Demand Forecasting</span> — Requires minimum 1 month of delivery history for reliable predictions.
           </div>
-        )
+          {forecastLoading ? (
+            <div className="flex justify-center py-20"><Loader size="lg" /></div>
+          ) : !forecast?.length ? (
+            <EmptyState title="No forecast data" />
+          ) : (
+            <div className="table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Cylinder Type</th>
+                    <th className="text-center">Avg Daily Demand</th>
+                    <th className="text-center">Current Stock</th>
+                    <th className="text-center">Days Remaining</th>
+                    <th className="text-center">7-Day Forecast</th>
+                    <th className="text-center">30-Day Forecast</th>
+                    <th className="text-center">Reorder Qty</th>
+                    <th>Trend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {forecast.map((f) => (
+                    <tr key={f.cylinderTypeId}>
+                      <td className="font-medium text-surface-900 dark:text-white">{f.cylinderTypeName}</td>
+                      <td className="text-center">{f.averageDailyDemand.toFixed(1)}</td>
+                      <td className="text-center">{f.currentStock}</td>
+                      <td className="text-center">{f.daysOfStockRemaining}</td>
+                      <td className="text-center">{f.forecastedDemand7Days}</td>
+                      <td className="text-center">{f.forecastedDemand30Days}</td>
+                      <td className="text-center font-semibold text-brand-600 dark:text-brand-400">{f.recommendedReorderQty}</td>
+                      <td>
+                        {f.trendDirection === 'increasing' ? (
+                          <span className="inline-flex items-center gap-1 text-red-500"><HiOutlineArrowTrendingUp className="h-4 w-4" />Increasing</span>
+                        ) : f.trendDirection === 'decreasing' ? (
+                          <span className="inline-flex items-center gap-1 text-accent-600 dark:text-accent-400"><HiOutlineArrowTrendingDown className="h-4 w-4" />Decreasing</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-surface-500"><HiOutlineArrowRight className="h-4 w-4" />Stable</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'customer' && (
         customerLoading ? (
           <div className="flex justify-center py-20"><Loader size="lg" /></div>
-        ) : !customerBalances?.length ? (
-          <EmptyState title="No customer balances" />
         ) : (
-          <div className="table-container">
-            <table className="table">
-              <thead>
-                <tr><th>Customer</th><th>Cylinder Type</th><th>With Customer</th><th>Pending Returns</th><th>Missing</th><th>Last Updated</th></tr>
-              </thead>
-              <tbody>
-                {customerBalances.map((b, i) => (
-                  <tr key={`${b.customerId}-${b.cylinderTypeId}-${i}`}>
-                    <td className="font-medium">{b.customerName}</td>
-                    <td>{b.cylinderTypeName}</td>
-                    <td>{b.withCustomerQty}</td>
-                    <td>{b.pendingReturns}</td>
-                    <td>{b.missingQty > 0 ? <span className="text-red-500 font-medium">{b.missingQty}</span> : 0}</td>
-                    <td className="text-xs text-surface-400">{new Date(b.lastUpdated).toLocaleDateString('en-IN')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <CustomerBalancesTab balances={customerBalances ?? []} />
         )
       )}
 
@@ -619,7 +699,94 @@ export default function InventoryPage() {
           date={selectedDate}
         />
       )}
+
+      {/* WI-080 F2: Adjust Stock Modal */}
+      {adjustOpen && (
+        <AdjustStockModal
+          open={adjustOpen}
+          onClose={() => setAdjustOpen(false)}
+          cylinderTypes={cylinderTypes ?? []}
+          date={selectedDate}
+          submitting={adjustMutation.isPending}
+          onSubmit={(data) => adjustMutation.mutate(data)}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── Adjust Stock Modal (WI-080 F2) ──────────────────────────────────────────
+
+function AdjustStockModal({
+  open,
+  onClose,
+  cylinderTypes,
+  date,
+  submitting,
+  onSubmit,
+}: {
+  open: boolean;
+  onClose: () => void;
+  cylinderTypes: CylinderType[];
+  date: string;
+  submitting: boolean;
+  onSubmit: (data: ManualAdjustmentInput) => void;
+}) {
+  const [cylinderTypeId, setCylinderTypeId] = useState('');
+  const [quantity, setQuantity] = useState<string>('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
+
+  const submit = () => {
+    const qty = Number(quantity);
+    if (!cylinderTypeId) return setError('Select a cylinder type');
+    if (!Number.isFinite(qty) || qty === 0) return setError('Quantity must be a non-zero number (positive to add, negative to subtract)');
+    if (!reason.trim()) return setError('Reason is required');
+    setError(null);
+    // API expects adjustmentType + positive quantity; map the signed input.
+    onSubmit({
+      cylinderTypeId,
+      adjustmentType: qty > 0 ? 'add' : 'subtract',
+      quantity: Math.abs(qty),
+      reason: reason.trim(),
+      adjustmentDate: date,
+    });
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Adjust Stock">
+      <div className="space-y-4">
+        <Select
+          label="Cylinder Type"
+          options={cylinderOptions}
+          placeholder="Select type"
+          required
+          value={cylinderTypeId}
+          onChange={(e) => setCylinderTypeId(e.target.value)}
+        />
+        <Input
+          label="Quantity (positive = add, negative = subtract)"
+          type="number"
+          placeholder="e.g. 10 or -5"
+          value={quantity}
+          onChange={(e) => setQuantity(e.target.value)}
+        />
+        <Input
+          label="Reason"
+          placeholder="Reason for adjustment"
+          required
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+        {error && <p className="text-sm text-red-500">{error}</p>}
+        <div className="flex justify-end gap-3 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="button" onClick={submit} loading={submitting}>Adjust</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -730,5 +897,178 @@ function OutgoingEmptiesModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+// ─── Customer Balances Tab (WI-080 F6) ───────────────────────────────────────
+
+type SortKey = 'customer' | 'type' | 'qty' | 'cost' | 'deposit' | 'days';
+
+function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[] }) {
+  // Distinct cylinder types present, with their pre-fill price.
+  const types = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; price: number }>();
+    for (const b of balances) {
+      if (!m.has(b.cylinderTypeId)) {
+        m.set(b.cylinderTypeId, { id: b.cylinderTypeId, name: b.cylinderTypeName, price: b.cylinderPrice ?? 0 });
+      }
+    }
+    return [...m.values()];
+  }, [balances]);
+
+  // Per-type "Empty Cylinder Price" inputs (session-only, pre-filled from
+  // cylinder prices; user can override inline). Plus a global security
+  // deposit per cylinder. None of this is persisted.
+  const [prices, setPrices] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setPrices((prev) => {
+      const next = { ...prev };
+      for (const t of types) if (next[t.id] === undefined) next[t.id] = String(t.price ?? 0);
+      return next;
+    });
+  }, [types]);
+
+  const [deposit, setDeposit] = useState('');
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [onlyOutstanding, setOnlyOutstanding] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>('customer');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const depositNum = Number(deposit) || 0;
+  const daysSince = (d?: string | null): number | null =>
+    d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : null;
+  const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+  const rows = useMemo(() => {
+    const mapped = balances
+      .filter((b) => (onlyOutstanding ? b.withCustomerQty > 0 : true))
+      .filter((b) => (search ? b.customerName.toLowerCase().includes(search.toLowerCase()) : true))
+      .filter((b) => (typeFilter ? b.cylinderTypeId === typeFilter : true))
+      .map((b) => {
+        const price = Number(prices[b.cylinderTypeId] ?? 0) || 0;
+        return {
+          ...b,
+          emptyCost: b.withCustomerQty * price,
+          securityDeposit: b.withCustomerQty * depositNum,
+          days: daysSince(b.lastDeliveryDate),
+        };
+      });
+    const dir = sortDir === 'asc' ? 1 : -1;
+    mapped.sort((a, b) => {
+      switch (sortKey) {
+        case 'customer': return a.customerName.localeCompare(b.customerName) * dir;
+        case 'type': return a.cylinderTypeName.localeCompare(b.cylinderTypeName) * dir;
+        case 'qty': return (a.withCustomerQty - b.withCustomerQty) * dir;
+        case 'cost': return (a.emptyCost - b.emptyCost) * dir;
+        case 'deposit': return (a.securityDeposit - b.securityDeposit) * dir;
+        case 'days': return ((a.days ?? -1) - (b.days ?? -1)) * dir;
+        default: return 0;
+      }
+    });
+    return mapped;
+  }, [balances, onlyOutstanding, search, typeFilter, prices, depositNum, sortKey, sortDir]);
+
+  const totalQty = rows.reduce((s, r) => s + r.withCustomerQty, 0);
+  const totalCost = rows.reduce((s, r) => s + r.emptyCost, 0);
+  const totalDeposit = rows.reduce((s, r) => s + r.securityDeposit, 0);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+  const SortTh = ({ k, label, center }: { k: SortKey; label: string; center?: boolean }) => (
+    <th
+      className={cn('cursor-pointer select-none hover:text-brand-600', center && 'text-center')}
+      onClick={() => toggleSort(k)}
+    >
+      {label}{sortKey === k ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+    </th>
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Pricing inputs (session-only) */}
+      <div className="card p-4 space-y-3">
+        <p className="text-sm font-medium text-surface-700 dark:text-surface-300">
+          Valuation inputs <span className="font-normal text-surface-400">(not saved — used to value outstanding cylinders)</span>
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {types.map((t) => (
+            <Input
+              key={t.id}
+              label={`Empty Cylinder Price — ${t.name}`}
+              type="number"
+              value={prices[t.id] ?? ''}
+              onChange={(e) => setPrices((p) => ({ ...p, [t.id]: e.target.value }))}
+            />
+          ))}
+          <Input
+            label="Security Deposit per Cylinder"
+            type="number"
+            placeholder="0"
+            value={deposit}
+            onChange={(e) => setDeposit(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="card p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+          <Input placeholder="Search customer…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Select
+            options={[{ value: '', label: 'All cylinder types' }, ...types.map((t) => ({ value: t.id, label: t.name }))]}
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+          />
+          <label className="flex items-center gap-2 text-sm text-surface-600 dark:text-surface-300">
+            <input type="checkbox" checked={onlyOutstanding} onChange={(e) => setOnlyOutstanding(e.target.checked)} />
+            Show only customers with cylinders outstanding
+          </label>
+        </div>
+      </div>
+
+      {!rows.length ? (
+        <EmptyState title="No customer balances" description="No customers match the current filters." />
+      ) : (
+        <div className="table-container">
+          <table className="table">
+            <thead>
+              <tr>
+                <SortTh k="customer" label="Customer" />
+                <SortTh k="type" label="Cylinder Type" />
+                <SortTh k="qty" label="With Customer" center />
+                <SortTh k="cost" label="Empty Cyl Cost" center />
+                <SortTh k="deposit" label="Security Deposit" center />
+                <SortTh k="days" label="Days Since Last Delivery" center />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.customerId}-${r.cylinderTypeId}-${i}`}>
+                  <td className="font-medium text-surface-900 dark:text-white">{r.customerName}</td>
+                  <td>{r.cylinderTypeName}</td>
+                  <td className="text-center">{r.withCustomerQty}</td>
+                  <td className="text-center">{money(r.emptyCost)}</td>
+                  <td className="text-center">{money(r.securityDeposit)}</td>
+                  <td className="text-center">{r.days === null ? '—' : `${r.days} days`}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="font-semibold border-t-2 border-surface-200 dark:border-surface-700">
+                <td>Total</td>
+                <td></td>
+                <td className="text-center">{totalQty}</td>
+                <td className="text-center">{money(totalCost)}</td>
+                <td className="text-center">{money(totalDeposit)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
