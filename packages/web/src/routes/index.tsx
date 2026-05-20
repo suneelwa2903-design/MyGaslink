@@ -127,6 +127,7 @@ export function AppRoutes() {
                 allowedRoles={[
                   UserRole.SUPER_ADMIN,
                   UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.INVENTORY,
                 ]}
                 requireDistributor
               />
