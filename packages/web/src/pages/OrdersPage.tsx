@@ -1228,19 +1228,31 @@ function CancelOrderModal({
     },
   });
 
+  const isPendingAssignment = order.status === 'pending_driver_assignment';
+
   return (
     <Modal open={open} onClose={onClose} title={`Cancel Order ${order.orderNumber}?`}>
       <div className="space-y-4 text-sm text-surface-700 dark:text-surface-300">
-        <p>This will:</p>
-        <ul className="list-disc list-inside space-y-1 text-surface-600 dark:text-surface-400">
-          <li>Cancel the order and return stock to depot</li>
-          <li>Void the invoice</li>
-          <li>Attempt to cancel EWB/IRN at NIC automatically</li>
-        </ul>
-        <p className="text-surface-500 dark:text-surface-400 text-xs">
-          Note: If EWB/IRN cannot be cancelled (after 24h window), a pending action will be raised for manual handling.
-        </p>
-        <p className="font-medium text-red-600 dark:text-red-400">This cannot be undone.</p>
+        {isPendingAssignment ? (
+          <>
+            <p>This will cancel the order.</p>
+            <p>No invoice has been generated yet.</p>
+            <p className="font-medium text-red-600 dark:text-red-400">This cannot be undone.</p>
+          </>
+        ) : (
+          <>
+            <p>This will:</p>
+            <ul className="list-disc list-inside space-y-1 text-surface-600 dark:text-surface-400">
+              <li>Cancel the order and return stock to depot</li>
+              <li>Void the invoice</li>
+              <li>Attempt to cancel EWB/IRN at NIC automatically</li>
+            </ul>
+            <p className="text-surface-500 dark:text-surface-400 text-xs">
+              Note: If EWB/IRN cannot be cancelled (after 24h window), a pending action will be raised for manual handling.
+            </p>
+            <p className="font-medium text-red-600 dark:text-red-400">This cannot be undone.</p>
+          </>
+        )}
       </div>
       <div className="flex justify-end gap-3 pt-4">
         <Button type="button" variant="secondary" onClick={onClose}>Go Back</Button>

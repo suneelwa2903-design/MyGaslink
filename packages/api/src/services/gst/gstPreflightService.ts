@@ -258,6 +258,13 @@ export async function preflightDispatch(params: {
       data: { status: 'loaded_and_dispatched' },
     });
 
+    if (mapping.vehicleId) {
+      await prisma.vehicle.update({
+        where: { id: mapping.vehicleId },
+        data: { status: 'dispatched' },
+      });
+    }
+
     // WI-038: bundle the per-order EWBs into a single consolidated EWB
     // (trip sheet) so the driver carries one printable doc. Single-order
     // drivers skip this — their per-order EWB IS the trip sheet. gencewb

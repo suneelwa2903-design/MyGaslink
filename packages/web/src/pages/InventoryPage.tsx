@@ -73,8 +73,8 @@ export default function InventoryPage() {
   });
 
   const { data: cancelledStock, isLoading: cancelledLoading } = useQuery({
-    queryKey: ['cancelled-stock', selectedDate],
-    queryFn: () => apiGet<CancelledStock[]>('/inventory/cancelled-stock', { date: selectedDate }),
+    queryKey: ['cancelled-stock'],
+    queryFn: () => apiGet<CancelledStock[]>('/inventory/cancelled-stock'),
     enabled: tab === 'cancelled',
   });
 
@@ -282,7 +282,7 @@ export default function InventoryPage() {
 
       {/* Tabs */}
       <div className="border-b border-surface-200 dark:border-surface-700">
-        <div className="flex gap-4">
+        <div className="flex gap-6">
           {tabs.map((t) => (
             <button
               key={t.key}
@@ -517,9 +517,10 @@ export default function InventoryPage() {
         cancelledLoading ? (
           <div className="flex justify-center py-20"><Loader size="lg" /></div>
         ) : !cancelledStock?.length ? (
-          <EmptyState title="No cancelled stock" description="No cancelled stock for this date." />
+          <EmptyState title="No undelivered stock" description="No undelivered stock found across all dates." />
         ) : (
           <div className="table-container">
+            <p className="text-xs text-surface-500 dark:text-surface-400 px-4 pt-3 pb-1">Showing all undelivered stock across all dates</p>
             <table className="table">
               <thead>
                 <tr>
