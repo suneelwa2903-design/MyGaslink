@@ -259,6 +259,22 @@ export async function markVehicleReturned(
     },
   });
 
+  // WI-087 BUG FIX: Block return if any orders are actively out for delivery.
+  // pending_delivery = IRN/EWB committed at NIC — the order is with the
+  // driver and cannot be silently abandoned. The admin must cancel those
+  // orders (which cancels the GST docs) BEFORE marking the vehicle returned.
+  // pending_dispatch orders are not yet dispatched so they CAN be reconciled
+  // at the inventory step, but pending_delivery ones cannot.
+  const pendingDeliveryOrders = undeliveredOrders.filter(
+    (o) => o.status === 'pending_delivery',
+  );
+  if (pendingDeliveryOrders.length > 0) {
+    const orderNumbers = pendingDeliveryOrders.map((o) => o.orderNumber).join(', ');
+    throw new Error(
+      `Cannot mark vehicle as returned — ${pendingDeliveryOrders.length} order(s) are still out for delivery: ${orderNumbers}. Cancel or confirm these orders before returning the vehicle.`,
+    );
+  }
+
   // Update vehicle status
   await prisma.vehicle.update({
     where: { id: vehicleId },

@@ -82,6 +82,11 @@ router.post('/driver/vehicle-returned',
       return sendSuccess(res, result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      // WI-087: pending_delivery guard throws a descriptive error → 409 Conflict
+      if (message.startsWith('Cannot mark vehicle as returned')) {
+        return sendError(res, message, 409);
+      }
+      if (message === 'Vehicle not found') return sendError(res, message, 404);
       return sendError(res, message, 500);
     }
   }

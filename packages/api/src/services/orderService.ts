@@ -678,6 +678,23 @@ export async function confirmDelivery(
     throw new OrderError('Order is not in a deliverable state', 400);
   }
 
+  // WI-087 BUG FIX: Block delivery confirmation if vehicle has already been
+  // returned to depot. Once returned, undelivered orders must be handled via
+  // Inventory → Reconciliation (confirmVehicleReconciliation), not confirmed
+  // as delivered — the physical cylinder is back at depot, not delivered.
+  if (order.vehicleId) {
+    const vehicle = await prisma.vehicle.findFirst({
+      where: { id: order.vehicleId, distributorId },
+      select: { status: true, vehicleNumber: true },
+    });
+    if (vehicle?.status === 'returned') {
+      throw new OrderError(
+        `Cannot confirm delivery — vehicle ${vehicle.vehicleNumber} has already been returned to depot. Process this order via Inventory → Vehicle Reconciliation instead.`,
+        409,
+      );
+    }
+  }
+
   const isModified = data.items.some(di => {
     const oi = order.items.find(i => i.cylinderTypeId === di.cylinderTypeId);
     return oi && di.deliveredQuantity !== oi.quantity;
