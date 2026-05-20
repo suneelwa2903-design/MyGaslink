@@ -128,6 +128,7 @@ export function AppRoutes() {
                   UserRole.SUPER_ADMIN,
                   UserRole.DISTRIBUTOR_ADMIN,
                   UserRole.INVENTORY,
+                  UserRole.FINANCE,
                 ]}
                 requireDistributor
               />
