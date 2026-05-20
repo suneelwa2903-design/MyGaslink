@@ -12,10 +12,13 @@
  *   3. When the auth response omits `TokenExpiry`, the fallback is
  *      ~28 min from now, not the old 14 min (WhiteBooks docs say 30,
  *      we leave a 2 min cushion).
- *   4. (WI-083) When TokenExpiry parses to a date already in the past,
- *      getAuthToken throws SESSION_EXPIRED (GstError) and evicts the
- *      cache entry rather than caching a stale token that NIC will
- *      reject with 1005 on every subsequent call.
+ *   4. (WI-083 revised) When TokenExpiry parses to a date already in the
+ *      past, getAuthToken uses a 55-min fallback expiry and caches the
+ *      token anyway. WhiteBooks sandbox confirmed: tokens are valid for
+ *      1 hour from issuance; their backend echoes a stale expiry field
+ *      from a previous session. The original hard SESSION_EXPIRED throw
+ *      was blocking valid fresh tokens. If NIC truly rejects the token
+ *      (1005), apiCall's retry logic evicts the cache and re-fetches.
  *
  * The TZ-independence test is the critical one: it's why this fix
  * exists. We don't actually mutate process.env.TZ at runtime (Node
@@ -129,38 +132,44 @@ describe('WI-060 — getAuthToken honours parsed expiry + fallback', () => {
     expect(row.tokenExpiresAt?.toISOString()).toBe(expectedExpiry.toISOString());
   });
 
-  it('WI-083: throws SESSION_EXPIRED and evicts cache when TokenExpiry is already in the past', async () => {
+  it('WI-083: caches token with 55-min fallback when TokenExpiry is in the past (sandbox quirk)', async () => {
+    // WhiteBooks sandbox confirmed: tokens are valid for 1 hour from
+    // issuance regardless of what TokenExpiry says. Their backend echoes
+    // a cached expiry from a previous session even when issuing a fresh
+    // token. Observed on dist-002 2026-05-20: auth at 18:40 IST returned
+    // TokenExpiry="2026-05-20 16:45:00" (1h55m in past) — token itself
+    // worked on NIC. We fall back to 55 min instead of hard-rejecting.
+    const before = Date.now();
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
         status_cd: 'Sucess',
         data: {
-          AuthToken: 'STALE-TOKEN',
+          AuthToken: 'STALE-EXPIRY-TOKEN',
           // Fixed historical IST timestamp — always in the past.
-          // Observed on dist-002 on 2026-05-20: re-auth at 17:14 IST
-          // returned TokenExpiry="2026-05-20 16:45:00" (29 min in past).
           TokenExpiry: '2020-01-01 00:00:00',
         },
       }),
     } as any));
 
-    // Must reject with SESSION_EXPIRED, not cache the stale token.
-    await expect(getAuthToken('dist-002', 'einvoice')).rejects.toMatchObject({
-      code: 'SESSION_EXPIRED',
-      message: expect.stringContaining('WhiteBooks session expired'),
-    });
-    await expect(getAuthToken('dist-002', 'einvoice')).rejects.toBeInstanceOf(GstError);
+    // Must succeed and return the token (not throw).
+    const token = await getAuthToken('dist-002', 'einvoice');
+    expect(token).toBe('STALE-EXPIRY-TOKEN');
 
-    // Each call must re-fetch (no stale cache entry served between calls).
-    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
+    // Second call must be a cache hit — no second fetch.
+    const token2 = await getAuthToken('dist-002', 'einvoice');
+    expect(token2).toBe('STALE-EXPIRY-TOKEN');
+    expect(globalThis.fetch as any).toHaveBeenCalledTimes(1);
 
-    // The stale token must NOT have been persisted to the DB.
+    // Token must be persisted to DB with a ~55-min fallback expiry.
     const row = await prisma.gstCredential.findFirstOrThrow({
       where: { distributorId: 'dist-002', scope: 'einvoice' },
     });
-    // tokenCache column must not hold the stale value
-    expect(row.tokenCache).not.toBe('STALE-TOKEN');
+    expect(row.tokenCache).toBe('STALE-EXPIRY-TOKEN');
+    const minsFromNow = (row.tokenExpiresAt!.getTime() - before) / 1000 / 60;
+    expect(minsFromNow).toBeGreaterThanOrEqual(54);
+    expect(minsFromNow).toBeLessThanOrEqual(56);
   });
 
   it('falls back to ~28 min when TokenExpiry is missing (was 14 pre-WI-060)', async () => {

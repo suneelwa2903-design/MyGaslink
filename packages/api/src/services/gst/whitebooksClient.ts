@@ -258,31 +258,29 @@ async function doAuthFetch(
     expiresAt = parseNicDateTime(json.data.TokenExpiry);
   }
 
-  // WI-083 amendment — stale-session guard.
+  // WI-083 amendment — stale TokenExpiry fallback.
   //
-  // WhiteBooks occasionally returns a TokenExpiry that is already in the
-  // past. This happens when the account's server-side IRN session has been
-  // invalidated (idle timeout, portal re-login from another device, NIC
-  // sandbox reset). The response still carries status_cd='1' (success)
-  // and a token string, so without this check the token would be cached,
-  // served on the next apiCall, and NIC would reject it with error 1005
-  // "Invalid Token". apiCall's retry logic matches on the word "Token"
-  // and re-fetches — but gets the SAME stale token back from WhiteBooks
-  // every time → silent infinite 1005 loop.
+  // WhiteBooks sandbox returns status_cd='Sucess' with a freshly-issued
+  // token, but the `TokenExpiry` field echoes a PREVIOUS session's expiry
+  // (a caching quirk on their backend). WhiteBooks confirmed: sandbox
+  // tokens are valid for 1 hour from issuance regardless of what
+  // TokenExpiry says.
   //
-  // Guard: if the parsed expiry is already past, evict any stale cache
-  // entry and throw a clear, actionable error. The error surfaces as a
-  // failed preflight result instead of a silent loop, and the message
-  // tells the operator exactly what to do.
+  // Original guard (hard SESSION_EXPIRED throw) was too strict: it blocked
+  // the valid fresh token because the stale field made it LOOK expired.
+  // Fix: when TokenExpiry is in the past, log a warning and fall back to a
+  // 55-min window (1 h sandbox lifetime minus 5-min safety margin). If NIC
+  // actually rejects the token with 1005 (truly stale), apiCall's retry
+  // logic evicts the cache and re-fetches, surfacing the real error.
   //
-  // Observed on dist-002 on 2026-05-20: re-auth at 17:14 IST returned
-  // TokenExpiry="2026-05-20 16:45:00" (29 min in the past).
+  // Observed 2026-05-20 dist-002: auth at 18:40 IST returned
+  // TokenExpiry="2026-05-20 16:45:00" (1h55m in past) — token itself
+  // worked fine on NIC.
   if (expiresAt.getTime() <= Date.now()) {
-    tokenCache.delete(cacheKey);
-    throw new GstError(
-      'WhiteBooks session expired. Please refresh GST credentials in Settings → GST → Test Connection.',
-      'SESSION_EXPIRED',
-    );
+    logger.warn('WhiteBooks TokenExpiry is in the past; using 55-min fallback (sandbox quirk)', {
+      distributorId, scope, tokenExpiry: json.data?.TokenExpiry, nowUtc: new Date().toISOString(),
+    });
+    expiresAt = new Date(Date.now() + 55 * 60 * 1000);
   }
 
   tokenCache.set(cacheKey, { token, expiresAt, scope });
