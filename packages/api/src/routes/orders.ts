@@ -230,7 +230,7 @@ router.post('/',
 
 // PUT /api/orders/:id
 router.put('/:id',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(updateOrderSchema),
   auditLog('update', 'order'),
   async (req, res) => {
@@ -247,7 +247,7 @@ router.put('/:id',
 
 // PUT /api/orders/:id/status
 router.put('/:id/status',
-  requireRole('super_admin', 'distributor_admin', 'driver'),
+  requireRole('super_admin', 'distributor_admin', 'driver', 'inventory'),
   validate(z.object({
     status: z.string().min(1),
     notes: z.string().optional(),

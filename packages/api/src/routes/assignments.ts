@@ -140,7 +140,7 @@ router.post('/',
 
 // DELETE /api/assignments/:id — delete with ownership check
 router.delete('/:id',
-  requireRole('distributor_admin', 'super_admin'),
+  requireRole('distributor_admin', 'super_admin', 'inventory'),
   auditLog('delete', 'assignment'),
   async (req: Request, res: Response) => {
     try {

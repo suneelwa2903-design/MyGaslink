@@ -73,7 +73,7 @@ driverRouter.get('/:id', async (req, res) => {
 });
 
 driverRouter.post('/',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(createDriverSchema),
   auditLog('create', 'driver'),
   async (req, res) => {
@@ -87,7 +87,7 @@ driverRouter.post('/',
 );
 
 driverRouter.put('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(createDriverSchema.partial().extend({
     status: z.enum(['active', 'inactive']).optional(),
     availableToday: z.boolean().optional(),
@@ -107,7 +107,7 @@ driverRouter.put('/:id',
 );
 
 driverRouter.delete('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   auditLog('delete', 'driver'),
   async (req, res) => {
     try {
@@ -122,7 +122,7 @@ driverRouter.delete('/:id',
 
 // PUT /api/drivers/:id/availability
 driverRouter.put('/:id/availability',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(z.object({ available: z.boolean() })),
   auditLog('toggle_availability', 'driver'),
   async (req, res) => {
@@ -167,7 +167,7 @@ driverRouter.get('/assignments/list', async (req, res) => {
 });
 
 driverRouter.post('/assignments',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(z.object({
     driverId: z.string().uuid(),
     vehicleId: z.string().uuid(),
@@ -581,7 +581,7 @@ vehicleRouter.get('/:id', async (req, res) => {
 });
 
 vehicleRouter.post('/',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(createVehicleSchema),
   auditLog('create', 'vehicle'),
   async (req, res) => {
@@ -596,7 +596,7 @@ vehicleRouter.post('/',
 );
 
 vehicleRouter.put('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(createVehicleSchema.partial().extend({
     status: z.enum(['idle', 'dispatched', 'returned', 'inactive']).optional(),
     deactivationNotes: z.string().optional(),
@@ -614,7 +614,7 @@ vehicleRouter.put('/:id',
 );
 
 vehicleRouter.delete('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   auditLog('delete', 'vehicle'),
   async (req, res) => {
     try {

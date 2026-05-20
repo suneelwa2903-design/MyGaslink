@@ -868,7 +868,12 @@ function AssignDriverModal({
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const driverOptions = drivers.map((d) => ({ value: d.driverId, label: `${d.driverName} (${d.phone})` }));
+  // WI-079: only drivers with a confirmed vehicle mapping for today can
+  // be assigned (the server auto-resolves the vehicle from that mapping).
+  // Label shows the vehicle number, not the phone.
+  const driverOptions = drivers
+    .filter((d) => d.vehicleNumber)
+    .map((d) => ({ value: d.driverId, label: `${d.driverName} — ${d.vehicleNumber}` }));
 
   return (
     <Modal open={open} onClose={onClose} title={`Assign Driver - ${order.orderNumber}`}>
@@ -921,7 +926,10 @@ function BulkAssignDriverModal({
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const driverOptions = drivers.map((d) => ({ value: d.driverId, label: `${d.driverName} (${d.phone})` }));
+  // WI-079: confirmed-vehicle-today filter + vehicle-number label (see AssignDriverModal).
+  const driverOptions = drivers
+    .filter((d) => d.vehicleNumber)
+    .map((d) => ({ value: d.driverId, label: `${d.driverName} — ${d.vehicleNumber}` }));
 
   return (
     <Modal open={open} onClose={onClose} title={`Bulk Assign Driver (${orderIds.length} orders)`}>

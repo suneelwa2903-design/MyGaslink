@@ -92,18 +92,28 @@ describe('Analytics — Role gates', () => {
     expect(res.status).toBe(200);
   });
 
-  it('inventory CANNOT access /due-amounts (403)', async () => {
+  // WI-079: inventory was granted FULL analytics access (founder decision —
+  // operational staff at this ERP are trusted with financial dashboards).
+  // These guards previously asserted 403; they now assert 200.
+  it('inventory CAN access /due-amounts (WI-079)', async () => {
     const res = await request(app)
       .get('/api/analytics/due-amounts')
       .set(auth(inventoryToken));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
-  it('inventory CANNOT access /dashboard (403)', async () => {
+  it('inventory CAN access /dashboard (WI-079)', async () => {
     const res = await request(app)
       .get('/api/analytics/dashboard')
       .set(auth(inventoryToken));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+  });
+
+  it('inventory CAN access /collections (WI-079)', async () => {
+    const res = await request(app)
+      .get('/api/analytics/collections')
+      .set(auth(inventoryToken));
+    expect(res.status).toBe(200);
   });
 });
 

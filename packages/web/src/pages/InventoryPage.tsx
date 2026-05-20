@@ -271,70 +271,54 @@ export default function InventoryPage() {
         ) : !inventory?.length ? (
           <EmptyState title="No inventory data" description="No inventory data for this date." />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {inventory.map((item) => {
-              const isWarning = item.thresholdWarning !== null && item.closingFulls <= item.thresholdWarning;
-              const isCritical = item.thresholdCritical !== null && item.closingFulls <= item.thresholdCritical;
-              return (
-                <div
-                  key={item.cylinderTypeId}
-                  className={cn(
-                    'card p-5 space-y-4',
-                    isCritical && 'ring-2 ring-red-500/50',
-                    isWarning && !isCritical && 'ring-2 ring-amber-500/50',
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-surface-900 dark:text-white">{item.cylinderTypeName}</h3>
-                    <div className="flex gap-1">
-                      {isCritical && <Badge variant="danger">Critical</Badge>}
-                      {isWarning && !isCritical && <Badge variant="warning">Warning</Badge>}
-                      {item.isLocked && <Badge variant="neutral">Locked</Badge>}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
-                      <p className="text-xs text-surface-400">Opening Fulls</p>
-                      <p className="font-bold text-surface-900 dark:text-white text-lg">{item.openingFulls}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-accent-50 dark:bg-accent-500/10">
-                      <p className="text-xs text-surface-400">Incoming Fulls</p>
-                      <p className="font-bold text-accent-600 dark:text-accent-400 text-lg">+{item.incomingFulls}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-brand-50 dark:bg-brand-500/10">
-                      <p className="text-xs text-surface-400">Delivered</p>
-                      <p className="font-bold text-brand-600 dark:text-brand-400 text-lg">-{item.deliveredQty}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-flame-50 dark:bg-flame-500/10">
-                      <p className="text-xs text-surface-400">Cancelled</p>
-                      <p className="font-bold text-flame-600 dark:text-flame-400 text-lg">{item.cancelledStockQty}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
-                      <p className="text-xs text-surface-400">Outgoing Empties</p>
-                      <p className="font-bold text-surface-900 dark:text-white text-lg">{item.outgoingEmpties}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
-                      <p className="text-xs text-surface-400">Collected Empties</p>
-                      <p className="font-bold text-surface-900 dark:text-white text-lg">{item.collectedEmpties}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-between pt-2 border-t border-surface-200 dark:border-surface-700">
-                    <div>
-                      <p className="text-xs text-surface-400">Closing Fulls</p>
-                      <p className={cn('font-bold text-xl', isCritical ? 'text-red-500' : 'text-surface-900 dark:text-white')}>
+          // WI-079: row/table layout — easier to scan across cylinder types than the previous card grid.
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Cylinder Type</th>
+                  <th className="text-right">Opening Fulls</th>
+                  <th className="text-right">Incoming</th>
+                  <th className="text-right">Delivered</th>
+                  <th className="text-right">Cancelled</th>
+                  <th className="text-right">Closing Fulls</th>
+                  <th className="text-right">Closing Empties</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inventory.map((item) => {
+                  const isWarning = item.thresholdWarning !== null && item.closingFulls <= item.thresholdWarning;
+                  const isCritical = item.thresholdCritical !== null && item.closingFulls <= item.thresholdCritical;
+                  return (
+                    <tr key={item.cylinderTypeId}>
+                      <td className="font-medium text-surface-900 dark:text-white">{item.cylinderTypeName}</td>
+                      <td className="text-right">{item.openingFulls}</td>
+                      {/* WI-079: guard the sign so a zero qty renders "0", not "+0" / "-0". */}
+                      <td className="text-right text-accent-600 dark:text-accent-400">
+                        {item.incomingFulls > 0 ? `+${item.incomingFulls}` : '0'}
+                      </td>
+                      <td className="text-right text-brand-600 dark:text-brand-400">
+                        {item.deliveredQty > 0 ? `-${item.deliveredQty}` : '0'}
+                      </td>
+                      <td className="text-right text-flame-600 dark:text-flame-400">{item.cancelledStockQty}</td>
+                      <td className={cn('text-right font-semibold', isCritical && 'text-red-500')}>
                         {item.closingFulls}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-surface-400">Closing Empties</p>
-                      <p className="font-bold text-xl text-surface-900 dark:text-white">{item.closingEmpties}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                      </td>
+                      <td className="text-right">{item.closingEmpties}</td>
+                      <td>
+                        <div className="flex gap-1">
+                          {isCritical && <Badge variant="danger">Critical</Badge>}
+                          {isWarning && !isCritical && <Badge variant="warning">Warning</Badge>}
+                          {!isCritical && !isWarning && <Badge variant="success">OK</Badge>}
+                          {item.isLocked && <Badge variant="neutral">Locked</Badge>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )
       )}
