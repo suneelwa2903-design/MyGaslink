@@ -24,9 +24,11 @@ import {
   CustomerStatus,
   createCustomerSchema,
   type CreateCustomerInput,
+  UserRole,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { useAuthStore, selectRole } from '@/stores/authStore';
 import { cn } from '@/lib/cn';
 
 const STATUS_MAP: Record<string, { variant: 'success' | 'warning' | 'danger' | 'neutral'; label: string }> = {
@@ -85,6 +87,13 @@ export default function CustomersPage() {
   const customers = data?.customers ?? [];
   const meta = data?.meta;
 
+  // Finance has view-only customer access (backend allows GET but not
+  // create/edit/supply). Hide mutation controls so finance doesn't get
+  // buttons that 403 on submit. super_admin / distributor_admin /
+  // inventory can manage.
+  const role = useAuthStore(selectRole);
+  const canManage = role !== UserRole.FINANCE;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -92,10 +101,12 @@ export default function CustomersPage() {
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Customers</h1>
           <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Manage your customer base</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <HiOutlinePlus className="h-4 w-4" />
-          New Customer
-        </Button>
+        {canManage && (
+          <Button onClick={() => setCreateOpen(true)}>
+            <HiOutlinePlus className="h-4 w-4" />
+            New Customer
+          </Button>
+        )}
       </div>
 
       <div className="card p-4">
@@ -125,7 +136,7 @@ export default function CustomersPage() {
         <EmptyState
           title="No customers found"
           description="Add your first customer to get started."
-          action={<Button onClick={() => setCreateOpen(true)}><HiOutlinePlus className="h-4 w-4" />Add Customer</Button>}
+          action={canManage ? <Button onClick={() => setCreateOpen(true)}><HiOutlinePlus className="h-4 w-4" />Add Customer</Button> : undefined}
         />
       ) : (
         <>
@@ -177,14 +188,16 @@ export default function CustomersPage() {
                         >
                           <HiOutlineEye className="h-4 w-4" />
                         </button>
-                        <button
-                          onClick={() => setEditCustomer(customer)}
-                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500"
-                          title="Edit"
-                        >
-                          <HiOutlinePencilSquare className="h-4 w-4" />
-                        </button>
-                        {customer.stopSupply ? (
+                        {canManage && (
+                          <button
+                            onClick={() => setEditCustomer(customer)}
+                            className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500"
+                            title="Edit"
+                          >
+                            <HiOutlinePencilSquare className="h-4 w-4" />
+                          </button>
+                        )}
+                        {canManage && (customer.stopSupply ? (
                           <button
                             onClick={() => resumeSupplyMutation.mutate(customer.customerId)}
                             className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-accent-500"
@@ -200,7 +213,7 @@ export default function CustomersPage() {
                           >
                             <HiOutlineNoSymbol className="h-4 w-4" />
                           </button>
-                        )}
+                        ))}
                       </div>
                     </td>
                   </tr>
