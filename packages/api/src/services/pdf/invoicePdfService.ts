@@ -520,8 +520,14 @@ async function drawComplianceSection(
 
     doc.fontSize(F.H2).fillColor(T.PRIMARY).font('Helvetica-Bold');
     doc.text('e-Invoice (IRN)', irnCardX + pad, cy, { width: textWidth });
-    const statusText = irnStatusVal === 'success' || irnStatusVal === 'SUCCESS' ? 'SUCCESS' : 'PENDING';
-    const statusColor = statusText === 'SUCCESS' ? T.PILL_SUCCESS : T.PILL_FAILED;
+    const statusText =
+      irnStatusVal === 'success' || irnStatusVal === 'SUCCESS' ? 'SUCCESS' :
+      irnStatusVal === 'cancel_failed' ? 'CANCELLATION PENDING' :
+      'PENDING';
+    const statusColor =
+      statusText === 'SUCCESS' ? T.PILL_SUCCESS :
+      statusText === 'CANCELLATION PENDING' ? T.PILL_WARN :
+      T.PILL_FAILED;
     drawPill(doc, irnCardX + irnCardWidth - pad - 70, cy - 2, statusText, statusColor);
     cy += 16;
 

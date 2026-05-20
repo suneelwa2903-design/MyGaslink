@@ -96,6 +96,7 @@ export enum IrnStatus {
   SUCCESS = 'success',
   FAILED = 'failed',
   CANCELLED = 'cancelled',
+  CANCEL_FAILED = 'cancel_failed',
 }
 
 export enum EwbStatus {

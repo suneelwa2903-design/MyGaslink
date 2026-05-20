@@ -48,6 +48,7 @@ const IRN_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | '
   [IrnStatus.SUCCESS]: 'success',
   [IrnStatus.FAILED]: 'danger',
   [IrnStatus.CANCELLED]: 'danger',
+  [IrnStatus.CANCEL_FAILED]: 'warning',
 };
 
 const EWB_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
@@ -380,7 +381,7 @@ function InvoiceDetailModal({
     enabled: gstEnabled && showGstDocs,
   });
 
-  const isIrnSuccess = invoice.irnStatus === IrnStatus.SUCCESS;
+  const isIrnSuccess = invoice.irnStatus === IrnStatus.SUCCESS || invoice.irnStatus === IrnStatus.CANCEL_FAILED;
   const isEwbActive = invoice.ewbStatus === EwbStatus.ACTIVE;
   const canGenerateGst = gstEnabled
     && invoice.status !== InvoiceStatus.CANCELLED
@@ -474,11 +475,12 @@ function InvoiceDetailModal({
               {isIrnSuccess && (
                 <Button
                   size="sm"
-                  variant="danger"
+                  variant={invoice.irnStatus === IrnStatus.CANCEL_FAILED ? 'secondary' : 'danger'}
+                  title={invoice.irnStatus === IrnStatus.CANCEL_FAILED ? 'IRN cancellation attempted but failed. Check pending actions.' : undefined}
                   onClick={() => onCancelIrn(invoice)}
                 >
                   <HiOutlineXCircle className="h-4 w-4 mr-1" />
-                  Cancel IRN
+                  {invoice.irnStatus === IrnStatus.CANCEL_FAILED ? 'Retry IRN Cancel' : 'Cancel IRN'}
                 </Button>
               )}
               {isEwbActive && (

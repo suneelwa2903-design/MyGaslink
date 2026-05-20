@@ -1098,6 +1098,11 @@ export async function cancelOrder(
         const { cancelIrn } = await import('./gst/gstService.js');
         await cancelIrn(invoiceId, distributorId, `Order cancelled: ${reason}`);
       } catch (_irnErr) {
+        // Mark invoice so the PDF shows an amber badge and the UI shows a warning pill.
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { irnStatus: 'cancel_failed' },
+        });
         await prisma.pendingAction.create({
           data: {
             distributorId,

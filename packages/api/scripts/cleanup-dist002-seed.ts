@@ -15,6 +15,8 @@ import { prisma } from '../src/lib/prisma.js';
 const BASE = 'http://localhost:5000/api';
 const DIST_ID = 'dist-002';
 const TODAY = new Date().toISOString().split('T')[0];
+const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+const YESTERDAY = yesterday.toISOString().split('T')[0];
 
 const C = {
   reset: '\x1b[0m',
@@ -131,14 +133,27 @@ async function main() {
   // ── 2. Reset DVA back to dispatch_ready ──────────────────────────────────────
   console.log(head('Step 2 — Reset DVAs and vehicle statuses'));
 
+  // Deduplicate DVA rows: when multiple rows exist for the same (driverId, assignmentDate)
+  // (can happen after multiple test sessions), delete the lower-tripNumber duplicates so
+  // the unique constraint allows us to reset all survivors to tripNumber=1.
+  const dupDel = await prisma.$executeRaw`
+    DELETE FROM driver_vehicle_assignments
+    WHERE assignment_id NOT IN (
+      SELECT DISTINCT ON (driver_id, assignment_date) assignment_id
+      FROM driver_vehicle_assignments
+      WHERE distributor_id = ${DIST_ID}
+      ORDER BY driver_id, assignment_date, trip_number DESC
+    )
+    AND distributor_id = ${DIST_ID}
+  `;
+  console.log(info(`duplicate DVA rows deleted: ${dupDel}`));
+
+  // Now safely reset all survivors to tripNumber=1, dispatch_ready.
   const dvaReset = await prisma.driverVehicleAssignment.updateMany({
-    where: {
-      distributorId: DIST_ID,
-      status: { in: ['loaded_and_dispatched', 'reconciled'] },
-    },
-    data: { status: 'dispatch_ready', tripSheetNo: null, tripSheetGeneratedAt: null },
+    where: { distributorId: DIST_ID },
+    data: { status: 'dispatch_ready', tripNumber: 1, tripSheetNo: null, tripSheetGeneratedAt: null },
   });
-  console.log(info(`DVAs reset to dispatch_ready: ${dvaReset.count}`));
+  console.log(info(`DVAs reset to dispatch_ready / tripNumber=1: ${dvaReset.count}`));
 
   const vehicleReset = await prisma.vehicle.updateMany({
     where: { distributorId: DIST_ID, status: 'dispatched' },
@@ -146,8 +161,12 @@ async function main() {
   });
   console.log(info(`vehicles reset to idle: ${vehicleReset.count}`));
 
-  // ── 3. Seed incoming fulls via API ───────────────────────────────────────────
-  console.log(head('Step 3 — Seed incoming fulls via API'));
+  // ── 3. Seed opening stock via API (dated yesterday) ─────────────────────────
+  // By dating events YESTERDAY, today's summary shows:
+  //   Opening Fulls  = yesterday's closingFulls  (non-zero ✓)
+  //   Opening Empties = yesterday's closingEmpties (non-zero ✓)
+  //   Incoming Fulls  = 0 today (clean slate ✓)
+  console.log(head('Step 3 — Seed opening stock via API (dated yesterday)'));
 
   // Login
   const loginRes = await api('POST', '/auth/login', {
@@ -168,14 +187,15 @@ async function main() {
     ctList.find((c) => c.typeName.toLowerCase() === `${kg} kg`) ??
     ctList.find((c) => new RegExp(`(^|\\s)${kg}(\\s|kg|$)`, 'i').test(c.typeName));
 
-  const seeds: Array<{ kg: number; qty: number }> = [
+  // 3a — Incoming fulls dated YESTERDAY (so today's Opening Fulls = these quantities)
+  const fullSeeds: Array<{ kg: number; qty: number }> = [
     { kg: 19,    qty: 50 },
     { kg: 47.5,  qty: 20 },
     { kg: 425,   qty: 10 },
     { kg: 5,     qty: 30 },
   ];
 
-  for (const { kg, qty } of seeds) {
+  for (const { kg, qty } of fullSeeds) {
     const ct = findCt(kg);
     if (!ct) {
       console.log(fail(`  ${kg} KG cylinder type not found — skipping`));
@@ -184,15 +204,43 @@ async function main() {
     const payload = {
       cylinderTypeId: ct.cylinderTypeId,
       quantity: qty,
-      documentType: 'Purchase Order',
-      documentNumber: `SEED-${kg}KG-${TODAY}`,
-      documentDate: TODAY,
+      documentType: 'Opening Stock',
+      documentNumber: `SEED-${kg}KG-${YESTERDAY}`,
+      documentDate: YESTERDAY,
     };
     const r = await api('POST', '/inventory/incoming-fulls', payload, token);
     if (r.status === 201) {
-      console.log(ok(`  ${kg} KG × ${qty}  (${ct.cylinderTypeId})`));
+      console.log(ok(`  Fulls  ${kg} KG × ${qty}  dated ${YESTERDAY}`));
     } else {
-      console.log(fail(`  ${kg} KG × ${qty}  — HTTP ${r.status}: ${JSON.stringify(r.body)}`));
+      console.log(fail(`  Fulls  ${kg} KG × ${qty}  — HTTP ${r.status}: ${JSON.stringify(r.body)}`));
+    }
+  }
+
+  // 3b — Opening empties dated YESTERDAY via initial-balance endpoint.
+  // initial_balance stores emptiesChange; after WI-083 fix to computeSummaryForDate
+  // the empties are included in closingEmpties so today's openingEmpties reflects them.
+  const emptiesSeeds: Array<{ kg: number; empties: number }> = [
+    { kg: 19,    empties: 25 },
+    { kg: 47.5,  empties: 10 },
+    { kg: 425,   empties: 5  },
+    { kg: 5,     empties: 15 },
+  ];
+
+  for (const { kg, empties } of emptiesSeeds) {
+    const ct = findCt(kg);
+    if (!ct) {
+      console.log(fail(`  ${kg} KG empties — cylinder type not found, skipping`));
+      continue;
+    }
+    const payload = {
+      entries: [{ cylinderTypeId: ct.cylinderTypeId, openingFulls: 0, openingEmpties: empties }],
+      eventDate: YESTERDAY,
+    };
+    const r = await api('POST', '/inventory/initial-balance', payload, token);
+    if (r.status === 200 || r.status === 201) {
+      console.log(ok(`  Empties ${kg} KG × ${empties}  dated ${YESTERDAY}`));
+    } else {
+      console.log(fail(`  Empties ${kg} KG × ${empties}  — HTTP ${r.status}: ${JSON.stringify(r.body)}`));
     }
   }
 
@@ -216,7 +264,7 @@ async function main() {
     due.setDate(due.getDate() + 30);
     await prisma.invoice.create({
       data: {
-        invoiceNumber: `FIXTURE-D002-${TODAY}`,
+        invoiceNumber: `FIXTURE-D002-${YESTERDAY}`,
         distributorId: DIST_ID,
         customerId: maruthi?.id ?? null,
         issueDate: today,

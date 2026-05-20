@@ -83,6 +83,7 @@ enum IrnStatus {
   success
   failed
   cancelled
+  cancel_failed
 }
 
 enum EwbStatus {

@@ -97,6 +97,11 @@ export async function computeSummaryForDate(
   let collectedEmpties = 0;
   let cancelledStockQty = 0;
   let manualAdjustment = 0;
+  // WI-083: initial_balance events carry an emptiesChange (set during onboarding).
+  // The closingEmpties formula only has collectedEmpties and outgoingEmpties, so
+  // the initial empties were silently ignored. Track them separately to avoid
+  // polluting the "Collected Empties" display column.
+  let initialEmpties = 0;
 
   for (const event of events) {
     switch (event.eventType) {
@@ -123,8 +128,9 @@ export async function computeSummaryForDate(
         manualAdjustment += event.fullsChange;
         break;
       case 'initial_balance':
-        // Initial balance treated as opening adjustment
+        // Fulls portion → manual adjustment column; empties tracked separately.
         manualAdjustment += event.fullsChange;
+        initialEmpties += event.emptiesChange;
         break;
       case 'write_off':
         manualAdjustment += event.fullsChange; // negative
@@ -137,7 +143,7 @@ export async function computeSummaryForDate(
   }
 
   const closingFulls = openingFulls + incomingFulls - deliveredQty + cancelledStockQty + manualAdjustment;
-  const closingEmpties = openingEmpties + collectedEmpties - outgoingEmpties;
+  const closingEmpties = openingEmpties + collectedEmpties + initialEmpties - outgoingEmpties;
 
   return {
     openingFulls,

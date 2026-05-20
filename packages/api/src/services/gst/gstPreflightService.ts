@@ -104,6 +104,7 @@ export async function preflightDispatch(params: {
       assignmentDate: targetDate,
       status: { not: 'cancelled' },
     },
+    orderBy: { tripNumber: 'desc' },  // WI-083: prefer highest tripNumber to avoid stale-row collisions
     select: { id: true, vehicleId: true, status: true, vehicle: { select: { vehicleNumber: true } } },
   });
   if (distributor.gstMode !== 'disabled' && !mapping?.vehicleId) {
@@ -355,6 +356,7 @@ export async function preflightAddToTrip(params: {
       assignmentDate: targetDate,
       status: { not: 'cancelled' },
     },
+    orderBy: { tripNumber: 'desc' },  // WI-083: prefer highest tripNumber to avoid stale-row collisions
     select: {
       id: true, vehicleId: true, status: true, tripNumber: true,
       vehicle: { select: { vehicleNumber: true } },

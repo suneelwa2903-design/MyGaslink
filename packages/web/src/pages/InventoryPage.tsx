@@ -344,12 +344,12 @@ export default function InventoryPage() {
                         {item.incomingFulls > 0 ? `+${item.incomingFulls}` : '0'}
                       </td>
                       <td className="text-center bg-[#dcfce7]/40 dark:bg-emerald-900/20">
-                        {item.outgoingEmpties > 0 ? `-${item.outgoingEmpties}` : '0'}
+                        {item.outgoingEmpties > 0 ? `${item.outgoingEmpties}` : '0'}
                       </td>
                       <td className="text-center">{item.openingFulls}</td>
                       <td className="text-center">{item.openingEmpties}</td>
                       <td className="text-center text-brand-600 dark:text-brand-400">
-                        {item.deliveredQty > 0 ? `-${item.deliveredQty}` : '0'}
+                        {item.deliveredQty > 0 ? `${item.deliveredQty}` : '0'}
                       </td>
                       <td className="text-center">{item.collectedEmpties}</td>
                       <td className="text-center text-flame-600 dark:text-flame-400">{item.cancelledStockQty}</td>
