@@ -69,7 +69,7 @@ router.post('/customer/confirm/:orderId',
 
 // POST /api/delivery/driver/vehicle-returned
 router.post('/driver/vehicle-returned',
-  requireRole('driver', 'distributor_admin'),
+  requireRole('driver', 'distributor_admin', 'inventory'),
   validate(z.object({
     vehicleId: z.string().uuid(),
   })),

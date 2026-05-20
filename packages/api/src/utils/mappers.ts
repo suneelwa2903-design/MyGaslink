@@ -256,6 +256,8 @@ export function mapInventoryEvent(e: any): any {
   if (!e) return e;
   const mapped = renameId(e, 'eventId');
   if (mapped.cylinderType) mapped.cylinderTypeName = mapped.cylinderType.typeName;
+  if (mapped.vehicle) mapped.vehicleNumber = mapped.vehicle.vehicleNumber;
+  if (mapped.driver) mapped.driverName = mapped.driver.driverName;
   // Derive quantity from fullsChange / emptiesChange for the frontend
   if (mapped.quantity === undefined) {
     mapped.quantity = Math.abs(mapped.fullsChange || 0) || Math.abs(mapped.emptiesChange || 0);

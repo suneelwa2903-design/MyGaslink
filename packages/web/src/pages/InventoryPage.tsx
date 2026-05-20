@@ -651,15 +651,25 @@ export default function InventoryPage() {
                 </div>
                 <div className="flex gap-3">
                   <Button
-                    onClick={() =>
+                    onClick={() => {
+                      const pending = (v as any).pendingOrderSummaries ?? [];
+                      if (pending.length > 0) {
+                        const names = pending
+                          .map((o: any) => `${o.orderNumber} (${o.customerName ?? 'Unknown'})`)
+                          .join('\n');
+                        const ok = confirm(
+                          `Warning: The following orders are still pending delivery and will be force-cancelled:\n\n${names}\n\nAre you sure you want to proceed?`,
+                        );
+                        if (!ok) return;
+                      }
                       reconciliationConfirm.mutate({
                         vehicleId: v.vehicleId,
                         data: {
                           physicalStockConfirmed: true,
                           notes: 'Physical stock matches system',
                         },
-                      })
-                    }
+                      });
+                    }}
                     disabled={reconciliationConfirm.isPending}
                   >
                     Confirm Physical Stock Matches

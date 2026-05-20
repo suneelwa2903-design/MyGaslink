@@ -13,6 +13,7 @@ import {
   HiOutlineTrash,
   HiOutlineArrowUturnLeft,
   HiOutlineEye,
+  HiOutlineXCircle,
 } from 'react-icons/hi2';
 import {
   type Order,
@@ -96,6 +97,7 @@ export default function OrdersPage() {
   const [deliverOrder, setDeliverOrder] = useState<Order | null>(null);
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
+  const [cancelOrderTarget, setCancelOrderTarget] = useState<Order | null>(null);
 
   const queryParams: Record<string, unknown> = { page, pageSize: 25 };
   if (search) queryParams.search = search;
@@ -347,6 +349,20 @@ export default function OrdersPage() {
                             <HiOutlinePencilSquare className="h-4 w-4" />
                           </button>
                         )}
+                        {canAssignDrivers && [
+                          OrderStatus.PENDING_DRIVER_ASSIGNMENT,
+                          OrderStatus.PENDING_DISPATCH,
+                          OrderStatus.PENDING_DELIVERY,
+                          OrderStatus.PREFLIGHT_IN_PROGRESS,
+                        ].includes(order.status as any) && (
+                          <button
+                            onClick={() => setCancelOrderTarget(order)}
+                            className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-red-500"
+                            title="Cancel Order"
+                          >
+                            <HiOutlineXCircle className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -447,6 +463,15 @@ export default function OrdersPage() {
           open={!!viewOrder}
           onClose={() => setViewOrder(null)}
           order={viewOrder}
+        />
+      )}
+
+      {/* Cancel Order Modal */}
+      {cancelOrderTarget && (
+        <CancelOrderModal
+          open={!!cancelOrderTarget}
+          onClose={() => setCancelOrderTarget(null)}
+          order={cancelOrderTarget}
         />
       )}
     </div>
@@ -1168,6 +1193,66 @@ function ReturnsOrderModal({
           <Button type="submit" loading={mutation.isPending}>Create Returns Order</Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ─── Cancel Order Modal ──────────────────────────────────────────────────────
+
+function CancelOrderModal({
+  open,
+  onClose,
+  order,
+}: {
+  open: boolean;
+  onClose: () => void;
+  order: Order;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiPost(`/orders/${order.orderId}/cancel`, { reason: 'Cancelled by admin' }),
+    onSuccess: () => {
+      toast.success('Order cancelled');
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      onClose();
+    },
+    onError: (error) => {
+      const msg = getErrorMessage(error);
+      if (msg.toLowerCase().includes('payment')) {
+        toast.error('Cannot cancel — this order has recorded payments. Handle the payment in Billing & Payments first.');
+      } else {
+        toast.error(msg);
+      }
+    },
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Cancel Order ${order.orderNumber}?`}>
+      <div className="space-y-4 text-sm text-surface-700 dark:text-surface-300">
+        <p>This will:</p>
+        <ul className="list-disc list-inside space-y-1 text-surface-600 dark:text-surface-400">
+          <li>Cancel the order and return stock to depot</li>
+          <li>Void the invoice</li>
+          <li>Attempt to cancel EWB/IRN at NIC automatically</li>
+        </ul>
+        <p className="text-surface-500 dark:text-surface-400 text-xs">
+          Note: If EWB/IRN cannot be cancelled (after 24h window), a pending action will be raised for manual handling.
+        </p>
+        <p className="font-medium text-red-600 dark:text-red-400">This cannot be undone.</p>
+      </div>
+      <div className="flex justify-end gap-3 pt-4">
+        <Button type="button" variant="secondary" onClick={onClose}>Go Back</Button>
+        <Button
+          type="button"
+          variant="danger"
+          loading={mutation.isPending}
+          onClick={() => mutation.mutate()}
+        >
+          Cancel Order
+        </Button>
+      </div>
     </Modal>
   );
 }

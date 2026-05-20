@@ -99,6 +99,34 @@ router.post('/orders',
   }
 );
 
+// PATCH /api/customer-portal/orders/:id/cancel
+router.patch('/orders/:id/cancel',
+  requireRole('customer'),
+  auditLog('cancel', 'customer_order'),
+  async (req, res) => {
+    try {
+      if (!req.user!.customerId) {
+        return sendError(res, 'No customer linked to this account', 400);
+      }
+      const order = await portalService.getMyOrderById(
+        req.user!.distributorId!, req.user!.customerId, param(req.params.id)
+      );
+      if (!order) return sendNotFound(res, 'Order');
+      const cancellableStatuses = ['pending_driver_assignment', 'pending_dispatch'];
+      if (!cancellableStatuses.includes(order.status)) {
+        return sendError(res, 'Order cannot be cancelled at this stage', 400);
+      }
+      const { cancelOrder } = await import('../services/orderService.js');
+      const cancelled = await cancelOrder(
+        param(req.params.id), req.user!.distributorId!, req.user!.userId, 'Cancelled by customer'
+      );
+      return sendSuccess(res, mapOrder(cancelled));
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
 // ─── Invoices ─────────────────────────────────────────────────────────────
 
 // GET /api/customer-portal/invoices

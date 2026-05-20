@@ -15,6 +15,7 @@ import {
   VehicleStatus,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
+import { useAuthStore, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -370,6 +371,8 @@ function DriversTab() {
 
 function VehiclesTab() {
   const queryClient = useQueryClient();
+  const role = useAuthStore(selectRole);
+  const canMarkReturned = role === 'distributor_admin' || role === 'inventory';
   const [vehicleFormOpen, setVehicleFormOpen] = useState(false);
   const [editVehicle, setEditVehicle] = useState<Vehicle | null>(null);
 
@@ -383,6 +386,16 @@ function VehiclesTab() {
   const deleteVehicleMutation = useMutation({
     mutationFn: (id: string) => apiDelete(`/vehicles/${id}`),
     onSuccess: () => { toast.success('Vehicle deleted'); queryClient.invalidateQueries({ queryKey: ['vehicles'] }); },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const markReturnedMutation = useMutation({
+    mutationFn: (vehicleId: string) => apiPost('/delivery/driver/vehicle-returned', { vehicleId }),
+    onSuccess: (_data, vehicleId) => {
+      const v = vehicles.find((x) => x.vehicleId === vehicleId);
+      toast.success(`${v?.vehicleNumber ?? 'Vehicle'} marked as returned`);
+      queryClient.invalidateQueries({ queryKey: ['vehicles'] });
+    },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
@@ -408,6 +421,20 @@ function VehiclesTab() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <Badge variant={VEHICLE_STATUS_VARIANTS[vehicle.status] || 'neutral'}>{vehicle.status}</Badge>
+                {canMarkReturned && vehicle.status === VehicleStatus.DISPATCHED && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={markReturnedMutation.isPending && markReturnedMutation.variables === vehicle.vehicleId}
+                    onClick={() => {
+                      if (confirm(`Mark vehicle ${vehicle.vehicleNumber} as returned to depot?`)) {
+                        markReturnedMutation.mutate(vehicle.vehicleId);
+                      }
+                    }}
+                  >
+                    Mark as Returned
+                  </Button>
+                )}
                 <button onClick={() => { setEditVehicle(vehicle); setVehicleFormOpen(true); }} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500">
                   <HiOutlinePencilSquare className="h-4 w-4" />
                 </button>

@@ -356,16 +356,38 @@ export async function confirmVehicleReconciliation(
   }
 
   // Physical stock confirmed - process reconciliation
+  // Pre-check: collect pending orders so the response can warn the caller
+  const pendingOrdersPrecheck = await prisma.order.findMany({
+    where: {
+      vehicleId,
+      distributorId,
+      status: { in: ['pending_delivery', 'pending_dispatch'] },
+      deletedAt: null,
+    },
+    include: {
+      items: { include: { cylinderType: { select: { typeName: true } } } },
+      customer: { select: { customerName: true } },
+    },
+  });
+
+  const ordersToBeForceCanelled = pendingOrdersPrecheck.map((o) => ({
+    orderNumber: o.orderNumber,
+    customerName: o.customer?.customerName ?? null,
+    items: o.items.map((i) => ({ cylinderType: i.cylinderType?.typeName, quantity: i.quantity })),
+  }));
+
   const results: {
     cancelledStockReturned: number;
     undeliveredOrdersCancelled: number;
     gstInvoicesCancelled: number;
     inventoryRestored: Record<string, number>;
+    ordersToBeForceCanelled: typeof ordersToBeForceCanelled;
   } = {
     cancelledStockReturned: 0,
     undeliveredOrdersCancelled: 0,
     gstInvoicesCancelled: 0,
     inventoryRestored: {},
+    ordersToBeForceCanelled,
   };
 
   // 1. Return all cancelled stock on this vehicle to depot
@@ -496,12 +518,17 @@ export async function confirmVehicleReconciliation(
 
   return {
     status: 'reconciled' as const,
-    ...results,
+    cancelledStockReturned: results.cancelledStockReturned,
+    undeliveredOrdersCancelled: results.undeliveredOrdersCancelled,
+    gstInvoicesCancelled: results.gstInvoicesCancelled,
+    inventoryRestored: results.inventoryRestored,
+    ordersToBeForceCanelled: results.ordersToBeForceCanelled,
   };
 }
 
 /**
- * Get vehicles pending reconciliation (returned but not yet verified)
+ * Get vehicles pending reconciliation (returned but not yet verified).
+ * Includes pending order summaries so the UI can warn about force-cancellations.
  */
 export async function getVehiclesPendingReconciliation(distributorId: string) {
   const vehicles = await prisma.vehicle.findMany({
@@ -513,16 +540,22 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
     const cancelledCount = await prisma.cancelledStockEvent.count({
       where: { vehicleId: vehicle.id, distributorId, status: { in: ['on_vehicle', 'pending_return'] } },
     });
-    const undeliveredCount = await prisma.order.count({
+    const pendingOrders = await prisma.order.findMany({
       where: { vehicleId: vehicle.id, distributorId, status: { in: ['pending_delivery', 'pending_dispatch'] }, deletedAt: null },
+      include: { customer: { select: { customerName: true } } },
     });
 
     result.push({
       vehicleId: vehicle.id,
       vehicleNumber: vehicle.vehicleNumber,
       pendingCancelledStock: cancelledCount,
-      pendingUndeliveredOrders: undeliveredCount,
-      totalPendingItems: cancelledCount + undeliveredCount,
+      pendingUndeliveredOrders: pendingOrders.length,
+      totalPendingItems: cancelledCount + pendingOrders.length,
+      pendingOrderSummaries: pendingOrders.map((o) => ({
+        orderId: o.id,
+        orderNumber: o.orderNumber,
+        customerName: o.customer?.customerName ?? null,
+      })),
     });
   }
 

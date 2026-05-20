@@ -1029,13 +1029,92 @@ export async function cancelOrder(
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, distributorId, deletedAt: null },
-    include: { items: true },
+    include: {
+      items: true,
+      invoice: { select: { id: true, status: true, irnStatus: true, ewbStatus: true } },
+    },
   });
   if (!order) throw new OrderError('Order not found', 404);
   if (['delivered', 'modified_delivered', 'cancelled'].includes(order.status)) {
     throw new OrderError('Cannot cancel a delivered or already cancelled order', 400);
   }
 
+  // STEP 1: Block if payment allocation exists (before any changes)
+  const invoiceId = order.invoice?.id ?? null;
+  if (invoiceId) {
+    const paymentCount = await prisma.paymentAllocation.count({
+      where: { invoiceId },
+    });
+    if (paymentCount > 0) {
+      throw new OrderError(
+        'Cannot cancel order with recorded payments. Please handle the payment in Billing & Payments first.',
+        409,
+      );
+    }
+  }
+
+  // STEP 2: Cancel EWB at NIC (outside TX — external API)
+  if (invoiceId && order.invoice?.ewbStatus === 'active') {
+    try {
+      const { cancelEwb } = await import('./gst/gstService.js');
+      await cancelEwb(invoiceId, distributorId, `Order cancelled: ${reason}`);
+    } catch (_ewbErr) {
+      await prisma.pendingAction.create({
+        data: {
+          distributorId,
+          module: 'gst_compliance',
+          actionType: 'EWB_CANCEL_FAILED',
+          entityId: invoiceId,
+          entityType: 'invoice',
+          description: `EWB cancellation failed for cancelled order ${order.orderNumber}. Manual cancellation required at NIC portal.`,
+          severity: 'high',
+          status: 'open',
+        },
+      });
+    }
+  }
+
+  // STEP 3: Cancel IRN at NIC (outside TX — external API)
+  if (invoiceId && order.invoice?.irnStatus === 'success') {
+    const freshInvoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      select: { ewbStatus: true },
+    });
+    if (freshInvoice?.ewbStatus === 'active') {
+      await prisma.pendingAction.create({
+        data: {
+          distributorId,
+          module: 'gst_compliance',
+          actionType: 'IRN_CANCEL_SKIPPED',
+          entityId: invoiceId,
+          entityType: 'invoice',
+          description: `IRN cancellation skipped — EWB still active for cancelled order ${order.orderNumber}. Handle manually.`,
+          severity: 'high',
+          status: 'open',
+        },
+      });
+    } else {
+      try {
+        const { cancelIrn } = await import('./gst/gstService.js');
+        await cancelIrn(invoiceId, distributorId, `Order cancelled: ${reason}`);
+      } catch (_irnErr) {
+        await prisma.pendingAction.create({
+          data: {
+            distributorId,
+            module: 'gst_compliance',
+            actionType: 'IRN_CANCEL_FAILED',
+            entityId: invoiceId,
+            entityType: 'invoice',
+            description: `IRN cancellation failed for cancelled order ${order.orderNumber}. Raise credit note manually if within same financial year.`,
+            severity: 'high',
+            status: 'open',
+          },
+        });
+      }
+    }
+  }
+
+  // STEPS 4-6 + original cancel logic: single TX
   return prisma.$transaction(async (tx) => {
     const updated = await tx.order.update({
       where: { id: orderId },
@@ -1043,6 +1122,7 @@ export async function cancelOrder(
         status: 'cancelled',
         cancelledAt: new Date(),
         cancellationReason: reason,
+        vehicleId: null, // STEP 6: detach vehicle from order
       },
       include: orderInclude,
     });
@@ -1073,8 +1153,6 @@ export async function cancelOrder(
           },
         });
 
-        // Create cancellation inventory event
-        // using static import
         await createInventoryEvent(tx, {
           distributorId,
           cylinderTypeId: item.cylinderTypeId,
@@ -1087,6 +1165,74 @@ export async function cancelOrder(
           createdBy: userId,
           notes: `Order ${order.orderNumber} cancelled`,
         });
+      }
+    }
+
+    // STEP 4: Void the invoice (preserve irnStatus/ewbStatus already updated by GST calls)
+    if (invoiceId) {
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { status: 'cancelled' },
+      });
+    }
+
+    // STEP 5: Reverse CustomerLedgerEntry
+    if (invoiceId) {
+      const ledgerEntry = await tx.customerLedgerEntry.findFirst({
+        where: { invoiceId, entryType: 'invoice_entry' as any },
+      });
+      if (ledgerEntry) {
+        await tx.customerLedgerEntry.create({
+          data: {
+            customerId: ledgerEntry.customerId,
+            distributorId: ledgerEntry.distributorId,
+            entryType: 'adjustment' as any,
+            referenceId: orderId,
+            invoiceId: ledgerEntry.invoiceId,
+            amountDelta: -(toNum(ledgerEntry.amountDelta)),
+            narration: `Order cancelled: ${order.orderNumber}`,
+            entryDate: new Date(),
+            createdBy: userId,
+          },
+        });
+      }
+    }
+
+    // STEP 6: Release DVA / trip
+    if (order.driverId) {
+      const dva = await tx.driverVehicleAssignment.findFirst({
+        where: {
+          driverId: order.driverId,
+          distributorId,
+          assignmentDate: order.deliveryDate,
+          isReconciled: false,
+          status: { notIn: ['cancelled'] as any[] },
+        },
+      });
+      if (dva) {
+        const activeOrders = await tx.order.count({
+          where: {
+            distributorId,
+            driverId: order.driverId,
+            deliveryDate: order.deliveryDate,
+            status: { in: ['pending_dispatch', 'pending_delivery', 'preflight_in_progress'] as any[] },
+            id: { not: orderId },
+            deletedAt: null,
+          },
+        });
+        const dvaUpdates: Record<string, unknown> = {};
+        if (dva.status === 'loaded_and_dispatched' as any) {
+          dvaUpdates.tripNumber = Math.max(1, dva.tripNumber - 1);
+        }
+        if (activeOrders === 0 && ['loaded_and_dispatched', 'dispatch_ready'].includes(dva.status as string)) {
+          dvaUpdates.status = 'dispatch_ready';
+        }
+        if (Object.keys(dvaUpdates).length > 0) {
+          await tx.driverVehicleAssignment.update({
+            where: { id: dva.id },
+            data: dvaUpdates,
+          });
+        }
       }
     }
 
