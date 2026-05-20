@@ -8,7 +8,7 @@
 
 **Last Updated:** 2026-05-20
 **Baseline Commit:** `a72b25e` (2026-03-28)
-**Latest Commits:** `0471a29` (same-token-on-retry guard), `f61861e` (GSTNDETAILS 1005 fix), `d7aa5cf` (55-min fallback)
+**Latest Commits:** `8aae463` (WI-084 IRN retry guard + cancel token refresh + trip sheet redesign), `a29b64d` (WI-083a2 gaps), `0471a29` (same-token-on-retry guard)
 **Git Branch:** master
 
 ---
@@ -394,9 +394,11 @@ _Status: 0/30 — ⬜ Not started_
 | 12 | 2026-05-20 | GST/Auth | WhiteBooks sandbox `TokenExpiry` field echoes previous session even on fresh token — hard SESSION_EXPIRED blocked valid tokens | ✅ Fixed (d7aa5cf — 55-min fallback when expiry in past) |
 | 13 | 2026-05-20 | Settings > GST | Test Connection showed "NIC GSTNDETAILS rejected: [1005]" even though IRN generation works fine | ✅ Fixed (f61861e — treat 1005 on GSTNDETAILS as reachable) |
 | 14 | 2026-05-20 | Fleet/Dispatch | 1005 on dispatch looped forever when WhiteBooks kept returning same stale NIC token | ✅ Fixed (0471a29 — same-token-on-retry → immediate SESSION_EXPIRED) |
-| 15 | 2026-05-20 | Reports > Trip Sheet PDF | Order # column width=45pt — order numbers (~15 chars at 9pt) need ~82pt, text wraps into Customer column | 🚧 Pending (GAP 1) |
-| 16 | 2026-05-20 | Inventory > Cancelled Stock | Cancelled order (Trip 2 Bangalore Foods 47.5KG) not visible in Undelivered Stock tab — CancelledStockEvent was created at `returned_to_depot` directly, skipping `on_vehicle` state | 🚧 Pending (GAP 2) |
-| 17 | 2026-05-20 | Inventory > Daily Summary | `cancellation_return` events feed `incomingFulls` bucket instead of `cancelledStockQty` — Cancelled column always 0, Incoming falsely +1 | 🚧 Pending (GAP 3) |
+| 15 | 2026-05-20 | Reports > Trip Sheet PDF | Order # column width=45pt — order numbers (~15 chars at 9pt) need ~82pt, text wraps into Customer column | ✅ Fixed (WI-083a2 → 85pt; WI-084 full redesign: 90pt, ellipsis, dark header, zebra rows) |
+| 16 | 2026-05-20 | Inventory > Cancelled Stock | Cancelled order (Trip 2 Bangalore Foods 47.5KG) not visible in Undelivered Stock tab — CancelledStockEvent was created at `returned_to_depot` directly, skipping `on_vehicle` state | ✅ Fixed (WI-083a2) |
+| 17 | 2026-05-20 | Inventory > Daily Summary | `cancellation_return` events feed `incomingFulls` bucket instead of `cancelledStockQty` — Cancelled column always 0, Incoming falsely +1 | ✅ Fixed (WI-083a2) |
+| 18 | 2026-05-20 | GST > Dispatch | Re-dispatch after SESSION_EXPIRED stamped `irnStatus='failed'` even when IRN already committed — corrupted INV-MPE5ZM628T4 | ✅ Fixed (WI-084 — retry guard in processInvoiceGst outer catch; DB patched direct) |
+| 19 | 2026-05-20 | GST > Cancel | IRN/EWB cancel always returned SESSION_EXPIRED — stale token cached from dispatch session never cleared before cancel callWithLog | ✅ Fixed (WI-084 — clearTokenCache() before cancelIrn + cancelEwb) |
 
 ---
 
@@ -408,4 +410,5 @@ _Status: 0/30 — ⬜ Not started_
 | 2026-04-07 | Fixed P0 null distributorId (c9c6f3d) + PDF download header bug (7f2758f). 94/94 API tests pass. Invoice PDF verified working. | Start Phase 1 Navigation Smoke Test (0/55 done) |
 | 2026-05-20 | WI-081: order cancellation + vehicle return workflow. WI-082: cancel modal context-aware messaging, Mark as Returned vehicle status fix, inventory tab spacing, undelivered stock tab date filter removed. WI-083: cancel_failed IRN status (schema + enum + service + PDF + UI), computeSummaryForDate empties fix, DVA tripNumber ordering fix, seed script fully working (Opening Fulls + Empties populated, Incoming Fulls = 0). 479/479 tests passing. dist-002 data clean-slated. | Phase 1 Navigation Smoke Test or Phase 2 E2E by module |
 | 2026-05-20 (session 2) | Live GST dispatch testing on dist-002 (Sharma Gas Distributors, sandbox). Fixed 3 auth/token bugs (d7aa5cf, f61861e, 0471a29). Successfully generated IRNs + EWBs: B2B intra-state (Maruthi), B2B inter-state IGST (Hyderabad Caterers), B2C (Bangalore Foods). Preflight dispatch: 2/2 orders succeeded (Kiran Reddy's trip). Identified 3 live-test gaps (bugs #15, #16, #17): trip sheet PDF column width, Undelivered Stock missing cancelled order, daily summary cancellation_return→incomingFulls misrouting. 480/480 tests passing. | Fix GAP 1 (trip sheet PDF), GAP 2 (Undelivered Stock), GAP 3 (daily summary cancelled column) |
+| 2026-05-20 (session 3) | WI-083a2: fixed trips #15/#16/#17 — Order# column width 45→85pt, CSE status on_vehicle for cancelOrder, cancellation_return→cancelledStockQty routing. WI-084: (1) IRN retry-corruption guard in processInvoiceGst outer catch (checks invoice.irn before stamping failed); (2) clearTokenCache() before cancelIrn + cancelEwb to fix SESSION_EXPIRED on every cancel; (3) full professional trip sheet PDF redesign — branded header, PRIMARY divider, 2-col info block, dark drawTableHeader, zebra rows, drawBox border, ellipsis on all cells, col widths Order#=90/Customer=115/Address=105/EWB=85/Items=55/Value=65. DB direct-patched INV-MPE5ZM628T4 irn_status failed→success. 480/480 tests passing, typecheck clean. Commit 8aae463. | Live-verify: (a) trip sheet PDF visually — no overflow; (b) cancel IRN/EWB — should succeed on first attempt; (c) Undelivered Stock tab shows on_vehicle cancelled orders |
 
