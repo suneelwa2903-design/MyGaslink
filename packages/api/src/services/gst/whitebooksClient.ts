@@ -258,6 +258,33 @@ async function doAuthFetch(
     expiresAt = parseNicDateTime(json.data.TokenExpiry);
   }
 
+  // WI-083 amendment — stale-session guard.
+  //
+  // WhiteBooks occasionally returns a TokenExpiry that is already in the
+  // past. This happens when the account's server-side IRN session has been
+  // invalidated (idle timeout, portal re-login from another device, NIC
+  // sandbox reset). The response still carries status_cd='1' (success)
+  // and a token string, so without this check the token would be cached,
+  // served on the next apiCall, and NIC would reject it with error 1005
+  // "Invalid Token". apiCall's retry logic matches on the word "Token"
+  // and re-fetches — but gets the SAME stale token back from WhiteBooks
+  // every time → silent infinite 1005 loop.
+  //
+  // Guard: if the parsed expiry is already past, evict any stale cache
+  // entry and throw a clear, actionable error. The error surfaces as a
+  // failed preflight result instead of a silent loop, and the message
+  // tells the operator exactly what to do.
+  //
+  // Observed on dist-002 on 2026-05-20: re-auth at 17:14 IST returned
+  // TokenExpiry="2026-05-20 16:45:00" (29 min in the past).
+  if (expiresAt.getTime() <= Date.now()) {
+    tokenCache.delete(cacheKey);
+    throw new GstError(
+      'WhiteBooks session expired. Please refresh GST credentials in Settings → GST → Test Connection.',
+      'SESSION_EXPIRED',
+    );
+  }
+
   tokenCache.set(cacheKey, { token, expiresAt, scope });
 
   // Also cache in DB for recovery

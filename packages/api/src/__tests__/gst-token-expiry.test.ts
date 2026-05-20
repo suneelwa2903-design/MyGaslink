@@ -1,5 +1,6 @@
 /**
  * WI-060 — TZ-safe parsing of WhiteBooks/NIC `TokenExpiry` strings.
+ * WI-083 amendment — stale-session guard (SESSION_EXPIRED).
  *
  * Pins the contract:
  *   1. `parseNicDateTime("2026-05-16 09:00:19")` always returns the
@@ -11,6 +12,10 @@
  *   3. When the auth response omits `TokenExpiry`, the fallback is
  *      ~28 min from now, not the old 14 min (WhiteBooks docs say 30,
  *      we leave a 2 min cushion).
+ *   4. (WI-083) When TokenExpiry parses to a date already in the past,
+ *      getAuthToken throws SESSION_EXPIRED (GstError) and evicts the
+ *      cache entry rather than caching a stale token that NIC will
+ *      reject with 1005 on every subsequent call.
  *
  * The TZ-independence test is the critical one: it's why this fix
  * exists. We don't actually mutate process.env.TZ at runtime (Node
@@ -25,6 +30,7 @@ import {
   parseNicDateTime,
   getAuthToken,
   clearTokenCache,
+  GstError,
 } from '../services/gst/whitebooksClient.js';
 
 let originalFetch: typeof globalThis.fetch;
@@ -121,6 +127,40 @@ describe('WI-060 — getAuthToken honours parsed expiry + fallback', () => {
     const expectedExpiry = parseNicDateTime('2099-12-31 23:59:59');
     // Prisma reads timestamp-without-time-zone columns back as UTC Date.
     expect(row.tokenExpiresAt?.toISOString()).toBe(expectedExpiry.toISOString());
+  });
+
+  it('WI-083: throws SESSION_EXPIRED and evicts cache when TokenExpiry is already in the past', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status_cd: 'Sucess',
+        data: {
+          AuthToken: 'STALE-TOKEN',
+          // Fixed historical IST timestamp — always in the past.
+          // Observed on dist-002 on 2026-05-20: re-auth at 17:14 IST
+          // returned TokenExpiry="2026-05-20 16:45:00" (29 min in past).
+          TokenExpiry: '2020-01-01 00:00:00',
+        },
+      }),
+    } as any));
+
+    // Must reject with SESSION_EXPIRED, not cache the stale token.
+    await expect(getAuthToken('dist-002', 'einvoice')).rejects.toMatchObject({
+      code: 'SESSION_EXPIRED',
+      message: expect.stringContaining('WhiteBooks session expired'),
+    });
+    await expect(getAuthToken('dist-002', 'einvoice')).rejects.toBeInstanceOf(GstError);
+
+    // Each call must re-fetch (no stale cache entry served between calls).
+    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
+
+    // The stale token must NOT have been persisted to the DB.
+    const row = await prisma.gstCredential.findFirstOrThrow({
+      where: { distributorId: 'dist-002', scope: 'einvoice' },
+    });
+    // tokenCache column must not hold the stale value
+    expect(row.tokenCache).not.toBe('STALE-TOKEN');
   });
 
   it('falls back to ~28 min when TokenExpiry is missing (was 14 pre-WI-060)', async () => {
