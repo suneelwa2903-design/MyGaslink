@@ -48,7 +48,15 @@ function addDays(dateStr: string, days: number): string {
 export default function InventoryPage() {
   const queryClient = useQueryClient();
   const [selectedDate, setSelectedDate] = useState(todayString());
-  const [tab, setTab] = useState<'daily' | 'depot' | 'onboarding' | 'cancelled' | 'forecast' | 'customer' | 'reconciliation'>('daily');
+  // WI-080 FIX2: allow deep-linking to a tab via ?tab= (e.g. the
+  // "AI Demand Forecast" header button → /app/inventory?tab=forecast).
+  const initialTab = (typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('tab')
+    : null) as ('daily' | 'depot' | 'onboarding' | 'cancelled' | 'forecast' | 'customer' | 'reconciliation') | null;
+  const validTabs = ['daily', 'depot', 'onboarding', 'cancelled', 'forecast', 'customer', 'reconciliation'];
+  const [tab, setTab] = useState<'daily' | 'depot' | 'onboarding' | 'cancelled' | 'forecast' | 'customer' | 'reconciliation'>(
+    initialTab && validTabs.includes(initialTab) ? initialTab : 'daily',
+  );
   const [incomingOpen, setIncomingOpen] = useState(false);
   const [outgoingOpen, setOutgoingOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
@@ -187,13 +195,13 @@ export default function InventoryPage() {
     { key: 'depot' as const, label: 'Depot History' },
     { key: 'onboarding' as const, label: 'Stock at Onboarding' },
     { key: 'cancelled' as const, label: 'Undelivered Stock' },
-    { key: 'forecast' as const, label: 'Forecast' },
+    { key: 'forecast' as const, label: 'AI Demand Forecast' },
     { key: 'customer' as const, label: 'Customer Balances' },
     { key: 'reconciliation' as const, label: 'Vehicle Return' },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Inventory</h1>
