@@ -176,7 +176,12 @@ export async function generateTripSheetPdf(
     doc.moveDown(0.8);
 
     // Table header
-    const colX = { num: 40, cust: 90, addr: 220, ewb: 350, items: 430, val: 500 };
+    // WI-083a2 — GAP 1: Order # column widened from 45→85pt (order numbers are
+    // ~15 chars at 9pt ≈ 82pt needed). Customer column shifted right from x=90
+    // to x=130 and narrowed from 125→85pt to keep addr/ewb/items/val unchanged.
+    // Layout: num[40..125] 5pt gap cust[130..215] 5pt gap addr[220..345] 5pt
+    //         gap ewb[350..425] 5pt gap items[430..495] 5pt gap val[500..555].
+    const colX = { num: 40, cust: 130, addr: 220, ewb: 350, items: 430, val: 500 };
     const headerY = doc.y;
     doc.fontSize(9).font('Helvetica-Bold')
       .text('Order #', colX.num, headerY)
@@ -197,8 +202,8 @@ export async function generateTripSheetPdf(
         .join(', ');
       const addr = [order.customer?.billingAddressLine1, order.customer?.billingCity]
         .filter(Boolean).join(', ');
-      doc.text(order.orderNumber, colX.num, rowY, { width: 45 });
-      doc.text(order.customer?.customerName ?? '—', colX.cust, rowY, { width: 125, ellipsis: true });
+      doc.text(order.orderNumber, colX.num, rowY, { width: 85 });
+      doc.text(order.customer?.customerName ?? '—', colX.cust, rowY, { width: 85, ellipsis: true });
       doc.text(addr || '—', colX.addr, rowY, { width: 125, ellipsis: true });
       doc.text(ewbByOrder.get(order.id) ?? '—', colX.ewb, rowY, { width: 75 });
       doc.text(itemSummary || '—', colX.items, rowY, { width: 65 });

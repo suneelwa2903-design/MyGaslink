@@ -1142,7 +1142,10 @@ export async function cancelOrder(
       },
     });
 
-    // Create cancelled stock events if order was in dispatch/delivery state
+    // Create cancelled stock events if order was in dispatch/delivery state.
+    // WI-083a2 — GAP 2: CSE MUST be created as 'on_vehicle'. The only code
+    // that may write 'returned_to_depot' is returnCancelledStock (manual return)
+    // or reconcileVehicle Step 1 (end-of-trip). Never set it here directly.
     if (['pending_dispatch', 'pending_delivery'].includes(order.status) && order.vehicleId) {
       for (const item of order.items) {
         await tx.cancelledStockEvent.create({

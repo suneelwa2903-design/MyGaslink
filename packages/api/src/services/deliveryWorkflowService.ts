@@ -462,8 +462,31 @@ export async function confirmVehicleReconciliation(
         },
       });
 
-      // Return cylinders to depot inventory
+      // Return cylinders to depot inventory.
+      // WI-083a2 — GAP 2: also create a CancelledStockEvent for each item so
+      // the Undelivered Stock tab has a record even when reconciliation runs
+      // before the admin manually cancels. We write 'on_vehicle' and then
+      // immediately update to 'returned_to_depot' within the same transaction
+      // — this preserves the invariant that 'returned_to_depot' is always
+      // written by reconcileVehicle (Step 1 or here) or returnCancelledStock.
       for (const item of order.items) {
+        const cse = await tx.cancelledStockEvent.create({
+          data: {
+            orderId: order.id,
+            vehicleId,
+            driverId: order.driverId,
+            cylinderTypeId: item.cylinderTypeId,
+            distributorId,
+            quantity: item.quantity,
+            cancellationDate: order.deliveryDate ?? new Date(),
+            status: 'on_vehicle',
+          },
+        });
+        await tx.cancelledStockEvent.update({
+          where: { id: cse.id },
+          data: { status: 'returned_to_depot', returnedDate: new Date(), reconciledBy: userId, notes: `Vehicle reconciliation — order ${order.orderNumber}` },
+        });
+
         await createInventoryEvent(tx, {
           distributorId,
           cylinderTypeId: item.cylinderTypeId,

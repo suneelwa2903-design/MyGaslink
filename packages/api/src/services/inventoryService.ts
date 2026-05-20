@@ -121,8 +121,11 @@ export async function computeSummaryForDate(
         cancelledStockQty += event.fullsChange;
         break;
       case 'cancellation_return':
-        // Returned cancelled stock goes back to fulls
-        incomingFulls += event.fullsChange;
+        // WI-083a2 — GAP 3: cancelled stock returned from vehicle belongs in the
+        // Cancelled column, not Incoming. Both buckets add to closingFulls equally
+        // (formula: + cancelledStockQty), so the balance is unchanged — only the
+        // display column changes. Incoming is for IOC refills; this is a return.
+        cancelledStockQty += event.fullsChange;
         break;
       case 'manual_adjustment':
         manualAdjustment += event.fullsChange;
