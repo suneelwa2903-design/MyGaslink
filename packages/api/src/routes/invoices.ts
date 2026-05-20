@@ -208,6 +208,11 @@ router.post('/:id/cancel-irn',
   auditLog('cancel_irn', 'invoice'),
   async (req, res) => {
     try {
+      // WI-086: standalone retry — evict stale token before calling.
+      // (cancelOrder evicts once for the combined sequence; standalone
+      // callers must do it themselves since gstService no longer does it.)
+      const { clearTokenCache } = await import('../services/gst/whitebooksClient.js');
+      clearTokenCache(req.user!.distributorId!);
       const result = await gstService.cancelIrn(
         param(req.params.id), req.user!.distributorId!, req.body.reason
       );
@@ -226,6 +231,9 @@ router.post('/:id/cancel-ewb',
   auditLog('cancel_ewb', 'invoice'),
   async (req, res) => {
     try {
+      // WI-086: standalone retry — evict stale token before calling.
+      const { clearTokenCache } = await import('../services/gst/whitebooksClient.js');
+      clearTokenCache(req.user!.distributorId!);
       const result = await gstService.cancelEwb(
         param(req.params.id), req.user!.distributorId!, req.body.reason
       );

@@ -821,13 +821,13 @@ export async function cancelIrn(invoiceId: string, distributorId: string, reason
     CnlRem: reason.substring(0, 100),
   };
 
-  // WI-084 FIX 2: Force-evict the cached einvoice token before every IRN
-  // cancel attempt. Cancel calls are infrequent and the NIC session may have
-  // gone stale since the last successful dispatch. The same-token guard in
-  // callWithLog fires SESSION_EXPIRED before NIC is even called when the
-  // cached token is stale — clearing here forces a fresh re-auth.
-  clearTokenCache(distributorId);
-
+  // WI-086 FIX: clearTokenCache removed from here. It is now called once
+  // by the cancel orchestrator (cancelOrder in orderService) before the
+  // EWB+IRN sequence, so both cancel calls share the same fresh NIC
+  // session. Double-eviction caused two back-to-back auth calls <1 s apart
+  // which made NIC reject the second token with 1004 (SESSION_EXPIRED).
+  // For standalone retries via POST /invoices/:id/cancel-irn, the route
+  // handler calls clearTokenCache before delegating here.
   const response = await callWithLog<any>(
     distributorId, 'POST',
     `/einvoice/type/CANCEL/version/V1_03?email=${encodeURIComponent(email)}`,
@@ -869,11 +869,9 @@ export async function cancelEwb(invoiceId: string, distributorId: string, reason
     : reason.toLowerCase().includes('error') ? 2
     : reason.toLowerCase().includes('cancel') ? 3 : 4;
 
-  // WI-084 FIX 2: Force-evict the cached ewaybill token before every EWB
-  // cancel attempt. Mirrors the fix in cancelIrn — same SESSION_EXPIRED
-  // root cause applies to the ewaybill scope as well.
-  clearTokenCache(distributorId);
-
+  // WI-086 FIX: clearTokenCache removed from here — see note in cancelIrn.
+  // The orchestrator (cancelOrder) evicts once before the whole sequence.
+  // Standalone retry via POST /invoices/:id/cancel-ewb evicts in the route.
   const response = await callWithLog<any>(
     distributorId, 'POST',
     `/ewaybillapi/v1.03/ewayapi/canewb?email=${encodeURIComponent(email)}`,

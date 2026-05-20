@@ -1054,6 +1054,15 @@ export async function cancelOrder(
   }
 
   // STEP 2: Cancel EWB at NIC (outside TX — external API)
+  // WI-086: Evict the token cache ONCE before the whole EWB+IRN cancel
+  // sequence. Both cancel calls then share the same fresh NIC session.
+  // Doing it inside each function separately caused two auth calls <1 s
+  // apart — NIC rejected the second token with 1004 (SESSION_EXPIRED).
+  if (invoiceId && (order.invoice?.ewbStatus === 'active' || order.invoice?.irnStatus === 'success')) {
+    const { clearTokenCache } = await import('./gst/whitebooksClient.js');
+    clearTokenCache(distributorId);
+  }
+
   if (invoiceId && order.invoice?.ewbStatus === 'active') {
     try {
       const { cancelEwb } = await import('./gst/gstService.js');
