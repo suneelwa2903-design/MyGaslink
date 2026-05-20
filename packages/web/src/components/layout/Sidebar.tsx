@@ -77,7 +77,7 @@ const adminMenuItems: MenuItem[] = [
     labelKey: 'nav.customers',
     path: '/app/customers',
     icon: HiOutlineUsers,
-    roles: [UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR_ADMIN],
+    roles: [UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR_ADMIN, UserRole.INVENTORY],
   },
   {
     label: 'Billing & Payments',

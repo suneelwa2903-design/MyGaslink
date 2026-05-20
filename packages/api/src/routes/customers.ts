@@ -39,7 +39,7 @@ const customerImportRowSchema = z.object({
 });
 
 router.post('/import-csv',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(z.object({ rows: z.array(customerImportRowSchema).min(1).max(1000) })),
   auditLog('import', 'customer'),
   async (req, res) => {
@@ -63,7 +63,7 @@ const openingBalanceRowSchema = z.object({
 });
 
 router.post('/import-opening-balances',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(z.object({ rows: z.array(openingBalanceRowSchema).min(1).max(2000) })),
   auditLog('import_opening_balances', 'customer'),
   async (req, res) => {
@@ -121,7 +121,7 @@ router.get('/:id',
 
 // POST /api/customers
 router.post('/',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(createCustomerSchema),
   auditLog('create', 'customer'),
   async (req, res) => {
@@ -137,7 +137,7 @@ router.post('/',
 
 // PUT /api/customers/:id
 router.put('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(updateCustomerSchema),
   auditLog('update', 'customer'),
   async (req, res) => {
@@ -235,7 +235,7 @@ router.get('/:id/audit-trail',
 
 // POST /api/customers/:id/stop-supply
 router.post('/:id/stop-supply',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   auditLog('stop_supply', 'customer'),
   async (req, res) => {
     try {
@@ -249,7 +249,7 @@ router.post('/:id/stop-supply',
 
 // POST /api/customers/:id/resume-supply
 router.post('/:id/resume-supply',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   auditLog('resume_supply', 'customer'),
   async (req, res) => {
     try {
