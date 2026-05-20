@@ -5,11 +5,23 @@ export async function listDrivers(distributorId: string, status?: string) {
   const where: Prisma.DriverWhereInput = { distributorId, deletedAt: null };
   if (status) where.status = status as any;
 
+  // WI-079: scope the assignment include to TODAY's date range so the
+  // surfaced vehicle reflects today's confirmed driver-vehicle mapping
+  // (mapDriver flattens this to driver.vehicleNumber). The assign-driver
+  // dropdown filters on this to exclude drivers with no vehicle today.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const startOfTomorrow = new Date(startOfToday);
+  startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
   return prisma.driver.findMany({
     where,
     include: {
       vehicleAssignments: {
-        where: { isReconciled: false },
+        where: {
+          isReconciled: false,
+          assignmentDate: { gte: startOfToday, lt: startOfTomorrow },
+        },
         include: { vehicle: { select: { id: true, vehicleNumber: true } } },
         orderBy: { assignmentDate: 'desc' },
         take: 1,

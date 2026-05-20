@@ -7,7 +7,7 @@ const router = Router();
 
 // GET /api/analytics/dashboard
 router.get('/dashboard',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const stats = await analyticsService.getDashboardStats(req.user!.distributorId!);
@@ -19,7 +19,7 @@ router.get('/dashboard',
 
 // GET /api/analytics/header-metrics
 router.get('/header-metrics',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const [financialMetrics, advancedMetrics] = await Promise.all([
@@ -46,7 +46,7 @@ router.get('/empty-cylinders',
 
 // GET /api/analytics/due-amounts
 router.get('/due-amounts',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const report = await analyticsService.getDueAmountsReport(req.user!.distributorId!);
@@ -58,7 +58,7 @@ router.get('/due-amounts',
 
 // GET /api/analytics/top-sales
 router.get('/top-sales',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
@@ -76,7 +76,7 @@ router.get('/top-sales',
 
 // GET /api/analytics/driver-performance
 router.get('/driver-performance',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const report = await analyticsService.getDriverDeliveryPerformance(
@@ -92,7 +92,7 @@ router.get('/driver-performance',
 
 // GET /api/analytics/revenue-trends
 router.get('/revenue-trends',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const months = req.query.months ? parseInt(req.query.months as string, 10) : 12;
@@ -105,7 +105,7 @@ router.get('/revenue-trends',
 
 // GET /api/analytics/customer-lifetime-value
 router.get('/customer-lifetime-value',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const report = await analyticsService.getCustomerLifetimeValue(req.user!.distributorId!);
@@ -117,7 +117,7 @@ router.get('/customer-lifetime-value',
 
 // GET /api/analytics/collections
 router.get('/collections',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const report = await analyticsService.getCollectionsDashboard(req.user!.distributorId!);
@@ -129,7 +129,7 @@ router.get('/collections',
 
 // GET /api/analytics/overdue-call-list — customers past credit period, sorted by days overdue
 router.get('/overdue-call-list',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const list = await analyticsService.getOverdueCallList(req.user!.distributorId!);
@@ -141,7 +141,7 @@ router.get('/overdue-call-list',
 
 // GET /api/analytics/advanced-metrics
 router.get('/advanced-metrics',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const metrics = await analyticsService.getAdvancedMetrics(req.user!.distributorId!);
@@ -153,7 +153,7 @@ router.get('/advanced-metrics',
 
 // GET /api/analytics/reports - bundled report for AnalyticsPage
 router.get('/reports',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
@@ -198,7 +198,7 @@ router.get('/reports',
 
 // GET /api/analytics/export/due-amounts - Excel export data
 router.get('/export/due-amounts',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const report = await analyticsService.getDueAmountsReport(req.user!.distributorId!);
@@ -211,7 +211,7 @@ router.get('/export/due-amounts',
 
 // GET /api/analytics/export/collections
 router.get('/export/collections',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const report = await analyticsService.getCollectionsDashboard(req.user!.distributorId!);
@@ -224,7 +224,7 @@ router.get('/export/collections',
 
 // GET /api/analytics/export/empty-cylinders
 router.get('/export/empty-cylinders',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const report = await analyticsService.getEmptyCylindersReport(req.user!.distributorId!);

@@ -172,7 +172,16 @@ export function mapPayments(list: any[]): any[] {
 
 export function mapDriver(d: any): any {
   if (!d) return d;
-  return renameId(d, 'driverId');
+  const mapped = renameId(d, 'driverId');
+  // WI-079: surface today's confirmed vehicle (from the scoped
+  // `vehicleAssignments` include in driverService.listDrivers) as flat
+  // `vehicleId` / `vehicleNumber` fields. The shared Driver type has
+  // always declared these but the mapper never populated them, so the
+  // assign-driver dropdown could neither filter nor label by vehicle.
+  const todayAssignment = Array.isArray(d.vehicleAssignments) ? d.vehicleAssignments[0] : null;
+  mapped.vehicleId = todayAssignment?.vehicle?.id ?? todayAssignment?.vehicleId ?? null;
+  mapped.vehicleNumber = todayAssignment?.vehicle?.vehicleNumber ?? null;
+  return mapped;
 }
 
 export function mapDrivers(list: any[]): any[] {
