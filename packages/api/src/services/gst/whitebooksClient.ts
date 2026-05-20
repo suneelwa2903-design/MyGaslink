@@ -392,11 +392,30 @@ export async function apiCall<T = any>(
 
     logger.error('WhiteBooks API error', { distributorId, url, errorCode, errorMessage, response: json });
 
-    // Handle token expiry - retry once
-    if (errorCode === '1004' || errorMessage.includes('token') || errorMessage.includes('Token')) {
+    // Handle token expiry - retry once with a fresh token.
+    //
+    // Guard: if WhiteBooks returns the SAME token on re-auth, retrying is
+    // pointless — NIC already rejected that exact string and will do so
+    // again. WhiteBooks sandbox sometimes caches a stale NIC session and
+    // returns the same token string repeatedly even when the NIC session
+    // has been invalidated. Detect this by comparing before and after, and
+    // surface SESSION_EXPIRED with an actionable message rather than burning
+    // a useless NIC call.
+    if (errorCode === '1004' || errorCode === '1005' || errorMessage.includes('token') || errorMessage.includes('Token')) {
       tokenCache.delete(getCacheKey(distributorId, scope));
-      // Retry with fresh token
       const newToken = await getAuthToken(distributorId, scope);
+
+      if (newToken === token && token !== 'no-token-needed') {
+        // WhiteBooks served the same stale token — NIC session not refreshed.
+        logger.warn('WhiteBooks returned same token after 1005 eviction — NIC session stale', {
+          distributorId, scope, errorCode,
+        });
+        throw new GstError(
+          'NIC session expired on WhiteBooks\' end. Please go to Settings → GST → Test Connection to re-validate, then retry dispatch.',
+          'SESSION_EXPIRED',
+        );
+      }
+
       if (newToken !== 'no-token-needed') headers['auth-token'] = newToken;
       const retryRes = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
       const retryJson = await retryRes.json() as any;
