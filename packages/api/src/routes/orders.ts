@@ -82,7 +82,7 @@ router.post('/returns-only',
 
 // POST /api/orders/from-cancelled-stock - Create order from cancelled stock on vehicle
 router.post('/from-cancelled-stock',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(z.object({
     customerId: z.string().uuid(),
     deliveryDate: z.string(),
@@ -367,7 +367,7 @@ router.post('/preflight-add-to-trip',
 // route's trip sheet through the mobile assignments flow, which
 // already enforces per-driver ownership separately.
 router.get('/trip-sheet/:assignmentId',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   async (req, res) => {
     try {
       const assignmentId = param(req.params.assignmentId);
@@ -389,7 +389,7 @@ router.get('/trip-sheet/:assignmentId',
 
 // POST /api/orders/:id/confirm-delivery
 router.post('/:id/confirm-delivery',
-  requireRole('super_admin', 'distributor_admin', 'driver'),
+  requireRole('super_admin', 'distributor_admin', 'driver', 'inventory'),
   validate(deliveryConfirmationSchema),
   auditLog('confirm_delivery', 'order'),
   async (req, res) => {
@@ -406,7 +406,7 @@ router.post('/:id/confirm-delivery',
 
 // POST /api/orders/:id/cancel
 router.post('/:id/cancel',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   validate(z.object({ reason: z.string().min(1, 'Cancellation reason is required') })),
   auditLog('cancel', 'order'),
   async (req, res) => {
@@ -423,7 +423,7 @@ router.post('/:id/cancel',
 
 // POST /api/orders/:id/confirm-returns - Confirm returns collection
 router.post('/:id/confirm-returns',
-  requireRole('super_admin', 'distributor_admin', 'driver'),
+  requireRole('super_admin', 'distributor_admin', 'driver', 'inventory'),
   validate(returnsConfirmationSchema),
   auditLog('confirm_returns', 'order'),
   async (req, res) => {
