@@ -13,7 +13,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
-import { getCredentials, GstError } from './whitebooksClient.js';
+import { getCredentials, GstError, clearTokenCache } from './whitebooksClient.js';
 import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 // Distance: minimum 1km (0 causes EWB error 721)
@@ -511,6 +511,25 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           }
         }
       } else if (!irnPersisted) {
+        // WI-084 FIX 1: Before stamping irnStatus='failed', guard against
+        // the retry-corruption pattern. When the admin re-dispatches an
+        // already-succeeded invoice (e.g. after a SESSION_EXPIRED UI error),
+        // processInvoiceGst starts fresh with irnPersisted=false. If this
+        // second call then throws, the outer catch must NOT overwrite the
+        // committed IRN/irnStatus='success' from the first call.
+        // Symptom: INV-MPE5ZM628T4 — real IRN in gst_documents but
+        // invoices.irn_status='failed' from the retry SESSION_EXPIRED.
+        const alreadyCommitted = await prisma.invoice.findUnique({
+          where: { id: invoiceId },
+          select: { irn: true },
+        });
+        if (alreadyCommitted?.irn) {
+          logger.warn(
+            'processInvoiceGst retry failed but real IRN already committed — preserving success state',
+            { invoiceId, irn: alreadyCommitted.irn.substring(0, 16) + '…', err: irnErr.message },
+          );
+          return result;
+        }
         await prisma.invoice.update({ where: { id: invoiceId }, data: { irnStatus: 'failed' } });
         await createPendingAction(distributorId, invoiceId, 'IRN_GENERATION', irnErr.message);
       } else {
@@ -802,6 +821,13 @@ export async function cancelIrn(invoiceId: string, distributorId: string, reason
     CnlRem: reason.substring(0, 100),
   };
 
+  // WI-084 FIX 2: Force-evict the cached einvoice token before every IRN
+  // cancel attempt. Cancel calls are infrequent and the NIC session may have
+  // gone stale since the last successful dispatch. The same-token guard in
+  // callWithLog fires SESSION_EXPIRED before NIC is even called when the
+  // cached token is stale — clearing here forces a fresh re-auth.
+  clearTokenCache(distributorId);
+
   const response = await callWithLog<any>(
     distributorId, 'POST',
     `/einvoice/type/CANCEL/version/V1_03?email=${encodeURIComponent(email)}`,
@@ -842,6 +868,11 @@ export async function cancelEwb(invoiceId: string, distributorId: string, reason
   const cancelRsnCode = reason.toLowerCase().includes('duplicate') ? 1
     : reason.toLowerCase().includes('error') ? 2
     : reason.toLowerCase().includes('cancel') ? 3 : 4;
+
+  // WI-084 FIX 2: Force-evict the cached ewaybill token before every EWB
+  // cancel attempt. Mirrors the fix in cancelIrn — same SESSION_EXPIRED
+  // root cause applies to the ewaybill scope as well.
+  clearTokenCache(distributorId);
 
   const response = await callWithLog<any>(
     distributorId, 'POST',
