@@ -505,6 +505,9 @@ export interface CustomerInventoryBalance {
   // WI-080: current price for the cylinder type (null if none set) and
   // the date of this customer's most recent delivery (null if never).
   cylinderPrice?: number | null;
+  // WI-080 amendment: empty-cylinder (container replacement) price from
+  // the EmptyCylinderPrice table; null when none set for the type.
+  emptyCylinderPrice?: number | null;
   lastDeliveryDate?: string | null;
 }
 

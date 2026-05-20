@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -902,40 +902,22 @@ function OutgoingEmptiesModal({
 
 // ─── Customer Balances Tab (WI-080 F6) ───────────────────────────────────────
 
-type SortKey = 'customer' | 'type' | 'qty' | 'cost' | 'deposit' | 'days';
+type SortKey = 'customer' | 'type' | 'qty' | 'cost' | 'days';
 
 function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[] }) {
-  // Distinct cylinder types present, with their pre-fill price.
+  // Distinct cylinder types present (for the filter dropdown).
   const types = useMemo(() => {
-    const m = new Map<string, { id: string; name: string; price: number }>();
-    for (const b of balances) {
-      if (!m.has(b.cylinderTypeId)) {
-        m.set(b.cylinderTypeId, { id: b.cylinderTypeId, name: b.cylinderTypeName, price: b.cylinderPrice ?? 0 });
-      }
-    }
-    return [...m.values()];
+    const m = new Map<string, string>();
+    for (const b of balances) if (!m.has(b.cylinderTypeId)) m.set(b.cylinderTypeId, b.cylinderTypeName);
+    return [...m.entries()].map(([id, name]) => ({ id, name }));
   }, [balances]);
 
-  // Per-type "Empty Cylinder Price" inputs (session-only, pre-filled from
-  // cylinder prices; user can override inline). Plus a global security
-  // deposit per cylinder. None of this is persisted.
-  const [prices, setPrices] = useState<Record<string, string>>({});
-  useEffect(() => {
-    setPrices((prev) => {
-      const next = { ...prev };
-      for (const t of types) if (next[t.id] === undefined) next[t.id] = String(t.price ?? 0);
-      return next;
-    });
-  }, [types]);
-
-  const [deposit, setDeposit] = useState('');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [onlyOutstanding, setOnlyOutstanding] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>('customer');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
-  const depositNum = Number(deposit) || 0;
   const daysSince = (d?: string | null): number | null =>
     d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : null;
   const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -946,11 +928,13 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
       .filter((b) => (search ? b.customerName.toLowerCase().includes(search.toLowerCase()) : true))
       .filter((b) => (typeFilter ? b.cylinderTypeId === typeFilter : true))
       .map((b) => {
-        const price = Number(prices[b.cylinderTypeId] ?? 0) || 0;
+        // WI-080 amendment: empty-cylinder price now comes from the API
+        // (EmptyCylinderPrice table). null when none is configured.
+        const emptyPrice = b.emptyCylinderPrice ?? null;
         return {
           ...b,
-          emptyCost: b.withCustomerQty * price,
-          securityDeposit: b.withCustomerQty * depositNum,
+          emptyPrice,
+          emptyCost: emptyPrice === null ? null : b.withCustomerQty * emptyPrice,
           days: daysSince(b.lastDeliveryDate),
         };
       });
@@ -960,18 +944,16 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
         case 'customer': return a.customerName.localeCompare(b.customerName) * dir;
         case 'type': return a.cylinderTypeName.localeCompare(b.cylinderTypeName) * dir;
         case 'qty': return (a.withCustomerQty - b.withCustomerQty) * dir;
-        case 'cost': return (a.emptyCost - b.emptyCost) * dir;
-        case 'deposit': return (a.securityDeposit - b.securityDeposit) * dir;
+        case 'cost': return ((a.emptyCost ?? -1) - (b.emptyCost ?? -1)) * dir;
         case 'days': return ((a.days ?? -1) - (b.days ?? -1)) * dir;
         default: return 0;
       }
     });
     return mapped;
-  }, [balances, onlyOutstanding, search, typeFilter, prices, depositNum, sortKey, sortDir]);
+  }, [balances, onlyOutstanding, search, typeFilter, sortKey, sortDir]);
 
   const totalQty = rows.reduce((s, r) => s + r.withCustomerQty, 0);
-  const totalCost = rows.reduce((s, r) => s + r.emptyCost, 0);
-  const totalDeposit = rows.reduce((s, r) => s + r.securityDeposit, 0);
+  const totalCost = rows.reduce((s, r) => s + (r.emptyCost ?? 0), 0);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -988,31 +970,6 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
 
   return (
     <div className="space-y-4">
-      {/* Pricing inputs (session-only) */}
-      <div className="card p-4 space-y-3">
-        <p className="text-sm font-medium text-surface-700 dark:text-surface-300">
-          Valuation inputs <span className="font-normal text-surface-400">(not saved — used to value outstanding cylinders)</span>
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {types.map((t) => (
-            <Input
-              key={t.id}
-              label={`Empty Cylinder Price — ${t.name}`}
-              type="number"
-              value={prices[t.id] ?? ''}
-              onChange={(e) => setPrices((p) => ({ ...p, [t.id]: e.target.value }))}
-            />
-          ))}
-          <Input
-            label="Security Deposit per Cylinder"
-            type="number"
-            placeholder="0"
-            value={deposit}
-            onChange={(e) => setDeposit(e.target.value)}
-          />
-        </div>
-      </div>
-
       {/* Filters */}
       <div className="card p-4">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
@@ -1040,7 +997,6 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
                 <SortTh k="type" label="Cylinder Type" />
                 <SortTh k="qty" label="With Customer" center />
                 <SortTh k="cost" label="Empty Cyl Cost" center />
-                <SortTh k="deposit" label="Security Deposit" center />
                 <SortTh k="days" label="Days Since Last Delivery" center />
               </tr>
             </thead>
@@ -1050,8 +1006,18 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
                   <td className="font-medium text-surface-900 dark:text-white">{r.customerName}</td>
                   <td>{r.cylinderTypeName}</td>
                   <td className="text-center">{r.withCustomerQty}</td>
-                  <td className="text-center">{money(r.emptyCost)}</td>
-                  <td className="text-center">{money(r.securityDeposit)}</td>
+                  <td className="text-center">
+                    {r.emptyCost === null ? (
+                      <span
+                        className="text-surface-400 cursor-help"
+                        title="Set empty cylinder price in Settings → Cylinder Prices"
+                      >
+                        —
+                      </span>
+                    ) : (
+                      money(r.emptyCost)
+                    )}
+                  </td>
                   <td className="text-center">{r.days === null ? '—' : `${r.days} days`}</td>
                 </tr>
               ))}
@@ -1062,7 +1028,6 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
                 <td></td>
                 <td className="text-center">{totalQty}</td>
                 <td className="text-center">{money(totalCost)}</td>
-                <td className="text-center">{money(totalDeposit)}</td>
                 <td></td>
               </tr>
             </tfoot>
