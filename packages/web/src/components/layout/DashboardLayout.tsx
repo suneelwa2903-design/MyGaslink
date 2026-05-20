@@ -6,6 +6,7 @@ import {
   HiBars3,
   HiOutlineArrowRightOnRectangle,
   HiOutlineUserCircle,
+  HiOutlineSparkles,
 } from 'react-icons/hi2';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
 import { apiGet } from '@/lib/api';
@@ -117,6 +118,14 @@ export function DashboardLayout() {
 
           {/* Right: controls */}
           <div className="flex items-center gap-2">
+            {/* WI-080 FIX2: loud AI Demand Forecast shortcut → inventory Forecast tab */}
+            <button
+              onClick={() => navigate('/app/inventory?tab=forecast')}
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-purple-600 to-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:from-purple-700 hover:to-blue-700 transition-colors"
+            >
+              <HiOutlineSparkles className="h-4 w-4" />
+              AI Demand Forecast
+            </button>
             <ThemeToggle />
 
             {/* Notifications bell */}
