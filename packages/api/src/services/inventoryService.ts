@@ -587,6 +587,18 @@ export async function getCustomerBalances(distributorId: string, customerId?: st
     }
   }
 
+  // WI-080 amendment: empty cylinder (container replacement) price per
+  // type, from the EmptyCylinderPrice table — used to value outstanding
+  // cylinders on the Customer Balances tab.
+  const emptyPriceMap = new Map<string, number>();
+  {
+    const emptyPrices = await prisma.emptyCylinderPrice.findMany({
+      where: { distributorId },
+      select: { cylinderTypeId: true, emptyCylinderPrice: true },
+    });
+    for (const e of emptyPrices) emptyPriceMap.set(e.cylinderTypeId, toNum(e.emptyCylinderPrice));
+  }
+
   // Most recent delivered order per customer.
   const lastDeliveryMap = new Map<string, Date | null>();
   const customerIds = [...new Set(rows.map((r) => r.customerId))];
@@ -618,6 +630,7 @@ export async function getCustomerBalances(distributorId: string, customerId?: st
     lastUpdated: b.lastUpdated,
     // WI-080 additions:
     cylinderPrice: priceMap.get(b.cylinderTypeId) ?? null,
+    emptyCylinderPrice: emptyPriceMap.get(b.cylinderTypeId) ?? null,
     lastDeliveryDate: lastDeliveryMap.get(b.customerId) ?? null,
   }));
 }

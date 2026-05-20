@@ -259,6 +259,7 @@ describe('WI-080 — customer-balances returns cylinderPrice + lastDeliveryDate'
     if (res.body.data.length > 0) {
       const row = res.body.data[0];
       expect(row).toHaveProperty('cylinderPrice');
+      expect(row).toHaveProperty('emptyCylinderPrice');
       expect(row).toHaveProperty('lastDeliveryDate');
     }
   });
