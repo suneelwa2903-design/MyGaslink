@@ -94,6 +94,7 @@ export function AppRoutes() {
                 allowedRoles={[
                   UserRole.SUPER_ADMIN,
                   UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
                   UserRole.INVENTORY,
                   UserRole.DRIVER,
                 ]}
@@ -111,6 +112,7 @@ export function AppRoutes() {
                 allowedRoles={[
                   UserRole.SUPER_ADMIN,
                   UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
                   UserRole.INVENTORY,
                 ]}
                 requireDistributor
@@ -145,6 +147,7 @@ export function AppRoutes() {
                   UserRole.SUPER_ADMIN,
                   UserRole.DISTRIBUTOR_ADMIN,
                   UserRole.FINANCE,
+                  UserRole.INVENTORY,
                 ]}
                 requireDistributor
               />
@@ -164,6 +167,7 @@ export function AppRoutes() {
                 allowedRoles={[
                   UserRole.SUPER_ADMIN,
                   UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
                   UserRole.INVENTORY,
                 ]}
                 requireDistributor
@@ -202,6 +206,7 @@ export function AppRoutes() {
                   UserRole.SUPER_ADMIN,
                   UserRole.DISTRIBUTOR_ADMIN,
                   UserRole.FINANCE,
+                  UserRole.INVENTORY,
                 ]}
                 requireDistributor
               />
