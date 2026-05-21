@@ -32,6 +32,10 @@ let sharmaAdminToken: string;
 
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
+// Self-seeded fixture invoice — avoids reliance on pre-existing DB data
+// (anti-pattern #7 fix). Created in beforeAll, deleted in afterAll.
+let fixtureInvoiceId: string | null = null;
+
 beforeAll(async () => {
   app = createApp();
   const sharmaAdmin = await prisma.user.findUniqueOrThrow({
@@ -43,18 +47,44 @@ beforeAll(async () => {
     role: sharmaAdmin.role as any,
     distributorId: sharmaAdmin.distributorId,
   });
+
+  // Seed a fixture invoice so getValuedInvoice() always finds one regardless
+  // of whether cleanup-dist002-seed.ts has been run.
+  const customer = await prisma.customer.findFirstOrThrow({
+    where: { distributorId: 'dist-002', deletedAt: null },
+  });
+  const fixture = await prisma.invoice.create({
+    data: {
+      invoiceNumber: `WI056-FIXTURE-${Date.now()}`,
+      distributorId: 'dist-002',
+      customerId: customer.id,
+      issueDate: new Date(),
+      dueDate: new Date(),
+      totalAmount: 5000,
+      amountPaid: 0,
+      outstandingAmount: 5000,
+      status: 'issued',
+    },
+  });
+  fixtureInvoiceId = fixture.id;
+});
+
+afterAll(async () => {
+  // Clean up credit/debit notes and gst_documents created by the tests,
+  // then remove the fixture invoice.
+  if (fixtureInvoiceId) {
+    await prisma.gstDocument.deleteMany({ where: { invoiceId: fixtureInvoiceId } });
+    await prisma.creditNote.deleteMany({ where: { invoiceId: fixtureInvoiceId } });
+    await prisma.debitNote.deleteMany({ where: { invoiceId: fixtureInvoiceId } });
+    await prisma.invoice.delete({ where: { id: fixtureInvoiceId } }).catch(() => {});
+    fixtureInvoiceId = null;
+  }
 });
 
 async function getValuedInvoice() {
-  return prisma.invoice.findFirstOrThrow({
-    where: {
-      distributorId: 'dist-002',
-      deletedAt: null,
-      status: { not: 'cancelled' },
-      totalAmount: { gt: 1000 },
-    },
-    orderBy: { createdAt: 'asc' },
-  });
+  // Returns the self-seeded fixture invoice — no longer depends on pre-existing
+  // DB data (anti-pattern #7 fix).
+  return prisma.invoice.findUniqueOrThrow({ where: { id: fixtureInvoiceId! } });
 }
 
 describe('WI-056 — Invoice list response shape', () => {

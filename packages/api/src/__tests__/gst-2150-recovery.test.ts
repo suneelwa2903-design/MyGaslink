@@ -12,7 +12,7 @@
  *   - GETIRNBYDOCDETAILS → returns the existing IRN
  *   - GETIRNBYDOCDETAILS → also throws (degraded path)
  */
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
 const { apiCallMock } = vi.hoisted(() => ({ apiCallMock: vi.fn() }));
 
@@ -41,19 +41,33 @@ import { GstError } from '../services/gst/whitebooksClient.js';
 let invoiceId: string;
 
 beforeAll(async () => {
-  // Find a Sharma B2B invoice with a value > 0 — same fixture as the
-  // other GST tests. We mutate it within each test and restore at the end.
-  const inv = await prisma.invoice.findFirstOrThrow({
-    where: {
-      distributorId: 'dist-002',
-      deletedAt: null,
-      status: { not: 'cancelled' },
-      totalAmount: { gt: 1000 },
-      customer: { gstin: { not: null } },
-    },
-    orderBy: { createdAt: 'asc' },
+  // Seed a fixture B2B invoice (customer must have GSTIN for the 2150-recovery
+  // path). Self-seeded so the test is independent of cleanup-dist002-seed.ts
+  // (anti-pattern #7 fix — replaces reliance on pre-existing DB data).
+  const b2bCustomer = await prisma.customer.findFirstOrThrow({
+    where: { distributorId: 'dist-002', deletedAt: null, gstin: { not: null } },
   });
-  invoiceId = inv.id;
+  const fixture = await prisma.invoice.create({
+    data: {
+      invoiceNumber: `WI057-FIXTURE-${Date.now()}`,
+      distributorId: 'dist-002',
+      customerId: b2bCustomer.id,
+      issueDate: new Date(),
+      dueDate: new Date(),
+      totalAmount: 5000,
+      amountPaid: 0,
+      outstandingAmount: 5000,
+      status: 'issued',
+      irnStatus: 'not_attempted',
+    },
+  });
+  invoiceId = fixture.id;
+});
+
+afterAll(async () => {
+  // Clean up gst_documents the tests may have created, then the fixture invoice.
+  await prisma.gstDocument.deleteMany({ where: { invoiceId } });
+  await prisma.invoice.delete({ where: { id: invoiceId } }).catch(() => {});
 });
 
 beforeEach(async () => {
