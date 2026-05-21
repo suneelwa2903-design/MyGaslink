@@ -65,36 +65,10 @@ router.post('/',
   }
 );
 
-router.put('/:id',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
-  validate(createCylinderTypeSchema.partial()),
-  auditLog('update', 'cylinder_type'),
-  async (req, res) => {
-    try {
-      const type = await cylinderTypeService.updateCylinderType(param(req.params.id), req.user!.distributorId!, req.body);
-      if (!type) return sendNotFound(res, 'Cylinder type');
-      return sendSuccess(res, mapCylinderType(type));
-    } catch (err) {
-      return sendError(res, (err as Error).message);
-    }
-  }
-);
-
-router.delete('/:id',
-  requireRole('super_admin', 'distributor_admin'),
-  auditLog('delete', 'cylinder_type'),
-  async (req, res) => {
-    try {
-      const type = await cylinderTypeService.deleteCylinderType(param(req.params.id), req.user!.distributorId!);
-      if (!type) return sendNotFound(res, 'Cylinder type');
-      return sendSuccess(res, { message: 'Cylinder type deactivated' });
-    } catch (err) {
-      return sendError(res, (err as Error).message);
-    }
-  }
-);
-
 // ─── Prices ─────────────────────────────────────────────────────────────────
+// NOTE: All static-path routes (no :id param) MUST be registered before the
+// wildcard PUT /:id and DELETE /:id handlers, otherwise Express matches the
+// param route first and the specific handlers are never reached.
 
 router.get('/prices/list', async (req, res) => {
   try {
@@ -147,6 +121,7 @@ router.get('/empty-prices/list', async (req, res) => {
   }
 });
 
+// PUT /empty-prices must be before PUT /:id (static beats param in registration order).
 router.put('/empty-prices',
   requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   validate(emptyPriceSchema),
@@ -163,6 +138,7 @@ router.put('/empty-prices',
 
 // ─── Thresholds ─────────────────────────────────────────────────────────────
 
+// PUT /thresholds must be before PUT /:id (static beats param in registration order).
 router.put('/thresholds',
   requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   validate(cylinderThresholdSchema),
@@ -171,6 +147,37 @@ router.put('/thresholds',
     try {
       const threshold = await cylinderTypeService.upsertThreshold(req.user!.distributorId!, req.body);
       return sendSuccess(res, threshold);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// ─── Cylinder Type by ID (must come AFTER all static-path PUT/DELETE routes) ──
+
+router.put('/:id',
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  validate(createCylinderTypeSchema.partial()),
+  auditLog('update', 'cylinder_type'),
+  async (req, res) => {
+    try {
+      const type = await cylinderTypeService.updateCylinderType(param(req.params.id), req.user!.distributorId!, req.body);
+      if (!type) return sendNotFound(res, 'Cylinder type');
+      return sendSuccess(res, mapCylinderType(type));
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+router.delete('/:id',
+  requireRole('super_admin', 'distributor_admin'),
+  auditLog('delete', 'cylinder_type'),
+  async (req, res) => {
+    try {
+      const type = await cylinderTypeService.deleteCylinderType(param(req.params.id), req.user!.distributorId!);
+      if (!type) return sendNotFound(res, 'Cylinder type');
+      return sendSuccess(res, { message: 'Cylinder type deactivated' });
     } catch (err) {
       return sendError(res, (err as Error).message);
     }
