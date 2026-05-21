@@ -22,7 +22,12 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
 
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { generateToken, loginAsFinance, loginAsInventory } from './helpers.js';
+import { generateToken, loginAsFinance, loginAsInventory, getOrCreateTestVehicle } from './helpers.js';
+
+// WI-090: dedicated test vehicles so teardown never resets the SEEDED
+// dist-002 / dist-001 fleet used by live/manual dispatch testing.
+const TEST_VEHICLE_D2 = 'TEST-PF-VEHICLE-D2';
+const TEST_VEHICLE_D1 = 'TEST-PF-VEHICLE-D1';
 
 // ─── Test date isolation ────────────────────────────────────────────────────
 // CLAUDE.md anti-pattern #7: tests that seed time-sensitive data must
@@ -185,12 +190,12 @@ async function clearPreflightArtifacts(orderIds: string[]) {
   await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
   await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
   // Reset vehicle status — the preflight service writes vehicle.status='dispatched'
-  // on success. Without this reset, the vehicle stays 'dispatched' in the live
-  // dev DB after every test run, breaking Fleet → Vehicles UI (anti-pattern #8 fix).
-  // We reset all non-inactive dist-002 vehicles because the test grabs the first
-  // one by findFirstOrThrow and the preflight tags it.
+  // on success. WI-090: scope the reset to the DEDICATED test vehicle only
+  // (by vehicleNumber). Resetting all dist-002 vehicles previously corrupted
+  // the SEEDED fleet's live dispatch state on the shared dev DB (anti-pattern
+  // #8 — now properly isolated, not blanket-reset).
   await prisma.vehicle.updateMany({
-    where: { distributorId: 'dist-002', status: { not: 'inactive' } },
+    where: { distributorId: 'dist-002', vehicleNumber: TEST_VEHICLE_D2 },
     data: { status: 'idle' },
   });
   // Also restore the test DVA back to dispatch_ready so the NEXT test in the
@@ -206,9 +211,9 @@ async function getSharmaContext() {
   const driver = await prisma.driver.findFirstOrThrow({
     where: { distributorId: 'dist-002', status: 'active', deletedAt: null },
   });
-  const vehicle = await prisma.vehicle.findFirstOrThrow({
-    where: { distributorId: 'dist-002', status: { not: 'inactive' }, deletedAt: null },
-  });
+  // WI-090: dedicated test vehicle (not the seeded fleet) so teardown can
+  // reset by vehicleNumber without touching live dispatch state.
+  const vehicle = await getOrCreateTestVehicle('dist-002', TEST_VEHICLE_D2);
   // Ensure today's mapping exists between this driver+vehicle. seed.ts
   // creates it; if it's been removed, recreate.
   const targetDate = new Date(today());
@@ -525,9 +530,8 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     const driver = await prisma.driver.findFirstOrThrow({
       where: { distributorId: 'dist-001', status: 'active', deletedAt: null },
     });
-    const vehicle = await prisma.vehicle.findFirstOrThrow({
-      where: { distributorId: 'dist-001', status: { not: 'inactive' }, deletedAt: null },
-    });
+    // WI-090: dedicated dist-001 test vehicle (not the seeded fleet).
+    const vehicle = await getOrCreateTestVehicle('dist-001', TEST_VEHICLE_D1);
     const cust = await prisma.customer.findFirstOrThrow({
       where: { distributorId: 'dist-001', deletedAt: null },
     });
@@ -587,6 +591,12 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       orders.forEach((o) => expect(o.status).toBe('pending_delivery'));
     } finally {
       await clearPreflightArtifacts(orderIds);
+      // clearPreflightArtifacts only resets dist-002 — reset the dedicated
+      // dist-001 vehicle this test dispatched (WI-090).
+      await prisma.vehicle.updateMany({
+        where: { distributorId: 'dist-001', vehicleNumber: TEST_VEHICLE_D1 },
+        data: { status: 'idle' },
+      });
     }
   });
 
@@ -829,9 +839,8 @@ describe('POST /api/orders/preflight-dispatch — integration', () => {
     const driver = await prisma.driver.findFirstOrThrow({
       where: { distributorId: 'dist-001', status: 'active', deletedAt: null },
     });
-    const vehicle = await prisma.vehicle.findFirstOrThrow({
-      where: { distributorId: 'dist-001', status: { not: 'inactive' }, deletedAt: null },
-    });
+    // WI-090: dedicated dist-001 test vehicle (not the seeded fleet).
+    const vehicle = await getOrCreateTestVehicle('dist-001', TEST_VEHICLE_D1);
     const cust = await prisma.customer.findFirstOrThrow({
       where: { distributorId: 'dist-001', deletedAt: null },
     });
@@ -886,6 +895,11 @@ describe('POST /api/orders/preflight-dispatch — integration', () => {
       expect(docCount).toBe(0);
     } finally {
       await clearPreflightArtifacts(orderIds);
+      // Reset the dedicated dist-001 vehicle this test dispatched (WI-090).
+      await prisma.vehicle.updateMany({
+        where: { distributorId: 'dist-001', vehicleNumber: TEST_VEHICLE_D1 },
+        data: { status: 'idle' },
+      });
     }
   });
 
@@ -1186,14 +1200,19 @@ describe('Audit + side-effects', () => {
 afterAll(async () => {
   // Cleanup any stray preflight artifacts from this test file.
   await prisma.gstApiLog.deleteMany({ where: { apiType: { startsWith: 'IRN_GENERATE' } } });
-  // Belt-and-braces: reset vehicle status in case a test failed mid-way
-  // and its clearPreflightArtifacts never ran.
+  // Belt-and-braces: reset only the DEDICATED test vehicles in case a test
+  // failed mid-way and its clearPreflightArtifacts never ran (WI-090 — never
+  // blanket-reset the seeded fleet).
   await prisma.vehicle.updateMany({
-    where: { distributorId: 'dist-002', status: { not: 'inactive' } },
+    where: { distributorId: 'dist-002', vehicleNumber: TEST_VEHICLE_D2 },
+    data: { status: 'idle' },
+  });
+  await prisma.vehicle.updateMany({
+    where: { distributorId: 'dist-001', vehicleNumber: TEST_VEHICLE_D1 },
     data: { status: 'idle' },
   });
   // Clean up the far-future TEST_DATE DVA created/modified by getSharmaContext.
   await prisma.driverVehicleAssignment.deleteMany({
-    where: { distributorId: 'dist-002', assignmentDate: new Date(today()) },
+    where: { distributorId: { in: ['dist-001', 'dist-002'] }, assignmentDate: new Date(today()) },
   });
 });

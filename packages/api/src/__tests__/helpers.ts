@@ -166,6 +166,38 @@ export function today(): string {
 }
 
 /**
+ * WI-090: find-or-create a DEDICATED test vehicle for a distributor.
+ *
+ * The GST preflight / trip-sheet tests dispatch a vehicle (preflight sets
+ * vehicle.status='dispatched') and then reset it in teardown. Previously
+ * they grabbed the first SEEDED vehicle via `findFirstOrThrow` and reset
+ * ALL of the distributor's vehicles to 'idle' — which corrupted live
+ * dispatch state on the shared dev DB (the seeded vehicle is also the one
+ * used for manual/live testing). Routing the tests through a dedicated
+ * vehicle (recognisable name, never used by live testing) lets teardown
+ * scope its reset to `vehicleNumber` and leave the seeded fleet untouched.
+ *
+ * Idempotent via the (distributorId, vehicleNumber) unique key.
+ */
+export async function getOrCreateTestVehicle(distributorId: string, vehicleNumber: string) {
+  const existing = await prisma.vehicle.findFirst({
+    where: { distributorId, vehicleNumber },
+  });
+  if (existing) {
+    if (existing.deletedAt || existing.status === 'inactive') {
+      return prisma.vehicle.update({
+        where: { id: existing.id },
+        data: { deletedAt: null, status: 'idle' },
+      });
+    }
+    return existing;
+  }
+  return prisma.vehicle.create({
+    data: { distributorId, vehicleNumber, vehicleType: 'truck', capacity: 100, status: 'idle' },
+  });
+}
+
+/**
  * WI-064 follow-up: ensure a confirmed (non-cancelled) DriverVehicleAssignment
  * exists for the given driver + date. orderService.assignDriver now requires
  * one — without it the assign-driver call 400s with

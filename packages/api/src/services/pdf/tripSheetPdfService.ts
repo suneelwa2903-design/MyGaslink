@@ -43,9 +43,13 @@ const TABLE_W = 515;      // 595 − 40 − 40
 const ROW_H   = 14;       // base row height for data rows
 
 // Column definitions — total widths must equal TABLE_W (515)
+// WI-090: Order# widened 90→102 so a 15-char "ORD-XXXXXXXXXX" (~92pt at
+// Helvetica 9pt) fits in the inner width (102−8 pad = 94pt) WITHOUT
+// PDFKit wrapping at the hyphen and discarding it ("ORDMPFG…"). Customer
+// trimmed 115→103 to keep the row total at TABLE_W (515).
 const COL_DEFS: { label: string; width: number }[] = [
-  { label: 'Order #',  width: 90  },
-  { label: 'Customer', width: 115 },
+  { label: 'Order #',  width: 102 },
+  { label: 'Customer', width: 103 },
   { label: 'Address',  width: 105 },
   { label: 'EWB No',   width: 85  },
   { label: 'Items',    width: 55  },
@@ -272,19 +276,25 @@ export async function generateTripSheetPdf(
       // Vertical padding: 3pt from top of row
       const textY = rowY + 3;
       const PAD   = 4;   // left inner padding per cell
+      // WI-090: a height bound is REQUIRED for `ellipsis` to fire. Without
+      // it PDFKit wraps overflowing text onto a second line (overflowing
+      // ROW_H and, for hyphenated tokens, dropping the hyphen at the break).
+      // height = ROW_H − 2 confines each cell to a single line and truncates
+      // with an ellipsis instead.
+      const CELL_H = ROW_H - 2;
 
       doc.text(order.orderNumber,
-        COL_X[0] + PAD, textY, { width: COL_DEFS[0].width - PAD * 2, ellipsis: true });
+        COL_X[0] + PAD, textY, { width: COL_DEFS[0].width - PAD * 2, height: CELL_H, ellipsis: true });
       doc.text(order.customer?.customerName ?? '—',
-        COL_X[1] + PAD, textY, { width: COL_DEFS[1].width - PAD * 2, ellipsis: true });
+        COL_X[1] + PAD, textY, { width: COL_DEFS[1].width - PAD * 2, height: CELL_H, ellipsis: true });
       doc.text(addr || '—',
-        COL_X[2] + PAD, textY, { width: COL_DEFS[2].width - PAD * 2, ellipsis: true });
+        COL_X[2] + PAD, textY, { width: COL_DEFS[2].width - PAD * 2, height: CELL_H, ellipsis: true });
       doc.text(ewbByOrder.get(order.id) ?? '—',
-        COL_X[3] + PAD, textY, { width: COL_DEFS[3].width - PAD * 2, ellipsis: true });
+        COL_X[3] + PAD, textY, { width: COL_DEFS[3].width - PAD * 2, height: CELL_H, ellipsis: true });
       doc.text(itemSummary || '—',
-        COL_X[4] + PAD, textY, { width: COL_DEFS[4].width - PAD * 2, ellipsis: true });
+        COL_X[4] + PAD, textY, { width: COL_DEFS[4].width - PAD * 2, height: CELL_H, ellipsis: true });
       doc.text(formatMoney(toNum(order.totalAmount)),
-        COL_X[5] + PAD, textY, { width: COL_DEFS[5].width - PAD * 2, ellipsis: true, align: 'right' });
+        COL_X[5] + PAD, textY, { width: COL_DEFS[5].width - PAD * 2, height: CELL_H, ellipsis: true, align: 'right' });
 
       rowY += ROW_H;
     }

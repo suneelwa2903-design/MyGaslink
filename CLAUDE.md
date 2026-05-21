@@ -69,6 +69,17 @@ cd packages/api && pnpm test   # API integration tests only
 | Driver | raju@gasagency.com | Driver@123 | Bhargava Gas Agency |
 | Customer | royal@kitchen.com | Customer@123 | Bhargava Gas Agency |
 
+> **Dev-DB test fixtures in Fleet (WI-090):** the GST integration tests
+> (`gst-preflight`, `gst-trip-sheet`, `gst-dispatch-trip`) dispatch DEDICATED
+> test vehicles instead of the seeded fleet, so they no longer corrupt live
+> vehicle dispatch state. As a result you will see extra vehicles named
+> **`TEST-PF-VEHICLE-D2`**, **`TEST-TS-VEHICLE-D2`**, **`TEST-DISPATCH-TRIP-D2`**
+> (Sharma / dist-002) and **`TEST-PF-VEHICLE-D1`** (Bhargava / dist-001) in
+> Fleet → Vehicles, normally `idle`. They are harmless test fixtures created
+> on demand by `getOrCreateTestVehicle` (packages/api/src/__tests__/helpers.ts)
+> — ignore them during manual testing. They are DB rows (not files, so not a
+> `.gitignore` concern); a future seed-cleanup pass can prune them.
+
 ---
 
 ## Testing Protocol

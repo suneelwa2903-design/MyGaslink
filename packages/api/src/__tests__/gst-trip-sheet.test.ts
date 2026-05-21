@@ -22,9 +22,13 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
 
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { generateToken } from './helpers.js';
+import { generateToken, getOrCreateTestVehicle } from './helpers.js';
 import * as whitebooksClient from '../services/gst/whitebooksClient.js';
 import type { Express } from 'express';
+
+// WI-090: dedicated test vehicle so teardown never resets the SEEDED
+// dist-002 fleet used by live/manual dispatch testing.
+const TEST_VEHICLE_D2 = 'TEST-TS-VEHICLE-D2';
 
 // CLAUDE.md anti-pattern #7: tests that seed time-sensitive data use
 // a fixed future date so real dev-DB rows never get swept into service
@@ -85,9 +89,9 @@ async function getSharmaContext() {
   const driver = await prisma.driver.findFirstOrThrow({
     where: { distributorId: 'dist-002', status: 'active', deletedAt: null },
   });
-  const vehicle = await prisma.vehicle.findFirstOrThrow({
-    where: { distributorId: 'dist-002', status: { not: 'inactive' }, deletedAt: null },
-  });
+  // WI-090: dedicated test vehicle (not the seeded fleet) so teardown can
+  // reset by vehicleNumber without touching live dispatch state.
+  const vehicle = await getOrCreateTestVehicle('dist-002', TEST_VEHICLE_D2);
   const targetDate = new Date(today());
   let mapping = await prisma.driverVehicleAssignment.findFirst({
     where: { distributorId: 'dist-002', driverId: driver.id, assignmentDate: targetDate },
@@ -165,10 +169,10 @@ async function cleanupOrders(ids: string[]) {
   await prisma.orderItem.deleteMany({ where: { orderId: { in: ids } } });
   await prisma.order.deleteMany({ where: { id: { in: ids } } });
   // Reset vehicle status — preflight writes vehicle.status='dispatched' on success.
-  // Without this, the dev-DB vehicle stays 'dispatched' after every test run
-  // and the Fleet → Vehicles UI shows the wrong badge (anti-pattern #8 fix).
+  // WI-090: scope to the DEDICATED test vehicle only; blanket-resetting the
+  // seeded dist-002 fleet corrupted live dispatch state on the shared dev DB.
   await prisma.vehicle.updateMany({
-    where: { distributorId: 'dist-002', status: { not: 'inactive' } },
+    where: { distributorId: 'dist-002', vehicleNumber: TEST_VEHICLE_D2 },
     data: { status: 'idle' },
   });
   // Restore TEST_DATE DVA to dispatch_ready for the next test case.

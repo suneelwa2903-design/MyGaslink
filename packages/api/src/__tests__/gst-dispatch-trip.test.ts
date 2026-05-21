@@ -51,9 +51,14 @@ import {
 } from '../services/gst/gstPreflightService.js';
 import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
 import { createApp } from '../app.js';
-import { loginAsDistAdmin } from './helpers.js';
+import { loginAsDistAdmin, getOrCreateTestVehicle } from './helpers.js';
 
 const TEST_DATE = '2099-12-31';
+// WI-090: dedicated test vehicle. preflightAddToTrip now sets
+// vehicle.status='dispatched' (FIX 1), and preflightDispatch always did —
+// so these tests must dispatch a DEDICATED vehicle and reset only it, never
+// the SEEDED dist-002 fleet used by live/manual dispatch testing.
+const TEST_VEHICLE_D2 = 'TEST-DISPATCH-TRIP-D2';
 const apiCallMock = whitebooksClient.apiCall as unknown as ReturnType<typeof vi.fn>;
 
 function irnSuccess() {
@@ -199,7 +204,7 @@ describe('WI-065 — dispatch state machine + Add to Trip', () => {
     });
     driverId = drivers[0].id;
     secondDriverId = drivers[1]?.id ?? drivers[0].id;
-    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId } });
+    const vehicle = await getOrCreateTestVehicle(distributorId, TEST_VEHICLE_D2);
     vehicleId = vehicle.id;
   });
 
@@ -552,7 +557,7 @@ describe('WI-068 — DVA auto-reset + Add-to-Trip in-flight gate', () => {
       orderBy: { driverName: 'asc' },
     });
     driverId = driver.id;
-    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId } });
+    const vehicle = await getOrCreateTestVehicle(distributorId, TEST_VEHICLE_D2);
     vehicleId = vehicle.id;
     orderService = await import('../services/orderService.js');
   });
@@ -677,7 +682,7 @@ describe('WI-069 — /in-transit excludes stale DVAs (0 in-flight orders)', () =
       orderBy: { driverName: 'asc' },
     });
     driverId = driver.id;
-    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId } });
+    const vehicle = await getOrCreateTestVehicle(distributorId, TEST_VEHICLE_D2);
     vehicleId = vehicle.id;
     const sharma = await prisma.user.findUniqueOrThrow({ where: { email: 'sharma@gasdist.com' } });
     const { generateToken } = await import('./helpers.js');
@@ -861,7 +866,7 @@ describe('WI-070 — confirmDelivery bumps tripNumber + EWB road circuity', () =
       orderBy: { driverName: 'asc' },
     });
     driverId = driver.id;
-    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId } });
+    const vehicle = await getOrCreateTestVehicle(distributorId, TEST_VEHICLE_D2);
     vehicleId = vehicle.id;
     orderService = await import('../services/orderService.js');
   });
@@ -1029,5 +1034,16 @@ describe('WI-070 — confirmDelivery bumps tripNumber + EWB road circuity', () =
     } finally {
       await teardown(newOrderIds, [dva.id]);
     }
+  });
+});
+
+// WI-090: reset the dedicated test vehicle so its dispatched state (set by
+// preflightDispatch / preflightAddToTrip during these tests) never leaks into
+// the shared dev DB's Fleet view. Scoped strictly to the test vehicle by
+// vehicleNumber — the seeded fleet is never touched.
+afterAll(async () => {
+  await prisma.vehicle.updateMany({
+    where: { distributorId: 'dist-002', vehicleNumber: TEST_VEHICLE_D2 },
+    data: { status: 'idle' },
   });
 });

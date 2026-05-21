@@ -453,6 +453,22 @@ export async function preflightAddToTrip(params: {
   const succeeded = results.filter((r) => r.success).length;
   const failed = results.length - succeeded;
 
+  // WI-090: keep the vehicle 'dispatched' when orders are added to an
+  // already-running trip. preflightDispatch (new-trip path) sets this on
+  // first dispatch, but if the vehicle status was reset in the meantime
+  // (e.g. a return/reconciliation, or a stale state), adding orders to the
+  // trip must re-assert 'dispatched' — otherwise the Fleet "Mark as
+  // Returned" button (which only renders for vehicle.status='dispatched')
+  // never appears for add-to-trip dispatches. The DVA is already
+  // 'loaded_and_dispatched' here (precondition above), so we only touch
+  // the vehicle. Mirrors the preflightDispatch block (~line 263).
+  if (failed === 0 && succeeded > 0 && mapping.vehicleId) {
+    await prisma.vehicle.update({
+      where: { id: mapping.vehicleId },
+      data: { status: 'dispatched' },
+    });
+  }
+
   // Generate a SECOND consolidated EWB if at least 2 new orders got
   // EWBs. NIC's gencewb has no append semantics — the existing
   // tripSheetNo stays valid for the original batch; tripSheetNo2 covers
