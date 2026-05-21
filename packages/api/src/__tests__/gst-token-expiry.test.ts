@@ -34,6 +34,7 @@ import {
   parseNicDateTime,
   getAuthToken,
   clearTokenCache,
+  apiCall,
   GstError,
 } from '../services/gst/whitebooksClient.js';
 
@@ -217,6 +218,109 @@ describe('WI-060 — getAuthToken honours parsed expiry + fallback', () => {
     expect(minsFromNow).toBeLessThanOrEqual(56);
   });
 
+});
+
+/**
+ * WI-090 — apiCall's same-token guard must NOT short-circuit CANCEL flows.
+ *
+ * WhiteBooks pins ONE auth token per session window and returns the SAME
+ * string on every re-auth — even when the NIC session is perfectly healthy
+ * (proven live by scripts/probe-nic-session.ts). The old guard treated
+ * "WhiteBooks returned the same token" as "NIC session dead" and threw
+ * SESSION_EXPIRED *before retrying the cancel against NIC*, stranding the IRN
+ * live at NIC with responsePayload=NULL.
+ *
+ * Contract now:
+ *   - CANCEL (apiType IRN_CANCEL/EWB_CANCEL): on 1004/1005 + pinned token,
+ *     RETRY the cancel against NIC. Return success if NIC accepts; only throw
+ *     SESSION_EXPIRED (with the raw NIC body attached) if NIC rejects twice.
+ *   - DISPATCH (apiType IRN_GENERATE / no apiType): keep the conservative
+ *     short-circuit — duplicate-IRN risk — and throw SESSION_EXPIRED with NO
+ *     retry NIC call.
+ */
+describe('WI-090 — apiCall cancel-retry guard', () => {
+  const AUTH = (token: string) => ({
+    ok: true, status: 200,
+    json: async () => ({ status_cd: 'Sucess', data: { AuthToken: token, TokenExpiry: '2099-12-31 23:59:59' } }),
+  } as any);
+  const NIC_TOKEN_ERR = {
+    ok: true, status: 200,
+    json: async () => ({ status_cd: '0', status_desc: JSON.stringify([{ ErrorCode: '1005', ErrorMessage: 'Invalid/Expired Token' }]) }),
+  } as any;
+  const NIC_OK = {
+    ok: true, status: 200,
+    json: async () => ({ status_cd: '1', status_desc: 'GSTR request succeeds', data: { Irn: 'X', CancelDate: '2026-05-21 17:36:00' } }),
+  } as any;
+
+  const isAuth = (url: string) => url.includes('/authenticate');
+
+  it('CANCEL: retries the cancel against NIC with the pinned token and returns success', async () => {
+    // Sequence: auth(PINNED) → CANCEL→1005 → re-auth(PINNED, SAME) → retry CANCEL→success.
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const u = String(url);
+      calls.push(isAuth(u) ? 'auth' : 'cancel');
+      if (isAuth(u)) return AUTH('PINNED-TOK');
+      // 1st cancel fails with token error, 2nd (retry) succeeds.
+      return calls.filter(c => c === 'cancel').length === 1 ? NIC_TOKEN_ERR : NIC_OK;
+    }) as any;
+
+    const res = await apiCall<any>(
+      'dist-002', 'POST', '/einvoice/type/CANCEL/version/V1_03?email=x',
+      { Irn: 'X', CnlRsn: '3', CnlRem: 'test' }, 'einvoice',
+      { apiType: 'IRN_CANCEL', invoiceId: 'inv-x' },
+    );
+    expect(res.status_cd).toBe('1');
+    // auth, cancel(1005), auth(re-auth), cancel(retry) = 4 fetches.
+    expect(calls).toEqual(['auth', 'cancel', 'auth', 'cancel']);
+  });
+
+  it('CANCEL: throws SESSION_EXPIRED WITH raw NIC payload when NIC rejects twice', async () => {
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const u = String(url);
+      return isAuth(u) ? AUTH('PINNED-TOK') : NIC_TOKEN_ERR; // cancel always 1005
+    }) as any;
+
+    let thrown: GstError | undefined;
+    try {
+      await apiCall<any>(
+        'dist-002', 'POST', '/einvoice/type/CANCEL/version/V1_03?email=x',
+        { Irn: 'X', CnlRsn: '3', CnlRem: 'test' }, 'einvoice',
+        { apiType: 'IRN_CANCEL', invoiceId: 'inv-x' },
+      );
+    } catch (e: any) { thrown = e; }
+    expect(thrown).toBeInstanceOf(GstError);
+    expect(thrown!.code).toBe('SESSION_EXPIRED');
+    // Decisive: the raw NIC body is attached (responsePayload no longer NULL).
+    expect(thrown!.response).toBeTruthy();
+    expect(thrown!.response.status_desc).toContain('1005');
+  });
+
+  it('DISPATCH: still short-circuits to SESSION_EXPIRED with NO retry NIC call', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const u = String(url);
+      calls.push(isAuth(u) ? 'auth' : 'generate');
+      return isAuth(u) ? AUTH('PINNED-TOK') : NIC_TOKEN_ERR; // generate always 1005
+    }) as any;
+
+    let thrown: GstError | undefined;
+    try {
+      await apiCall<any>(
+        'dist-002', 'POST', '/einvoice/type/GENERATE/version/V1_03?email=x',
+        { foo: 'bar' }, 'einvoice',
+        { apiType: 'IRN_GENERATE', invoiceId: 'inv-x' },
+      );
+    } catch (e: any) { thrown = e; }
+    expect(thrown).toBeInstanceOf(GstError);
+    expect(thrown!.code).toBe('SESSION_EXPIRED');
+    // No retry GENERATE call: auth, generate(1005), re-auth — then short-circuit.
+    expect(calls).toEqual(['auth', 'generate', 'auth']);
+    expect(calls.filter(c => c === 'generate')).toHaveLength(1);
+  });
+});
+
+describe('WI-060 — getAuthToken fallback (cont.)', () => {
   it('falls back to ~28 min when TokenExpiry is missing (was 14 pre-WI-060)', async () => {
     const before = Date.now();
     globalThis.fetch = vi.fn(async () => ({

@@ -6,9 +6,9 @@
 > - At the start of any Claude session, say: **"read docs/TESTING_PROGRESS.md and continue testing"**
 > - Detail is in `docs/E2E_Testing_Guide.xlsx` — this file is the running status summary
 
-**Last Updated:** 2026-05-20
+**Last Updated:** 2026-05-21
 **Baseline Commit:** `a72b25e` (2026-03-28)
-**Latest Commits:** `6dcaf57` (WI-087 vehicle workflow guards), `640d348` (WI-086), `5a14d26` (WI-085), `8aae463` (WI-084)
+**Latest Commits:** WI-090 (IRN cancel guard fix), `66c9630` (WI-089 handoff), `f8d1117` (WI-089 badge), `6dcaf57` (WI-087)
 **Git Branch:** master
 
 ---
@@ -279,7 +279,7 @@ _Status: 0/26 — ⬜ Not started_
 | FB-019 | Approve debit note | ⬜ | |
 | FB-020 | Reject debit note | ⬜ | |
 | FB-021 | Generate GST (IRN) | ⬜ | |
-| FB-022 | Cancel IRN | ⬜ | |
+| FB-022 | Cancel IRN | ✅ | WI-090 (2026-05-21): live verified — production /orders/:id/cancel + standalone /cancel-irn both cancel real NIC IRNs (status_cd=1). Guard fix removes false SESSION_EXPIRED short-circuit on cancel. |
 | FB-023 | Generate EWB | ⬜ | |
 | FB-024 | Cancel EWB | ⬜ | |
 | FB-025 | Regenerate invoice | ⬜ | |
@@ -372,7 +372,7 @@ _Status: 0/30 — ⬜ Not started_
 | customer-portal.test.ts | ✅ | 94/94 pass (2026-04-07) |
 | workflow.test.ts | ✅ | 94/94 pass (2026-04-07) |
 
-**Total: 481/481 tests passing as of 2026-05-20**
+**Total: 484/484 tests passing as of 2026-05-21** (+3 WI-090 cancel-guard tests)
 
 ---
 
@@ -405,6 +405,7 @@ _Status: 0/30 — ⬜ Not started_
 | 23 | 2026-05-20 | Fleet > Vehicle Return | markVehicleReturned allowed return even when pending_delivery orders exist — driver could abandon live orders without any error | ✅ Fixed (WI-087 — guard added: if any pending_delivery orders exist → 409 "still out for delivery"; pending_dispatch orders are allowed) |
 | 24 | 2026-05-20 | Orders > Deliver | confirmDelivery succeeded even after vehicle was already marked returned — order data becomes inconsistent (delivered stock but vehicle is back at depot) | ✅ Fixed (WI-087 — vehicle status check added; if vehicle.status='returned' → 409 "returned to depot, use Reconciliation") |
 | 25 | 2026-05-20 | Fleet > Vehicle Return | Vehicle return modal showed 0 cancelled orders even after cancelling orders assigned to that vehicle — root cause: CSE already reconciled (returned_to_depot) from a prior session, not a code bug | ✅ Explained (expected behaviour — see workflow note below) |
+| 26 | 2026-05-21 | GST > Cancel | IRN cancel intermittently failed with SESSION_EXPIRED + responsePayload=NULL. Root cause: apiCall's `newToken===token` guard treated WhiteBooks' normal token-pinning as "NIC session dead" and threw BEFORE retrying the cancel at NIC. Proven false by probe: WhiteBooks pins one token per window (immediate+delayed re-auth identical) yet that pinned token cancels successfully at NIC. | ✅ Fixed (WI-090 — cancel flows now retry the real NIC call with the pinned token; only surface SESSION_EXPIRED after a SECOND NIC rejection, and with the raw NIC body attached. Dispatch short-circuit kept for duplicate-IRN safety.) |
 
 ---
 
@@ -419,4 +420,5 @@ _Status: 0/30 — ⬜ Not started_
 | 2026-05-20 (session 3) | WI-083a2: fixed trips #15/#16/#17 — Order# column width 45→85pt, CSE status on_vehicle for cancelOrder, cancellation_return→cancelledStockQty routing. WI-084: (1) IRN retry-corruption guard in processInvoiceGst outer catch (checks invoice.irn before stamping failed); (2) clearTokenCache() before cancelIrn + cancelEwb to fix SESSION_EXPIRED on every cancel; (3) full professional trip sheet PDF redesign — branded header, PRIMARY divider, 2-col info block, dark drawTableHeader, zebra rows, drawBox border, ellipsis on all cells, col widths Order#=90/Customer=115/Address=105/EWB=85/Items=55/Value=65. DB direct-patched INV-MPE5ZM628T4 irn_status failed→success. 480/480 tests passing, typecheck clean. Commit 8aae463. | Live-verify: (a) trip sheet PDF visually — no overflow; (b) cancel IRN/EWB — should succeed on first attempt; (c) Undelivered Stock tab shows on_vehicle cancelled orders |
 | 2026-05-20 (session 4) | Cancel E2E test (test-cancel-irn-ewb.ts): 20/20 PASS — EWB cancel status_cd=1, IRN cancel status_cd=1, both DB statuses=cancelled. WI-085: (1) getAuthToken retry-once on stale TokenExpiry — if retry also stale use 55-min fallback (WhiteBooks support confirmed sandbox tokens valid 1h regardless of TokenExpiry field); SESSION_EXPIRED only from NIC 1004/1005 guard. (2) Mobile trip.tsx: wired "Mark Vehicle Returned" button → POST /delivery/driver/vehicle-returned with vehicleId, shown only for loaded_and_dispatched→returned_inventory transition. (3) Dev-only test endpoints: POST /test/inject-stale-token + GET /test/token-cache-state. Live E2E (test-wi085-token-retry.ts): 29/29 PASS — stale inject confirmed, dispatch succeeded (ORD-MPE8JWU8KRF, IRN+EWB generated), no SESSION_EXPIRED in logs, cache=valid(55-min fallback), cancel succeeded (EWB+IRN both status_cd=1). 481/481 tests passing, typecheck clean. Commit 5a14d26. Full B2B+B2C smoke (test-full-b2b-b2c.ts): 52/52 PASS. Live cancel of Hyderabad Caterers order (INV-MPE9HNM5F5M) revealed WI-086 bug — double clearTokenCache in back-to-back cancel calls. WI-086 fix: single eviction at cancelOrder orchestrator level, standalone retry routes handle their own eviction. 52/52 B2B+B2C smoke re-confirmed. INV-MPE9HNM5F5M manually retried + fully cancelled. Commit 640d348. | Phase 1 Navigation Smoke Test (0/55 done) or Phase 2 E2E by module |
 | 2026-05-20 (session 5) | WI-087: Found and fixed 2 vehicle workflow safety bugs. Bug #23: markVehicleReturned had no guard — could mark vehicle returned with pending_delivery orders still out. Fix: block with 409 if any pending_delivery orders exist, allow if only pending_dispatch. Bug #24: confirmDelivery had no vehicle status check — could confirm delivery after vehicle returned to depot. Fix: check vehicle.status='returned' → throw 409. Bug #25: 0 cancelled orders shown in return modal — explained (CSE already returned_to_depot from prior reconciliation, not a code bug). Route handler updated to return 409 (not 500) for the new guard. Verification: test-vehicle-workflow.ts 11/11 PASS. | Phase 1 Navigation Smoke Test (0/55 done) or Phase 2 E2E by module |
+| 2026-05-21 (WI-090) | **IRN cancel permanent fix.** Live two-order diagnostic (scripts/diag-irn-cancel.ts) on dist-002: ORDER A via production /orders/:id/cancel → EWB_CANCEL + IRN_CANCEL both status_cd=1 (gap ~370-430ms); ORDER B via direct NIC fetch (guard bypassed) → IRN cancel status_cd=1 with the pinned token. Probe (probe-nic-session) proved WhiteBooks pins ONE token per window (immediate+60s-delayed re-auth identical) and that pinned token succeeds at NIC — so the `newToken===token` guard's premise was false. Fix (whitebooksClient.ts apiCall): cancel flows (IRN_CANCEL/EWB_CANCEL) now RETRY the real NIC cancel with the pinned token instead of short-circuiting; SESSION_EXPIRED only after a SECOND NIC rejection and now carries the raw NIC body (no more responsePayload=NULL). Dispatch (IRN_GENERATE) short-circuit kept (duplicate-IRN safety). Resolved 2 stranded invoices (INV-MPFCFGZWUGV, INV-MPFCFGNAOBZ) — IRNs cancelled at NIC, pending actions closed. 484/484 API tests pass (+3 new WI-090 guard tests in gst-token-expiry.test.ts). 0 cancel_failed invoices remain. Bug #26. | Phase 1 Navigation Smoke Test (0/55) or Phase 2 E2E by module |
 

@@ -336,9 +336,10 @@ export interface ApiCallContext {
  * wraps this and writes a `gst_api_logs` row on success AND failure
  * (Anti-pattern #11).
  *
- * The `context` parameter is accepted but unused here — it's only present so
- * call sites that already pass it for the logged path keep typechecking when
- * they accidentally hit this function directly.
+ * WI-090: `context.apiType` is now read to distinguish CANCEL calls from
+ * dispatch (GENERATE). The same-token guard below short-circuits only for
+ * non-cancel calls; cancel calls always retry the real NIC call (see the
+ * comment on the guard).
  */
 export async function apiCall<T = any>(
   distributorId: string | null,
@@ -346,7 +347,7 @@ export async function apiCall<T = any>(
   path: string,
   body?: any,
   scope: 'einvoice' | 'ewaybill' = 'einvoice',
-  _context?: ApiCallContext
+  context?: ApiCallContext
 ): Promise<T> {
   const creds = await getCredentials(distributorId, scope);
   if (!creds) throw new GstError('GST credentials not configured', 'NO_CREDENTIALS');
@@ -411,26 +412,52 @@ export async function apiCall<T = any>(
 
     // Handle token expiry - retry once with a fresh token.
     //
-    // Guard: if WhiteBooks returns the SAME token on re-auth, retrying is
-    // pointless — NIC already rejected that exact string and will do so
-    // again. WhiteBooks sandbox sometimes caches a stale NIC session and
-    // returns the same token string repeatedly even when the NIC session
-    // has been invalidated. Detect this by comparing before and after, and
-    // surface SESSION_EXPIRED with an actionable message rather than burning
-    // a useless NIC call.
+    // WI-090: WhiteBooks pins ONE auth token per session window and returns
+    // that SAME string on every re-auth — even when the NIC session is
+    // perfectly healthy. Proven live by scripts/probe-nic-session.ts:
+    // immediate AND 60s-delayed re-auth both returned the identical token,
+    // and GSTNDETAILS + a direct IRN CANCEL both succeeded with it. So
+    // "newToken === token" does NOT mean the NIC session is dead — it's just
+    // WhiteBooks' normal token-pinning behaviour. The old guard treated the
+    // two as equivalent and short-circuited EVERY 1004/1005 to SESSION_EXPIRED.
+    //
+    //   - For DISPATCH (IRN_GENERATE) we KEEP the conservative short-circuit:
+    //     re-issuing GENERATE with a token NIC just rejected risks a duplicate
+    //     IRN, and dispatch bounces the order back to pending_dispatch cleanly
+    //     anyway (bug #14 — the "1005 looped forever" fix).
+    //
+    //   - For CANCEL (IRN_CANCEL) we MUST NOT short-circuit. Cancel is a single,
+    //     targeted, idempotent-ish op (re-cancelling an already-cancelled IRN
+    //     returns a benign error, never corruption). The old guard threw
+    //     SESSION_EXPIRED *before sending the cancel to NIC*, stranding the IRN
+    //     live at NIC with responsePayload=NULL in gst_api_logs (WI-089
+    //     forensics). Instead we always retry the cancel against NIC with the
+    //     pinned token: it succeeds whenever the einvoice session is healthy
+    //     (the common case — the outage is intermittent and self-heals), and
+    //     when NIC genuinely rejects it again we surface the REAL NIC response
+    //     body so the failure is diagnosable (no more NULL payload).
     if (errorCode === '1004' || errorCode === '1005' || errorMessage.includes('token') || errorMessage.includes('Token')) {
       tokenCache.delete(getCacheKey(distributorId, scope));
       const newToken = await getAuthToken(distributorId, scope);
 
-      if (newToken === token && token !== 'no-token-needed') {
-        // WhiteBooks served the same stale token — NIC session not refreshed.
-        logger.warn('WhiteBooks returned same token after 1005 eviction — NIC session stale', {
-          distributorId, scope, errorCode,
+      const isCancel = context?.apiType === 'IRN_CANCEL' || context?.apiType === 'EWB_CANCEL';
+
+      if (newToken === token && token !== 'no-token-needed' && !isCancel) {
+        // Dispatch / non-cancel path: WhiteBooks served the same pinned token.
+        // Don't burn a duplicate GENERATE — surface SESSION_EXPIRED.
+        logger.warn('WhiteBooks returned same token after 1005 eviction — NIC session stale (non-cancel path)', {
+          distributorId, scope, errorCode, apiType: context?.apiType,
         });
         throw new GstError(
           'NIC session expired on WhiteBooks\' end. Please go to Settings → GST → Test Connection to re-validate, then retry dispatch.',
           'SESSION_EXPIRED',
         );
+      }
+
+      if (isCancel && newToken === token) {
+        logger.warn('Cancel hit 1004/1005; retrying CANCEL against NIC with pinned token (WI-090)', {
+          distributorId, scope, errorCode, apiType: context?.apiType,
+        });
       }
 
       if (newToken !== 'no-token-needed') headers['auth-token'] = newToken;
@@ -440,6 +467,32 @@ export async function apiCall<T = any>(
       if (retryOk) {
         return retryJson as T;
       }
+
+      // Retry also failed. Parse the retry error so the thrown GstError carries
+      // the REAL NIC response (responsePayload in gst_api_logs is no longer NULL).
+      let retryCode = '';
+      let retryMsg = retryJson.status_desc || retryJson.error?.message || errorMessage;
+      if (typeof retryJson.status_desc === 'string') {
+        try {
+          const errs = JSON.parse(retryJson.status_desc);
+          if (Array.isArray(errs) && errs.length > 0) {
+            retryCode = errs[0].ErrorCode || '';
+            retryMsg = errs.map((e: any) => `[${e.ErrorCode}] ${e.ErrorMessage}`).join('; ');
+          }
+        } catch { /* not JSON */ }
+      }
+      const stillTokenErr = retryCode === '1004' || retryCode === '1005' || /token/i.test(retryMsg);
+      if (isCancel && stillTokenErr) {
+        // NIC rejected the cancel TWICE with a token error → the einvoice NIC
+        // session really is in a dead window (WI-089). Surface SESSION_EXPIRED,
+        // but WITH the raw NIC body so a side-by-side diff is possible.
+        throw new GstError(
+          'NIC e-invoice session is temporarily down on WhiteBooks\' end — cancel was rejected after re-auth. Retry in a few minutes via the invoice\'s Retry Cancel action.',
+          'SESSION_EXPIRED',
+          retryJson,
+        );
+      }
+      throw new GstError(retryMsg, retryCode || 'API_ERROR', retryJson);
     }
 
     throw new GstError(errorMessage, errorCode || 'API_ERROR', json);
