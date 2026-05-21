@@ -398,4 +398,80 @@ Session 3 took over from Session 2's `recursing-goldwasser` worktree. Worktree: 
 
 ---
 
+## SECTION 12 — Sessions 4 + 5 Addendum (2026-05-20 / 2026-05-21)
+
+Sessions 4 and 5 ran as a single continuous Claude Code thread on the **master worktree** (no worktree). All WIs shipped directly to master.
+
+### Updated state at end of Session 5
+
+| Item | Value |
+|---|---|
+| Master SHA | **`6dcaf57`** — WI-087 vehicle workflow safety guards |
+| API test suite | **481 passed / 481 total** (Vitest integration suite) |
+| Typecheck | clean |
+| Live GST (dist-002) | ✅ B2B + B2C dispatch + cancel fully end-to-end verified |
+| Vehicle workflow guards | ✅ New (WI-087) |
+
+### WIs completed in Sessions 4 + 5
+
+| WI | Status | Summary |
+|---|---|---|
+| WI-074 | ✅ done | B2C EWB transactionType=2, URP Bill-To, depot shipToGSTIN — live B2C dispatch works |
+| WI-076 | ✅ done | B2B EWB omits redundant shipTo/dispatchFrom (NIC 616 fix) — live verified |
+| WI-077 | ✅ done | Billing list B2B/B2C pills + B2C CN/DN PDF skips IRN compliance block |
+| WI-078 | ✅ done (absorbed) | Cancel EWB/IRN at NIC + DVA release — absorbed into WI-081..WI-084 |
+| WI-079 | ✅ done | Inventory-role fixes (5 bugs) + finance customer view-only |
+| WI-080 | ✅ done | Consolidated inventory improvements (daily ledger, adjust stock, forecast, onboarding) |
+| WI-081 | ✅ done | Order cancellation wired to NIC cancel + CancelledStockEvent + vehicle return workflow |
+| WI-082 | ✅ done | Cancel modal context-aware + Mark as Returned vehicle status fix |
+| WI-083 | ✅ done | cancel_failed IRN status (schema→PDF→UI) + inventory empties fix + DVA ordering |
+| WI-083a2 | ✅ done | Live-dispatch gaps: trip sheet PDF widths, CSE on_vehicle, cancellation_return routing |
+| WI-084 | ✅ done | IRN retry corruption guard (irnPersisted flag) + cancel token refresh + trip sheet redesign |
+| WI-085 | ✅ done | Stale token retry-once + 55-min fallback + mobile Mark as Returned + dev test endpoints |
+| WI-086 | ✅ done | Single token eviction before EWB+IRN cancel sequence (NIC 1004 double-auth race) |
+| WI-087 | ✅ done | Vehicle workflow safety guards (markVehicleReturned + confirmDelivery) |
+
+### Key bugs found and fixed during live GST testing
+
+1. **IRN retry-corruption** (WI-084): processInvoiceGst outer catch was stamping `irnStatus=failed` even when IRN was already committed. `irnPersisted` flag tracks commit; catch only overwrites if flag is false.
+2. **Cancel SESSION_EXPIRED on every attempt** (WI-084/WI-086): WI-084 added `clearTokenCache` inside cancelIrn + cancelEwb; when cancelOrder calls both sequentially, two auth calls fire <700ms — NIC 1004 on second. WI-086 moved eviction to orchestrator (once before the sequence).
+3. **Stale TokenExpiry** (WI-085): WhiteBooks sandbox returns stale `TokenExpiry` on every auth call. WI-085 retry-once; if both stale, use 55-min fallback (WhiteBooks confirmed tokens valid 1h). SESSION_EXPIRED only from NIC 1004/1005 guard.
+4. **GST tenant isolation** (pre-session, WI-058): `lookupGstin` had no `distributorId` filter. Leaked dist-001 test credential to all callers including dist-002. Now requires distributorId; falls back to owner-distributor lookup. Anti-pattern #13.
+5. **EWB status NIC 616** (WI-076): `shipToGSTIN`/`dispatchFromGSTIN` fields now rejected by NIC under transactionType=1. Omitted from B2B branch. Anti-pattern #14.
+
+### Anti-patterns added to CLAUDE.md (sessions 4+5)
+
+- **#11**: External API call failures logged only as errors, never as request payloads — persist both success and failure with full outgoing request payload.
+- **#12**: EWB sub-step error overwriting committed IRN status — use `irnPersisted` flag pattern.
+- **#13**: Tenant-scoped Prisma queries without `distributorId` filter.
+- **#14**: Sending `shipToGSTIN`/`dispatchFromGSTIN` under `transactionType=1` — NIC 616.
+
+### Verification scripts (in `packages/api/scripts/`)
+
+| Script | Purpose |
+|---|---|
+| `test-full-b2b-b2c.ts` | Full B2B + B2C GST smoke (52 assertions). Stale-token inject, dispatch, cancel. |
+| `test-wi085-token-retry.ts` | WI-085 stale-token retry verification (29 assertions) |
+| `test-vehicle-workflow.ts` | WI-087 vehicle workflow guards (11 assertions) |
+| `test-cancel-irn-ewb.ts` | Cancel IRN + EWB live verification (20 assertions) |
+| `smoke-test-ewb.ts` | One-shot B2B+B2C dispatch smoke harness |
+
+Run all: `cd packages/api && .\node_modules\.bin\tsx scripts/<name>.ts`
+
+### Stale investigation scripts deleted (session 5 cleanup)
+
+All `_*.ts` scripts (underscore-prefixed one-off investigation/debug scripts from sessions 4+5) deleted:
+`_check-token-logs.ts`, `_irn-fix.ts`, `_wb-raw-test.ts`, `_check-cse.ts`, `_check-hyderabad.ts`, `_check-vehicle-state.ts`, `_debug-cancel.ts`, `_fix-hyderabad-cancel.ts`, `_gap-invest2.ts`, `_gap-investigation.ts`, `_list-customers.ts`, `_retry-cancel-irn.ts`
+
+### Next steps
+
+1. **Finance user test plan** (Phase 3): `finance@gasagency.com` / `Finance@123` on Bhargava Gas Agency. Access matrix: billing + collections + payments read; orders/inventory/customers/fleet/settings blocked. Salary access, reports, PDF download.
+2. **Inventory user test plan** (Phase 4): `inventory@gasagency.com` / `Inventory@123`. Daily summary, depot intake, manual adjustment, lock day, reconciliation, vehicle return flow.
+3. **Driver web check** (Phase 5): `raju@gasagency.com` — should redirect to driver tile view. Only /app/orders accessible.
+4. **Customer portal** (Phase 6): `royal@kitchen.com` — dashboard, orders, invoices, payments.
+5. **Tenant isolation** (Phase 7): cross-tenant entity ID access — expect 404 not data leak.
+6. **Open pending_actions cleanup**: ~300+ open HIGH actions from pre-WI-076 B2C/B2B failures. SQL sweep once all Phase 2 testing done.
+
+---
+
 **End of handoff.**

@@ -8,7 +8,7 @@
 
 **Last Updated:** 2026-05-20
 **Baseline Commit:** `a72b25e` (2026-03-28)
-**Latest Commits:** WI-087 (vehicle workflow guards — pending), `640d348` (WI-086), `5a14d26` (WI-085), `8aae463` (WI-084)
+**Latest Commits:** `6dcaf57` (WI-087 vehicle workflow guards), `640d348` (WI-086), `5a14d26` (WI-085), `8aae463` (WI-084)
 **Git Branch:** master
 
 ---

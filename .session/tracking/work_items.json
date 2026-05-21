@@ -747,10 +747,121 @@
       "title": "Cancel order — NIC EWB cancellation + DVA release not wired into cancelOrder()",
       "type": "bugfix",
       "priority": "P0",
-      "status": "parked",
+      "status": "done",
+      "completedAt": "2026-05-20",
       "blocksLaunch": true,
       "dependencies": ["WI-077"],
-      "description": "PARKED — critical to fix before go-live sign-off, but parked until webapp + mobile app testing is complete so the cancel flow can be scoped against real user paths rather than speculation.\n\nCurrent state of POST /api/orders/:id/cancel → orderService.cancelOrder() (audit done 2026-05-19, see Session 3 Area 3 investigation in HANDOFF-SESSION-2.md Section 11 / handoff document for details):\n\n  ✓ a) Endpoint exists at routes/orders.ts:408\n  ✗ b) Does NOT call cancelEwb at NIC — the EWB stays 'active' on the NIC portal even after order cancel\n  ✗ c) Does NOT call cancelIrn at NIC — same issue for the invoice IRN\n  ✓ d) Reverses inventory (createInventoryEvent eventType=cancellation) — only from pending_dispatch / pending_delivery though\n  ✗ e) Does NOT release the driver_vehicle_assignment / tripNumber — driver appears occupied with a cancelled order\n  ✓ f) Allowed-from gate at orderService.ts:1035: rejects if already delivered / modified_delivered / cancelled\n  ✓ g) Cancel buttons exist in web (admin + customer OrdersPage) and mobile (admin + customer)\n\nThree real gaps to close (b, c, e). Compliance drift is the top risk — a cancelled order may still have a live e-Way Bill that NIC believes is in transit. Also: if cancelOrder runs cancelIrn/cancelEwb, the existing per-invoice POST /api/invoices/:id/cancel-irn and POST /api/invoices/:id/cancel-ewb endpoints become redundant for the order-level path (keep them for manual ops); decision on whether to deprecate them belongs in the WI-078 spec.\n\nUnblock criteria: webapp + mobile app testing complete (Phase 2 + Phase 3 in TESTING_PROGRESS.md). At that point cancel scenarios will have concrete failure modes attached, and the wiring can be designed against them rather than against an inventory of theoretical bugs."
+      "description": "Absorbed into WI-081/082/083/084 during live GST dispatch testing on 2026-05-20. All three gaps closed: (b) cancelEwb now called from cancelOrder, (c) cancelIrn now called from cancelOrder, (e) DVA released on order cancel. cancel_failed IRN status added, retry buttons wired. Standalone cancel retry routes kept for manual ops. See WI-081 through WI-084 for implementation detail."
+    },
+    {
+      "id": "WI-079",
+      "title": "Inventory-role fixes from user testing (5 fixes) + finance customer view-only access",
+      "type": "bugfix",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": false,
+      "dependencies": ["WI-078"],
+      "description": "Five inventory-role bugs found during manual user testing: (1) analytics access blocked for inventory role; (2) assign-driver dropdown not populated for inventory; (3) edit/dispatch permissions missing; (4) -0 display on inventory table amounts; (5) inventory table column alignment. Plus follow-up: inventory role given customer read + operational access (sidebar + create/edit/supply/import routes). Finance role given view-only access to customers. Commits: 7180235, 4a24add, a65f6e0, 3525700, 4bacae7, 6a17494."
+    },
+    {
+      "id": "WI-080",
+      "title": "Consolidated inventory improvements (daily ledger, adjust stock, forecast, onboarding, config access)",
+      "type": "feature",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": false,
+      "dependencies": ["WI-079"],
+      "description": "Consolidated batch: distributor config access from inventory tab, customer-balances valuation section, daily ledger UI, adjust stock modal, forecast table, onboarding tab, settings visibility improvements. Amendment: empty cylinder price read from EmptyCylinderPrice table (not hardcoded). UI: inventory full-width layout guarantee + AI Demand Forecast header shortcut. Commits: 8558019, 9193136, 804ba8c, 73e0459, b31de9b."
+    },
+    {
+      "id": "WI-081",
+      "title": "Order cancellation + vehicle return workflow (initial implementation)",
+      "type": "feature",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": true,
+      "dependencies": ["WI-080"],
+      "description": "Initial implementation of order cancellation wired to NIC EWB + IRN cancel, CancelledStockEvent creation on cancel, vehicle return to depot workflow (markVehicleReturned, confirmVehicleReconciliation), inventory reconciliation flow. Commit: ff84bbd."
+    },
+    {
+      "id": "WI-082",
+      "title": "Cancel modal context-aware messaging + Mark as Returned vehicle status fix",
+      "type": "bugfix",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": false,
+      "dependencies": ["WI-081"],
+      "description": "Cancel modal now shows GST warning only for orders that have an invoice (not pending_driver_assignment). Mark as Returned button was never appearing because vehicle.status was never set to 'dispatched' on preflight success — fixed to set dispatched on preflightDispatch completion. Inventory tab spacing + undelivered stock tab date filter removed (no date filtering needed for reconciliation view). Commit: 55c0db7."
+    },
+    {
+      "id": "WI-083",
+      "title": "cancel_failed IRN status + inventory empties fix + DVA trip ordering + seed improvements",
+      "type": "bugfix",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": true,
+      "dependencies": ["WI-082"],
+      "description": "Four fixes: (1) cancel_failed IRN status — Prisma enum, invoice schema, service logic, PDF amber badge, retry button in UI. (2) computeSummaryForDate empties fix — initial_balance.emptiesChange was excluded, Opening Empties always showed 0. (3) DVA findFirst orderBy tripNumber DESC — stale low-trip row was winning when multiple DVAs exist. (4) Seed script improvements — Opening Fulls + Opening Empties now populated, Incoming Fulls = 0. Plus WI-083-amend: stale WhiteBooks session guard in getAuthToken (isExpiredOrExpiringSoon check). Commits: 1344406, 57e7c56."
+    },
+    {
+      "id": "WI-083a2",
+      "title": "Three live-dispatch gap fixes (trip sheet PDF, CSE on_vehicle, cancellation_return routing)",
+      "type": "bugfix",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": true,
+      "dependencies": ["WI-083"],
+      "description": "Three gaps discovered during live GST dispatch on dist-002: (1) Trip sheet PDF Order# column width 45→85pt to prevent text overflow into Customer column. (2) cancelOrder must create CancelledStockEvent with status=on_vehicle (not returned_to_depot directly) — fixed, added rule to anti-pattern list. (3) cancellation_return inventory events were routing to incomingFulls bucket instead of cancelledStockQty — Cancelled column was always 0, Incoming was falsely +1. Auth fixes committed separately: d7aa5cf (55-min fallback), f61861e (1005 reachable), 0471a29 (same-token-on-retry SESSION_EXPIRED). Commit: a29b64d."
+    },
+    {
+      "id": "WI-084",
+      "title": "IRN retry corruption guard + cancel token refresh + trip sheet PDF redesign",
+      "type": "bugfix",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": true,
+      "dependencies": ["WI-083a2"],
+      "description": "Three critical fixes from live dispatch session: (1) IRN retry corruption guard — processInvoiceGst outer catch now checks invoice.irn before stamping irnStatus=failed; irnPersisted flag prevents overwriting committed IRN state. DB direct-patched INV-MPE5ZM628T4. (2) clearTokenCache() before cancelIrn + cancelEwb to fix SESSION_EXPIRED on every cancel attempt (tokens from dispatch session were cached stale). (3) Full professional trip sheet PDF redesign — branded header, PRIMARY divider, 2-col info block, dark table headers, zebra rows, drawBox border, ellipsis on all cells, col widths Order#=90/Customer=115/Address=105/EWB=85/Items=55/Value=65. Anti-patterns #11 and #12 documented. Commit: 8aae463."
+    },
+    {
+      "id": "WI-085",
+      "title": "Stale token retry-once + 55-min fallback + mobile Mark as Returned + dev test endpoints",
+      "type": "bugfix",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": true,
+      "dependencies": ["WI-084"],
+      "description": "Three parts: (1) getAuthToken retry-once on stale TokenExpiry — WhiteBooks sandbox returns stale TokenExpiry on every auth call; retry once; if both stale use 55-min fallback (WhiteBooks support confirmed sandbox tokens valid 1h regardless of TokenExpiry field). SESSION_EXPIRED only from NIC 1004/1005. (2) Mobile trip.tsx: Mark as Returned button wired to POST /delivery/driver/vehicle-returned with vehicleId confirmation alert, shown only for loaded_and_dispatched status. (3) Dev-only test endpoints: POST /test/inject-stale-token + GET /test/token-cache-state for integration test support. Live verification: test-wi085-token-retry.ts 29/29 PASS. Commit: 5a14d26."
+    },
+    {
+      "id": "WI-086",
+      "title": "Single token eviction before EWB+IRN cancel sequence",
+      "type": "bugfix",
+      "priority": "P0",
+      "status": "done",
+      "completedAt": "2026-05-20",
+      "blocksLaunch": true,
+      "dependencies": ["WI-085"],
+      "description": "WI-084 added clearTokenCache inside both cancelEwb and cancelIrn. When cancelOrder calls them in sequence, two auth calls fire <700ms apart — NIC rejects the second token with 1004 SESSION_EXPIRED. Fix: clearTokenCache moved to cancelOrder orchestrator (once before the whole EWB+IRN sequence); removed from inside individual cancel functions. Standalone retry routes (POST /invoices/:id/cancel-irn and POST /invoices/:id/cancel-ewb) handle their own eviction. Anti-pattern #12 addendum. DB direct-patched INV-MPE9HNM5F5M (cancel_failed → success → re-cancelled). Full B2B+B2C smoke: 52/52 PASS. Commit: 640d348."
+    },
+    {
+      "id": "WI-087",
+      "title": "Vehicle workflow safety guards (markVehicleReturned + confirmDelivery)",
+      "type": "bugfix",
+      "priority": "P1",
+      "status": "done",
+      "completedAt": "2026-05-21",
+      "blocksLaunch": false,
+      "dependencies": ["WI-086"],
+      "description": "Two safety guards: (1) markVehicleReturned now blocks with 409 if any pending_delivery orders exist — those have IRN/EWB committed at NIC; admin must cancel GST docs before returning vehicle. pending_dispatch orders are allowed (not yet dispatched, safe to reconcile). Route handler updated to return 409 (not 500) for the guard error. (2) confirmDelivery now blocks with 409 if vehicle.status=returned — once vehicle is back at depot, undelivered orders must go through Inventory > Vehicle Reconciliation, not be confirmed as delivered. Verification: test-vehicle-workflow.ts 11/11 PASS. Commit: 6dcaf57."
     }
   ]
 }
