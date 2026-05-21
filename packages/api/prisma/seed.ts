@@ -499,6 +499,68 @@ async function main() {
   console.log('WhiteBooks sandbox credentials seeded for GST distributor (einvoice + ewaybill)');
   } // end if (!sharmaSeeded) — Sharma customers + drivers + vehicles + credentials
 
+  // ─── Sharma (dist-002) sub-role users ─────────────────────────────────────
+  // Upserted outside the sharmaSeeded gate so they're created on any re-seed.
+  // Driver is linked to Kiran Reddy; Customer is linked to Bangalore Foods.
+  // Resolve linked IDs dynamically so this stays correct after a fresh seed.
+  const kiranReddy = await prisma.driver.findFirst({
+    where: { distributorId: gstDist.id, driverName: 'Kiran Reddy' },
+  });
+  const bangaloreFoods = await prisma.customer.findFirst({
+    where: { distributorId: gstDist.id, customerName: 'Bangalore Foods' },
+  });
+
+  const finance2Hash = await bcrypt.hash('Finance@123', 12);
+  await prisma.user.upsert({
+    where: { email: 'finance2@gasdist.com' },
+    update: {},
+    create: {
+      email: 'finance2@gasdist.com', passwordHash: finance2Hash,
+      firstName: 'Divya', lastName: 'Sharma', phone: '9876500011',
+      role: 'finance', status: 'active', provisioningStatus: 'active',
+      distributorId: gstDist.id, requiresPasswordReset: false,
+    },
+  });
+
+  const inventory2Hash = await bcrypt.hash('Inventory@123', 12);
+  await prisma.user.upsert({
+    where: { email: 'inventory2@gasdist.com' },
+    update: {},
+    create: {
+      email: 'inventory2@gasdist.com', passwordHash: inventory2Hash,
+      firstName: 'Suresh', lastName: 'Reddy', phone: '9876500012',
+      role: 'inventory', status: 'active', provisioningStatus: 'active',
+      distributorId: gstDist.id, requiresPasswordReset: false,
+    },
+  });
+
+  const driver2Hash = await bcrypt.hash('Driver@123', 12);
+  await prisma.user.upsert({
+    where: { email: 'driver2@gasdist.com' },
+    update: {},
+    create: {
+      email: 'driver2@gasdist.com', passwordHash: driver2Hash,
+      firstName: 'Kiran', lastName: 'Reddy', phone: '9876500010',
+      role: 'driver', status: 'active', provisioningStatus: 'active',
+      distributorId: gstDist.id, requiresPasswordReset: false,
+    },
+  });
+
+  const customer2Hash = await bcrypt.hash('Customer@123', 12);
+  await prisma.user.upsert({
+    where: { email: 'customer2@gasdist.com' },
+    update: {},
+    create: {
+      email: 'customer2@gasdist.com', passwordHash: customer2Hash,
+      firstName: 'Bangalore', lastName: 'Foods', phone: '9876500001',
+      role: 'customer', status: 'active', provisioningStatus: 'active',
+      distributorId: gstDist.id,
+      customerId: bangaloreFoods?.id ?? null,
+      requiresPasswordReset: false,
+    },
+  });
+  console.log('Sharma (dist-002) sub-role users seeded: finance2, inventory2, driver2, customer2');
+
   // ═══════════════════════════════════════════════════════════════════════════
   // TRANSACTIONAL TEST DATA FOR BHARGAVA GAS AGENCY (dist-001)
   // ═══════════════════════════════════════════════════════════════════════════
