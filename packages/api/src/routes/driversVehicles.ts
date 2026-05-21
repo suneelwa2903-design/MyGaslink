@@ -8,6 +8,7 @@ import { prisma } from '../lib/prisma.js';
 import * as driverService from '../services/driverService.js';
 import * as vehicleService from '../services/vehicleService.js';
 import { mapDriver, mapDrivers, mapVehicle, mapVehicles, mapAssignment, mapAssignments, mapOrders } from '../utils/mappers.js';
+import { startOfUtcDay } from '../utils/dateOnly.js';
 import { z } from 'zod';
 
 /**
@@ -222,8 +223,9 @@ driverRouter.get('/me/assignment',
 
       // Date math: use start-of-today as the date column is `@db.Date`.
       // Prisma equality on a `Date` column matches by the calendar day.
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // @db.Date column → bound by UTC calendar day, not local midnight
+      // (utils/dateOnly.ts). setHours(0,0,0,0) was off-by-one on this IST server.
+      const today = startOfUtcDay();
 
       const assignment = await prisma.driverVehicleAssignment.findFirst({
         where: { driverId: driver.id, distributorId, assignmentDate: today },
@@ -282,8 +284,9 @@ driverRouter.get('/me/trip-stock',
       const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
       if (!driver) return sendSuccess(res, { items: [] });
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // @db.Date column → bound by UTC calendar day, not local midnight
+      // (utils/dateOnly.ts). setHours(0,0,0,0) was off-by-one on this IST server.
+      const today = startOfUtcDay();
 
       const orders = await prisma.order.findMany({
         where: {
@@ -365,8 +368,9 @@ driverRouter.get('/me/trip-ewbs',
         return sendSuccess(res, { items: [] });
       }
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // @db.Date column → bound by UTC calendar day, not local midnight
+      // (utils/dateOnly.ts). setHours(0,0,0,0) was off-by-one on this IST server.
+      const today = startOfUtcDay();
 
       // WI-063 follow-up — current-trip scoping. Mirrors the WI-061 fix
       // in tripSheetPdfService: preflightDispatch reuses the same DVA
@@ -458,8 +462,9 @@ driverRouter.get('/me/trip-sheet-pdf',
         return sendNotFound(res, 'Trip sheet');
       }
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // @db.Date column → bound by UTC calendar day, not local midnight
+      // (utils/dateOnly.ts). setHours(0,0,0,0) was off-by-one on this IST server.
+      const today = startOfUtcDay();
       const assignment = await prisma.driverVehicleAssignment.findFirst({
         where: { driverId: driver.id, distributorId, assignmentDate: today },
         select: { id: true },
@@ -506,8 +511,9 @@ driverRouter.get('/me/vehicle-inventory',
       const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
       if (!driver) return sendSuccess(res, []);
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // @db.Date column → bound by UTC calendar day, not local midnight
+      // (utils/dateOnly.ts). setHours(0,0,0,0) was off-by-one on this IST server.
+      const today = startOfUtcDay();
       const assignment = await prisma.driverVehicleAssignment.findFirst({
         where: { driverId: driver.id, assignmentDate: today, status: { not: 'cancelled' } },
         orderBy: { createdAt: 'desc' },
@@ -531,8 +537,9 @@ driverRouter.get('/me/cancelled-stock',
       const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
       if (!driver) return sendSuccess(res, []);
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // @db.Date column → bound by UTC calendar day, not local midnight
+      // (utils/dateOnly.ts). setHours(0,0,0,0) was off-by-one on this IST server.
+      const today = startOfUtcDay();
       const assignment = await prisma.driverVehicleAssignment.findFirst({
         where: { driverId: driver.id, assignmentDate: today, status: { not: 'cancelled' } },
         orderBy: { createdAt: 'desc' },

@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { getSeedData, generateToken } from './helpers.js';
+import { startOfUtcDay } from '../utils/dateOnly.js';
 import type { Express } from 'express';
 import type { UserRole } from '@gaslink/shared';
 
@@ -179,8 +180,10 @@ beforeAll(async () => {
   // + driverId filter works deterministically. We grab the first 2 seeded
   // vehicles to pair with the drivers; their IDs don't matter for the
   // tests as long as they exist and belong to dist-001.
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Must use startOfUtcDay() to match the endpoints' @db.Date query (the
+  // /drivers/me/* routes were fixed to bound by UTC calendar day). The old
+  // setHours(0,0,0,0) seeded the PREVIOUS UTC day on this IST server.
+  const today = startOfUtcDay();
 
   const dvaA = await prisma.driverVehicleAssignment.create({
     data: {

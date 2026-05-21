@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
+import { utcDayRange } from '../utils/dateOnly.js';
 
 export async function listDrivers(distributorId: string, status?: string) {
   const where: Prisma.DriverWhereInput = { distributorId, deletedAt: null };
@@ -9,10 +10,13 @@ export async function listDrivers(distributorId: string, status?: string) {
   // surfaced vehicle reflects today's confirmed driver-vehicle mapping
   // (mapDriver flattens this to driver.vehicleNumber). The assign-driver
   // dropdown filters on this to exclude drivers with no vehicle today.
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const startOfTomorrow = new Date(startOfToday);
-  startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+  //
+  // assignment_date is a `@db.Date` column — must bound the range by the
+  // UTC calendar day (see utils/dateOnly.ts). The old setHours(0,0,0,0)
+  // produced LOCAL midnight, which on this IST server truncated to the
+  // PREVIOUS UTC day, so the Drivers tab showed yesterday's mapping while
+  // the Vehicle Mapping tab (UTC date) showed today's.
+  const { gte: startOfToday, lt: startOfTomorrow } = utcDayRange();
 
   return prisma.driver.findMany({
     where,
