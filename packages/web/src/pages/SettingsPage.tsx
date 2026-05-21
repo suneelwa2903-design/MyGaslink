@@ -297,6 +297,18 @@ function GstCredentialCard({
     onError: (err) => toast.error(getErrorMessage(err)),
   });
 
+  // WI-089: the persisted `row.isValid` flag is stamped true on every
+  // successful WhiteBooks *auth* (getAuthToken), independent of NIC health.
+  // It must NOT be flipped on a transient NIC outage — gstinLookup and the
+  // dispatch credential-resolution path both require isValid:true, and the
+  // 2026-05-21 probe proved the NIC GSTNDETAILS session can be dead for 10+
+  // minutes while auth + IRN GENERATE stay perfectly healthy. So we keep
+  // isValid as "credentials authenticate" and instead make the badge stop
+  // implying end-to-end health: when an in-session Test Connection shows the
+  // NIC hop down, downgrade the badge to amber so it agrees with the red ×
+  // row below instead of showing a misleading green "Valid".
+  const nicDown = !!testResult && testResult.authenticated && !testResult.nicReachable;
+
   return (
     <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -312,11 +324,17 @@ function GstCredentialCard({
                 <span
                   className={cn(
                     'inline-flex items-center gap-1 text-xs',
-                    row.isValid ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400',
+                    row.isValid && !nicDown
+                      ? 'text-green-600 dark:text-green-400'
+                      : 'text-amber-600 dark:text-amber-400',
                   )}
                 >
                   <span className="inline-block h-2 w-2 rounded-full bg-current" />
-                  {row.isValid ? 'Valid' : 'Not validated'}
+                  {!row.isValid
+                    ? 'Not validated'
+                    : nicDown
+                      ? 'Credentials valid · NIC unreachable'
+                      : 'Credentials valid'}
                 </span>
                 {row.lastValidated && (
                   <span className="text-surface-400">

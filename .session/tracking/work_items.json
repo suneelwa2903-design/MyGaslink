@@ -862,6 +862,17 @@
       "blocksLaunch": false,
       "dependencies": ["WI-086"],
       "description": "Two safety guards: (1) markVehicleReturned now blocks with 409 if any pending_delivery orders exist — those have IRN/EWB committed at NIC; admin must cancel GST docs before returning vehicle. pending_dispatch orders are allowed (not yet dispatched, safe to reconcile). Route handler updated to return 409 (not 500) for the guard error. (2) confirmDelivery now blocks with 409 if vehicle.status=returned — once vehicle is back at depot, undelivered orders must go through Inventory > Vehicle Reconciliation, not be confirmed as delivered. Verification: test-vehicle-workflow.ts 11/11 PASS. Commit: 6dcaf57."
+    },
+    {
+      "id": "WI-089",
+      "title": "Auto-refresh NIC session on SESSION_EXPIRED during dispatch",
+      "type": "bugfix",
+      "priority": "P1",
+      "status": "wont_fix",
+      "completedAt": "2026-05-21",
+      "blocksLaunch": false,
+      "dependencies": ["WI-087"],
+      "description": "PROPOSED: on SESSION_EXPIRED, auto-call the Test Connection refresh flow (WhiteBooks /authenticate) then retry the API call once — self-healing dispatch, same pattern as WI-085 token retry. Also wrap lookupGstin in apiCall. WONT_FIX — premise disproved by live sandbox probe (scripts/probe-nic-session.ts, read-only, 2026-05-21). Findings: (1) WhiteBooks sandbox PINS one auth token per session window — immediate AND 60s-delayed re-auth both return the IDENTICAL token string (len=25, same first/last 6 chars, same TokenExpiry). So apiCall's existing 'evict cache → re-auth → get fresh token → retry' strategy has no fresh token to get; its `newToken === token` guard fires every time, surfacing SESSION_EXPIRED with responsePayload=NULL (short-circuits before the retry NIC call). (2) Test Connection (settings.ts:202-214) does the SAME clearTokenCache + getAuthToken as apiCall's retry — it has NO special power to refresh WhiteBooks' NIC session; it does not force a WhiteBooks↔NIC re-handshake. The reason clicking it 'works' is ELAPSED TIME, not the click. (3) The failure is a transient WhiteBooks↔NIC einvoice-session outage that self-heals upstream on its own — observed dead ≥13.5 min (gst_api_logs SESSION_EXPIRED at 10:24:08, 10:27:53, 10:37:34) then the SAME pinned token returned 'GSTR request succeeds' minutes later. No client action shortens it. A synchronous in-request retry (even 60s) cannot bridge a 10+ min upstream outage. (4) Preflight dispatch never calls GSTNDETAILS (uses GENERATE + EWB); the error only affects the Settings health card and customer GSTIN auto-fill, not the IRN flow. The token-pinning quirk may be sandbox-only (WI-085 notes the stale-expiry quirk is sandbox-specific) — re-evaluate against a LIVE-mode tenant before any production work. SHIPPED INSTEAD: frontend-only honest-badge fix in SettingsPage.tsx — 'Valid' badge (driven by row.isValid, stamped true on auth success regardless of NIC health) relabeled to 'Credentials valid' and downgraded to amber 'Credentials valid · NIC unreachable' when an in-session Test Connection shows the NIC hop down. isValid left untouched (load-bearing for gstinLookup + dispatch credential selection; flipping it on a NIC blip would wrongly disable a working credential). Diagnostic scripts kept: scripts/probe-nic-session.ts, scripts/probe-cancel-logs.ts."
     }
   ]
 }
