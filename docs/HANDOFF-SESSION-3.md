@@ -10,7 +10,8 @@
 
 | | |
 |---|---|
-| **Master SHA** | `07b76193d2fde7ec21631386affea2428760383b` (`07b7619`) |
+| **Code baseline SHA** | `07b7619` (`07b76193d2fde7ec21631386affea2428760383b`) — last CODE commit (WI-090 pt2). |
+| **HEAD when this doc shipped** | `5459ed1` = `07b7619` + this docs-only handoff commit. **Source of truth = `git rev-parse HEAD`.** Docs/handoff commits after `07b7619` change NO code and do NOT affect the 484/484 result — only a `fix(`/`feat(` commit after `07b7619` in `git log --oneline` would. So "HEAD is `07b7619` or a later docs-only SHA" is the expected state. |
 | **Branch** | `master` (all work lands directly on master; no feature branches; remote not pushed) |
 | **API tests** | **484 / 484 passing** (37 files) — `cd packages/api && pnpm test` |
 | **Web typecheck** | clean (2 pre-existing `afterAll` import errors in `credit-debit-note-amount.test.ts` + `invoice-list-badges-cn-pdf.test.ts` — harmless, tests pass) |
@@ -395,10 +396,13 @@ Stored in DB `gst_credentials` (scope `einvoice` + `ewaybill`); also visible in 
 # 0. cd to repo
 cd C:\Projects\Re-New_Gaslink
 
-# 1. Confirm you're on the expected commit
-git rev-parse HEAD
-#   EXPECTED: 07b76193d2fde7ec21631386affea2428760383b
+# 1. Confirm the code baseline
 git log --oneline -3
+#   EXPECTED: the last `fix(`/`feat(` commit is 07b7619 (WI-090 pt2).
+#   HEAD itself may be a LATER docs-only commit (e.g. 5459ed1 = the handoff doc,
+#   or a subsequent handoff edit). That's fine — docs commits change NO code and
+#   do NOT affect 484/484. Only a fix/feat commit AFTER 07b7619 means code moved.
+git rev-parse HEAD      # source of truth for the live SHA
 git status --short      # should be clean
 
 # 2. Confirm tests are green (THE baseline)
@@ -437,4 +441,4 @@ Then move to Phase 2 E2E modules (`docs/E2E_Testing_Guide.xlsx`, 272 cases). Mob
 
 ---
 
-*End of handoff. SHA `07b7619` · 484/484 tests · master · 2026-05-21.*
+*End of handoff. Code baseline `07b7619` (HEAD = a later docs-only commit; trust `git rev-parse HEAD`) · 484/484 tests · master · 2026-05-21.*
