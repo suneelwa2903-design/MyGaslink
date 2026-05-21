@@ -73,6 +73,7 @@ export default function OrdersPage() {
   const canAssignDrivers =
     role === UserRole.DISTRIBUTOR_ADMIN ||
     role === UserRole.SUPER_ADMIN ||
+    role === UserRole.FINANCE ||
     role === UserRole.INVENTORY;
   // Read ?tab= so other pages (e.g. the AssignmentModal empty state)
   // can deep-link straight into the Driver Assignment tab.
