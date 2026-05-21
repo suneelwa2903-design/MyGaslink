@@ -8,6 +8,10 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
   return {
     ...original,
     apiCall: vi.fn(),
+    // WI-091: pre-dispatch NIC health probe seam — default "alive" so it never
+    // disturbs the ordered IRN/EWB apiCall mocks. Override per-test to simulate
+    // a dead NIC window.
+    pingEinvoiceSession: vi.fn(async () => undefined),
     getCredentials: vi.fn(async () => ({
       clientId: 'EINS-test',
       clientSecret: 'EINS-test-secret',
@@ -397,6 +401,87 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       expect(String(path)).toContain('/ewaybillapi/v1.03/ewayapi/genewaybill');
       const order = await prisma.order.findUniqueOrThrow({ where: { id: orders[0].id } });
       expect(order.status).toBe('pending_delivery');
+    } finally {
+      await clearPreflightArtifacts(orders.map((o) => o.id));
+    }
+  });
+
+  it('WI-091: B2C EWB status_cd=1 with NO ewayBillNo → ewbStatus=failed + pending action, dispatch NOT blocked', async () => {
+    const ctx = await getSharmaContext();
+    if (!ctx.b2cCust) return;
+    const orders = await seedOrders({
+      customerId: ctx.b2cCust.id, count: 1,
+      cylinderTypeId: ctx.cyl.id, qty: 2,
+      driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
+    });
+    try {
+      // NIC's degenerate envelope: status_cd=1 but no data block / no ewayBillNo
+      // (the live Bangalore Foods "Sucess" case). The phantom-active guard must
+      // mark the EWB failed + raise a pending action, WITHOUT blocking dispatch.
+      apiCallMock.mockResolvedValueOnce({ status_cd: '1', status_desc: 'Sucess' });
+      const result = await preflightDispatch({
+        distributorId: 'dist-002',
+        driverId: ctx.driver.id,
+        assignmentDate: today(),
+        userId: 'test-user',
+      });
+
+      // Dispatch NOT blocked — order succeeds and stays out for delivery.
+      expect(result.summary).toMatchObject({ total: 1, succeeded: 1, failed: 0 });
+      expect(result.results[0].mode).toBe('B2C');
+      expect(result.results[0].success).toBe(true);
+      expect(result.results[0].ewbNo == null).toBe(true);
+
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: orders[0].id } });
+      expect(order.status).toBe('pending_delivery'); // NOT reverted to pending_dispatch
+
+      const inv = await prisma.invoice.findFirstOrThrow({ where: { orderId: orders[0].id } });
+      expect(inv.ewbStatus).toBe('failed');
+
+      const doc = await prisma.gstDocument.findFirstOrThrow({ where: { invoiceId: inv.id, isLatest: true } });
+      expect(doc.ewbNo).toBeNull();
+
+      const pa = await prisma.pendingAction.findFirst({
+        where: { entityId: inv.id, actionType: 'EWB_GENERATION' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(pa).not.toBeNull();
+
+      // The health-probe seam was consulted but did NOT consume the EWB apiCall
+      // mock — calls[0] is still the genewaybill call (proves FIX 3 isolation).
+      expect(apiCallMock).toHaveBeenCalledTimes(1);
+      const [, , path] = apiCallMock.mock.calls[0];
+      expect(String(path)).toContain('/ewaybillapi/v1.03/ewayapi/genewaybill');
+    } finally {
+      await clearPreflightArtifacts(orders.map((o) => o.id));
+    }
+  });
+
+  it('WI-091: pre-dispatch NIC health probe failure → PreflightError NIC_SESSION_DOWN (503), no orders touched', async () => {
+    const ctx = await getSharmaContext();
+    const orders = await seedOrders({
+      customerId: ctx.b2bCust.id, count: 1,
+      cylinderTypeId: ctx.cyl.id, qty: 5,
+      driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
+    });
+    try {
+      // Simulate a dead NIC e-invoice window: the probe seam rejects.
+      (whitebooksClient.pingEinvoiceSession as any).mockRejectedValueOnce(
+        new whitebooksClient.GstError('NIC session expired', 'SESSION_EXPIRED'),
+      );
+      await expect(
+        preflightDispatch({
+          distributorId: 'dist-002',
+          driverId: ctx.driver.id,
+          assignmentDate: today(),
+          userId: 'test-user',
+        }),
+      ).rejects.toMatchObject({ code: 'NIC_SESSION_DOWN', statusCode: 503 });
+
+      // Fail-fast BEFORE the order loop: no IRN/EWB call made, order untouched.
+      expect(apiCallMock).not.toHaveBeenCalled();
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: orders[0].id } });
+      expect(order.status).toBe('pending_dispatch');
     } finally {
       await clearPreflightArtifacts(orders.map((o) => o.id));
     }

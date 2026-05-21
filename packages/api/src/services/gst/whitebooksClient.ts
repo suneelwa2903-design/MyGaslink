@@ -451,6 +451,7 @@ export async function apiCall<T = any>(
         throw new GstError(
           'NIC session expired on WhiteBooks\' end. Please go to Settings → GST → Test Connection to re-validate, then retry dispatch.',
           'SESSION_EXPIRED',
+          json,  // WI-091: persist the original NIC 1004/1005 body to gst_api_logs (was responsePayload=null)
         );
       }
 
@@ -499,6 +500,29 @@ export async function apiCall<T = any>(
   }
 
   return json as T;
+}
+
+/**
+ * WI-091 — read-only NIC e-invoice session health check.
+ *
+ * Does ONE GSTNDETAILS lookup on the given GSTIN. Resolves if NIC accepts the
+ * (pinned) token; throws GstError (SESSION_EXPIRED / 1005) when the einvoice
+ * session is in a dead window. The pre-dispatch probe (gstPreflightService)
+ * uses this to fail fast before the order loop. Routed as its OWN exported
+ * function (not an inline apiCall in the preflight service) so the integration
+ * tests can mock this single seam without disturbing their ordered IRN/EWB
+ * apiCall mock chains. Goes through apiCall, so a success also warms the
+ * einvoice token cache for the dispatch loop that follows.
+ */
+export async function pingEinvoiceSession(distributorId: string | null, gstin: string): Promise<void> {
+  const creds = await getCredentials(distributorId, 'einvoice');
+  const email = encodeURIComponent(creds?.email || 'info@mygaslink.com');
+  await apiCall<any>(
+    distributorId, 'GET',
+    `/einvoice/type/GSTNDETAILS/version/V1_03?param1=${gstin}&email=${email}`,
+    undefined, 'einvoice',
+    { apiType: 'NIC_HEALTH_PROBE' },
+  );
 }
 
 /**

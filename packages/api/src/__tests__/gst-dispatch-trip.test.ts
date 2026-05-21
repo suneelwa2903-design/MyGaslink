@@ -29,6 +29,7 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
   return {
     ...original,
     apiCall: vi.fn(),
+    pingEinvoiceSession: vi.fn(async () => undefined), // WI-091 health-probe seam (default alive)
     getCredentials: vi.fn(async () => ({
       clientId: 'EINS-test',
       clientSecret: 'EINS-test-secret',

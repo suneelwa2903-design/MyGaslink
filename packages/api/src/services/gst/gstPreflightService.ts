@@ -20,7 +20,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
-import { getCredentials } from './whitebooksClient.js';
+import { getCredentials, pingEinvoiceSession } from './whitebooksClient.js';
 import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 import {
@@ -65,6 +65,36 @@ export class PreflightError extends Error {
     super(message);
     this.code = code;
     this.statusCode = statusCode;
+  }
+}
+
+/**
+ * WI-091 — pre-dispatch NIC e-invoice health probe, run BEFORE the per-order
+ * loop. The WhiteBooks↔NIC sandbox session flickers alive/dead (1005 "Invalid
+ * Token" windows that self-heal). Without this gate, every order in the batch
+ * independently hits the dead session and surfaces a confusing per-order
+ * SESSION_EXPIRED, leaving a half-dispatched trip.
+ *   - alive → returns (the underlying GSTNDETAILS call also warms the einvoice
+ *             token cache for the loop that follows)
+ *   - dead  → throws PreflightError(NIC_SESSION_DOWN, 503): nothing is
+ *             committed, the client gets ONE clear "retry shortly" message.
+ * Delegates to whitebooksClient.pingEinvoiceSession — a single seam the
+ * integration tests mock, so the probe runs in tests WITHOUT consuming the
+ * ordered IRN/EWB apiCall mocks. Only meaningful for GST-enabled tenants;
+ * callers gate on gstMode.
+ */
+async function probeNicEinvoiceSession(distributorId: string, gstin: string): Promise<void> {
+  try {
+    await pingEinvoiceSession(distributorId, gstin);
+  } catch (err: any) {
+    logger.warn('Pre-dispatch NIC health probe failed — aborting batch before any IRN/EWB call', {
+      distributorId, code: err?.code, msg: err?.message,
+    });
+    throw new PreflightError(
+      'NIC e-invoice session is temporarily unavailable (upstream). No orders were dispatched — please retry in a few minutes.',
+      'NIC_SESSION_DOWN',
+      503,
+    );
   }
 }
 
@@ -233,6 +263,8 @@ export async function preflightDispatch(params: {
         distributorId, err: (warmErr as Error).message,
       });
     }
+    // WI-091: fail fast on a dead NIC window — before any order is touched.
+    await probeNicEinvoiceSession(distributorId, distributor.gstin!);
   }
 
   const results: PreflightResult[] = [];
@@ -436,6 +468,8 @@ export async function preflightAddToTrip(params: {
     const { getAuthToken } = await import('./whitebooksClient.js');
     try { await getAuthToken(distributorId, 'einvoice'); } catch { /* per-call retry */ }
     try { await getAuthToken(distributorId, 'ewaybill'); } catch { /* per-call retry */ }
+    // WI-091: fail fast on a dead NIC window — before any order is touched.
+    await probeNicEinvoiceSession(distributorId, distributor.gstin!);
   }
 
   const results: PreflightResult[] = [];
@@ -1115,16 +1149,25 @@ async function runB2cPreflight(params: {
     });
 
     const parsed = parseEwbResponse(ewbResponse);
+    // WI-091 phantom-active guard (dispatch path). NIC sandbox sometimes
+    // returns status_cd=1 with NO ewayBillNo (bare "Sucess"). Mark such a
+    // number-less success as FAILED + raise a pending action — but DO NOT
+    // block the dispatch: the cylinder is on the vehicle, so the order still
+    // moves to pending_delivery and the trip proceeds. The post-delivery
+    // path (gstService.processInvoiceGst) already has this guard; this brings
+    // the preflight/dispatch path in line. Live bug: Bangalore Foods
+    // INV-MPFK6QBLCD5 (2026-05-21) — green EWB badge, ewb_no=NULL.
+    const ewbOk = !!parsed.ewbNo;
 
     await prisma.invoice.update({
       where: { id: invoiceId },
-      data: { ewbStatus: 'active' },
+      data: { ewbStatus: ewbOk ? 'active' : 'failed' },
     });
     await upsertLatestGstDocument({
       invoiceId, orderId, distributorId,
       gstDocNo: invoice.invoiceNumber,
       data: {
-        ewbStatus: 'active',
+        ewbStatus: ewbOk ? 'active' : 'failed',
         ewbNo: parsed.ewbNo,
         ewbDate: parsed.validFromDate,
         ewbValidTill: parsed.validToDate,
@@ -1133,9 +1176,22 @@ async function runB2cPreflight(params: {
       },
     });
 
+    if (!ewbOk) {
+      logger.warn('B2C EWB: NIC returned status_cd=1 with no ewayBillNo — marked failed (phantom-active guard); dispatch continues', {
+        orderId, invoiceId, statusDesc: ewbResponse?.status_desc,
+      });
+      await createPendingAction(
+        distributorId, invoiceId, 'EWB_GENERATION',
+        `Order ${order.orderNumber}: NIC returned success but no e-Way Bill number. Cylinder dispatched; retry EWB generation from Billing once NIC is healthy.`,
+        'high',
+      );
+    }
+
+    // Dispatch is NOT blocked by a missing EWB — the order moves to
+    // pending_delivery regardless (vehicle loaded, driver must deliver).
     await transitionToPendingDelivery(
       orderId, userId,
-      `B2C preflight succeeded: EWB=${parsed.ewbNo}`,
+      ewbOk ? `B2C preflight succeeded: EWB=${parsed.ewbNo}` : 'B2C dispatched; EWB pending (no number returned by NIC)',
       tripNumber,
     );
 
