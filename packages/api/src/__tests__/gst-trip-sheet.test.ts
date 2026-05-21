@@ -164,6 +164,18 @@ async function cleanupOrders(ids: string[]) {
   await prisma.driverAssignment.deleteMany({ where: { orderId: { in: ids } } });
   await prisma.orderItem.deleteMany({ where: { orderId: { in: ids } } });
   await prisma.order.deleteMany({ where: { id: { in: ids } } });
+  // Reset vehicle status — preflight writes vehicle.status='dispatched' on success.
+  // Without this, the dev-DB vehicle stays 'dispatched' after every test run
+  // and the Fleet → Vehicles UI shows the wrong badge (anti-pattern #8 fix).
+  await prisma.vehicle.updateMany({
+    where: { distributorId: 'dist-002', status: { not: 'inactive' } },
+    data: { status: 'idle' },
+  });
+  // Restore TEST_DATE DVA to dispatch_ready for the next test case.
+  await prisma.driverVehicleAssignment.updateMany({
+    where: { distributorId: 'dist-002', assignmentDate: new Date(today()), isReconciled: false },
+    data: { status: 'dispatch_ready', tripSheetNo: null, tripSheetGeneratedAt: null },
+  });
 }
 
 describe('gstPreflightService — consolidated EWB (gencewb) on success', () => {

@@ -184,6 +184,21 @@ async function clearPreflightArtifacts(orderIds: string[]) {
   await prisma.driverAssignment.deleteMany({ where: { orderId: { in: orderIds } } });
   await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
   await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+  // Reset vehicle status — the preflight service writes vehicle.status='dispatched'
+  // on success. Without this reset, the vehicle stays 'dispatched' in the live
+  // dev DB after every test run, breaking Fleet → Vehicles UI (anti-pattern #8 fix).
+  // We reset all non-inactive dist-002 vehicles because the test grabs the first
+  // one by findFirstOrThrow and the preflight tags it.
+  await prisma.vehicle.updateMany({
+    where: { distributorId: 'dist-002', status: { not: 'inactive' } },
+    data: { status: 'idle' },
+  });
+  // Also restore the test DVA back to dispatch_ready so the NEXT test in the
+  // same run can preflight without re-seeding.
+  await prisma.driverVehicleAssignment.updateMany({
+    where: { distributorId: 'dist-002', assignmentDate: new Date(today()), isReconciled: false },
+    data: { status: 'dispatch_ready' },
+  });
 }
 
 async function getSharmaContext() {
@@ -1171,4 +1186,14 @@ describe('Audit + side-effects', () => {
 afterAll(async () => {
   // Cleanup any stray preflight artifacts from this test file.
   await prisma.gstApiLog.deleteMany({ where: { apiType: { startsWith: 'IRN_GENERATE' } } });
+  // Belt-and-braces: reset vehicle status in case a test failed mid-way
+  // and its clearPreflightArtifacts never ran.
+  await prisma.vehicle.updateMany({
+    where: { distributorId: 'dist-002', status: { not: 'inactive' } },
+    data: { status: 'idle' },
+  });
+  // Clean up the far-future TEST_DATE DVA created/modified by getSharmaContext.
+  await prisma.driverVehicleAssignment.deleteMany({
+    where: { distributorId: 'dist-002', assignmentDate: new Date(today()) },
+  });
 });
