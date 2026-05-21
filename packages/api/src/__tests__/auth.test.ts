@@ -111,13 +111,13 @@ describe('Role-Based Access Control', () => {
     expect(res.status).toBe(200);
   });
 
-  it('should deny finance from accessing inventory summary', async () => {
+  it('should allow finance to access inventory summary (WI-088)', async () => {
     const { token } = await loginAsFinance();
     const today = new Date().toISOString().split('T')[0];
     const res = await request(app)
       .get(`/api/inventory/summary/${today}`)
       .set('Authorization', `Bearer ${token}`);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   it('should allow finance to access payments', async () => {

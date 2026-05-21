@@ -363,7 +363,7 @@ describe('Credit Notes', () => {
     expect(list.body.data.creditNotes[0].status).toBe('pending');
   });
 
-  it('admin can approve a credit note; finance cannot (403)', async () => {
+  it('finance and admin can both approve a credit note (WI-088)', async () => {
     const { invoiceId } = await createDeliveredOrderWithInvoice();
     if (!invoiceId) return;
     const invRes = await request(app).get(`/api/invoices/${invoiceId}`).set(auth(financeToken));
@@ -382,13 +382,8 @@ describe('Credit Notes', () => {
     const financeApprove = await request(app)
       .put(`/api/invoices/credit-notes/${creditNoteId}/approve`)
       .set(auth(financeToken));
-    expect(financeApprove.status).toBe(403);
-
-    const adminApprove = await request(app)
-      .put(`/api/invoices/credit-notes/${creditNoteId}/approve`)
-      .set(auth(adminToken));
-    expect(adminApprove.status).toBe(200);
-    expect(adminApprove.body.data.status).toBe('approved');
+    expect(financeApprove.status).toBe(200);
+    expect(financeApprove.body.data.status).toBe('approved');
   });
 
   it('admin can reject a credit note with a reason captured in audit', async () => {

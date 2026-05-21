@@ -57,6 +57,7 @@ const adminMenuItems: MenuItem[] = [
     roles: [
       UserRole.SUPER_ADMIN,
       UserRole.DISTRIBUTOR_ADMIN,
+      UserRole.FINANCE,
       UserRole.INVENTORY,
       UserRole.DRIVER,
     ],
@@ -69,6 +70,7 @@ const adminMenuItems: MenuItem[] = [
     roles: [
       UserRole.SUPER_ADMIN,
       UserRole.DISTRIBUTOR_ADMIN,
+      UserRole.FINANCE,
       UserRole.INVENTORY,
     ],
   },
@@ -88,6 +90,7 @@ const adminMenuItems: MenuItem[] = [
       UserRole.SUPER_ADMIN,
       UserRole.DISTRIBUTOR_ADMIN,
       UserRole.FINANCE,
+      UserRole.INVENTORY,
     ],
   },
   {
@@ -101,6 +104,7 @@ const adminMenuItems: MenuItem[] = [
       UserRole.SUPER_ADMIN,
       UserRole.DISTRIBUTOR_ADMIN,
       UserRole.FINANCE,
+      UserRole.INVENTORY,
     ],
   },
   {

@@ -26,7 +26,7 @@ router.get('/',
 
 // POST /api/payments
 router.post('/',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(createPaymentSchema),
   auditLog('create', 'payment'),
   async (req, res) => {

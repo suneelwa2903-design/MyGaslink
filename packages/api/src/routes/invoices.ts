@@ -34,7 +34,7 @@ router.get('/',
 
 // POST /api/invoices/validate-gstin - Validate a GSTIN via WhiteBooks
 router.post('/validate-gstin',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ gstin: z.string().length(15) })),
   async (req, res) => {
     try {
@@ -50,7 +50,7 @@ router.post('/validate-gstin',
 
 // GET /api/invoices/:id
 router.get('/:id',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const invoice = await invoiceService.getInvoiceById(param(req.params.id), req.user!.distributorId!);
@@ -63,7 +63,7 @@ router.get('/:id',
 
 // POST /api/invoices/from-order/:orderId
 router.post('/from-order/:orderId',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('create_from_order', 'invoice'),
   async (req, res) => {
     try {
@@ -83,7 +83,7 @@ router.post('/from-order/:orderId',
 
 // POST /api/invoices/manual
 router.post('/manual',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({
     customerId: z.string().uuid(),
     issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -133,7 +133,7 @@ router.post('/retroactive-gst',
 
 // PUT /api/invoices/:id/status
 router.put('/:id/status',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ status: z.string().min(1) })),
   auditLog('update_status', 'invoice'),
   async (req, res) => {
@@ -164,7 +164,7 @@ router.post('/mark-overdue',
 
 // GET /api/invoices/:id/pdf - Generate invoice PDF
 router.get('/:id/pdf',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const pdfBuffer = await generateInvoicePdf(param(req.params.id), req.user!.distributorId!);
@@ -185,7 +185,7 @@ router.get('/:id/pdf',
 
 // POST /api/invoices/:id/generate-gst - Trigger GST compliance (IRN + EWB)
 router.post('/:id/generate-gst',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('generate_gst', 'invoice'),
   async (req, res) => {
     try {
@@ -203,7 +203,7 @@ router.post('/:id/generate-gst',
 // WI-039: finance can also cancel IRN — they're the team raising CN/DN
 // and need to clean up the upstream IRN before reissuing.
 router.post('/:id/cancel-irn',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ reason: z.string().min(1).max(100) })),
   auditLog('cancel_irn', 'invoice'),
   async (req, res) => {
@@ -226,7 +226,7 @@ router.post('/:id/cancel-irn',
 // POST /api/invoices/:id/cancel-ewb - Cancel e-Way Bill
 // WI-039: finance can also cancel EWB (companion to cancel-irn above).
 router.post('/:id/cancel-ewb',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ reason: z.string().min(1).max(100) })),
   auditLog('cancel_ewb', 'invoice'),
   async (req, res) => {
@@ -246,7 +246,7 @@ router.post('/:id/cancel-ewb',
 
 // POST /api/invoices/:id/regenerate - Cancel old invoice and create new one (after delivery changes)
 router.post('/:id/regenerate',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('regenerate_invoice', 'invoice'),
   async (req, res) => {
     try {
@@ -266,7 +266,7 @@ router.post('/:id/regenerate',
 
 // GET /api/invoices/:id/gst-documents - Get GST documents for an invoice
 router.get('/:id/gst-documents',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const docs = await prisma.gstDocument.findMany({
@@ -285,7 +285,7 @@ router.get('/:id/gst-documents',
 // GET /api/invoices/:id/credit-notes - List CNs for an invoice (admin/finance)
 // Used by the View Invoice modal to render the CN list section.
 router.get('/:id/credit-notes',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const invoiceId = param(req.params.id);
@@ -307,7 +307,7 @@ router.get('/:id/credit-notes',
 );
 
 router.post('/credit-notes',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(createCreditNoteSchema),
   auditLog('create', 'credit_note'),
   async (req, res) => {
@@ -323,7 +323,7 @@ router.post('/credit-notes',
 );
 
 router.put('/credit-notes/:id/approve',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('approve', 'credit_note'),
   async (req, res) => {
     try {
@@ -336,7 +336,7 @@ router.put('/credit-notes/:id/approve',
 );
 
 router.put('/credit-notes/:id/reject',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   // Optional `reason` — captured by auditLog middleware in the request body
   // for compliance trail. Not stored on the credit_note row (no column
   // for it; deferred until a separate audit column is added).
@@ -354,7 +354,7 @@ router.put('/credit-notes/:id/reject',
 
 // GET /api/invoices/credit-notes/:id/pdf - Generate credit note PDF
 router.get('/credit-notes/:id/pdf',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const pdfBuffer = await generateCreditNotePdf(param(req.params.id), req.user!.distributorId!);
@@ -375,7 +375,7 @@ router.get('/credit-notes/:id/pdf',
 
 // GET /api/invoices/:id/debit-notes - List DNs for an invoice
 router.get('/:id/debit-notes',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const invoiceId = param(req.params.id);
@@ -396,7 +396,7 @@ router.get('/:id/debit-notes',
 );
 
 router.post('/debit-notes',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(createDebitNoteSchema),
   auditLog('create', 'debit_note'),
   async (req, res) => {
@@ -412,7 +412,7 @@ router.post('/debit-notes',
 );
 
 router.put('/debit-notes/:id/approve',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('approve', 'debit_note'),
   async (req, res) => {
     try {
@@ -425,7 +425,7 @@ router.put('/debit-notes/:id/approve',
 );
 
 router.put('/debit-notes/:id/reject',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ reason: z.string().max(500).optional() })),
   auditLog('reject', 'debit_note'),
   async (req, res) => {
@@ -441,7 +441,7 @@ router.put('/debit-notes/:id/reject',
 // GET /api/invoices/debit-notes/:id/pdf - Generate debit note PDF (WI-039)
 // Mirrors the credit-note PDF route; tenant-scoped at the service layer.
 router.get('/debit-notes/:id/pdf',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const pdfBuffer = await generateDebitNotePdf(param(req.params.id), req.user!.distributorId!);

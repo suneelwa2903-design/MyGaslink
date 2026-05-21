@@ -13,7 +13,7 @@ const router = Router();
 
 // GET /api/assignments/vehicle-mappings?date=2026-03-23
 router.get('/vehicle-mappings',
-  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   async (req: Request, res: Response) => {
     try {
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
@@ -28,7 +28,7 @@ router.get('/vehicle-mappings',
 
 // POST /api/assignments/vehicle-mappings/confirm
 router.post('/vehicle-mappings/confirm',
-  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   validate(z.object({
     date: z.string(),
     mappings: z.array(z.object({
@@ -57,7 +57,7 @@ router.post('/vehicle-mappings/confirm',
 // for a date. Distinct from POST /vehicle-mappings/confirm which replaces the
 // entire day's mappings.
 router.put('/vehicle-mappings',
-  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   validate(z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     driverId: z.string().uuid(),
@@ -82,7 +82,7 @@ router.put('/vehicle-mappings',
 
 // POST /api/assignments/order-recommendations
 router.post('/order-recommendations',
-  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   validate(z.object({
     orderIds: z.array(z.string().uuid()).min(1),
   })),
@@ -101,7 +101,7 @@ router.post('/order-recommendations',
 
 // GET /api/assignments — list this distributor's driver-vehicle assignments
 router.get('/',
-  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   async (req: Request, res: Response) => {
     try {
       const rows = await assignmentService.listDriverVehicleAssignments(req.user!.distributorId!);
@@ -115,7 +115,7 @@ router.get('/',
 
 // POST /api/assignments — create a driver-vehicle assignment
 router.post('/',
-  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   validate(z.object({
     driverId: z.string().uuid(),
     vehicleId: z.string().uuid(),
@@ -140,7 +140,7 @@ router.post('/',
 
 // DELETE /api/assignments/:id — delete with ownership check
 router.delete('/:id',
-  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   auditLog('delete', 'assignment'),
   async (req: Request, res: Response) => {
     try {
@@ -158,7 +158,7 @@ router.delete('/:id',
 
 // POST /api/assignments/bulk-assign
 router.post('/bulk-assign',
-  requireRole('distributor_admin', 'super_admin', 'inventory'),
+  requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   validate(z.object({
     assignments: z.array(z.object({
       orderId: z.string().uuid(),

@@ -12,7 +12,7 @@ const router = Router();
 
 // GET /api/accountability
 router.get('/',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const result = await accountabilityService.listAccountabilityLogs(
@@ -34,7 +34,7 @@ router.get('/',
 
 // GET /api/accountability/:id
 router.get('/:id',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const log = await accountabilityService.getAccountabilityLogById(
@@ -49,7 +49,7 @@ router.get('/:id',
 
 // POST /api/accountability
 router.post('/',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(createAccountabilitySchema),
   auditLog('create', 'accountability_log'),
   async (req, res) => {
@@ -66,7 +66,7 @@ router.post('/',
 
 // PUT /api/accountability/:id/resolve
 router.put('/:id/resolve',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(resolveAccountabilitySchema),
   auditLog('resolve', 'accountability_log'),
   async (req, res) => {

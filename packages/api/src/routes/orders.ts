@@ -65,7 +65,7 @@ router.get('/',
 
 // POST /api/orders/returns-only - Create returns-only order
 router.post('/returns-only',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(returnsOnlyOrderSchema),
   auditLog('create_returns_order', 'order'),
   async (req, res) => {
@@ -82,7 +82,7 @@ router.post('/returns-only',
 
 // POST /api/orders/from-cancelled-stock - Create order from cancelled stock on vehicle
 router.post('/from-cancelled-stock',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({
     customerId: z.string().uuid(),
     deliveryDate: z.string(),
@@ -112,7 +112,7 @@ router.post('/from-cancelled-stock',
 // Route MUST be registered before GET /:id, otherwise "in-transit"
 // would be caught by the `:id` route and 404 as a not-found order.
 router.get('/in-transit',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const distributorId = req.user!.distributorId!;
@@ -247,7 +247,7 @@ router.put('/:id',
 
 // PUT /api/orders/:id/status
 router.put('/:id/status',
-  requireRole('super_admin', 'distributor_admin', 'driver', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory'),
   validate(z.object({
     status: z.string().min(1),
     notes: z.string().optional(),
@@ -269,7 +269,7 @@ router.put('/:id/status',
 // POST /api/orders/:id/assign-driver
 // Inventory can assign drivers as part of the morning dispatch flow.
 router.post('/:id/assign-driver',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(assignDriverSchema),
   auditLog('assign_driver', 'order'),
   async (req, res) => {
@@ -286,7 +286,7 @@ router.post('/:id/assign-driver',
 
 // POST /api/orders/bulk-assign-driver
 router.post('/bulk-assign-driver',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(bulkAssignDriverSchema),
   auditLog('bulk_assign_driver', 'order'),
   async (req, res) => {
@@ -308,7 +308,7 @@ router.post('/bulk-assign-driver',
 // successes move to pending_delivery, failures revert to
 // pending_dispatch and surface in the response + PendingActions queue.
 router.post('/preflight-dispatch',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(preflightDispatchSchema),
   auditLog('preflight_dispatch', 'order'),
   async (req, res) => {
@@ -339,7 +339,7 @@ router.post('/preflight-dispatch',
 // second consolidated EWB for the new batch (NIC's gencewb has no
 // "append" semantics — a fresh CEWB per batch is the only legal path).
 router.post('/preflight-add-to-trip',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(preflightDispatchSchema),
   auditLog('preflight_add_to_trip', 'order'),
   async (req, res) => {
@@ -367,7 +367,7 @@ router.post('/preflight-add-to-trip',
 // route's trip sheet through the mobile assignments flow, which
 // already enforces per-driver ownership separately.
 router.get('/trip-sheet/:assignmentId',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const assignmentId = param(req.params.assignmentId);
@@ -389,7 +389,7 @@ router.get('/trip-sheet/:assignmentId',
 
 // POST /api/orders/:id/confirm-delivery
 router.post('/:id/confirm-delivery',
-  requireRole('super_admin', 'distributor_admin', 'driver', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory'),
   validate(deliveryConfirmationSchema),
   auditLog('confirm_delivery', 'order'),
   async (req, res) => {
@@ -406,7 +406,7 @@ router.post('/:id/confirm-delivery',
 
 // POST /api/orders/:id/cancel
 router.post('/:id/cancel',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ reason: z.string().min(1, 'Cancellation reason is required') })),
   auditLog('cancel', 'order'),
   async (req, res) => {
@@ -423,7 +423,7 @@ router.post('/:id/cancel',
 
 // POST /api/orders/:id/confirm-returns - Confirm returns collection
 router.post('/:id/confirm-returns',
-  requireRole('super_admin', 'distributor_admin', 'driver', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory'),
   validate(returnsConfirmationSchema),
   auditLog('confirm_returns', 'order'),
   async (req, res) => {

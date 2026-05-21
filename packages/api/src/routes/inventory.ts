@@ -16,7 +16,7 @@ const router = Router();
 
 // GET /api/inventory/summary (defaults to today)
 router.get('/summary',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const date = new Date().toISOString().split('T')[0];
@@ -29,7 +29,7 @@ router.get('/summary',
 
 // GET /api/inventory/summary/:date
 router.get('/summary/:date',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const summaries = await inventoryService.getInventorySummary(req.user!.distributorId!, param(req.params.date));
@@ -41,7 +41,7 @@ router.get('/summary/:date',
 
 // POST /api/inventory/incoming-fulls
 router.post('/incoming-fulls',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(incomingFullsSchema),
   auditLog('incoming_fulls', 'inventory'),
   async (req, res) => {
@@ -58,7 +58,7 @@ router.post('/incoming-fulls',
 
 // POST /api/inventory/outgoing-empties
 router.post('/outgoing-empties',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(outgoingEmptiesSchema),
   auditLog('outgoing_empties', 'inventory'),
   async (req, res) => {
@@ -75,7 +75,7 @@ router.post('/outgoing-empties',
 
 // POST /api/inventory/initial-balance — onboarding-time opening-stock entry
 router.post('/initial-balance',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({
     entries: z.array(z.object({
       cylinderTypeId: z.string().uuid(),
@@ -99,7 +99,7 @@ router.post('/initial-balance',
 
 // POST /api/inventory/manual-adjustment
 router.post('/manual-adjustment',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(manualAdjustmentSchema),
   auditLog('manual_adjustment', 'inventory'),
   async (req, res) => {
@@ -116,7 +116,7 @@ router.post('/manual-adjustment',
 
 // GET /api/inventory/depot-history
 router.get('/depot-history',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const { events, meta } = await inventoryService.getDepotHistory(
@@ -150,7 +150,7 @@ router.get('/onboarding-stock',
 
 // GET /api/inventory/cancelled-stock
 router.get('/cancelled-stock',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const events = await inventoryService.getCancelledStock(
@@ -169,7 +169,7 @@ router.get('/cancelled-stock',
 
 // POST /api/inventory/cancelled-stock/return
 router.post('/cancelled-stock/return',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(cancelledStockReturnSchema),
   auditLog('return_cancelled_stock', 'inventory'),
   async (req, res) => {
@@ -186,7 +186,7 @@ router.post('/cancelled-stock/return',
 
 // GET /api/inventory/threshold-alerts
 router.get('/threshold-alerts',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const alerts = await inventoryService.checkThresholds(req.user!.distributorId!);
@@ -236,7 +236,7 @@ router.get('/customer-balances/:customerId',
 // cylinderTypeId and lock are optional; lock defaults to true so the
 // frontend's day-level "Lock Day" button can just send { date }.
 router.put('/lock-summary',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({
     cylinderTypeId: z.string().uuid().optional(),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -269,7 +269,7 @@ router.put('/lock-summary',
 
 // POST /api/inventory/unlock
 router.post('/unlock',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   })),
@@ -290,7 +290,7 @@ router.post('/unlock',
 
 // GET /api/inventory/forecast
 router.get('/forecast',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const forecast = await inventoryService.getInventoryForecast(req.user!.distributorId!);
@@ -302,7 +302,7 @@ router.get('/forecast',
 
 // GET /api/inventory/reconciliation
 router.get('/reconciliation',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
     const data = await inventoryService.getReconciliationDashboard(req.user!.distributorId!);

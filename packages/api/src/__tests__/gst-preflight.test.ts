@@ -882,11 +882,14 @@ describe('POST /api/orders/preflight-dispatch — integration', () => {
       driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
     });
     try {
+      // WI-088: finance now has preflight-dispatch access. Passes role gate;
+      // fails tenant isolation (dist-002 driver, finance token is dist-001) → 404.
       const finRes = await request(app)
         .post('/api/orders/preflight-dispatch')
         .set(auth(financeToken))
         .send({ driverId: ctx.driver.id, assignmentDate: today() });
-      expect(finRes.status).toBe(403);
+      expect(finRes.status).not.toBe(403);
+      expect(finRes.status).toBe(404);
 
       // Inventory role is now permitted on preflight-dispatch (founder
       // spec: dispatch is an inventory task). The inventoryToken belongs

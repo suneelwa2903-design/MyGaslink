@@ -69,7 +69,7 @@ router.post('/customer/confirm/:orderId',
 
 // POST /api/delivery/driver/vehicle-returned
 router.post('/driver/vehicle-returned',
-  requireRole('driver', 'distributor_admin', 'inventory'),
+  requireRole('driver', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({
     vehicleId: z.string().uuid(),
   })),
@@ -96,7 +96,7 @@ router.post('/driver/vehicle-returned',
 
 // GET /api/delivery/reconciliation/pending
 router.get('/reconciliation/pending',
-  requireRole('inventory', 'distributor_admin', 'super_admin'),
+  requireRole('inventory', 'distributor_admin', 'finance', 'super_admin'),
   async (req, res) => {
     try {
       const result = await deliveryWorkflow.getVehiclesPendingReconciliation(req.user!.distributorId!);
@@ -110,7 +110,7 @@ router.get('/reconciliation/pending',
 
 // POST /api/delivery/reconciliation/confirm/:vehicleId
 router.post('/reconciliation/confirm/:vehicleId',
-  requireRole('inventory', 'distributor_admin', 'super_admin'),
+  requireRole('inventory', 'distributor_admin', 'finance', 'super_admin'),
   validate(z.object({
     physicalStockConfirmed: z.boolean(),
     notes: z.string().max(500).optional(),

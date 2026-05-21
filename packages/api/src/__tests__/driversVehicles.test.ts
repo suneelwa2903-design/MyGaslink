@@ -52,12 +52,12 @@ describe('Drivers — Auth', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rejects POST for non-admin role (403)', async () => {
+  it('allows finance role to create drivers (WI-088)', async () => {
     const res = await request(app)
       .post('/api/drivers')
       .set(auth(financeToken))
       .send({ driverName: 'X', phone: '9999999999' });
-    expect(res.status).toBe(403);
+    expect(res.status).not.toBe(403);
   });
 });
 

@@ -39,7 +39,7 @@ const customerImportRowSchema = z.object({
 });
 
 router.post('/import-csv',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ rows: z.array(customerImportRowSchema).min(1).max(1000) })),
   auditLog('import', 'customer'),
   async (req, res) => {
@@ -63,7 +63,7 @@ const openingBalanceRowSchema = z.object({
 });
 
 router.post('/import-opening-balances',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ rows: z.array(openingBalanceRowSchema).min(1).max(2000) })),
   auditLog('import_opening_balances', 'customer'),
   async (req, res) => {
@@ -170,7 +170,7 @@ router.delete('/:id',
 
 // POST /api/customers/:id/modification-requests
 router.post('/:id/modification-requests',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({
     modificationType: z.enum(['update_info', 'credit_limit_change', 'stop_supply', 'resume_supply']),
     reason: z.string().optional(),
@@ -191,7 +191,7 @@ router.post('/:id/modification-requests',
 
 // PUT /api/customers/modification-requests/:requestId/approve
 router.put('/modification-requests/:requestId/approve',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('approve', 'customer_modification_request'),
   async (req, res) => {
     try {
@@ -205,7 +205,7 @@ router.put('/modification-requests/:requestId/approve',
 
 // PUT /api/customers/modification-requests/:requestId/reject
 router.put('/modification-requests/:requestId/reject',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({ reason: z.string().optional() })),
   auditLog('reject', 'customer_modification_request'),
   async (req, res) => {
@@ -222,7 +222,7 @@ router.put('/modification-requests/:requestId/reject',
 
 // GET /api/customers/:id/audit-trail
 router.get('/:id/audit-trail',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
       const trail = await customerService.getCustomerAuditTrail(param(req.params.id), req.user!.distributorId!);
@@ -235,7 +235,7 @@ router.get('/:id/audit-trail',
 
 // POST /api/customers/:id/stop-supply
 router.post('/:id/stop-supply',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('stop_supply', 'customer'),
   async (req, res) => {
     try {
@@ -249,7 +249,7 @@ router.post('/:id/stop-supply',
 
 // POST /api/customers/:id/resume-supply
 router.post('/:id/resume-supply',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('resume_supply', 'customer'),
   async (req, res) => {
     try {
@@ -263,7 +263,7 @@ router.post('/:id/resume-supply',
 
 // POST /api/customers/:id/balance-setup
 router.post('/:id/balance-setup',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(customerBalanceSetupSchema.omit({ customerId: true })),
   auditLog('balance_setup', 'customer'),
   async (req, res) => {

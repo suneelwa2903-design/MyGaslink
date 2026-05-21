@@ -92,20 +92,20 @@ describe('Assignments — Auth', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rejects /vehicle-mappings/confirm for finance role (403)', async () => {
+  it('allows /vehicle-mappings/confirm for finance role (WI-088)', async () => {
     const res = await request(app)
       .post('/api/assignments/vehicle-mappings/confirm')
       .set(auth(financeToken))
       .send({ date: today() });
-    expect(res.status).toBe(403);
+    expect(res.status).not.toBe(403);
   });
 
-  it('rejects /bulk-assign for finance role (403)', async () => {
+  it('allows /bulk-assign for finance role — bad body gives 400 not 403 (WI-088)', async () => {
     const res = await request(app)
       .post('/api/assignments/bulk-assign')
       .set(auth(financeToken))
       .send({ assignments: [] });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(400);
   });
 });
 
