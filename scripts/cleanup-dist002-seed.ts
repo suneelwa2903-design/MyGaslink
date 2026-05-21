@@ -146,6 +146,14 @@ async function main() {
   const { count: dva } = await prisma.driverVehicleAssignment.deleteMany({ where: { distributorId: DIST_ID } });
   log(`  Deleted driver_vehicle_assignments: ${dva}`);
 
+  // 3u. Reset all vehicle statuses to 'idle' — dispatched orders were wiped
+  // above so any vehicle left in 'dispatched' or 'returned' is orphaned.
+  const { count: vehReset } = await prisma.vehicle.updateMany({
+    where: { distributorId: DIST_ID, status: { not: 'inactive' } },
+    data: { status: 'idle' },
+  });
+  log(`  Reset vehicle statuses to idle:  ${vehReset}`);
+
   // ── 4. Seed fresh DVA for today ─────────────────────────────────────────────
 
   const kiranReddy = await prisma.driver.findFirst({
