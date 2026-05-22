@@ -293,7 +293,7 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId:
   // actually writes the IRN to a `gst_documents` row with docType=CRN and
   // invoiceId=cn.invoice. Look that up instead so the CN PDF renders the
   // real IRN block + QR code when the credit note went through NIC.
-  const crnDoc = await prisma.gstDocument.findFirst({
+  const findCrnDoc = () => prisma.gstDocument.findFirst({
     where: {
       invoiceId: inv.id,
       docType: 'CRN',
@@ -302,6 +302,16 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId:
     },
     orderBy: { createdAt: 'desc' },
   });
+  let crnDoc = await findCrnDoc();
+  // WI-092: the CN IRN is generated fire-and-forget (~2s) after the credit
+  // note is approved, but the PDF is downloadable immediately. When the
+  // download races ahead of the IRN landing, the gst_documents row doesn't
+  // exist yet. Retry once after 2s to ride through that window; if it's
+  // still absent we fall through to the unchanged no-IRN render below.
+  if (!crnDoc) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    crnDoc = await findCrnDoc();
+  }
   // WI-077: render the IRN block only when there's an actual IRN or EWB
   // on the gst_documents row. Mirrors the invoice PDF pattern
   // ([invoicePdfService.ts:489-491](../pdf/invoicePdfService.ts)): if

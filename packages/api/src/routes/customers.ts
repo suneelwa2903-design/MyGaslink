@@ -3,7 +3,8 @@ import { param } from '../utils/params.js';
 import { requireRole } from '../middleware/auth.js';
 import { validate, validateQuery } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
-import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
+import { sendSuccess, sendError, sendCreated, sendNotFound, sendForbidden } from '../utils/apiResponse.js';
+import { generateCustomerLedgerPdf } from '../services/pdf/customerLedgerPdfService.js';
 import {
   createCustomerSchema, updateCustomerSchema, customerFilterSchema,
   customerBalanceSetupSchema,
@@ -115,6 +116,32 @@ router.get('/:id',
       return sendSuccess(res, mapCustomer(customer));
     } catch (err) {
       return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// GET /api/customers/:id/ledger/pdf — customer statement PDF (WI-092)
+// Accessible to staff roles and to the customer themselves (own statement only).
+router.get('/:id/ledger/pdf',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'customer'),
+  async (req, res) => {
+    try {
+      const customerId = param(req.params.id);
+      if (req.user!.role === 'customer' && req.user!.customerId !== customerId) {
+        return sendForbidden(res, 'You can only download your own statement');
+      }
+      const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+      const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+      const pdfBuffer = await generateCustomerLedgerPdf(req.user!.distributorId!, customerId, { from, to });
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="statement-${customerId}.pdf"`,
+        'Content-Length': String(pdfBuffer.length),
+      });
+      return res.send(pdfBuffer);
+    } catch (err: any) {
+      if (err.message === 'Customer not found') return sendNotFound(res, 'Customer');
+      return sendError(res, err.message, 500);
     }
   }
 );

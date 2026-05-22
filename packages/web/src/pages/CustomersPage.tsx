@@ -11,6 +11,7 @@ import {
   HiOutlineNoSymbol,
   HiOutlinePlayCircle,
   HiOutlineTrash,
+  HiOutlineDocumentArrowDown,
 } from 'react-icons/hi2';
 import {
   type Customer,
@@ -25,7 +26,7 @@ import {
   type CreateCustomerInput,
   UserRole,
 } from '@gaslink/shared';
-import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { useAuthStore, selectRole } from '@/stores/authStore';
 import { cn } from '@/lib/cn';
@@ -572,6 +573,29 @@ function CustomerDetailModal({
     enabled: tab === 'ledger',
   });
 
+  const [ledgerFrom, setLedgerFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [ledgerTo, setLedgerTo] = useState(() => new Date().toISOString().split('T')[0]);
+
+  const handleDownloadStatement = async () => {
+    try {
+      const resp = await api.get(`/customers/${customer.customerId}/ledger/pdf`, {
+        params: { from: ledgerFrom, to: ledgerTo },
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(resp.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `statement-${customer.customerName}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Failed to download statement');
+    }
+  };
+
   const tabs = [
     { key: 'orders' as const, label: 'Orders' },
     { key: 'invoices' as const, label: 'Invoices' },
@@ -685,7 +709,23 @@ function CustomerDetailModal({
         )}
 
         {tab === 'ledger' && (
-          <LedgerTab entries={ledgerEntries ?? []} loading={ledgerLoading} />
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="label">From</label>
+                <input type="date" value={ledgerFrom} onChange={(e) => setLedgerFrom(e.target.value)} className="input py-2" />
+              </div>
+              <div>
+                <label className="label">To</label>
+                <input type="date" value={ledgerTo} onChange={(e) => setLedgerTo(e.target.value)} className="input py-2" />
+              </div>
+              <Button variant="secondary" onClick={handleDownloadStatement}>
+                <HiOutlineDocumentArrowDown className="h-4 w-4" />
+                Download PDF
+              </Button>
+            </div>
+            <LedgerTab entries={ledgerEntries ?? []} loading={ledgerLoading} />
+          </div>
         )}
       </div>
     </Modal>

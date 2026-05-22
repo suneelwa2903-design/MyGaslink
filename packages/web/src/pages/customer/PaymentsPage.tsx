@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { HiOutlineEye } from 'react-icons/hi2';
+import toast from 'react-hot-toast';
+import { HiOutlineEye, HiOutlineDocumentArrowDown } from 'react-icons/hi2';
 import type { Payment, PaginationMeta } from '@gaslink/shared';
 import { PaymentAllocationStatus } from '@gaslink/shared';
-import { apiGet } from '@/lib/api';
+import { api, apiGet } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import { Button, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 
 const ALLOCATION_VARIANTS: Record<string, 'success' | 'warning' | 'neutral'> = {
@@ -21,6 +23,30 @@ export default function CustomerPaymentsPage() {
   const { t } = useTranslation();
   const [page, setPage] = useState(1);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
+  const customerId = useAuthStore((s) => s.user?.customerId);
+  const [stmtFrom, setStmtFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [stmtTo, setStmtTo] = useState(() => new Date().toISOString().split('T')[0]);
+
+  const handleDownloadStatement = async () => {
+    if (!customerId) return;
+    try {
+      const resp = await api.get(`/customers/${customerId}/ledger/pdf`, {
+        params: { from: stmtFrom, to: stmtTo },
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(resp.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'statement.pdf';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Failed to download statement');
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['customer-payments', page],
@@ -32,9 +58,21 @@ export default function CustomerPaymentsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-surface-900 dark:text-white">{t('customerPortal.payments.title')}</h1>
-        <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">{t('customerPortal.payments.subtitle')}</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-surface-900 dark:text-white">{t('customerPortal.payments.title')}</h1>
+          <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">{t('customerPortal.payments.subtitle')}</p>
+        </div>
+        {customerId && (
+          <div className="flex flex-wrap items-end gap-2">
+            <input type="date" value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} className="input py-2" />
+            <input type="date" value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} className="input py-2" />
+            <Button variant="secondary" onClick={handleDownloadStatement}>
+              <HiOutlineDocumentArrowDown className="h-4 w-4" />
+              Download Statement
+            </Button>
+          </div>
+        )}
       </div>
 
       {isLoading ? (

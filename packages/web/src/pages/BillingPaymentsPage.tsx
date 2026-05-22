@@ -15,6 +15,7 @@ import {
   HiOutlineShieldCheck,
   HiOutlineXCircle,
   HiOutlineDocumentText,
+  HiOutlineArrowsRightLeft,
 } from 'react-icons/hi2';
 import {
   type Invoice,
@@ -450,6 +451,7 @@ function PaymentsTab() {
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [createOpen, setCreateOpen] = useState(false);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
+  const [allocatePayment, setAllocatePayment] = useState<Payment | null>(null);
 
   const queryParams: Record<string, unknown> = { page, pageSize: 25 };
   if (methodFilter) queryParams.paymentMethod = methodFilter;
@@ -526,13 +528,24 @@ function PaymentsTab() {
                       </Badge>
                     </td>
                     <td>
-                      <button
-                        onClick={() => setViewPayment(payment)}
-                        className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500"
-                        title="View Allocations"
-                      >
-                        <HiOutlineEye className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setViewPayment(payment)}
+                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500"
+                          title="View Allocations"
+                        >
+                          <HiOutlineEye className="h-4 w-4" />
+                        </button>
+                        {payment.unallocatedAmount > 0 && (
+                          <button
+                            onClick={() => setAllocatePayment(payment)}
+                            className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-accent-500"
+                            title="Allocate to Invoice"
+                          >
+                            <HiOutlineArrowsRightLeft className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -554,6 +567,15 @@ function PaymentsTab() {
 
       {/* Create Payment Modal */}
       {createOpen && <CreatePaymentModal open={createOpen} onClose={() => setCreateOpen(false)} />}
+
+      {/* Allocate Payment Modal */}
+      {allocatePayment && (
+        <AllocatePaymentModal
+          open={!!allocatePayment}
+          onClose={() => setAllocatePayment(null)}
+          payment={allocatePayment}
+        />
+      )}
 
       {/* View Allocations Modal */}
       {viewPayment && (
@@ -1480,6 +1502,107 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={mutation.isPending}>Record Payment</Button>
         </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Allocate Payment Modal (WI-092) ────────────────────────────────────────
+// Applies an unallocated (or partially allocated) payment to an open invoice
+// for the same customer. The server enforces tenant + customer + amount caps.
+
+function AllocatePaymentModal({ open, onClose, payment }: { open: boolean; onClose: () => void; payment: Payment }) {
+  const queryClient = useQueryClient();
+  const [invoiceId, setInvoiceId] = useState('');
+  const [amount, setAmount] = useState<number>(0);
+
+  const { data: invoiceData, isLoading } = useQuery({
+    queryKey: ['customer-open-invoices', payment.customerId],
+    queryFn: () => apiGet<{ invoices: Invoice[] }>('/invoices', { customerId: payment.customerId, pageSize: 100 }),
+  });
+
+  const openInvoices = (invoiceData?.invoices ?? []).filter(
+    (inv) => (inv.status === InvoiceStatus.ISSUED || inv.status === InvoiceStatus.PARTIALLY_PAID) && inv.outstandingAmount > 0,
+  );
+  const invoiceOptions = openInvoices.map((inv) => ({
+    value: inv.invoiceId,
+    label: `${inv.invoiceNumber} (${formatCurrency(inv.outstandingAmount)} due)`,
+  }));
+
+  const selectedInvoice = openInvoices.find((inv) => inv.invoiceId === invoiceId) ?? null;
+  const maxAmount = selectedInvoice
+    ? Math.min(payment.unallocatedAmount, selectedInvoice.outstandingAmount)
+    : payment.unallocatedAmount;
+
+  const handleSelectInvoice = (id: string) => {
+    setInvoiceId(id);
+    const inv = openInvoices.find((i) => i.invoiceId === id);
+    setAmount(inv ? Math.min(payment.unallocatedAmount, inv.outstandingAmount) : 0);
+  };
+
+  const mutation = useMutation({
+    mutationFn: () => apiPost(`/payments/${payment.paymentId}/allocate`, { invoiceId, amount: Number(amount) }),
+    onSuccess: () => {
+      toast.success('Payment allocated');
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      onClose();
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!invoiceId) { toast.error('Select an invoice'); return; }
+    if (!(amount > 0)) { toast.error('Enter an amount greater than zero'); return; }
+    if (amount > maxAmount + 0.001) { toast.error('Amount exceeds the allowable allocation'); return; }
+    mutation.mutate();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Allocate Payment — ${payment.customerName}`}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="p-3 bg-surface-50 dark:bg-surface-800/50 rounded-xl">
+          <p className="text-xs text-surface-400">Unallocated Amount</p>
+          <p className="font-bold text-lg text-surface-900 dark:text-white">{formatCurrency(payment.unallocatedAmount)}</p>
+        </div>
+        {isLoading ? (
+          <div className="flex justify-center py-6"><Loader /></div>
+        ) : invoiceOptions.length === 0 ? (
+          <EmptyState title="No open invoices" description="This customer has no invoices with an outstanding balance." />
+        ) : (
+          <>
+            <Select
+              label="Invoice"
+              options={invoiceOptions}
+              placeholder="Select invoice"
+              value={invoiceId}
+              onChange={(e) => handleSelectInvoice(e.target.value)}
+              required
+            />
+            <div>
+              <Input
+                label="Amount"
+                type="number"
+                step="0.01"
+                min={0.01}
+                max={maxAmount}
+                value={amount}
+                onChange={(e) => setAmount(e.target.valueAsNumber || 0)}
+                required
+              />
+              {selectedInvoice && (
+                <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+                  Max allocatable: {formatCurrency(maxAmount)} (invoice outstanding {formatCurrency(selectedInvoice.outstandingAmount)})
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 pt-4">
+              <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button type="submit" variant="accent" loading={mutation.isPending}>Allocate</Button>
+            </div>
+          </>
+        )}
       </form>
     </Modal>
   );

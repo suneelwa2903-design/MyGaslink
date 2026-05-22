@@ -6,9 +6,15 @@ import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated } from '../utils/apiResponse.js';
 import { createPaymentSchema, paymentFilterSchema } from '@gaslink/shared';
 import * as paymentService from '../services/paymentService.js';
-import { mapPayment, mapPayments } from '../utils/mappers.js';
+import { mapPayment, mapPayments, mapInvoice } from '../utils/mappers.js';
+import { z } from 'zod';
 
 const router = Router();
+
+const allocatePaymentSchema = z.object({
+  invoiceId: z.string().uuid(),
+  amount: z.number().positive(),
+});
 
 // GET /api/payments
 router.get('/',
@@ -35,6 +41,26 @@ router.post('/',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapPayment(payment));
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
+// POST /api/payments/:id/allocate — apply unallocated payment to an invoice
+router.post('/:id/allocate',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  validate(allocatePaymentSchema),
+  auditLog('allocate', 'payment'),
+  async (req, res) => {
+    try {
+      const result = await paymentService.allocatePayment(
+        req.user!.distributorId!, req.user!.userId, param(req.params.id), req.body,
+      );
+      return sendSuccess(res, {
+        payment: mapPayment(result.payment),
+        invoice: mapInvoice(result.invoice),
+      });
     } catch (err: any) {
       return sendError(res, err.message, err.statusCode || 500);
     }

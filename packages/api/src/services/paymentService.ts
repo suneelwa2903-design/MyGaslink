@@ -219,7 +219,107 @@ export async function createPayment(
   });
 }
 
-export async function getCustomerLedger(distributorId: string, customerId: string): Promise<CustomerLedgerResponse> {
+/**
+ * WI-092: allocate (part of) an already-recorded payment to an open invoice.
+ *
+ * Unallocated payment amount is otherwise stuck — there was no way to apply
+ * it to an invoice raised after the payment was taken. `unallocatedAmount`
+ * is not stored; it's `amount − Σ allocations`, so we recompute it and only
+ * persist the derived `allocationStatus`.
+ */
+export async function allocatePayment(
+  distributorId: string,
+  userId: string,
+  paymentId: string,
+  data: { invoiceId: string; amount: number },
+) {
+  const payment = await prisma.paymentTransaction.findFirst({
+    where: { id: paymentId, distributorId, deletedAt: null },
+    include: { allocations: true },
+  });
+  if (!payment) throw new PaymentError('Payment not found', 404);
+
+  const amount = data.amount;
+  if (!(amount > 0)) throw new PaymentError('Allocation amount must be positive', 400);
+
+  const allocated = payment.allocations.reduce((sum, a) => sum + toNum(a.allocatedAmount), 0);
+  const unallocated = toNum(payment.amount) - allocated;
+  if (amount > unallocated + 1e-9) {
+    throw new PaymentError('Allocation exceeds unallocated payment amount', 400);
+  }
+
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: data.invoiceId, distributorId, deletedAt: null },
+  });
+  if (!invoice) throw new PaymentError('Invoice not found', 404);
+  if (invoice.customerId !== payment.customerId) {
+    throw new PaymentError('Invoice belongs to a different customer', 400);
+  }
+  if (amount > toNum(invoice.outstandingAmount) + 1e-9) {
+    throw new PaymentError('Allocation exceeds invoice outstanding amount', 400);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.paymentAllocation.create({
+      data: { paymentId: payment.id, invoiceId: invoice.id, allocatedAmount: amount },
+    });
+
+    const newOutstanding = toNum(invoice.outstandingAmount) - amount;
+    const newAmountPaid = toNum(invoice.amountPaid) + amount;
+    const updatedInvoice = await tx.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        outstandingAmount: newOutstanding,
+        amountPaid: newAmountPaid,
+        status: newOutstanding <= 0 ? 'paid' : 'partially_paid',
+        closedAt: newOutstanding <= 0 ? new Date() : null,
+      },
+    });
+
+    const newUnallocated = unallocated - amount;
+    const allocationStatus = newUnallocated <= 1e-9 ? 'fully_allocated' : 'partially_allocated';
+    const updatedPayment = await tx.paymentTransaction.update({
+      where: { id: payment.id },
+      data: { allocationStatus: allocationStatus as any },
+      include: {
+        customer: { select: { id: true, customerName: true } },
+        allocations: {
+          include: { invoice: { select: { id: true, invoiceNumber: true } } },
+        },
+      },
+    });
+
+    await tx.customerLedgerEntry.create({
+      data: {
+        distributorId,
+        customerId: payment.customerId,
+        entryType: 'payment_entry',
+        referenceId: payment.id,
+        invoiceId: invoice.id,
+        amountDelta: -amount,
+        narration: `Allocated ${amount} to invoice ${invoice.invoiceNumber}`,
+        entryDate: payment.transactionDate,
+        createdBy: userId,
+      },
+    });
+
+    const newAllocated = allocated + amount;
+    return {
+      payment: {
+        ...updatedPayment,
+        allocatedAmount: newAllocated,
+        unallocatedAmount: toNum(updatedPayment.amount) - newAllocated,
+      },
+      invoice: updatedInvoice,
+    };
+  });
+}
+
+export async function getCustomerLedger(
+  distributorId: string,
+  customerId: string,
+  range?: { from?: string; to?: string },
+): Promise<CustomerLedgerResponse> {
   // 1. Get customer with credit period
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
@@ -308,6 +408,19 @@ export async function getCustomerLedger(distributorId: string, customerId: strin
   // Sort by date ascending
   timeline.sort((a, b) => a.date.getTime() - b.date.getTime());
 
+  // WI-092: optional date-range scoping for the customer statement PDF.
+  // When no range is supplied (the default ledger view) the timeline is
+  // used as-is, so existing callers are unaffected.
+  const fromDate = range?.from ? new Date(range.from) : null;
+  const toDate = range?.to ? new Date(range.to) : null;
+  const scopedTimeline = (fromDate || toDate)
+    ? timeline.filter((e) => {
+        if (fromDate && e.date < fromDate) return false;
+        if (toDate && e.date > toDate) return false;
+        return true;
+      })
+    : timeline;
+
   // 6. Build ledger rows with running totals
   const rows: CustomerLedgerRow[] = [];
   let cumulativeInvoiceAmount = 0;
@@ -321,7 +434,7 @@ export async function getCustomerLedger(distributorId: string, customerId: strin
 
   const today = new Date();
 
-  for (const entry of timeline) {
+  for (const entry of scopedTimeline) {
     if (entry.type === 'delivery') {
       const { cylinderTypeId, cylinderTypeName, fullCylsDelivered, amount, emptyCylsCollected } = entry;
 
