@@ -127,6 +127,32 @@ router.patch('/orders/:id/cancel',
   }
 );
 
+// PATCH /api/customer-portal/orders/:id — customer modifies quantities (WI-093)
+// Quantity-only edit of the customer's own order while still pending.
+router.patch('/orders/:id',
+  requireRole('customer'),
+  validate(z.object({
+    items: z.array(z.object({
+      cylinderTypeId: z.string().uuid(),
+      quantity: z.number().int().positive(),
+    })).min(1),
+  })),
+  auditLog('update', 'customer_order'),
+  async (req, res) => {
+    try {
+      if (!req.user!.customerId) {
+        return sendError(res, 'No customer linked to this account', 400);
+      }
+      const order = await portalService.modifyMyOrder(
+        req.user!.distributorId!, req.user!.customerId, param(req.params.id), req.body.items,
+      );
+      return sendSuccess(res, mapOrder(order));
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
 // ─── Invoices ─────────────────────────────────────────────────────────────
 
 // GET /api/customer-portal/invoices

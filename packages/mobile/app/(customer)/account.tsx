@@ -17,8 +17,8 @@ interface AccountData {
   gstin: string | null;
   phone: string;
   email: string | null;
-  billingAddress: string | null;
-  shippingAddress: string | null;
+  billingAddressLine1: string | null;
+  shippingAddressLine1: string | null;
   creditPeriodDays: number;
   status: string;
   cylinderDiscounts: Array<{ cylinderTypeName: string; discountPerUnit: number }>;
@@ -51,7 +51,6 @@ export default function CustomerAccountScreen() {
   // Edit profile state
   const [showEdit, setShowEdit] = useState(false);
   const [editPhone, setEditPhone] = useState('');
-  const [editBillingAddress, setEditBillingAddress] = useState('');
   const [editShippingAddress, setEditShippingAddress] = useState('');
 
   // Dispute state
@@ -59,8 +58,8 @@ export default function CustomerAccountScreen() {
   const [disputeOrderId, setDisputeOrderId] = useState<string | null>(null);
   const [disputeReason, setDisputeReason] = useState('');
 
-  const updateProfile = useApiMutation<AccountData, { phone: string; billingAddress: string; shippingAddress: string }>(
-    'patch',
+  const updateProfile = useApiMutation<AccountData, { phone: string; shippingAddressLine1: string }>(
+    'put',
     '/customer-portal/account',
     {
       invalidateKeys: [['customer-account']],
@@ -108,16 +107,17 @@ export default function CustomerAccountScreen() {
 
   const openEditModal = () => {
     setEditPhone(data?.phone ?? '');
-    setEditBillingAddress(data?.billingAddress ?? '');
-    setEditShippingAddress(data?.shippingAddress ?? '');
+    setEditShippingAddress(data?.shippingAddressLine1 ?? '');
     setShowEdit(true);
   };
 
   const handleSaveProfile = () => {
+    // PUT /customer-portal/account accepts phone + shipping* fields only
+    // (billing is not customer-editable via the portal). Map the single
+    // shipping textarea to shippingAddressLine1.
     updateProfile.mutate({
       phone: editPhone,
-      billingAddress: editBillingAddress,
-      shippingAddress: editShippingAddress,
+      shippingAddressLine1: editShippingAddress,
     });
   };
 
@@ -200,8 +200,8 @@ export default function CustomerAccountScreen() {
           <InfoRow label="GSTIN" value={data?.gstin} />
           <InfoRow label="Phone" value={data?.phone} />
           <InfoRow label="Email" value={data?.email} />
-          <InfoRow label="Billing Address" value={data?.billingAddress} />
-          <InfoRow label="Shipping Address" value={data?.shippingAddress} />
+          <InfoRow label="Billing Address" value={data?.billingAddressLine1} />
+          <InfoRow label="Shipping Address" value={data?.shippingAddressLine1} />
           <InfoRow label="Credit Period" value={data?.creditPeriodDays ? `${data.creditPeriodDays} days` : undefined} />
           <InfoRow label="Status" value={data?.status?.toUpperCase()} />
         </Card>
@@ -247,6 +247,11 @@ export default function CustomerAccountScreen() {
                     </Text>
                   </View>
                 </View>
+                {/* TODO WI-093: implement when server routes added.
+                    POST /customer-portal/orders/:id/confirm-delivery and
+                    /dispute do not exist yet — these actions are hidden to
+                    avoid 404s. Code retained for when the routes land. */}
+                {false && (
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                   <TouchableOpacity
                     onPress={() => handleConfirmDelivery(order.orderId, order.orderNumber)}
@@ -271,6 +276,7 @@ export default function CustomerAccountScreen() {
                     <Text style={{ fontSize: 13, fontWeight: '600', color: accent.red }}>Dispute</Text>
                   </TouchableOpacity>
                 </View>
+                )}
               </View>
             ))
           )}
@@ -311,23 +317,8 @@ export default function CustomerAccountScreen() {
                   }}
                 />
 
-                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
-                  Billing Address
-                </Text>
-                <TextInput
-                  value={editBillingAddress}
-                  onChangeText={setEditBillingAddress}
-                  multiline
-                  numberOfLines={3}
-                  placeholder="Billing address"
-                  placeholderTextColor={colors.textMuted}
-                  style={{
-                    backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder,
-                    borderRadius: 10, padding: 12, fontSize: 15, color: colors.text, marginBottom: 16,
-                    textAlignVertical: 'top', minHeight: 80,
-                  }}
-                />
-
+                {/* Billing address is not customer-editable via the portal
+                    (PUT /customer-portal/account accepts shipping* only). */}
                 <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
                   Shipping Address
                 </Text>

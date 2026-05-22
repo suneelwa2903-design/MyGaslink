@@ -1,8 +1,13 @@
-import { View, Text, FlatList, RefreshControl } from 'react-native';
+import { useState } from 'react';
+import { View, Text, FlatList, RefreshControl, TextInput, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { EmptyState, MetricCard } from '../../src/components/ui';
+import { Button, EmptyState, MetricCard } from '../../src/components/ui';
+import { useAuthStore } from '../../src/stores/authStore';
+import { api, getErrorMessage } from '../../src/lib/api';
 import { useTheme, formatINR } from '../../src/theme';
 import type { Payment } from '@gaslink/shared';
 
@@ -20,12 +25,69 @@ const PAYMENT_METHOD_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
 export default function CustomerPaymentsScreen() {
   const { dark, colors, accent } = useTheme();
 
-  const { data: payments, isLoading, refetch } = useApiQuery<Payment[]>(
+  // GET /customer-portal/payments returns the standard envelope
+  // { payments, meta } — NOT a bare array. Read .payments to match the
+  // pattern in invoices.tsx (was previously typed as Payment[] and crashed
+  // .reduce on the wrong shape).
+  const { data, isLoading, refetch } = useApiQuery<{ payments: Payment[]; meta?: unknown }>(
     ['customer-payments'],
     '/customer-portal/payments',
   );
+  const payments = data?.payments ?? [];
 
-  const totalPaid = payments?.reduce((sum, p) => sum + (p.amount ?? 0), 0) ?? 0;
+  const totalPaid = payments.reduce((sum, p) => sum + (p.amount ?? 0), 0);
+
+  // ── Statement PDF (WI-093) ──────────────────────────────────────────────
+  // Downloads the customer's own ledger statement via the shared endpoint
+  // GET /customers/:id/ledger/pdf (customer role allowed, own-only). Mirrors
+  // the driver trip-sheet pattern: arraybuffer → expo-file-system cache → OS
+  // share sheet. Date pickers default to the last 30 days. No DateTimePicker
+  // native module is installed, so plain YYYY-MM-DD text inputs are used.
+  const customerId = useAuthStore((s) => s.user?.customerId);
+  const [downloading, setDownloading] = useState(false);
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [toDate, setToDate] = useState(() => new Date().toISOString().split('T')[0]);
+
+  const handleDownloadStatement = async () => {
+    if (!customerId) {
+      Alert.alert('Unavailable', 'No customer is linked to this account.');
+      return;
+    }
+    setDownloading(true);
+    try {
+      const res = await api.get(`/customers/${customerId}/ledger/pdf`, {
+        params: { from: fromDate, to: toDate },
+        responseType: 'arraybuffer',
+      });
+      const bytes = new Uint8Array(res.data);
+      const file = new File(Paths.cache, `statement-${Date.now()}.pdf`);
+      try { file.create(); } catch { /* already exists, fine */ }
+      file.write(bytes);
+
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Account Statement',
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (err) {
+      Alert.alert('Could not download statement', getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const dateInputStyle = {
+    borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
+    backgroundColor: colors.inputBg, color: colors.text,
+  } as const;
 
   const getMethodIcon = (method: string | null | undefined): keyof typeof Ionicons.glyphMap => {
     if (!method) return 'wallet-outline';
@@ -86,7 +148,7 @@ export default function CustomerPaymentsScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       <FlatList
-        data={payments ?? []}
+        data={payments}
         keyExtractor={(p) => p.paymentId}
         renderItem={renderPayment}
         contentContainerStyle={{ padding: 16, gap: 2 }}
@@ -101,6 +163,45 @@ export default function CustomerPaymentsScreen() {
         }
         ListEmptyComponent={
           <EmptyState title="No payments" description="Your payment history will appear here" />
+        }
+        ListFooterComponent={
+          <View style={{ marginTop: 20, gap: 10, paddingBottom: 16 }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
+              Account Statement
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>From</Text>
+                <TextInput
+                  value={fromDate}
+                  onChangeText={setFromDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={dateInputStyle}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>To</Text>
+                <TextInput
+                  value={toDate}
+                  onChangeText={setToDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={dateInputStyle}
+                />
+              </View>
+            </View>
+            <Button
+              title={downloading ? 'Preparing statement…' : 'Download Statement (PDF)'}
+              onPress={handleDownloadStatement}
+              loading={downloading}
+              variant="secondary"
+            />
+          </View>
         }
       />
     </SafeAreaView>

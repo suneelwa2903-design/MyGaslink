@@ -169,6 +169,86 @@ export async function createMyOrder(
 }
 
 /**
+ * WI-093: customer modifies the QUANTITIES on their own pending order.
+ *
+ * Allowed only while the order is pending_driver_assignment or
+ * pending_dispatch (same window the cancel action uses). Cylinder types
+ * cannot be added, removed, or substituted — only quantities change. We
+ * keep each item's existing unitPrice/discountPerUnit and recompute
+ * totalPrice + order.totalAmount; if an invoice already exists for the
+ * order, its totalAmount + outstandingAmount are recalculated too.
+ *
+ * Tenant + customer scoped: the order must belong to BOTH this distributor
+ * and this customer, otherwise it's reported as not found (404).
+ */
+export async function modifyMyOrder(
+  distributorId: string,
+  customerId: string,
+  orderId: string,
+  items: { cylinderTypeId: string; quantity: number }[],
+) {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, customerId, distributorId, deletedAt: null },
+    include: { items: true, invoice: { select: { id: true } } },
+  });
+  if (!order) throw new PortalError('Order not found', 404);
+  if (!['pending_driver_assignment', 'pending_dispatch'].includes(order.status)) {
+    throw new PortalError('This order can no longer be modified', 400);
+  }
+  if (!items || items.length === 0) {
+    throw new PortalError('At least one item is required', 400);
+  }
+  for (const it of items) {
+    if (!Number.isInteger(it.quantity) || it.quantity <= 0) {
+      throw new PortalError('Quantity must be a positive whole number', 400);
+    }
+  }
+  // Quantity-only: the submitted set of cylinder types must exactly match the
+  // order's existing types (no add, remove, or substitution).
+  const existingIds = new Set(order.items.map((i) => i.cylinderTypeId));
+  const submittedIds = new Set(items.map((i) => i.cylinderTypeId));
+  const sameTypes = submittedIds.size === existingIds.size
+    && [...submittedIds].every((id) => existingIds.has(id));
+  if (!sameTypes) {
+    throw new PortalError('Only quantities can be changed', 400);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    let totalAmount = 0;
+    for (const it of items) {
+      const existing = order.items.find((oi) => oi.cylinderTypeId === it.cylinderTypeId)!;
+      const effectivePrice = Math.max(toNum(existing.unitPrice) - toNum(existing.discountPerUnit), 0);
+      const totalPrice = effectivePrice * it.quantity;
+      totalAmount += totalPrice;
+      await tx.orderItem.update({
+        where: { id: existing.id },
+        data: { quantity: it.quantity, totalPrice },
+      });
+    }
+
+    if (order.invoice) {
+      const inv = await tx.invoice.findUnique({ where: { id: order.invoice.id } });
+      if (inv) {
+        const paid = toNum(inv.amountPaid);
+        await tx.invoice.update({
+          where: { id: inv.id },
+          data: { totalAmount, outstandingAmount: Math.max(totalAmount - paid, 0) },
+        });
+      }
+    }
+
+    return tx.order.update({
+      where: { id: orderId },
+      data: { totalAmount },
+      include: {
+        items: { include: { cylinderType: { select: { typeName: true } } } },
+        customer: true,
+      },
+    });
+  });
+}
+
+/**
  * Get customer's invoices.
  */
 export async function getMyInvoices(
