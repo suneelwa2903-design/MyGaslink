@@ -314,6 +314,74 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
     await prisma.gstDocument.delete({ where: { id: crnDoc.id } });
     await prisma.creditNote.delete({ where: { id: cn.id } });
   });
+
+  it('WI-092 — retries the gst_documents lookup after a miss and renders the IRN block when the row lands on the 2nd attempt', async () => {
+    // Proves the fire-and-forget timing fix: the CN IRN is generated ~2s
+    // after approval, so the first lookup can miss. The service retries once
+    // (after 2s) and must then render the IRN block. We mock the lookup to
+    // return null on the 1st call and a populated CRN row on the 2nd.
+    const PDFDocument = (await import('pdfkit')).default;
+    const drawnStrings: string[] = [];
+    const originalText = PDFDocument.prototype.text;
+    const textSpy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
+      function (this: any, str: any, ...rest: any[]) {
+        if (typeof str === 'string') drawnStrings.push(str);
+        return originalText.call(this, str, ...rest);
+      },
+    );
+
+    const inv = await getValuedInvoice();
+    const cn = await prisma.creditNote.create({
+      data: {
+        invoiceId: inv.id,
+        creditNoteNumber: `CN-RETRY-${Date.now().toString(36)}`,
+        totalAmount: 10,
+        reason: 'WI-092 retry',
+        status: 'pending_cn',
+      },
+    });
+
+    const fakeCrnDoc = {
+      id: 'wi092-fake-crn-doc',
+      invoiceId: inv.id,
+      distributorId: 'dist-002',
+      docType: 'CRN',
+      irn: 'c'.repeat(64),
+      ackNo: '112610259999999',
+      ackDate: new Date(),
+      signedQr: null,
+      ewbNo: null,
+      irnStatus: 'success',
+      isLatest: true,
+    };
+
+    // Manual save/restore rather than vi.spyOn: Prisma model delegates don't
+    // restore reliably via mockRestore (they're proxy-backed), and a leaked
+    // findFirst override would break every later test that reads gst_documents.
+    const originalFindFirst = prisma.gstDocument.findFirst;
+    let crnLookupCalls = 0;
+    (prisma.gstDocument as any).findFirst = async (...args: any[]) => {
+      crnLookupCalls++;
+      // 1st lookup misses (IRN hasn't landed yet); 2nd (post-retry) finds it.
+      return crnLookupCalls === 1 ? null : fakeCrnDoc;
+    };
+
+    try {
+      const res = await request(app)
+        .get(`/api/invoices/credit-notes/${cn.id}/pdf`)
+        .set(auth(sharmaAdminToken));
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('application/pdf');
+      // The retry fired (exactly 2 lookups) and the IRN block rendered.
+      expect(crnLookupCalls).toBe(2);
+      expect(drawnStrings.some((s) => /CRN Details/i.test(s))).toBe(true);
+    } finally {
+      (prisma.gstDocument as any).findFirst = originalFindFirst;
+      textSpy.mockRestore();
+      await prisma.creditNote.delete({ where: { id: cn.id } });
+    }
+  });
 });
 
 describe('WI-077 — Debit Note PDF skips IRN block for B2C-style (no IRN/EWB) DBN', () => {

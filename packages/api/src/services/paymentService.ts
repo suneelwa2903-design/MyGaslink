@@ -289,20 +289,10 @@ export async function allocatePayment(
       },
     });
 
-    await tx.customerLedgerEntry.create({
-      data: {
-        distributorId,
-        customerId: payment.customerId,
-        entryType: 'payment_entry',
-        referenceId: payment.id,
-        invoiceId: invoice.id,
-        amountDelta: -amount,
-        narration: `Allocated ${amount} to invoice ${invoice.invoiceNumber}`,
-        entryDate: payment.transactionDate,
-        createdBy: userId,
-      },
-    });
-
+    // WI-092: NO ledger entry here. Allocation only distributes money that
+    // was already recorded (and already written to customer_ledger_entries)
+    // when the payment was first created. Writing another entry here would
+    // double-count the payment against the customer's balance.
     const newAllocated = allocated + amount;
     return {
       payment: {
