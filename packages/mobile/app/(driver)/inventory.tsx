@@ -13,7 +13,11 @@ interface TripStockItem {
 }
 
 interface CancelledItem {
-  cylinderTypeName: string;
+  // WI-094b Fix 5: API (vehicleService.getCancelledStockByVehicle) returns the
+  // cylinder type NESTED under `cylinderType.typeName`, not a flat field.
+  cylinderType?: {
+    typeName?: string;
+  };
   quantity: number;
   cancellationDate: string;
   status: string;
@@ -84,16 +88,16 @@ export default function DriverInventoryScreen() {
                   backgroundColor: dark ? 'rgba(16,185,129,0.15)' : '#ecfdf5',
                   padding: 10, borderRadius: 10, alignItems: 'center',
                 }}>
-                  <Text style={{ fontSize: 20, fontWeight: '800', color: ACCENT.green }}>{item.fullQuantity}</Text>
-                  <Text style={{ fontSize: 11, color: dark ? ACCENT.green : '#059669', marginTop: 2 }}>Full</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '800', color: dark ? ACCENT.green : '#047857' }}>{item.fullQuantity}</Text>
+                  <Text style={{ fontSize: 11, color: dark ? ACCENT.green : '#047857', marginTop: 2 }}>Full</Text>
                 </View>
                 <View style={{
                   flex: 1,
                   backgroundColor: dark ? 'rgba(59,130,246,0.15)' : '#eef7ff',
                   padding: 10, borderRadius: 10, alignItems: 'center',
                 }}>
-                  <Text style={{ fontSize: 20, fontWeight: '800', color: ACCENT.blue }}>{item.emptyQuantity}</Text>
-                  <Text style={{ fontSize: 11, color: dark ? ACCENT.blue : '#1a6df5', marginTop: 2 }}>Empty</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '800', color: dark ? ACCENT.blue : '#1d4ed8' }}>{item.emptyQuantity}</Text>
+                  <Text style={{ fontSize: 11, color: dark ? ACCENT.blue : '#1d4ed8', marginTop: 2 }}>Empty</Text>
                 </View>
               </View>
             </Card>
@@ -108,7 +112,9 @@ export default function DriverInventoryScreen() {
               <Card key={i}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                   <View>
-                    <Text style={{ fontWeight: '600', color: colors.text }}>{item.cylinderTypeName}</Text>
+                    <Text style={{ fontWeight: '600', color: colors.text }}>
+                      {item.cylinderType?.typeName ?? 'Cylinder'} × {item.quantity}
+                    </Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>Cancelled: {formatDate(item.cancellationDate)}</Text>
                     {item.order?.customer?.customerName ? (
                       <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }}>

@@ -201,6 +201,14 @@ export default function DriverTripScreen() {
   const isReturnTransition =
     assignment?.status === 'loaded_and_dispatched' && nextStep?.status === 'returned_inventory';
 
+  // WI-094b Fix 2: only surface the "Dispatch pending" note when the DVA is
+  // dispatch_ready AND there is actually an order waiting to be dispatched.
+  // A fresh dispatch_ready DVA with no pending_dispatch orders (e.g. just
+  // after reconciliation) showed a misleading "waiting to dispatch" card.
+  const hasPendingDispatch = !!assignment?.orders?.some(
+    (o: any) => o.status === 'pending_dispatch',
+  );
+
   const handleAdvance = () => {
     if (!nextStep) return;
     if (isReturnTransition) {
@@ -325,7 +333,7 @@ export default function DriverTripScreen() {
             </Card>
 
             {/* Next Action — Fix 1: dispatch_ready is read-only; Fix 2: returned_inventory has no button */}
-            {assignment.status === 'dispatch_ready' ? (
+            {assignment.status === 'dispatch_ready' && hasPendingDispatch ? (
               <Card>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <Ionicons name="information-circle-outline" size={20} color={ACCENT.blue} />
@@ -337,7 +345,7 @@ export default function DriverTripScreen() {
                   </View>
                 </View>
               </Card>
-            ) : assignment.status === 'returned_inventory' ? null : (
+            ) : assignment.status === 'dispatch_ready' || assignment.status === 'returned_inventory' ? null : (
               nextStep && (
                 <Button
                   title={isReturnTransition ? 'Mark Vehicle Returned' : `Move to: ${nextStep.label}`}

@@ -45,7 +45,12 @@ export function MetricCard({ title, value, subtitle, color = '#338dff', icon }: 
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: '500' }}>{title}</Text>
-          <Text style={{ fontSize: 24, fontWeight: '700', color, marginTop: 4 }}>
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.5}
+            style={{ fontSize: 24, fontWeight: '700', color, marginTop: 4 }}
+          >
             {typeof value === 'number' ? value.toLocaleString('en-IN') : value}
           </Text>
           {subtitle && (

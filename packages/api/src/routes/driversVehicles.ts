@@ -288,6 +288,24 @@ driverRouter.get('/me/trip-stock',
       // (utils/dateOnly.ts). setHours(0,0,0,0) was off-by-one on this IST server.
       const today = startOfUtcDay();
 
+      // WI-094b Fix 3/4: scope the cargo to the driver's CURRENT trip, not
+      // every order they touched today. A driver who finishes Trip 1 (all
+      // delivered/reconciled) and starts Trip 2 was previously shown Trip 1's
+      // delivered fulls + empties on top of Trip 2's — a wildly inflated truck
+      // count. We pin to the latest DVA's tripNumber, mirroring the trip-sheet
+      // PDF service (tripSheetPdfService.ts:103-113):
+      //   - dispatched/delivered orders carry order.tripNumber === DVA.tripNumber
+      //     (stamped at the pending_delivery transition by preflightOne)
+      //   - pending_dispatch orders are not yet stamped (tripNumber NULL) but
+      //     belong to the upcoming load for this same (driver, date), so they
+      //     count toward fulls about to go on the truck.
+      const currentDva = await prisma.driverVehicleAssignment.findFirst({
+        where: { driverId: driver.id, distributorId, assignmentDate: today, status: { not: 'cancelled' } },
+        orderBy: { tripNumber: 'desc' },
+        select: { tripNumber: true, updatedAt: true },
+      });
+      if (!currentDva) return sendSuccess(res, { items: [] });
+
       const orders = await prisma.order.findMany({
         where: {
           distributorId,
@@ -296,6 +314,18 @@ driverRouter.get('/me/trip-stock',
           deletedAt: null,
           // Exclude cancelled — those aren't on the truck.
           status: { not: 'cancelled' },
+          OR: [
+            // On/returned with this trip: dispatched + delivered fulls/empties.
+            { tripNumber: currentDva.tripNumber, status: { in: ['pending_delivery', 'delivered', 'modified_delivered'] } },
+            // Queued for the next load (not yet dispatched → tripNumber NULL).
+            { tripNumber: null, status: 'pending_dispatch' },
+            // Legacy fallback (mirrors tripSheetPdfService.ts:112): orders
+            // dispatched BEFORE WI-065's per-order tripNumber stamping have
+            // tripNumber = NULL while pending_delivery. Pin them to the
+            // current DVA via the updatedAt window so historical trucks still
+            // report their cargo. New dispatches always carry tripNumber.
+            { tripNumber: null, status: 'pending_delivery', updatedAt: { gte: currentDva.updatedAt } },
+          ],
         },
         include: {
           items: { include: { cylinderType: { select: { id: true, typeName: true } } } },
