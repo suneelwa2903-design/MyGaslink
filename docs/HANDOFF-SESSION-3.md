@@ -10,10 +10,10 @@
 
 | | |
 |---|---|
-| **Code baseline SHA** | `07b7619` (`07b76193d2fde7ec21631386affea2428760383b`) — last CODE commit (WI-090 pt2). |
-| **HEAD when this doc shipped** | `5459ed1` = `07b7619` + this docs-only handoff commit. **Source of truth = `git rev-parse HEAD`.** Docs/handoff commits after `07b7619` change NO code and do NOT affect the 484/484 result — only a `fix(`/`feat(` commit after `07b7619` in `git log --oneline` would. So "HEAD is `07b7619` or a later docs-only SHA" is the expected state. |
+| **Code baseline SHA** | `ba45f26` (WI-091b — last CODE commit, Session 4). Prior code baselines: `e178e5b` (WI-091), `07b7619` (WI-090 pt2). |
+| **HEAD when this doc shipped** | a docs-only handoff commit on top of `ba45f26`. **Source of truth = `git rev-parse HEAD`.** Docs/handoff commits change NO code and do NOT affect the 488/488 result — only a `fix(`/`feat(` commit after `ba45f26` in `git log --oneline` would. |
 | **Branch** | `master` (all work lands directly on master; no feature branches; remote not pushed) |
-| **API tests** | **484 / 484 passing** (37 files) — `cd packages/api && pnpm test` |
+| **API tests** | **488 / 488 passing** (37 files) — `cd packages/api && pnpm test`. ⚠️ Flake: running the suite while `pnpm dev` is up can intermittently drop ~4 tests via shared-dev-DB contention; re-run resolves it. |
 | **Web typecheck** | clean (2 pre-existing `afterAll` import errors in `credit-debit-note-amount.test.ts` + `invoice-list-badges-cn-pdf.test.ts` — harmless, tests pass) |
 | **Monorepo** | `packages/api` (Express+Prisma+PG), `packages/web` (React19+Vite+Tailwind+Zustand), `packages/mobile` (Expo) |
 
@@ -69,7 +69,7 @@ pnpm db:studio      # Prisma Studio GUI
 
 ---
 
-## 2. WHAT WAS BUILT (WI-001 → WI-090)
+## 2. WHAT WAS BUILT (WI-001 → WI-091b)
 
 Status legend: ✅ done · ⏸ pending · 🔁 in_progress · ⛔ wont_fix. "BLOCKS" = blocksLaunch flag.
 
@@ -96,8 +96,10 @@ Status legend: ✅ done · ⏸ pending · 🔁 in_progress · ⛔ wont_fix. "BLO
 - **WI-078** ✅ BLOCKS — Cancel order wires NIC EWB cancellation + DVA release into `cancelOrder()`.
 - **WI-083 / WI-083a2 / WI-084 / WI-085 / WI-086** ✅ BLOCKS — Cancel/dispatch token-and-status hardening (see anti-patterns #10–#13; §8 token behavior).
 - **WI-089** ⛔ wont_fix — Auto-refresh NIC session on SESSION_EXPIRED (premise disproved by live probe; shipped honest-badge UI instead).
-- **WI-090** ✅ BLOCKS — **(this session)** IRN-cancel guard fix (retry cancel with pinned token), add-to-trip vehicle status, trip-sheet PDF hyphen, test→live vehicle contamination fix.
-- **WI-007** ⏸ BLOCKS — Verify GST **live** mode against WhiteBooks **production** (NOT done — sandbox only so far).
+- **WI-090** ✅ BLOCKS — IRN-cancel guard fix (retry cancel with pinned token), add-to-trip vehicle status, trip-sheet PDF hyphen, test→live vehicle contamination fix.
+- **WI-091** ✅ BLOCKS — **(Session 4)** B2C phantom-active EWB guard (NIC `status_cd=1` + no `ewayBillNo` → `ewbStatus='failed'` + PendingAction, dispatch NOT blocked); SESSION_EXPIRED logging fix (GENERATE throw now carries NIC body → no more `responsePayload=null`); pre-dispatch NIC health probe via `pingEinvoiceSession` seam (dead window → one clean `NIC_SESSION_DOWN` 503 before the order loop). Commit `e178e5b`.
+- **WI-091b** ✅ BLOCKS — **(Session 4)** Bounded retry on the probe: 3 attempts × 2s, cache-evict + fresh auth between each. Rides through the ≤6s NIC sandbox flicker (proven by a live profiler: 93.8% alive, dead blips ≤6s, flips ~every 30s). All 3 fail → `NIC_SESSION_DOWN` 503. Commit `ba45f26`.
+- **WI-007** ⏸ BLOCKS — Verify GST **live** mode against WhiteBooks **production** (NOT done — sandbox only so far). **Session-4 additions:** (a) the e-Invoice `GENERATE_EWAYBILL` (by-IRN) endpoint returns generic **`5001` "Application Error"** in sandbox — **unverifiable here**, can't confirm the Rule-A-compliant B2B EWB path pre-prod; (b) the B2C **standalone EWB** sometimes returns a bare **`{"status_cd":"1","status_desc":"Sucess"}`** with no `ewayBillNo` — **root cause unknown** (WI-091 guards it as failed). Both require a **production WhiteBooks tenant** to verify.
 
 ### Orders / Dispatch / Vehicle workflow
 - **WI-062** ✅ BLOCKS — GET /api/orders auto-scopes to driver_id for driver role (within-tenant leak fix).
@@ -214,11 +216,18 @@ Status legend: ✅ done · ⏸ pending · 🔁 in_progress · ⛔ wont_fix. "BLO
 
 ## 4. TESTING STATUS
 
+> **Round 1 (dist-admin) — NOT COMPLETE.** Session 4 was spent on the GST/NIC
+> investigation + WI-091/091b fixes; dist-002 data is messy from live diagnostics
+> (stranded/cancelled orders, extra test orders). **Restart tomorrow with a clean
+> seed** (`cleanup-dist002-seed.ts` + `create-dist002-users.ts`) and begin §5
+> Round 1 (sharma@gasdist.com, cases A1–A15) from a fresh baseline.
+
 ### Tested & passing
-- **API integration suite: 484/484** (37 files) — auth, inventory, gst-invoicing, gst-toggle, customer-portal, workflow, gst-preflight, gst-trip-sheet, gst-dispatch-trip, gst-reissue (+variants), cancel-order, gst-token-expiry (incl. WI-090 cancel-guard tests), gst-payload-shape, anti-pattern-guards, settings, etc.
+- **API integration suite: 488/488** (37 files) — auth, inventory, gst-invoicing, gst-toggle, customer-portal, workflow, gst-preflight, gst-trip-sheet, gst-dispatch-trip, gst-reissue (+variants), cancel-order, gst-token-expiry (incl. WI-090 cancel-guard + WI-091b probe-retry tests), gst-payload-shape, anti-pattern-guards, settings, etc.
 - **Live GST sandbox (dist-002):** B2B intra-state (Maruthi), B2B inter-state IGST (Hyderabad Caterers), B2C (Bangalore Foods) IRN+EWB generation; preflight dispatch; **IRN/EWB cancel succeeds at NIC** (WI-090 verified — production endpoint + standalone retry + direct fetch); add-to-trip → vehicle dispatched; trip-sheet PDF order numbers render with hyphen.
 - **Invoice PDF download** (FB-006) — header bug fixed.
 - **Settings thresholds** (FS-008/009).
+- **Session 4 live (dist-002):** WI-091 health-probe shown working in the dispatch UI (dead NIC → one clean "retry in a few minutes"); a stranded `cancel_failed` IRN (`INV-MPFRFIFU0R3`) recovered via **Retry-Cancel** once NIC came back (WI-090 lifecycle proven end-to-end); FIX 2 captured the real NIC `1005` body in `gst_api_logs` (was null). NIC flicker quantified by a live profiler (93.8% alive / ≤6s dead) → sized WI-091b retry.
 
 ### Pending (the real work for next session)
 - **Phase 1 — Navigation smoke (55 cases, 7 roles)** — `docs/Navigation_Smoke_Test.xlsx` / TESTING_PROGRESS.md Phase 1. **0/55 done.** START HERE.
@@ -398,16 +407,17 @@ cd C:\Projects\Re-New_Gaslink
 
 # 1. Confirm the code baseline
 git log --oneline -3
-#   EXPECTED: the last `fix(`/`feat(` commit is 07b7619 (WI-090 pt2).
-#   HEAD itself may be a LATER docs-only commit (e.g. 5459ed1 = the handoff doc,
-#   or a subsequent handoff edit). That's fine — docs commits change NO code and
-#   do NOT affect 484/484. Only a fix/feat commit AFTER 07b7619 means code moved.
+#   EXPECTED: the last `fix(`/`feat(` commit is ba45f26 (WI-091b).
+#   HEAD itself may be a LATER docs-only commit (the Session-4 handoff edit).
+#   That's fine — docs commits change NO code and do NOT affect 488/488.
+#   Only a fix/feat commit AFTER ba45f26 means code moved.
 git rev-parse HEAD      # source of truth for the live SHA
 git status --short      # should be clean
 
 # 2. Confirm tests are green (THE baseline)
 pnpm --filter @gaslink/api test
-#   EXPECTED: Test Files 37 passed (37) | Tests 484 passed (484)
+#   EXPECTED: Test Files 37 passed (37) | Tests 488 passed (488)
+#   (If ~4 fail: re-run — shared-dev-DB contention with a running `pnpm dev`.)
 
 # 3. Bring the system up
 pnpm docker:up          # if gaslink-db not already healthy
@@ -441,4 +451,4 @@ Then move to Phase 2 E2E modules (`docs/E2E_Testing_Guide.xlsx`, 272 cases). Mob
 
 ---
 
-*End of handoff. Code baseline `07b7619` (HEAD = a later docs-only commit; trust `git rev-parse HEAD`) · 484/484 tests · master · 2026-05-21.*
+*End of handoff. Code baseline `ba45f26` (WI-091b; HEAD = a later docs-only commit; trust `git rev-parse HEAD`) · 488/488 tests · master · Session 4, 2026-05-22. Round 1 testing still pending — restart with a clean seed.*
