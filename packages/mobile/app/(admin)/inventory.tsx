@@ -9,6 +9,10 @@ import {
   ActivityIndicator,
   Alert,
   StyleSheet,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -240,6 +244,50 @@ export default function AdminInventoryScreen() {
 
 // ─── SUMMARY TAB ────────────────────────────────────────────────────────────
 
+type StockModalType = 'incoming' | 'outgoing' | 'adjust' | null;
+
+interface StockMovementForm {
+  cylinderTypeId: string;
+  quantity: string;
+  documentType: string;
+  documentNumber: string;
+  documentDate: string;
+  vehicleNumber: string;
+  driverName: string;
+  notes: string;
+}
+
+interface AdjustForm {
+  cylinderTypeId: string;
+  adjustmentType: 'add' | 'subtract';
+  quantity: string;
+  reason: string;
+  adjustmentDate: string;
+}
+
+function emptyMovementForm(defaultDate: string): StockMovementForm {
+  return {
+    cylinderTypeId: '',
+    quantity: '',
+    documentType: '',
+    documentNumber: '',
+    documentDate: defaultDate,
+    vehicleNumber: '',
+    driverName: '',
+    notes: '',
+  };
+}
+
+function emptyAdjustForm(defaultDate: string): AdjustForm {
+  return {
+    cylinderTypeId: '',
+    adjustmentType: 'add',
+    quantity: '',
+    reason: '',
+    adjustmentDate: defaultDate,
+  };
+}
+
 function SummaryTab({
   selectedDate,
   setSelectedDate,
@@ -271,6 +319,81 @@ function SummaryTab({
 
   const isLocked = inventory?.[0]?.isLocked ?? false;
 
+  // ── Modal state ────────────────────────────────────────────────────────────
+  const [activeModal, setActiveModal] = useState<StockModalType>(null);
+  const [movementForm, setMovementForm] = useState<StockMovementForm>(() =>
+    emptyMovementForm(selectedDate),
+  );
+  const [adjustForm, setAdjustForm] = useState<AdjustForm>(() => emptyAdjustForm(selectedDate));
+
+  // Cylinder type options derived from loaded inventory
+  const cylinderOptions = useMemo(
+    () => (inventory ?? []).map((i) => ({ id: i.cylinderTypeId, name: i.cylinderTypeName })),
+    [inventory],
+  );
+
+  // ── Mutations ──────────────────────────────────────────────────────────────
+  const incomingMutation = useApiMutation<
+    unknown,
+    {
+      cylinderTypeId: string;
+      quantity: number;
+      documentType: string;
+      documentNumber: string;
+      documentDate: string;
+      vehicleNumber?: string;
+      driverName?: string;
+      notes?: string;
+    }
+  >('post', '/inventory/incoming-fulls', {
+    invalidateKeys: [['inventory', selectedDate]],
+    successMessage: 'Incoming fulls recorded',
+    onSuccess: () => {
+      setActiveModal(null);
+      setMovementForm(emptyMovementForm(selectedDate));
+    },
+  });
+
+  const outgoingMutation = useApiMutation<
+    unknown,
+    {
+      cylinderTypeId: string;
+      quantity: number;
+      documentType: string;
+      documentNumber: string;
+      documentDate: string;
+      vehicleNumber?: string;
+      driverName?: string;
+      notes?: string;
+    }
+  >('post', '/inventory/outgoing-empties', {
+    invalidateKeys: [['inventory', selectedDate]],
+    successMessage: 'Outgoing empties recorded',
+    onSuccess: () => {
+      setActiveModal(null);
+      setMovementForm(emptyMovementForm(selectedDate));
+    },
+  });
+
+  const adjustMutation = useApiMutation<
+    unknown,
+    {
+      cylinderTypeId: string;
+      adjustmentType: 'add' | 'subtract';
+      quantity: number;
+      reason: string;
+      adjustmentDate: string;
+    }
+  >('post', '/inventory/manual-adjustment', {
+    invalidateKeys: [['inventory', selectedDate]],
+    successMessage: 'Stock adjustment saved',
+    onSuccess: () => {
+      setActiveModal(null);
+      setAdjustForm(emptyAdjustForm(selectedDate));
+    },
+  });
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
   const handleLockToggle = () => {
     if (isLocked) {
       Alert.alert('Unlock Day', `Unlock inventory for ${formatDate(selectedDate)}?`, [
@@ -278,241 +401,884 @@ function SummaryTab({
         { text: 'Unlock', onPress: () => unlockMutation.mutate({ date: selectedDate }) },
       ]);
     } else {
-      Alert.alert('Lock Day', `Lock inventory for ${formatDate(selectedDate)}? This prevents further edits.`, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Lock', style: 'destructive', onPress: () => lockMutation.mutate({ date: selectedDate }) },
-      ]);
+      Alert.alert(
+        'Lock Day',
+        `Lock inventory for ${formatDate(selectedDate)}? This prevents further edits.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Lock',
+            style: 'destructive',
+            onPress: () => lockMutation.mutate({ date: selectedDate }),
+          },
+        ],
+      );
     }
   };
 
+  const openModal = (type: StockModalType) => {
+    if (isLocked) {
+      Alert.alert(
+        'Day is locked',
+        'Day is locked — unlock first to make adjustments.',
+      );
+      return;
+    }
+    if (type === 'adjust') {
+      setAdjustForm(emptyAdjustForm(selectedDate));
+    } else {
+      setMovementForm(emptyMovementForm(selectedDate));
+    }
+    setActiveModal(type);
+  };
+
+  const handleMovementSubmit = () => {
+    const qty = parseInt(movementForm.quantity, 10);
+    if (!movementForm.cylinderTypeId) {
+      Alert.alert('Required', 'Please select a cylinder type.');
+      return;
+    }
+    if (isNaN(qty) || qty <= 0) {
+      Alert.alert('Required', 'Quantity must be a whole number greater than 0.');
+      return;
+    }
+    if (!movementForm.documentType.trim()) {
+      Alert.alert('Required', 'Document Type is required.');
+      return;
+    }
+    if (!movementForm.documentNumber.trim()) {
+      Alert.alert('Required', 'Document Number is required.');
+      return;
+    }
+
+    const payload = {
+      cylinderTypeId: movementForm.cylinderTypeId,
+      quantity: qty,
+      documentType: movementForm.documentType.trim(),
+      documentNumber: movementForm.documentNumber.trim(),
+      documentDate: movementForm.documentDate,
+      ...(movementForm.vehicleNumber.trim() ? { vehicleNumber: movementForm.vehicleNumber.trim() } : {}),
+      ...(movementForm.driverName.trim() ? { driverName: movementForm.driverName.trim() } : {}),
+      ...(movementForm.notes.trim() ? { notes: movementForm.notes.trim() } : {}),
+    };
+
+    if (activeModal === 'incoming') {
+      incomingMutation.mutate(payload);
+    } else {
+      outgoingMutation.mutate(payload);
+    }
+  };
+
+  const handleAdjustSubmit = () => {
+    const qty = parseInt(adjustForm.quantity, 10);
+    if (!adjustForm.cylinderTypeId) {
+      Alert.alert('Required', 'Please select a cylinder type.');
+      return;
+    }
+    if (isNaN(qty) || qty <= 0) {
+      Alert.alert('Required', 'Quantity must be a whole number greater than 0.');
+      return;
+    }
+    if (!adjustForm.reason.trim()) {
+      Alert.alert('Required', 'Reason is required.');
+      return;
+    }
+
+    adjustMutation.mutate({
+      cylinderTypeId: adjustForm.cylinderTypeId,
+      adjustmentType: adjustForm.adjustmentType,
+      quantity: qty,
+      reason: adjustForm.reason.trim(),
+      adjustmentDate: adjustForm.adjustmentDate,
+    });
+  };
+
+  const isMovementPending = incomingMutation.isPending || outgoingMutation.isPending;
+
   return (
-    <ScrollView
-      style={{ flex: 1 }}
-      contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }}
-      refreshControl={
-        <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={t.accent} />
-      }
-    >
-      {/* Date Navigation */}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: t.card,
-          borderRadius: 12,
-          padding: 12,
-          borderWidth: 1,
-          borderColor: t.cardBorder,
-        }}
+    <>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }}
+        refreshControl={
+          <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={t.accent} />
+        }
       >
-        <TouchableOpacity
-          onPress={() => setSelectedDate(addDays(selectedDate, -1))}
-          style={{ padding: 6, borderRadius: 8, backgroundColor: t.metricBg }}
-        >
-          <Ionicons name="chevron-back" size={20} color={t.text} />
-        </TouchableOpacity>
-
-        <View style={{ alignItems: 'center', flex: 1 }}>
-          <Text style={{ fontSize: 15, fontWeight: '700', color: t.text }}>
-            {formatDate(selectedDate)}
-          </Text>
-          {isToday && (
-            <Text style={{ fontSize: 11, color: t.green, fontWeight: '600', marginTop: 1 }}>
-              Today
-            </Text>
-          )}
-        </View>
-
-        <TouchableOpacity
-          onPress={() => setSelectedDate(addDays(selectedDate, 1))}
-          style={{ padding: 6, borderRadius: 8, backgroundColor: t.metricBg }}
-        >
-          <Ionicons name="chevron-forward" size={20} color={t.text} />
-        </TouchableOpacity>
-
-        {!isToday && (
+        {/* ── Action Buttons Row ─────────────────────────────────────── */}
+        <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity
-            onPress={() => setSelectedDate(todayString())}
+            onPress={() => openModal('incoming')}
             style={{
-              marginLeft: 8,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-              borderRadius: 8,
-              backgroundColor: t.accentBg,
+              flex: 1,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4,
+              backgroundColor: t.greenBg,
+              borderRadius: 10,
+              paddingVertical: 10,
+              borderWidth: 1,
+              borderColor: t.green + '40',
             }}
           >
-            <Text style={{ fontSize: 12, fontWeight: '700', color: t.accent }}>Today</Text>
+            <Ionicons name="arrow-down-circle-outline" size={16} color={t.green} />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: t.green }}>Incoming Fulls</Text>
           </TouchableOpacity>
-        )}
 
-        <TouchableOpacity
-          onPress={handleLockToggle}
-          disabled={lockMutation.isPending || unlockMutation.isPending}
+          <TouchableOpacity
+            onPress={() => openModal('outgoing')}
+            style={{
+              flex: 1,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4,
+              backgroundColor: t.orangeBg,
+              borderRadius: 10,
+              paddingVertical: 10,
+              borderWidth: 1,
+              borderColor: t.orange + '40',
+            }}
+          >
+            <Ionicons name="arrow-up-circle-outline" size={16} color={t.orange} />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: t.orange }}>Outgoing Empties</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => openModal('adjust')}
+            style={{
+              flex: 1,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4,
+              backgroundColor: t.blueBg,
+              borderRadius: 10,
+              paddingVertical: 10,
+              borderWidth: 1,
+              borderColor: t.blue + '40',
+            }}
+          >
+            <Ionicons name="create-outline" size={16} color={t.blue} />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: t.blue }}>Adjust Stock</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Date Navigation */}
+        <View
           style={{
-            marginLeft: 8,
-            padding: 6,
-            borderRadius: 8,
-            backgroundColor: isLocked ? t.greenBg : t.metricBg,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: t.card,
+            borderRadius: 12,
+            padding: 12,
+            borderWidth: 1,
+            borderColor: t.cardBorder,
           }}
         >
-          <Ionicons
-            name={isLocked ? 'lock-closed' : 'lock-open-outline'}
-            size={18}
-            color={isLocked ? t.green : t.textSecondary}
-          />
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            onPress={() => setSelectedDate(addDays(selectedDate, -1))}
+            style={{ padding: 6, borderRadius: 8, backgroundColor: t.metricBg }}
+          >
+            <Ionicons name="chevron-back" size={20} color={t.text} />
+          </TouchableOpacity>
 
-      {/* Loading State */}
-      {isLoading && (
-        <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-          <ActivityIndicator size="large" color={t.accent} />
-        </View>
-      )}
+          <View style={{ alignItems: 'center', flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: t.text }}>
+              {formatDate(selectedDate)}
+            </Text>
+            {isToday && (
+              <Text style={{ fontSize: 11, color: t.green, fontWeight: '600', marginTop: 1 }}>
+                Today
+              </Text>
+            )}
+          </View>
 
-      {/* Empty State */}
-      {!isLoading && (!inventory || inventory.length === 0) && (
-        <EmptyCard icon="cube-outline" title="No inventory data" subtitle="No records for this date" />
-      )}
+          <TouchableOpacity
+            onPress={() => setSelectedDate(addDays(selectedDate, 1))}
+            style={{ padding: 6, borderRadius: 8, backgroundColor: t.metricBg }}
+          >
+            <Ionicons name="chevron-forward" size={20} color={t.text} />
+          </TouchableOpacity>
 
-      {/* Cylinder Cards */}
-      {!isLoading &&
-        inventory?.map((item) => {
-          const isWarning =
-            item.thresholdWarning !== null && item.closingFulls <= (item.thresholdWarning ?? 0);
-          const isCritical =
-            item.thresholdCritical !== null && item.closingFulls <= (item.thresholdCritical ?? 0);
-
-          return (
-            <View
-              key={item.cylinderTypeId}
+          {!isToday && (
+            <TouchableOpacity
+              onPress={() => setSelectedDate(todayString())}
               style={{
-                backgroundColor: t.card,
-                borderRadius: 12,
-                padding: 16,
-                borderWidth: isCritical ? 2 : isWarning ? 2 : 1,
-                borderColor: isCritical
-                  ? 'rgba(239, 68, 68, 0.5)'
-                  : isWarning
-                    ? 'rgba(249, 115, 22, 0.5)'
-                    : t.cardBorder,
+                marginLeft: 8,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 8,
+                backgroundColor: t.accentBg,
               }}
             >
-              {/* Header */}
+              <Text style={{ fontSize: 12, fontWeight: '700', color: t.accent }}>Today</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            onPress={handleLockToggle}
+            disabled={lockMutation.isPending || unlockMutation.isPending}
+            style={{
+              marginLeft: 8,
+              padding: 6,
+              borderRadius: 8,
+              backgroundColor: isLocked ? t.greenBg : t.metricBg,
+            }}
+          >
+            <Ionicons
+              name={isLocked ? 'lock-closed' : 'lock-open-outline'}
+              size={18}
+              color={isLocked ? t.green : t.textSecondary}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {/* Loading State */}
+        {isLoading && (
+          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+            <ActivityIndicator size="large" color={t.accent} />
+          </View>
+        )}
+
+        {/* Empty State */}
+        {!isLoading && (!inventory || inventory.length === 0) && (
+          <EmptyCard
+            icon="cube-outline"
+            title="No inventory data"
+            subtitle="No records for this date"
+          />
+        )}
+
+        {/* Cylinder Cards */}
+        {!isLoading &&
+          inventory?.map((item) => {
+            const isWarning =
+              item.thresholdWarning !== null && item.closingFulls <= (item.thresholdWarning ?? 0);
+            const isCritical =
+              item.thresholdCritical !== null &&
+              item.closingFulls <= (item.thresholdCritical ?? 0);
+
+            return (
               <View
+                key={item.cylinderTypeId}
                 style={{
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 12,
+                  backgroundColor: t.card,
+                  borderRadius: 12,
+                  padding: 16,
+                  borderWidth: isCritical ? 2 : isWarning ? 2 : 1,
+                  borderColor: isCritical
+                    ? 'rgba(239, 68, 68, 0.5)'
+                    : isWarning
+                      ? 'rgba(249, 115, 22, 0.5)'
+                      : t.cardBorder,
                 }}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: t.text }}>
-                    {item.cylinderTypeName}
-                  </Text>
-                  {item.capacity && (
-                    <View
+                {/* Header */}
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 12,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: t.text }}>
+                      {item.cylinderTypeName}
+                    </Text>
+                    {item.capacity && (
+                      <View
+                        style={{
+                          backgroundColor: t.blueBg,
+                          paddingHorizontal: 8,
+                          paddingVertical: 2,
+                          borderRadius: 10,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: t.blue }}>
+                          {item.capacity}kg
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 4 }}>
+                    {isCritical && <StatusBadge label="Critical" color={t.red} bg={t.redBg} />}
+                    {isWarning && !isCritical && (
+                      <StatusBadge label="Warning" color={t.orange} bg={t.orangeBg} />
+                    )}
+                    {item.isLocked && (
+                      <StatusBadge label="Locked" color={t.green} bg={t.greenBg} />
+                    )}
+                  </View>
+                </View>
+
+                {/* 2-Column Flow Metrics */}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  <MetricCell
+                    label="Opening Fulls"
+                    value={item.openingFulls}
+                    bg={t.metricBg}
+                    color={t.text}
+                  />
+                  <MetricCell
+                    label="Incoming"
+                    value={item.incomingFulls}
+                    prefix="+"
+                    bg={t.greenBg}
+                    color={t.green}
+                  />
+                  <MetricCell
+                    label="Delivered"
+                    value={item.deliveredQty}
+                    prefix="-"
+                    bg={t.blueBg}
+                    color={t.blue}
+                  />
+                  <MetricCell
+                    label="Cancelled"
+                    value={item.cancelledStockQty}
+                    bg={t.orangeBg}
+                    color={t.orange}
+                  />
+                  <MetricCell
+                    label="Outgoing Empties"
+                    value={item.outgoingEmpties}
+                    bg={t.metricBg}
+                    color={t.text}
+                  />
+                  <MetricCell
+                    label="Collected Empties"
+                    value={item.collectedEmpties}
+                    bg={t.metricBg}
+                    color={t.text}
+                  />
+                </View>
+
+                {/* Closing row */}
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    borderTopWidth: 1,
+                    borderTopColor: t.divider,
+                    paddingTop: 12,
+                  }}
+                >
+                  <View>
+                    <Text style={{ fontSize: 11, color: t.textSecondary }}>Closing Fulls</Text>
+                    <Text
                       style={{
-                        backgroundColor: t.blueBg,
-                        paddingHorizontal: 8,
-                        paddingVertical: 2,
-                        borderRadius: 10,
+                        fontSize: 22,
+                        fontWeight: '800',
+                        color: isCritical ? t.red : t.text,
                       }}
                     >
-                      <Text style={{ fontSize: 11, fontWeight: '600', color: t.blue }}>
-                        {item.capacity}kg
+                      {item.closingFulls}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 11, color: t.textSecondary }}>Closing Empties</Text>
+                    <Text style={{ fontSize: 22, fontWeight: '800', color: t.text }}>
+                      {item.closingEmpties}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+      </ScrollView>
+
+      {/* ── Incoming Fulls / Outgoing Empties Modal ───────────────────────── */}
+      <Modal
+        visible={activeModal === 'incoming' || activeModal === 'outgoing'}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setActiveModal(null)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
+          <View
+            style={{
+              backgroundColor: t.card,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              padding: 20,
+              maxHeight: '90%',
+            }}
+          >
+            {/* Modal Header */}
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 16,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons
+                  name={
+                    activeModal === 'incoming'
+                      ? 'arrow-down-circle-outline'
+                      : 'arrow-up-circle-outline'
+                  }
+                  size={22}
+                  color={activeModal === 'incoming' ? t.green : t.orange}
+                />
+                <Text style={{ fontSize: 17, fontWeight: '800', color: t.text }}>
+                  {activeModal === 'incoming' ? '+ Incoming Fulls' : '+ Outgoing Empties'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setActiveModal(null)} style={{ padding: 4 }}>
+                <Ionicons name="close" size={22} color={t.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Cylinder Type Picker */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Cylinder Type <Text style={{ color: t.red }}>*</Text>
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginBottom: 14 }}
+                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+              >
+                {cylinderOptions.map((opt) => {
+                  const selected = movementForm.cylinderTypeId === opt.id;
+                  const chipColor = activeModal === 'incoming' ? t.green : t.orange;
+                  const chipBg = activeModal === 'incoming' ? t.greenBg : t.orangeBg;
+                  return (
+                    <TouchableOpacity
+                      key={opt.id}
+                      onPress={() =>
+                        setMovementForm((f) => ({ ...f, cylinderTypeId: opt.id }))
+                      }
+                      style={{
+                        paddingHorizontal: 14,
+                        paddingVertical: 8,
+                        borderRadius: 20,
+                        backgroundColor: selected ? chipColor : t.metricBg,
+                        borderWidth: 1,
+                        borderColor: selected ? chipColor : t.cardBorder,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: '600',
+                          color: selected ? '#fff' : t.text,
+                        }}
+                      >
+                        {opt.name}
                       </Text>
-                    </View>
-                  )}
-                </View>
-                <View style={{ flexDirection: 'row', gap: 4 }}>
-                  {isCritical && <StatusBadge label="Critical" color={t.red} bg={t.redBg} />}
-                  {isWarning && !isCritical && (
-                    <StatusBadge label="Warning" color={t.orange} bg={t.orangeBg} />
-                  )}
-                  {item.isLocked && <StatusBadge label="Locked" color={t.green} bg={t.greenBg} />}
-                </View>
-              </View>
+                    </TouchableOpacity>
+                  );
+                })}
+                {cylinderOptions.length === 0 && (
+                  <Text style={{ fontSize: 13, color: t.textMuted, paddingVertical: 8 }}>
+                    Load summary first
+                  </Text>
+                )}
+              </ScrollView>
 
-              {/* 2-Column Flow Metrics */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                <MetricCell
-                  label="Opening Fulls"
-                  value={item.openingFulls}
-                  bg={t.metricBg}
-                  color={t.text}
-                />
-                <MetricCell
-                  label="Incoming"
-                  value={item.incomingFulls}
-                  prefix="+"
-                  bg={t.greenBg}
-                  color={t.green}
-                />
-                <MetricCell
-                  label="Delivered"
-                  value={item.deliveredQty}
-                  prefix="-"
-                  bg={t.blueBg}
-                  color={t.blue}
-                />
-                <MetricCell
-                  label="Cancelled"
-                  value={item.cancelledStockQty}
-                  bg={t.orangeBg}
-                  color={t.orange}
-                />
-                <MetricCell
-                  label="Outgoing Empties"
-                  value={item.outgoingEmpties}
-                  bg={t.metricBg}
-                  color={t.text}
-                />
-                <MetricCell
-                  label="Collected Empties"
-                  value={item.collectedEmpties}
-                  bg={t.metricBg}
-                  color={t.text}
-                />
-              </View>
+              {/* Quantity */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Quantity <Text style={{ color: t.red }}>*</Text>
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="e.g. 50"
+                placeholderTextColor={t.textMuted}
+                keyboardType="number-pad"
+                value={movementForm.quantity}
+                onChangeText={(v) => setMovementForm((f) => ({ ...f, quantity: v }))}
+              />
 
-              {/* Closing row */}
-              <View
+              {/* Date */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>Date (YYYY-MM-DD)</Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={t.textMuted}
+                value={movementForm.documentDate}
+                onChangeText={(v) => setMovementForm((f) => ({ ...f, documentDate: v }))}
+              />
+
+              {/* Document Type */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Document Type <Text style={{ color: t.red }}>*</Text>
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="e.g. Invoice, DC"
+                placeholderTextColor={t.textMuted}
+                value={movementForm.documentType}
+                onChangeText={(v) => setMovementForm((f) => ({ ...f, documentType: v }))}
+              />
+
+              {/* Document Number */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Document Number <Text style={{ color: t.red }}>*</Text>
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="e.g. INV-2026-001"
+                placeholderTextColor={t.textMuted}
+                value={movementForm.documentNumber}
+                onChangeText={(v) => setMovementForm((f) => ({ ...f, documentNumber: v }))}
+              />
+
+              {/* Vehicle Number (optional) */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Vehicle Number{' '}
+                <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="e.g. AP09AB1234"
+                placeholderTextColor={t.textMuted}
+                value={movementForm.vehicleNumber}
+                onChangeText={(v) => setMovementForm((f) => ({ ...f, vehicleNumber: v }))}
+              />
+
+              {/* Driver Name (optional) */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Driver Name{' '}
+                <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="Driver name"
+                placeholderTextColor={t.textMuted}
+                value={movementForm.driverName}
+                onChangeText={(v) => setMovementForm((f) => ({ ...f, driverName: v }))}
+              />
+
+              {/* Notes (optional) */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Notes <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  modalStyles.textarea,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="Additional notes..."
+                placeholderTextColor={t.textMuted}
+                multiline
+                numberOfLines={3}
+                value={movementForm.notes}
+                onChangeText={(v) => setMovementForm((f) => ({ ...f, notes: v }))}
+              />
+
+              {/* Submit */}
+              <TouchableOpacity
+                onPress={handleMovementSubmit}
+                disabled={isMovementPending}
                 style={{
                   flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  borderTopWidth: 1,
-                  borderTopColor: t.divider,
-                  paddingTop: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  backgroundColor:
+                    activeModal === 'incoming' ? t.green : t.orange,
+                  borderRadius: 12,
+                  paddingVertical: 14,
+                  marginTop: 8,
+                  marginBottom: 8,
+                  opacity: isMovementPending ? 0.6 : 1,
                 }}
               >
-                <View>
-                  <Text style={{ fontSize: 11, color: t.textSecondary }}>Closing Fulls</Text>
-                  <Text
-                    style={{
-                      fontSize: 22,
-                      fontWeight: '800',
-                      color: isCritical ? t.red : t.text,
-                    }}
-                  >
-                    {item.closingFulls}
-                  </Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={{ fontSize: 11, color: t.textSecondary }}>Closing Empties</Text>
-                  <Text style={{ fontSize: 22, fontWeight: '800', color: t.text }}>
-                    {item.closingEmpties}
-                  </Text>
-                </View>
+                {isMovementPending ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons
+                    name={
+                      activeModal === 'incoming'
+                        ? 'arrow-down-circle-outline'
+                        : 'arrow-up-circle-outline'
+                    }
+                    size={18}
+                    color="#fff"
+                  />
+                )}
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
+                  {isMovementPending
+                    ? 'Saving...'
+                    : activeModal === 'incoming'
+                      ? 'Record Incoming Fulls'
+                      : 'Record Outgoing Empties'}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── Adjust Stock Modal ─────────────────────────────────────────────── */}
+      <Modal
+        visible={activeModal === 'adjust'}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setActiveModal(null)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
+          <View
+            style={{
+              backgroundColor: t.card,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              padding: 20,
+              maxHeight: '85%',
+            }}
+          >
+            {/* Modal Header */}
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 16,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="create-outline" size={22} color={t.blue} />
+                <Text style={{ fontSize: 17, fontWeight: '800', color: t.text }}>
+                  Adjust Stock
+                </Text>
               </View>
+              <TouchableOpacity onPress={() => setActiveModal(null)} style={{ padding: 4 }}>
+                <Ionicons name="close" size={22} color={t.textSecondary} />
+              </TouchableOpacity>
             </View>
-          );
-        })}
-    </ScrollView>
+
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Cylinder Type Picker */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Cylinder Type <Text style={{ color: t.red }}>*</Text>
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginBottom: 14 }}
+                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+              >
+                {cylinderOptions.map((opt) => {
+                  const selected = adjustForm.cylinderTypeId === opt.id;
+                  return (
+                    <TouchableOpacity
+                      key={opt.id}
+                      onPress={() =>
+                        setAdjustForm((f) => ({ ...f, cylinderTypeId: opt.id }))
+                      }
+                      style={{
+                        paddingHorizontal: 14,
+                        paddingVertical: 8,
+                        borderRadius: 20,
+                        backgroundColor: selected ? t.blue : t.metricBg,
+                        borderWidth: 1,
+                        borderColor: selected ? t.blue : t.cardBorder,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: '600',
+                          color: selected ? '#fff' : t.text,
+                        }}
+                      >
+                        {opt.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                {cylinderOptions.length === 0 && (
+                  <Text style={{ fontSize: 13, color: t.textMuted, paddingVertical: 8 }}>
+                    Load summary first
+                  </Text>
+                )}
+              </ScrollView>
+
+              {/* Adjustment Type Toggle */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Adjustment Type <Text style={{ color: t.red }}>*</Text>
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                {(['add', 'subtract'] as const).map((type) => {
+                  const isSelected = adjustForm.adjustmentType === type;
+                  const color = type === 'add' ? t.green : t.red;
+                  const bgColor = type === 'add' ? t.greenBg : t.redBg;
+                  return (
+                    <TouchableOpacity
+                      key={type}
+                      onPress={() => setAdjustForm((f) => ({ ...f, adjustmentType: type }))}
+                      style={{
+                        flex: 1,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        backgroundColor: isSelected ? color : t.metricBg,
+                        borderWidth: 1,
+                        borderColor: isSelected ? color : t.cardBorder,
+                      }}
+                    >
+                      <Ionicons
+                        name={type === 'add' ? 'add-circle-outline' : 'remove-circle-outline'}
+                        size={16}
+                        color={isSelected ? '#fff' : color}
+                      />
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: '700',
+                          color: isSelected ? '#fff' : color,
+                          textTransform: 'capitalize',
+                        }}
+                      >
+                        {type}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Quantity */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Quantity <Text style={{ color: t.red }}>*</Text>
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="e.g. 10"
+                placeholderTextColor={t.textMuted}
+                keyboardType="number-pad"
+                value={adjustForm.quantity}
+                onChangeText={(v) => setAdjustForm((f) => ({ ...f, quantity: v }))}
+              />
+
+              {/* Adjustment Date */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Adjustment Date (YYYY-MM-DD)
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={t.textMuted}
+                value={adjustForm.adjustmentDate}
+                onChangeText={(v) => setAdjustForm((f) => ({ ...f, adjustmentDate: v }))}
+              />
+
+              {/* Reason */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Reason <Text style={{ color: t.red }}>*</Text>
+              </Text>
+              <TextInput
+                style={[
+                  modalStyles.input,
+                  modalStyles.textarea,
+                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                ]}
+                placeholder="Reason for adjustment..."
+                placeholderTextColor={t.textMuted}
+                multiline
+                numberOfLines={3}
+                value={adjustForm.reason}
+                onChangeText={(v) => setAdjustForm((f) => ({ ...f, reason: v }))}
+              />
+
+              {/* Submit */}
+              <TouchableOpacity
+                onPress={handleAdjustSubmit}
+                disabled={adjustMutation.isPending}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  backgroundColor: t.blue,
+                  borderRadius: 12,
+                  paddingVertical: 14,
+                  marginTop: 8,
+                  marginBottom: 8,
+                  opacity: adjustMutation.isPending ? 0.6 : 1,
+                }}
+              >
+                {adjustMutation.isPending ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="create-outline" size={18} color="#fff" />
+                )}
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
+                  {adjustMutation.isPending ? 'Saving...' : 'Save Adjustment'}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </>
   );
 }
+
+// ─── Modal Styles ────────────────────────────────────────────────────────────
+
+const modalStyles = StyleSheet.create({
+  label: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    marginBottom: 14,
+  },
+  textarea: {
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+});
 
 // ─── HISTORY TAB ────────────────────────────────────────────────────────────
 

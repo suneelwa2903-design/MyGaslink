@@ -16,9 +16,12 @@ import {
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
+import { api, getErrorMessage } from '../../src/lib/api';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -69,6 +72,48 @@ interface CylinderType {
   typeName: string;
   capacity: number;
   unit: string;
+}
+
+// ─── GST Dispatch Types ─────────────────────────────────────────────────────
+
+interface DispatchResult {
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  mode: 'B2B' | 'B2C' | 'GST_DISABLED';
+  success: boolean;
+  irn?: string | null;
+  ackNo?: string | null;
+  ewbNo?: string | null;
+  ewbValidTill?: string | null;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+interface DispatchResponse {
+  summary: { total: number; succeeded: number; failed: number };
+  results: DispatchResult[];
+  dispatched: boolean;
+}
+
+interface InTransitDriver {
+  driverId: string;
+  driverName: string;
+  vehicleId: string;
+  vehicleNumber: string;
+  assignmentId: string;
+  tripNumber: string;
+  tripSheetNo?: string;
+  inTransitCount: number;
+  deliveredCount: number;
+}
+
+// Group of pending_dispatch orders for one driver
+interface ReadyToDispatchGroup {
+  driverId: string;
+  driverName: string;
+  orderCount: number;
+  assignmentDate: string; // YYYY-MM-DD
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -159,6 +204,14 @@ export default function AdminOrdersScreen() {
   const [bulkAssignVisible, setBulkAssignVisible] = useState(false);
   const [deliverOrder, setDeliverOrder] = useState<Order | null>(null);
 
+  // GST dispatch state
+  const [dispatchingDriverId, setDispatchingDriverId] = useState<string | null>(null);
+  const [dispatchResult, setDispatchResult] = useState<DispatchResponse | null>(null);
+  const [dispatchResultVisible, setDispatchResultVisible] = useState(false);
+
+  // In-transit trip sheet download
+  const [downloadingAssignmentId, setDownloadingAssignmentId] = useState<string | null>(null);
+
   // ─── Queries ────────────────────────────────────────────────────────────
 
   const queryParams: Record<string, unknown> = { pageSize: 50, page: 1 };
@@ -203,6 +256,12 @@ export default function AdminOrdersScreen() {
     { staleTime: 10 * 60 * 1000 },
   );
 
+  const { data: inTransitData } = useApiQuery<{ drivers: InTransitDriver[] }>(
+    ['admin-in-transit'],
+    '/orders/in-transit',
+    { date: getTodayISO() },
+  );
+
   // ─── Mutations ──────────────────────────────────────────────────────────
 
   const cancelMutation = useApiMutation<unknown, { orderId: string }>(
@@ -233,6 +292,30 @@ export default function AdminOrdersScreen() {
     );
   }, [orders, search]);
 
+  // Derive ready-to-dispatch groups from the currently loaded order list.
+  // Only orders with status===pending_dispatch AND a driverId qualify.
+  const readyToDispatchGroups = useMemo<ReadyToDispatchGroup[]>(() => {
+    const map = new Map<string, ReadyToDispatchGroup>();
+    for (const o of orders) {
+      if (o.status !== 'pending_dispatch' || !o.driverId) continue;
+      const existing = map.get(o.driverId);
+      const dateStr = String(o.deliveryDate).split('T')[0];
+      if (existing) {
+        existing.orderCount += 1;
+      } else {
+        map.set(o.driverId, {
+          driverId: o.driverId,
+          driverName: o.driverName ?? o.driverId,
+          orderCount: 1,
+          assignmentDate: dateStr,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [orders]);
+
+  const inTransitDrivers = inTransitData?.drivers ?? [];
+
   // ─── Handlers ──────────────────────────────────────────────────────────
 
   const toggleExpand = useCallback((orderId: string) => {
@@ -261,6 +344,63 @@ export default function AdminOrdersScreen() {
       );
     },
     [cancelMutation],
+  );
+
+  const handleDispatch = useCallback(
+    async (group: ReadyToDispatchGroup) => {
+      setDispatchingDriverId(group.driverId);
+      try {
+        const result = await api.post<{ success: boolean; data: DispatchResponse }>(
+          '/orders/preflight-dispatch',
+          { driverId: group.driverId, assignmentDate: group.assignmentDate },
+        );
+        setDispatchResult(result.data.data);
+        setDispatchResultVisible(true);
+      } catch (err: unknown) {
+        const axiosErr = err as { response?: { data?: { code?: string; error?: string }; status?: number } };
+        const code = axiosErr?.response?.data?.code;
+        if (code === 'NIC_SESSION_DOWN') {
+          Alert.alert('NIC unavailable', 'NIC is temporarily unavailable. Wait a few minutes and retry.');
+        } else if (code === 'SESSION_EXPIRED') {
+          Alert.alert('NIC session expired', 'NIC session expired. Go to Settings → GST → Test Connection, then retry.');
+        } else {
+          Alert.alert('Dispatch failed', getErrorMessage(err));
+        }
+      } finally {
+        setDispatchingDriverId(null);
+      }
+    },
+    [],
+  );
+
+  const handleDownloadTripSheet = useCallback(
+    async (assignmentId: string) => {
+      setDownloadingAssignmentId(assignmentId);
+      try {
+        const res = await api.get(`/orders/trip-sheet/${assignmentId}`, {
+          responseType: 'arraybuffer',
+        });
+        const bytes = new Uint8Array(res.data as ArrayBuffer);
+        const file = new File(Paths.cache, `trip-sheet-${assignmentId}-${Date.now()}.pdf`);
+        try { file.create(); } catch { /* already exists */ }
+        file.write(bytes);
+
+        if (!(await Sharing.isAvailableAsync())) {
+          Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+          return;
+        }
+        await Sharing.shareAsync(file.uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Trip Sheet',
+          UTI: 'com.adobe.pdf',
+        });
+      } catch (err) {
+        Alert.alert('Could not load trip sheet', getErrorMessage(err));
+      } finally {
+        setDownloadingAssignmentId(null);
+      }
+    },
+    [],
   );
 
   // ─── Render helpers ────────────────────────────────────────────────────
@@ -504,6 +644,99 @@ export default function AdminOrdersScreen() {
               colors={[ACCENT]}
             />
           }
+          ListHeaderComponent={
+            readyToDispatchGroups.length > 0 ? (
+              <View style={[styles.sectionBox, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
+                <View style={styles.sectionHeader}>
+                  <Ionicons name="flash-outline" size={16} color={ACCENT} />
+                  <Text style={[styles.sectionTitle, { color: C.text }]}>Ready to Dispatch</Text>
+                </View>
+                {readyToDispatchGroups.map((group) => {
+                  const isDispatching = dispatchingDriverId === group.driverId;
+                  return (
+                    <View
+                      key={group.driverId}
+                      style={[styles.dispatchRow, { borderTopColor: C.divider }]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.dispatchDriverName, { color: C.text }]}>
+                          {group.driverName}
+                        </Text>
+                        <Text style={[styles.dispatchSubtext, { color: C.textSecondary }]}>
+                          {group.orderCount} order{group.orderCount !== 1 ? 's' : ''} · {group.assignmentDate}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[
+                          styles.dispatchBtn,
+                          { opacity: isDispatching || dispatchingDriverId !== null ? 0.6 : 1 },
+                        ]}
+                        onPress={() => handleDispatch(group)}
+                        disabled={isDispatching || dispatchingDriverId !== null}
+                      >
+                        {isDispatching ? (
+                          <>
+                            <ActivityIndicator size="small" color="#fff" />
+                            <Text style={styles.dispatchBtnText}>Generating IRN & EWB…</Text>
+                          </>
+                        ) : (
+                          <>
+                            <Ionicons name="rocket-outline" size={14} color="#fff" />
+                            <Text style={styles.dispatchBtnText}>Dispatch</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null
+          }
+          ListFooterComponent={
+            inTransitDrivers.length > 0 ? (
+              <View style={[styles.sectionBox, { backgroundColor: C.card, borderColor: C.cardBorder, marginTop: 10 }]}>
+                <View style={styles.sectionHeader}>
+                  <Ionicons name="car-outline" size={16} color="#a855f7" />
+                  <Text style={[styles.sectionTitle, { color: C.text }]}>In Transit</Text>
+                </View>
+                {inTransitDrivers.map((driver) => {
+                  const isDownloading = downloadingAssignmentId === driver.assignmentId;
+                  return (
+                    <View
+                      key={driver.assignmentId}
+                      style={[styles.inTransitRow, { borderTopColor: C.divider }]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.dispatchDriverName, { color: C.text }]}>
+                          {driver.driverName}
+                        </Text>
+                        <Text style={[styles.dispatchSubtext, { color: C.textSecondary }]}>
+                          {driver.vehicleNumber} · {driver.inTransitCount} in transit · {driver.deliveredCount} delivered
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[
+                          styles.tripSheetBtn,
+                          { opacity: isDownloading ? 0.6 : 1 },
+                        ]}
+                        onPress={() => handleDownloadTripSheet(driver.assignmentId)}
+                        disabled={isDownloading}
+                      >
+                        {isDownloading ? (
+                          <ActivityIndicator size="small" color={ACCENT} />
+                        ) : (
+                          <>
+                            <Ionicons name="document-text-outline" size={14} color={ACCENT} />
+                            <Text style={[styles.tripSheetBtnText, { color: ACCENT }]}>Trip Sheet</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="receipt-outline" size={48} color={C.textMuted} />
@@ -567,6 +800,19 @@ export default function AdminOrdersScreen() {
           onClose={() => setDeliverOrder(null)}
           order={deliverOrder}
           dark={dark}
+        />
+      )}
+
+      {dispatchResultVisible && dispatchResult && (
+        <DispatchResultModal
+          visible={dispatchResultVisible}
+          result={dispatchResult}
+          dark={dark}
+          onClose={() => {
+            setDispatchResultVisible(false);
+            setDispatchResult(null);
+            refetch();
+          }}
         />
       )}
     </SafeAreaView>
@@ -1416,6 +1662,95 @@ function DeliveryConfirmationModal({
   );
 }
 
+// ─── Dispatch Result Modal ───────────────────────────────────────────────────
+
+function DispatchResultModal({
+  visible,
+  result,
+  dark,
+  onClose,
+}: {
+  visible: boolean;
+  result: DispatchResponse;
+  dark: boolean;
+  onClose: () => void;
+}) {
+  const C = getColors(dark);
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
+        <View style={[styles.bottomSheet, { backgroundColor: C.modalBg, maxHeight: '85%' }]}>
+          <View style={styles.bottomSheetHandle} />
+          {/* Header */}
+          <View style={[styles.modalHeader, { borderBottomColor: C.divider }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.modalTitle, { color: C.text }]}>Dispatch Results</Text>
+              <Text style={[{ fontSize: 13, color: C.textSecondary, marginTop: 2 }]}>
+                {result.summary.succeeded}/{result.summary.total} dispatched
+                {result.summary.failed > 0 ? ` · ${result.summary.failed} failed` : ''}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="close" size={24} color={C.text} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24, gap: 10 }}>
+            {result.results.map((r) => (
+              <View
+                key={r.orderId}
+                style={[
+                  styles.resultRow,
+                  {
+                    backgroundColor: r.success
+                      ? dark ? 'rgba(34,197,94,0.12)' : '#f0fdf4'
+                      : dark ? 'rgba(239,68,68,0.12)' : '#fef2f2',
+                    borderColor: r.success ? '#22c55e' : '#ef4444',
+                  },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                  <Ionicons
+                    name={r.success ? 'checkmark-circle' : 'close-circle'}
+                    size={20}
+                    color={r.success ? '#22c55e' : '#ef4444'}
+                    style={{ marginTop: 1 }}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.resultOrderNum, { color: C.text }]}>{r.orderNumber}</Text>
+                    <Text style={[{ fontSize: 12, color: C.textSecondary, marginTop: 1 }]}>
+                      {r.customerName} · {r.mode}
+                    </Text>
+                    {r.success && r.mode !== 'GST_DISABLED' && (
+                      <Text style={[{ fontSize: 12, color: C.textSecondary, marginTop: 4 }]}>
+                        {r.mode === 'B2C'
+                          ? `EWB: ${r.ewbNo ?? '—'}`
+                          : `IRN: ${r.irn ? r.irn.substring(0, 20) + '…' : '—'}`}
+                        {r.ewbValidTill ? `  ·  Valid till ${String(r.ewbValidTill).split('T')[0]}` : ''}
+                      </Text>
+                    )}
+                    {!r.success && r.errorMessage && (
+                      <Text style={[{ fontSize: 12, color: '#ef4444', marginTop: 4 }]}>
+                        {r.errorMessage}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+
+          <View style={{ paddingHorizontal: 16, paddingBottom: 20 }}>
+            <TouchableOpacity style={styles.primaryBtn} onPress={onClose}>
+              <Text style={styles.primaryBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Styles ─────────────────────────────────────────────────────────────────
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -1903,5 +2238,87 @@ const styles = StyleSheet.create({
   },
   deliveryFieldsRow: {
     flexDirection: 'row',
+  },
+
+  // Ready-to-dispatch / in-transit sections
+  sectionBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dispatchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    gap: 10,
+  },
+  dispatchDriverName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  dispatchSubtext: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  dispatchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: ACCENT,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  dispatchBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  inTransitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    gap: 10,
+  },
+  tripSheetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderColor: ACCENT,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  tripSheetBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  // Dispatch result modal
+  resultRow: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+  },
+  resultOrderNum: {
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

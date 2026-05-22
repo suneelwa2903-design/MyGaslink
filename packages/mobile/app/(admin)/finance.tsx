@@ -12,15 +12,15 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { useQueryClient } from '@tanstack/react-query';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
-import { api, getErrorMessage } from '../../src/lib/api';
+import { api, apiGet, apiPost, apiPut, getErrorMessage } from '../../src/lib/api';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +43,8 @@ interface Invoice {
   outstandingAmount: number;
   status: string;
   lineItems?: InvoiceLineItem[];
+  creditNotesCount?: number;
+  debitNotesCount?: number;
 }
 
 interface Payment {
@@ -56,12 +58,32 @@ interface Payment {
   notes?: string;
   allocationStatus?: string;
   allocations?: { invoiceId: string; invoiceNumber?: string; allocatedAmount: number }[];
+  unallocatedAmount?: number;
+  allocatedAmount?: number;
 }
 
 interface Customer {
   customerId: string;
   customerName: string;
   phone?: string;
+}
+
+interface CreditNoteRow {
+  creditNoteId: string;
+  creditNoteNumber: string | null;
+  totalAmount: number;
+  reason: string;
+  status: string;
+  createdAt: string;
+}
+
+interface DebitNoteRow {
+  debitNoteId: string;
+  debitNoteNumber: string | null;
+  totalAmount: number;
+  reason: string;
+  status: string;
+  createdAt: string;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -106,6 +128,14 @@ const PAYMENT_METHODS = [
   { label: 'Cheque', value: 'cheque' },
 ];
 
+const NOTE_STATUS_COLORS: Record<string, { bg: string; text: string }> = {
+  pending: { bg: '#f97316', text: '#ffffff' },
+  approved: { bg: '#22c55e', text: '#ffffff' },
+  issued: { bg: '#22c55e', text: '#ffffff' },
+  rejected: { bg: '#ef4444', text: '#ffffff' },
+  cancelled: { bg: '#6b7280', text: '#ffffff' },
+};
+
 function getColors(dark: boolean) {
   return {
     bg: dark ? '#0f172a' : '#ffffff',
@@ -125,7 +155,7 @@ function getColors(dark: boolean) {
 }
 
 function formatCurrency(amount: number | undefined): string {
-  return '\u20B9' + (amount ?? 0).toLocaleString('en-IN');
+  return '₹' + (amount ?? 0).toLocaleString('en-IN');
 }
 
 function formatDate(dateStr: string | undefined): string {
@@ -169,6 +199,24 @@ export default function AdminFinanceScreen() {
 
   // Payment state
   const [createPaymentVisible, setCreatePaymentVisible] = useState(false);
+
+  // Feature 2: CN/DN modal state (lifted to screen level so gstEnabled is accessible)
+  const [creditNoteInvoice, setCreditNoteInvoice] = useState<Invoice | null>(null);
+  const [debitNoteInvoice, setDebitNoteInvoice] = useState<Invoice | null>(null);
+
+  // Feature 3: Allocate payment modal state
+  const [allocatePayment, setAllocatePayment] = useState<Payment | null>(null);
+
+  // ─── Settings Query (for gstEnabled) ───────────────────────────────────
+
+  const { data: settingsData } = useApiQuery<{ gstMode: string | null }>(
+    ['settings'],
+    '/settings',
+    undefined,
+    { staleTime: 5 * 60 * 1000 },
+  );
+  const gstEnabled =
+    settingsData?.gstMode != null && settingsData.gstMode !== 'disabled';
 
   // ─── Invoice Queries ────────────────────────────────────────────────────
 
@@ -242,6 +290,7 @@ export default function AdminFinanceScreen() {
         <InvoicesTab
           C={C}
           dark={dark}
+          gstEnabled={gstEnabled}
           invoiceStatus={invoiceStatus}
           setInvoiceStatus={setInvoiceStatus}
           invoicesData={invoicesData}
@@ -251,6 +300,8 @@ export default function AdminFinanceScreen() {
           expandedInvoiceId={expandedInvoiceId}
           setExpandedInvoiceId={setExpandedInvoiceId}
           setPayInvoice={setPayInvoice}
+          setCreditNoteInvoice={setCreditNoteInvoice}
+          setDebitNoteInvoice={setDebitNoteInvoice}
         />
       ) : (
         <PaymentsTab
@@ -261,6 +312,7 @@ export default function AdminFinanceScreen() {
           paymentsRefetching={paymentsRefetching}
           refetchPayments={refetchPayments}
           setCreatePaymentVisible={setCreatePaymentVisible}
+          setAllocatePayment={setAllocatePayment}
         />
       )}
 
@@ -282,6 +334,38 @@ export default function AdminFinanceScreen() {
           onClose={() => setCreatePaymentVisible(false)}
         />
       )}
+
+      {/* Feature 2: Credit Note Modal */}
+      {creditNoteInvoice && (
+        <CreateNoteModal
+          C={C}
+          dark={dark}
+          kind="cn"
+          invoice={creditNoteInvoice}
+          onClose={() => setCreditNoteInvoice(null)}
+        />
+      )}
+
+      {/* Feature 2: Debit Note Modal */}
+      {debitNoteInvoice && (
+        <CreateNoteModal
+          C={C}
+          dark={dark}
+          kind="dn"
+          invoice={debitNoteInvoice}
+          onClose={() => setDebitNoteInvoice(null)}
+        />
+      )}
+
+      {/* Feature 3: Allocate Payment Modal */}
+      {allocatePayment && (
+        <AllocatePaymentModal
+          C={C}
+          dark={dark}
+          payment={allocatePayment}
+          onClose={() => setAllocatePayment(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -291,6 +375,7 @@ export default function AdminFinanceScreen() {
 interface InvoicesTabProps {
   C: ReturnType<typeof getColors>;
   dark: boolean;
+  gstEnabled: boolean;
   invoiceStatus: string;
   setInvoiceStatus: (s: string) => void;
   invoicesData: { invoices: Invoice[]; total: number } | undefined;
@@ -300,11 +385,14 @@ interface InvoicesTabProps {
   expandedInvoiceId: string | null;
   setExpandedInvoiceId: (id: string | null) => void;
   setPayInvoice: (inv: Invoice) => void;
+  setCreditNoteInvoice: (inv: Invoice) => void;
+  setDebitNoteInvoice: (inv: Invoice) => void;
 }
 
 function InvoicesTab({
   C,
   dark,
+  gstEnabled,
   invoiceStatus,
   setInvoiceStatus,
   invoicesData,
@@ -314,6 +402,8 @@ function InvoicesTab({
   expandedInvoiceId,
   setExpandedInvoiceId,
   setPayInvoice,
+  setCreditNoteInvoice,
+  setDebitNoteInvoice,
 }: InvoicesTabProps) {
   const invoices = invoicesData?.invoices ?? [];
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -378,6 +468,9 @@ function InvoicesTab({
     ({ item: inv }: { item: Invoice }) => {
       const expanded = expandedInvoiceId === inv.invoiceId;
       const statusColor = INVOICE_STATUS_COLORS[inv.status] ?? { bg: '#6b7280', text: '#ffffff' };
+      const hasCn = (inv.creditNotesCount ?? 0) > 0;
+      const hasDn = (inv.debitNotesCount ?? 0) > 0;
+      const showCnDnButtons = gstEnabled && inv.status === 'issued';
 
       return (
         <TouchableOpacity
@@ -396,7 +489,7 @@ function InvoicesTab({
           {/* Header Row */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Text style={{ fontSize: 15, fontWeight: '700', color: C.text }}>
                   {inv.invoiceNumber}
                 </Text>
@@ -412,6 +505,35 @@ function InvoicesTab({
                     {capitalizeStatus(inv.status)}
                   </Text>
                 </View>
+                {/* Feature 2: CN/DN count chips */}
+                {hasCn && (
+                  <View
+                    style={{
+                      paddingHorizontal: 7,
+                      paddingVertical: 2,
+                      borderRadius: 6,
+                      backgroundColor: '#fef3c7',
+                    }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#92400e' }}>
+                      {(inv.creditNotesCount ?? 0) === 1 ? 'CN' : `CN ×${inv.creditNotesCount}`}
+                    </Text>
+                  </View>
+                )}
+                {hasDn && (
+                  <View
+                    style={{
+                      paddingHorizontal: 7,
+                      paddingVertical: 2,
+                      borderRadius: 6,
+                      backgroundColor: '#e0f2fe',
+                    }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#0369a1' }}>
+                      {(inv.debitNotesCount ?? 0) === 1 ? 'DN' : `DN ×${inv.debitNotesCount}`}
+                    </Text>
+                  </View>
+                )}
               </View>
               <Text style={{ fontSize: 13, color: C.textSecondary, marginTop: 3 }}>
                 {inv.customerName}
@@ -512,8 +634,8 @@ function InvoicesTab({
                 </View>
               </View>
 
-              {/* Action Buttons */}
-              <View style={{ flexDirection: 'row', gap: 10 }}>
+              {/* Action Buttons — row 1: PDF + Record Payment */}
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
                 <TouchableOpacity
                   onPress={() => downloadInvoicePdf(inv.invoiceId)}
                   disabled={downloadingId === inv.invoiceId}
@@ -558,12 +680,66 @@ function InvoicesTab({
                   </TouchableOpacity>
                 )}
               </View>
+
+              {/* Feature 2: Credit Note + Debit Note buttons (only for issued invoices with GST) */}
+              {showCnDnButtons && (
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                  <TouchableOpacity
+                    onPress={() => setCreditNoteInvoice(inv)}
+                    style={{
+                      flex: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      backgroundColor: '#fef3c7',
+                      borderWidth: 1,
+                      borderColor: '#fbbf24',
+                    }}
+                  >
+                    <Ionicons name="remove-circle-outline" size={16} color="#92400e" />
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#92400e' }}>Credit Note</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setDebitNoteInvoice(inv)}
+                    style={{
+                      flex: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      backgroundColor: '#e0f2fe',
+                      borderWidth: 1,
+                      borderColor: '#7dd3fc',
+                    }}
+                  >
+                    <Ionicons name="add-circle-outline" size={16} color="#0369a1" />
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#0369a1' }}>Debit Note</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Feature 2: Inline CN/DN list (lazy-loaded when expanded) */}
+              <InvoiceNotesSection
+                C={C}
+                dark={dark}
+                invoiceId={inv.invoiceId}
+                enabled={expanded}
+              />
             </View>
           )}
         </TouchableOpacity>
       );
     },
-    [expandedInvoiceId, C, dark, setExpandedInvoiceId, setPayInvoice, downloadingId, downloadInvoicePdf],
+    [
+      expandedInvoiceId, C, dark, gstEnabled, setExpandedInvoiceId, setPayInvoice,
+      setCreditNoteInvoice, setDebitNoteInvoice, downloadingId, downloadInvoicePdf,
+    ],
   );
 
   const renderEmpty = () => {
@@ -612,6 +788,556 @@ function InvoicesTab({
   );
 }
 
+// ─── Feature 2: Invoice Notes Section ──────────────────────────────────────
+// Lazy-loaded when a card is expanded. Lists CN + DN rows with
+// Approve / Reject (pending) and Download PDF (approved/issued).
+
+interface InvoiceNotesSectionProps {
+  C: ReturnType<typeof getColors>;
+  dark: boolean;
+  invoiceId: string;
+  enabled: boolean;
+}
+
+function InvoiceNotesSection({ C, dark, invoiceId, enabled }: InvoiceNotesSectionProps) {
+  const queryClient = useQueryClient();
+
+  const [rejectTarget, setRejectTarget] = useState<{ kind: 'cn' | 'dn'; id: string; number: string | null } | null>(null);
+  const [downloadingNoteId, setDownloadingNoteId] = useState<string | null>(null);
+
+  const { data: cnData, isLoading: cnLoading } = useApiQuery<{ creditNotes: CreditNoteRow[] }>(
+    ['invoice-credit-notes', invoiceId],
+    `/invoices/${invoiceId}/credit-notes`,
+    undefined,
+    { enabled },
+  );
+
+  const { data: dnData, isLoading: dnLoading } = useApiQuery<{ debitNotes: DebitNoteRow[] }>(
+    ['invoice-debit-notes', invoiceId],
+    `/invoices/${invoiceId}/debit-notes`,
+    undefined,
+    { enabled },
+  );
+
+  const cns = cnData?.creditNotes ?? [];
+  const dns = dnData?.debitNotes ?? [];
+  const total = cns.length + dns.length;
+
+  const invalidateNotes = () => {
+    queryClient.invalidateQueries({ queryKey: ['invoice-credit-notes', invoiceId] });
+    queryClient.invalidateQueries({ queryKey: ['invoice-debit-notes', invoiceId] });
+    queryClient.invalidateQueries({ queryKey: ['admin-invoices'] });
+  };
+
+  const handleApprove = async (kind: 'cn' | 'dn', id: string) => {
+    try {
+      const path = kind === 'cn'
+        ? `/invoices/credit-notes/${id}/approve`
+        : `/invoices/debit-notes/${id}/approve`;
+      await apiPut(path);
+      Alert.alert('Approved', `${kind === 'cn' ? 'Credit' : 'Debit'} note approved.`);
+      invalidateNotes();
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err));
+    }
+  };
+
+  const handleReject = async (kind: 'cn' | 'dn', id: string, reason: string) => {
+    try {
+      const path = kind === 'cn'
+        ? `/invoices/credit-notes/${id}/reject`
+        : `/invoices/debit-notes/${id}/reject`;
+      await apiPut(path, { reason });
+      Alert.alert('Rejected', `${kind === 'cn' ? 'Credit' : 'Debit'} note rejected.`);
+      setRejectTarget(null);
+      invalidateNotes();
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err));
+    }
+  };
+
+  const downloadNotePdf = async (kind: 'cn' | 'dn', id: string, number: string | null) => {
+    try {
+      setDownloadingNoteId(id);
+      const path = kind === 'cn'
+        ? `/invoices/credit-notes/${id}/pdf`
+        : `/invoices/debit-notes/${id}/pdf`;
+      const res = await api.get(path, { responseType: 'arraybuffer' });
+      const bytes = new Uint8Array(res.data);
+      const filename = `${kind === 'cn' ? 'credit-note' : 'debit-note'}-${number ?? id.slice(0, 8)}.pdf`;
+      const file = new File(Paths.cache, filename);
+      try { file.create(); } catch {}
+      file.write(bytes);
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: kind === 'cn' ? 'Credit Note' : 'Debit Note',
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (err) {
+      Alert.alert('Could not download PDF', getErrorMessage(err));
+    } finally {
+      setDownloadingNoteId(null);
+    }
+  };
+
+  if (!enabled) return null;
+
+  const loading = cnLoading || dnLoading;
+
+  if (loading) {
+    return (
+      <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+        <ActivityIndicator size="small" color={ACCENT} />
+      </View>
+    );
+  }
+
+  if (total === 0) return null;
+
+  const renderNoteRow = (kind: 'cn' | 'dn', id: string, number: string | null, amount: number, reason: string, status: string) => {
+    const sc = NOTE_STATUS_COLORS[status] ?? { bg: '#6b7280', text: '#ffffff' };
+    const isPending = status === 'pending';
+    const isDownloadable = status === 'approved' || status === 'issued';
+    const isDownloading = downloadingNoteId === id;
+
+    return (
+      <View
+        key={id}
+        style={{
+          backgroundColor: dark ? '#0f172a' : '#f8fafc',
+          borderRadius: 8,
+          padding: 10,
+          marginBottom: 6,
+          borderWidth: 1,
+          borderColor: C.cardBorder,
+        }}
+      >
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: C.text, fontVariant: ['tabular-nums'] }}>
+              {number ?? id.slice(0, 8)}
+            </Text>
+            <Text style={{ fontSize: 12, fontWeight: '600', color: C.textSecondary }}>
+              {formatCurrency(amount)}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: sc.bg }}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: sc.text }}>
+                {capitalizeStatus(status)}
+              </Text>
+            </View>
+          </View>
+        </View>
+        {reason ? (
+          <Text style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }} numberOfLines={2}>
+            {reason}
+          </Text>
+        ) : null}
+        {/* Action row */}
+        {(isPending || isDownloadable) && (
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+            {isDownloadable && (
+              <TouchableOpacity
+                onPress={() => downloadNotePdf(kind, id, number)}
+                disabled={isDownloading}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  borderRadius: 6,
+                  backgroundColor: dark ? '#334155' : '#e2e8f0',
+                  opacity: isDownloading ? 0.6 : 1,
+                }}
+              >
+                {isDownloading
+                  ? <ActivityIndicator size="small" color={C.text} />
+                  : <Ionicons name="download-outline" size={13} color={C.text} />}
+                <Text style={{ fontSize: 12, fontWeight: '600', color: C.text }}>
+                  {isDownloading ? 'Downloading...' : 'PDF'}
+                </Text>
+              </TouchableOpacity>
+            )}
+            {isPending && (
+              <>
+                <TouchableOpacity
+                  onPress={() => handleApprove(kind, id)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    backgroundColor: '#22c55e',
+                  }}
+                >
+                  <Ionicons name="checkmark-outline" size={13} color="#ffffff" />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#ffffff' }}>Approve</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setRejectTarget({ kind, id, number })}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    backgroundColor: '#ef4444',
+                  }}
+                >
+                  <Ionicons name="close-outline" size={13} color="#ffffff" />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#ffffff' }}>Reject</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  return (
+    <View style={{ marginTop: 4 }}>
+      <View style={{ height: 1, backgroundColor: C.divider, marginBottom: 10 }} />
+      <Text style={{ fontSize: 12, fontWeight: '700', color: C.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        Credit / Debit Notes
+      </Text>
+
+      {cns.length > 0 && (
+        <View style={{ marginBottom: 8 }}>
+          <Text style={{ fontSize: 11, fontWeight: '600', color: C.textMuted, marginBottom: 4 }}>Credit Notes</Text>
+          {cns.map((cn) => renderNoteRow('cn', cn.creditNoteId, cn.creditNoteNumber, cn.totalAmount, cn.reason, cn.status))}
+        </View>
+      )}
+
+      {dns.length > 0 && (
+        <View>
+          <Text style={{ fontSize: 11, fontWeight: '600', color: C.textMuted, marginBottom: 4 }}>Debit Notes</Text>
+          {dns.map((dn) => renderNoteRow('dn', dn.debitNoteId, dn.debitNoteNumber, dn.totalAmount, dn.reason, dn.status))}
+        </View>
+      )}
+
+      {/* Reject modal */}
+      {rejectTarget && (
+        <RejectNoteModal
+          C={C}
+          dark={dark}
+          target={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onSubmit={(reason) => handleReject(rejectTarget.kind, rejectTarget.id, reason)}
+        />
+      )}
+    </View>
+  );
+}
+
+// ─── Feature 2: Reject Note Modal ───────────────────────────────────────────
+
+interface RejectNoteModalProps {
+  C: ReturnType<typeof getColors>;
+  dark: boolean;
+  target: { kind: 'cn' | 'dn'; id: string; number: string | null };
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+}
+
+function RejectNoteModal({ C, dark, target, onClose, onSubmit }: RejectNoteModalProps) {
+  const [reason, setReason] = useState('');
+  const noun = target.kind === 'cn' ? 'Credit Note' : 'Debit Note';
+
+  const inputStyle = {
+    backgroundColor: C.inputBg,
+    borderWidth: 1,
+    borderColor: C.inputBorder,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: C.text,
+    minHeight: 80,
+    textAlignVertical: 'top' as const,
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View
+            style={{
+              backgroundColor: C.modalBg,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              paddingHorizontal: 20,
+              paddingTop: 16,
+              paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+            }}
+          >
+            <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: C.divider, marginBottom: 16 }} />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: C.text }}>
+                Reject {noun}
+              </Text>
+              <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons name="close" size={22} color={C.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ fontSize: 13, color: C.textSecondary, marginBottom: 12 }}>
+              The rejection reason will be recorded in the audit log. The {noun.toLowerCase()} will be marked as rejected.
+            </Text>
+            <TextInput
+              style={inputStyle}
+              placeholder="Reason for rejection (required)"
+              placeholderTextColor={C.textMuted}
+              value={reason}
+              onChangeText={setReason}
+              multiline
+              numberOfLines={3}
+              maxLength={500}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity
+                onPress={onClose}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  backgroundColor: dark ? '#334155' : '#f1f5f9',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!reason.trim()) {
+                    Alert.alert('Validation', 'Please enter a reason for rejection.');
+                    return;
+                  }
+                  onSubmit(reason.trim());
+                }}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  backgroundColor: '#ef4444',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff' }}>Reject</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Feature 2: Create Note Modal (Credit / Debit) ───────────────────────────
+
+interface CreateNoteModalProps {
+  C: ReturnType<typeof getColors>;
+  dark: boolean;
+  kind: 'cn' | 'dn';
+  invoice: Invoice;
+  onClose: () => void;
+}
+
+function CreateNoteModal({ C, dark, kind, invoice, onClose }: CreateNoteModalProps) {
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+
+  const isCn = kind === 'cn';
+  const title = isCn ? 'Credit Note' : 'Debit Note';
+  const endpoint = isCn ? '/invoices/credit-notes' : '/invoices/debit-notes';
+
+  const noteMutation = useApiMutation<unknown, {
+    invoiceId: string;
+    amount: number;
+    reason: string;
+    note?: string;
+  }>('post', endpoint, {
+    invalidateKeys: [
+      ['admin-invoices'],
+      ['invoice-credit-notes', invoice.invoiceId],
+      ['invoice-debit-notes', invoice.invoiceId],
+    ],
+    onSuccess: () => {
+      Alert.alert(
+        `${title} created`,
+        'Pending approval.',
+      );
+      onClose();
+    },
+  });
+
+  const handleSubmit = () => {
+    const parsedAmount = parseFloat(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      Alert.alert('Validation', 'Please enter a valid amount.');
+      return;
+    }
+    if (isCn && parsedAmount > invoice.totalAmount) {
+      Alert.alert('Validation', `Credit note amount cannot exceed invoice total of ${formatCurrency(invoice.totalAmount)}.`);
+      return;
+    }
+    if (!reason.trim()) {
+      Alert.alert('Validation', 'Please enter a reason.');
+      return;
+    }
+    noteMutation.mutate({
+      invoiceId: invoice.invoiceId,
+      amount: parsedAmount,
+      reason: reason.trim(),
+      note: note.trim() || undefined,
+    });
+  };
+
+  const inputStyle = {
+    backgroundColor: C.inputBg,
+    borderWidth: 1,
+    borderColor: C.inputBorder,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: C.text,
+  } as const;
+
+  const labelStyle = {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: C.textSecondary,
+    marginBottom: 6,
+  };
+
+  const readonlyStyle = {
+    ...inputStyle,
+    backgroundColor: dark ? '#334155' : '#f1f5f9',
+    color: C.textMuted,
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View
+            style={{
+              backgroundColor: C.modalBg,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              paddingHorizontal: 20,
+              paddingTop: 16,
+              paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+              maxHeight: '90%',
+            }}
+          >
+            <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: C.divider, marginBottom: 16 }} />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ fontSize: 18, fontWeight: '800', color: C.text }}>{title}</Text>
+              <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons name="close" size={24} color={C.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Invoice (readonly) */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={labelStyle}>Invoice #</Text>
+                <View style={readonlyStyle}>
+                  <Text style={{ fontSize: 15, color: C.textMuted }}>{invoice.invoiceNumber}</Text>
+                </View>
+              </View>
+
+              {/* Amount */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={labelStyle}>
+                  {isCn ? `Credit Amount (max ${formatCurrency(invoice.totalAmount)})` : 'Debit Amount'}
+                </Text>
+                <TextInput
+                  style={inputStyle}
+                  placeholder={isCn ? `Enter amount (max ${formatCurrency(invoice.totalAmount)})` : 'Enter amount'}
+                  placeholderTextColor={C.textMuted}
+                  keyboardType="numeric"
+                  value={amount}
+                  onChangeText={setAmount}
+                />
+              </View>
+
+              {/* Reason */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={labelStyle}>Reason *</Text>
+                <TextInput
+                  style={{
+                    ...inputStyle,
+                    minHeight: 70,
+                    textAlignVertical: 'top',
+                  }}
+                  placeholder="e.g. Price correction, billing error"
+                  placeholderTextColor={C.textMuted}
+                  value={reason}
+                  onChangeText={setReason}
+                  multiline
+                  numberOfLines={2}
+                  maxLength={500}
+                />
+              </View>
+
+              {/* Note (optional) */}
+              <View style={{ marginBottom: 24 }}>
+                <Text style={labelStyle}>Note (optional)</Text>
+                <TextInput
+                  style={{
+                    ...inputStyle,
+                    minHeight: 60,
+                    textAlignVertical: 'top',
+                  }}
+                  placeholder="Internal notes"
+                  placeholderTextColor={C.textMuted}
+                  value={note}
+                  onChangeText={setNote}
+                  multiline
+                  numberOfLines={2}
+                />
+              </View>
+
+              {/* Submit */}
+              <TouchableOpacity
+                onPress={handleSubmit}
+                disabled={noteMutation.isPending}
+                style={{
+                  backgroundColor: noteMutation.isPending ? '#9ca3af' : (isCn ? '#d97706' : '#0369a1'),
+                  borderRadius: 12,
+                  paddingVertical: 14,
+                  alignItems: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                {noteMutation.isPending ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#ffffff' }}>
+                    Create {title}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Payments Tab ───────────────────────────────────────────────────────────
 
 interface PaymentsTabProps {
@@ -622,6 +1348,7 @@ interface PaymentsTabProps {
   paymentsRefetching: boolean;
   refetchPayments: () => void;
   setCreatePaymentVisible: (v: boolean) => void;
+  setAllocatePayment: (p: Payment) => void;
 }
 
 function PaymentsTab({
@@ -632,6 +1359,7 @@ function PaymentsTab({
   paymentsRefetching,
   refetchPayments,
   setCreatePaymentVisible,
+  setAllocatePayment,
 }: PaymentsTabProps) {
   const payments = paymentsData?.payments ?? [];
 
@@ -653,6 +1381,8 @@ function PaymentsTab({
           : allocationLabel === 'Unallocated'
           ? '#ef4444'
           : '#f97316';
+
+      const unallocated = pmt.unallocatedAmount ?? 0;
 
       return (
         <View
@@ -733,10 +1463,47 @@ function PaymentsTab({
               </Text>
             </View>
           )}
+
+          {/* Feature 3: Unallocated amount + Allocate button */}
+          {unallocated > 0 && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginTop: 10,
+                paddingTop: 10,
+                borderTopWidth: 1,
+                borderTopColor: C.divider,
+              }}
+            >
+              <View>
+                <Text style={{ fontSize: 11, color: C.textMuted }}>Unallocated</Text>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#f59e0b' }}>
+                  {formatCurrency(unallocated)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setAllocatePayment(pmt)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  backgroundColor: '#f59e0b',
+                }}
+              >
+                <Ionicons name="arrow-forward-outline" size={15} color="#ffffff" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff' }}>Allocate</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       );
     },
-    [C],
+    [C, dark, setAllocatePayment],
   );
 
   const renderEmpty = () => {
@@ -802,6 +1569,265 @@ function PaymentsTab({
         <Ionicons name="add" size={28} color="#ffffff" />
       </TouchableOpacity>
     </View>
+  );
+}
+
+// ─── Feature 3: Allocate Payment Modal ──────────────────────────────────────
+
+interface AllocatePaymentModalProps {
+  C: ReturnType<typeof getColors>;
+  dark: boolean;
+  payment: Payment;
+  onClose: () => void;
+}
+
+function AllocatePaymentModal({ C, dark, payment, onClose }: AllocatePaymentModalProps) {
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [invoicePickerVisible, setInvoicePickerVisible] = useState(false);
+
+  // Fetch open invoices for this customer
+  const { data: invoicesData, isLoading: invoicesLoading } = useApiQuery<{ invoices: Invoice[] }>(
+    ['customer-open-invoices', payment.customerId],
+    '/invoices',
+    { customerId: payment.customerId, pageSize: 100 },
+    { staleTime: 60 * 1000 },
+  );
+
+  // Filter client-side to status issued/partially_paid with outstanding > 0
+  const openInvoices = useMemo(() => {
+    const all = invoicesData?.invoices ?? [];
+    return all.filter(
+      (inv) =>
+        (inv.status === 'issued' || inv.status === 'partially_paid') &&
+        (inv.outstandingAmount ?? 0) > 0,
+    );
+  }, [invoicesData]);
+
+  const selectedInvoice = openInvoices.find((inv) => inv.invoiceId === selectedInvoiceId) ?? null;
+
+  const unallocated = payment.unallocatedAmount ?? 0;
+  const maxAmount = selectedInvoice
+    ? Math.min(unallocated, selectedInvoice.outstandingAmount)
+    : unallocated;
+
+  // Pre-fill amount when invoice selected
+  const handleSelectInvoice = (inv: Invoice) => {
+    setSelectedInvoiceId(inv.invoiceId);
+    setInvoicePickerVisible(false);
+    setAmount(Math.min(unallocated, inv.outstandingAmount).toFixed(2));
+  };
+
+  const allocateMutation = useApiMutation<unknown, { invoiceId: string; amount: number }>(
+    'post',
+    `/payments/${payment.paymentId}/allocate`,
+    {
+      invalidateKeys: [['admin-payments'], ['admin-invoices']],
+      successMessage: 'Payment allocated successfully',
+      onSuccess: () => onClose(),
+    },
+  );
+
+  const handleSubmit = () => {
+    if (!selectedInvoiceId) {
+      Alert.alert('Validation', 'Please select an invoice.');
+      return;
+    }
+    const parsedAmount = parseFloat(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      Alert.alert('Validation', 'Please enter a valid amount.');
+      return;
+    }
+    if (parsedAmount > maxAmount) {
+      Alert.alert(
+        'Validation',
+        `Amount cannot exceed ${formatCurrency(maxAmount)} (min of unallocated and outstanding).`,
+      );
+      return;
+    }
+    allocateMutation.mutate({ invoiceId: selectedInvoiceId, amount: parsedAmount });
+  };
+
+  const inputStyle = {
+    backgroundColor: C.inputBg,
+    borderWidth: 1,
+    borderColor: C.inputBorder,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: C.text,
+  } as const;
+
+  const labelStyle = {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: C.textSecondary,
+    marginBottom: 6,
+  };
+
+  const readonlyStyle = {
+    ...inputStyle,
+    backgroundColor: dark ? '#334155' : '#f1f5f9',
+    color: C.textMuted,
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View
+            style={{
+              backgroundColor: C.modalBg,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              paddingHorizontal: 20,
+              paddingTop: 16,
+              paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+              maxHeight: '90%',
+            }}
+          >
+            <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: C.divider, marginBottom: 16 }} />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ fontSize: 18, fontWeight: '800', color: C.text }}>Allocate Payment</Text>
+              <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons name="close" size={24} color={C.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Customer (readonly) */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={labelStyle}>Customer</Text>
+                <View style={readonlyStyle}>
+                  <Text style={{ fontSize: 15, color: C.textMuted }}>{payment.customerName}</Text>
+                </View>
+              </View>
+
+              {/* Unallocated (readonly) */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={labelStyle}>Unallocated Amount</Text>
+                <View style={readonlyStyle}>
+                  <Text style={{ fontSize: 15, color: '#f59e0b', fontWeight: '700' }}>
+                    {formatCurrency(unallocated)}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Invoice picker */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={labelStyle}>Invoice</Text>
+                {invoicesLoading ? (
+                  <View style={{ ...readonlyStyle, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <ActivityIndicator size="small" color={ACCENT} />
+                    <Text style={{ fontSize: 14, color: C.textMuted }}>Loading invoices...</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => setInvoicePickerVisible(!invoicePickerVisible)}
+                    style={{
+                      ...inputStyle,
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 15, color: selectedInvoice ? C.text : C.textMuted, flex: 1 }} numberOfLines={1}>
+                      {selectedInvoice
+                        ? `${selectedInvoice.invoiceNumber} (${formatCurrency(selectedInvoice.outstandingAmount)} due)`
+                        : openInvoices.length === 0
+                        ? 'No open invoices'
+                        : 'Select invoice'}
+                    </Text>
+                    <Ionicons name="chevron-down" size={18} color={C.textSecondary} />
+                  </TouchableOpacity>
+                )}
+                {invoicePickerVisible && openInvoices.length > 0 && (
+                  <View
+                    style={{
+                      backgroundColor: C.card,
+                      borderWidth: 1,
+                      borderColor: C.cardBorder,
+                      borderRadius: 10,
+                      marginTop: 4,
+                      maxHeight: 220,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <FlatList
+                      data={openInvoices}
+                      keyExtractor={(inv) => inv.invoiceId}
+                      keyboardShouldPersistTaps="handled"
+                      renderItem={({ item: inv }) => (
+                        <TouchableOpacity
+                          onPress={() => handleSelectInvoice(inv)}
+                          style={{
+                            paddingHorizontal: 14,
+                            paddingVertical: 12,
+                            borderBottomWidth: 1,
+                            borderBottomColor: C.divider,
+                            backgroundColor:
+                              selectedInvoiceId === inv.invoiceId
+                                ? (dark ? '#334155' : '#f1f5f9')
+                                : 'transparent',
+                          }}
+                        >
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>
+                            {inv.invoiceNumber}
+                          </Text>
+                          <Text style={{ fontSize: 12, color: C.textSecondary, marginTop: 2 }}>
+                            Due: {formatCurrency(inv.outstandingAmount)} · {inv.customerName}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    />
+                  </View>
+                )}
+              </View>
+
+              {/* Amount */}
+              <View style={{ marginBottom: 24 }}>
+                <Text style={labelStyle}>
+                  Amount{selectedInvoice ? ` (max ${formatCurrency(maxAmount)})` : ''}
+                </Text>
+                <TextInput
+                  style={inputStyle}
+                  placeholder={`Enter amount${selectedInvoice ? ` (max ${formatCurrency(maxAmount)})` : ''}`}
+                  placeholderTextColor={C.textMuted}
+                  keyboardType="numeric"
+                  value={amount}
+                  onChangeText={setAmount}
+                />
+              </View>
+
+              {/* Submit */}
+              <TouchableOpacity
+                onPress={handleSubmit}
+                disabled={allocateMutation.isPending || openInvoices.length === 0}
+                style={{
+                  backgroundColor:
+                    allocateMutation.isPending || openInvoices.length === 0
+                      ? '#9ca3af'
+                      : '#f59e0b',
+                  borderRadius: 12,
+                  paddingVertical: 14,
+                  alignItems: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                {allocateMutation.isPending ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#ffffff' }}>
+                    Allocate Payment
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
   );
 }
 
