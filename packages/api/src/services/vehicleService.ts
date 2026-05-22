@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
+import { startOfUtcDay } from '../utils/dateOnly.js';
 
 export async function listVehicles(distributorId: string, status?: string) {
   const where: Prisma.VehicleWhereInput = { distributorId, deletedAt: null };
@@ -119,8 +120,18 @@ export async function updateVehicleInventory(
 }
 
 export async function getCancelledStockByVehicle(distributorId: string, vehicleId: string) {
+  // WI-094c: scope to TODAY's still-on-vehicle cancelled stock. The model has
+  // no tripNumber, so we approximate "current" by date + status: hide events
+  // already handled by the inventory team (returned_to_depot / reconciled) and
+  // events from prior days. Without this the driver app showed stale events
+  // from earlier trips/days that were long since returned to the depot.
   return prisma.cancelledStockEvent.findMany({
-    where: { distributorId, vehicleId },
+    where: {
+      distributorId,
+      vehicleId,
+      cancellationDate: { gte: startOfUtcDay() },
+      status: { notIn: ['returned_to_depot', 'reconciled'] },
+    },
     include: {
       // WI-094 (Issue 8): include the customer so the driver app can show
       // who the cancelled order was for. Nested under order.customer; the

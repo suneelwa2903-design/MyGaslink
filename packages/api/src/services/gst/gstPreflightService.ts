@@ -227,6 +227,14 @@ export async function preflightDispatch(params: {
         tripSheetGeneratedAt: null,
         tripSheetNo2: null,
         tripSheetNo2GeneratedAt: null,
+        // WI-094c: clear the per-trip timeline timestamps on the trip roll
+        // (mirrors the confirmDelivery auto-reset in orderService.ts). Keeps
+        // the previous trip's dispatched/returned/reconciled stamps from
+        // leaking onto the new trip's timeline.
+        dispatchedAt: null,
+        returnedAt: null,
+        reconciledAt: null,
+        isReconciled: false,
       },
     });
     mapping.status = 'dispatch_ready';

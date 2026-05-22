@@ -216,3 +216,26 @@ describe('WI-094b — GET /drivers/me/trip-stock scoped to current trip', () => 
     expect(sum(rows, 'fullQuantity')).toBe(3); // pending 3 only — NOT the cancelled 5
   });
 });
+
+// WI-094c (Change 2) — GET /drivers/me/assignment orders scoped to current trip.
+describe('WI-094c — GET /drivers/me/assignment orders scoped to current trip', () => {
+  const assignment = (t: string) => request(app).get('/api/drivers/me/assignment').set(auth(t));
+
+  it('✅ 7 — assignment.orders shows only current-trip orders (Trip 1 excluded)', async () => {
+    // Driver A: Trip 1 delivered (TEST-TSS-A-T1D, tripNumber=1) + Trip 2 current
+    // (A-T2P pending + A-T2D delivered, tripNumber=2). Current DVA is trip 2.
+    const res = await assignment(aToken);
+    expect(res.status).toBe(200);
+    const nums: string[] = res.body.data.orders.map((o: any) => o.orderNumber);
+    expect(nums).toEqual(expect.arrayContaining(['TEST-TSS-A-T2P', 'TEST-TSS-A-T2D']));
+    expect(nums).not.toContain('TEST-TSS-A-T1D');
+  });
+
+  it('❌ 8 — cross-tenant: dist-001 driver sees only its own orders', async () => {
+    const res = await assignment(dToken);
+    expect(res.status).toBe(200);
+    const nums: string[] = res.body.data.orders.map((o: any) => o.orderNumber);
+    expect(nums).toContain('TEST-TSS-D-P');
+    expect(nums.some((n) => n.startsWith('TEST-TSS-A-'))).toBe(false);
+  });
+});

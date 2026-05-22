@@ -231,7 +231,10 @@ driverRouter.get('/me/assignment',
         where: { driverId: driver.id, distributorId, assignmentDate: today },
         include: {
           driver: { select: { id: true, driverName: true, phone: true } },
-          vehicle: { select: { id: true, vehicleNumber: true } },
+          // WI-094c: surface vehicle.status so the driver app can show the
+          // "vehicle returned — waiting for inventory to reconcile" state
+          // (vehicle goes 'returned' before the DVA rolls to the next trip).
+          vehicle: { select: { id: true, vehicleNumber: true, status: true } },
         },
         orderBy: { tripNumber: 'desc' }, // multiple trips same day: pick latest
       });
@@ -241,12 +244,27 @@ driverRouter.get('/me/assignment',
       // shape transform and the orders query can opt into the heavier
       // orderInclude (items + cylinderType + customer). We scope to the
       // driver to keep the EW within-tenant + within-driver guarantee.
+      // WI-094c: scope the order list to the CURRENT trip. The DVA row is
+      // reused across trips (tripNumber++ in place), so an unscoped "today"
+      // query showed every order the driver touched all day (11 orders across
+      // 4 trips in the live report). Mirror the trip-stock OR pattern:
+      //   - orders stamped with this trip's number (any status: pending /
+      //     delivered / cancelled-in-trip)
+      //   - pending_dispatch orders not yet stamped (tripNumber NULL) — the
+      //     upcoming load, so the pre-dispatch view isn't empty
+      //   - legacy NULL-tripNumber pending_delivery dispatched before WI-065
+      //     (pinned via the DVA updatedAt window, same as tripSheetPdfService)
       const orders = await prisma.order.findMany({
         where: {
           distributorId,
           driverId: driver.id,
           deliveryDate: today,
           deletedAt: null,
+          OR: [
+            { tripNumber: assignment.tripNumber },
+            { tripNumber: null, status: 'pending_dispatch' },
+            { tripNumber: null, status: 'pending_delivery', updatedAt: { gte: assignment.updatedAt } },
+          ],
         },
         include: {
           customer: { select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true } },
@@ -386,8 +404,9 @@ driverRouter.get('/me/trip-ewbs',
   async (req, res) => {
     try {
       const distributorId = req.user!.distributorId!;
+      const empty = { tripNumber: null, tripSheetNo: null, tripSheetNo2: null, items: [] as unknown[] };
       const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
-      if (!driver) return sendSuccess(res, { items: [] });
+      if (!driver) return sendSuccess(res, empty);
 
       // Short-circuit for GST-disabled tenants.
       const distributor = await prisma.distributor.findUnique({
@@ -395,43 +414,47 @@ driverRouter.get('/me/trip-ewbs',
         select: { gstMode: true },
       });
       if (!distributor || distributor.gstMode === 'disabled') {
-        return sendSuccess(res, { items: [] });
+        return sendSuccess(res, empty);
       }
 
       // @db.Date column → bound by UTC calendar day, not local midnight
       // (utils/dateOnly.ts). setHours(0,0,0,0) was off-by-one on this IST server.
       const today = startOfUtcDay();
 
-      // WI-063 follow-up — current-trip scoping. Mirrors the WI-061 fix
-      // in tripSheetPdfService: preflightDispatch reuses the same DVA
-      // row across trips and bumps updatedAt on each tripNumber++.
-      // Combining (a) status='pending_delivery' and (b) order.updatedAt
-      // >= dva.updatedAt cleanly partitions trip 2's in-transit orders
-      // from trip 1's already-delivered ones on a multi-trip day.
-      // Without this, the afternoon-trip EWB list would inherit the
-      // morning batch's EWBs even though those orders are off the truck.
+      // WI-094c: scope to the CURRENT trip and include the just-completed
+      // trip's EWBs (delivered orders), so the driver can still show the EWB
+      // at a checkpoint after handing over. We also return the consolidated
+      // trip-sheet numbers so the mobile knows whether to offer a PDF
+      // download. Mirrors the trip-stock / tripSheetPdfService scoping:
+      //   - orders stamped with this trip's number (pending or delivered)
+      //   - legacy NULL-tripNumber pending_delivery (pre-WI-065) via the
+      //     DVA updatedAt window.
       const assignment = await prisma.driverVehicleAssignment.findFirst({
         where: { driverId: driver.id, distributorId, assignmentDate: today },
         orderBy: { tripNumber: 'desc' },
-        select: { updatedAt: true },
+        select: { tripNumber: true, tripSheetNo: true, tripSheetNo2: true, updatedAt: true },
       });
-      if (!assignment) return sendSuccess(res, { items: [] });
+      if (!assignment) return sendSuccess(res, empty);
 
-      // We need order_id + ewb_no + ewb_status + valid_till, joined to
-      // orders for the customer name and order number. doc_type='INV'
-      // filters out CN/DN docs which carry separate EWBs on the same
-      // gst_documents table.
+      // We need order_id + ewb_no + ewb_status + valid_till, joined to orders
+      // for the customer name, order number, and cylinder type/qty. doc_type
+      // ='INV' filters out CN/DN docs which carry separate EWBs on the same
+      // table. ewbStatus in [active, cancelled] excludes failed/pending docs
+      // that never got a real NIC EWB number (e.g. B2C below threshold).
       const docs = await prisma.gstDocument.findMany({
         where: {
           distributorId,
           docType: 'INV',
           ewbNo: { not: null },
+          ewbStatus: { in: ['active', 'cancelled'] },
           order: {
             driverId: driver.id,
             deliveryDate: today,
             deletedAt: null,
-            status: 'pending_delivery',
-            updatedAt: { gte: assignment.updatedAt },
+            OR: [
+              { tripNumber: assignment.tripNumber, status: { in: ['pending_delivery', 'delivered', 'modified_delivered'] } },
+              { tripNumber: null, status: 'pending_delivery', updatedAt: { gte: assignment.updatedAt } },
+            ],
           },
         },
         select: {
@@ -444,6 +467,7 @@ driverRouter.get('/me/trip-ewbs',
             select: {
               orderNumber: true,
               customer: { select: { customerName: true } },
+              items: { select: { quantity: true, cylinderType: { select: { typeName: true } } } },
             },
           },
           invoice: { select: { invoiceNumber: true } },
@@ -451,17 +475,27 @@ driverRouter.get('/me/trip-ewbs',
         orderBy: { ewbDate: 'desc' },
       });
 
-      const items = docs.map((d) => ({
-        orderId: d.orderId,
-        orderNumber: d.order?.orderNumber ?? null,
-        customerName: d.order?.customer?.customerName ?? null,
-        invoiceNumber: d.invoice?.invoiceNumber ?? null,
-        ewbNo: d.ewbNo,
-        ewbDate: d.ewbDate,
-        ewbValidTill: d.ewbValidTill,
-        ewbStatus: d.ewbStatus,
-      }));
-      return sendSuccess(res, { items });
+      const items = docs.map((d) => {
+        const orderItems = d.order?.items ?? [];
+        return {
+          orderId: d.orderId,
+          orderNumber: d.order?.orderNumber ?? null,
+          customerName: d.order?.customer?.customerName ?? null,
+          invoiceNumber: d.invoice?.invoiceNumber ?? null,
+          ewbNo: d.ewbNo,
+          ewbDate: d.ewbDate,
+          ewbValidTill: d.ewbValidTill,
+          ewbStatus: d.ewbStatus,
+          cylinderType: orderItems[0]?.cylinderType?.typeName ?? null,
+          quantity: orderItems.reduce((s, it) => s + (it.quantity ?? 0), 0),
+        };
+      });
+      return sendSuccess(res, {
+        tripNumber: assignment.tripNumber,
+        tripSheetNo: assignment.tripSheetNo,
+        tripSheetNo2: assignment.tripSheetNo2,
+        items,
+      });
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

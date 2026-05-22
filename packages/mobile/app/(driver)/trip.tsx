@@ -28,7 +28,7 @@ interface DistributorSettings {
  * `vehicle` object is the canonical source going forward (Fix 3).
  */
 interface ExtendedAssignment extends DriverVehicleAssignment {
-  vehicle?: { vehicleNumber: string } | null;
+  vehicle?: { vehicleNumber: string; status?: string } | null;
   dispatchedAt?: string | null;
   returnedAt?: string | null;
   reconciledAt?: string | null;
@@ -50,6 +50,22 @@ interface TripEwb {
   ewbDate: string | null;
   ewbValidTill: string | null;
   ewbStatus: 'not_attempted' | 'pending' | 'active' | 'failed' | 'cancelled';
+  // WI-094c: cylinder type + total quantity now travel with each EWB so the
+  // merged Compliance Docs list can show "<type> × <qty>" at a glance.
+  cylinderType: string | null;
+  quantity: number;
+}
+
+/**
+ * WI-094c: the trip-ewbs endpoint now returns the consolidated trip-sheet
+ * numbers alongside the per-order EWB list, so a single "Compliance Docs"
+ * section can offer both the trip-sheet PDF download and the EWB references.
+ */
+interface TripEwbsResponse {
+  tripNumber: number | null;
+  tripSheetNo: string | null;
+  tripSheetNo2: string | null;
+  items: TripEwb[];
 }
 
 export default function DriverTripScreen() {
@@ -73,13 +89,18 @@ export default function DriverTripScreen() {
 
   // Only fetch EWBs when GST is on. TanStack's `enabled` skips the call
   // entirely otherwise — no wasted round-trip, no 200 + [] spinner flash.
-  const { data: ewbsResponse } = useApiQuery<{ items: TripEwb[] }>(
+  const { data: ewbsResponse } = useApiQuery<TripEwbsResponse>(
     ['driver-trip-ewbs'],
     '/drivers/me/trip-ewbs',
     undefined,
     { enabled: gstEnabled },
   );
   const ewbs: TripEwb[] = ewbsResponse?.items ?? [];
+  // WI-094c: trip-sheet numbers now come from the trip-ewbs response (so the
+  // merged Compliance Docs section can offer the PDF download) rather than the
+  // assignment row.
+  const tripSheetNo = ewbsResponse?.tripSheetNo ?? null;
+  const tripSheetNo2 = ewbsResponse?.tripSheetNo2 ?? null;
 
   /**
    * Download the consolidated trip-sheet PDF, save to the app's cache
@@ -178,19 +199,14 @@ export default function DriverTripScreen() {
     { status: 'reconciled', label: 'Reconciled', color: ACCENT.purple },
   ];
 
-  const currentStepIndex = statusSteps.findIndex((s) => s.status === assignment?.status);
+  // WI-094c Change 6: the vehicle flips to 'returned' the moment the driver
+  // taps "Mark Vehicle Returned", but the DVA stays loaded_and_dispatched
+  // until Inventory reconciles on the web. Advance the timeline to "Returned"
+  // for that window and surface a waiting state instead of an action button.
+  const vehicleReturned = assignment?.vehicle?.status === 'returned';
+  const baseStepIndex = statusSteps.findIndex((s) => s.status === assignment?.status);
+  const currentStepIndex = vehicleReturned && baseStepIndex === 1 ? 2 : baseStepIndex;
   const nextStep = currentStepIndex < statusSteps.length - 1 ? statusSteps[currentStepIndex + 1] : null;
-
-  // WI-064: hide the "Download Trip Sheet" button once every order on
-  // the trip has been delivered (or modified-delivered). The trip-sheet
-  // PDF service requires at least one `pending_delivery` order so it
-  // can pin the row set to the current trip — without any in-flight
-  // orders the endpoint 400s with a confusing "No EWB available"
-  // message. The doc is a transit document anyway, so post-delivery
-  // there's nothing to print.
-  const hasInFlightOrder = !!assignment?.orders?.some(
-    (o: any) => o.status === 'pending_delivery',
-  );
 
   // True when the next step is "returned_inventory" — i.e. the driver is
   // currently dispatched and needs to mark the vehicle back at the depot.
@@ -208,6 +224,21 @@ export default function DriverTripScreen() {
   const hasPendingDispatch = !!assignment?.orders?.some(
     (o: any) => o.status === 'pending_dispatch',
   );
+
+  // WI-094c Change 5: sort the trip's orders by what the driver does next —
+  // delivered most-recent-first, then pending oldest-first (the next stops),
+  // then cancelled at the bottom. The final spread catches any other status
+  // so no order is silently dropped.
+  const tripOrders = (assignment?.orders ?? []) as any[];
+  const isDeliveredStatus = (s: string) => s === 'delivered' || s === 'modified_delivered';
+  const isPendingStatus = (s: string) => s === 'pending_delivery' || s === 'pending_dispatch';
+  const ts = (v: any) => (v ? new Date(v).getTime() : 0);
+  const sortedOrders = [
+    ...tripOrders.filter((o) => isDeliveredStatus(o.status)).sort((a, b) => ts(b.deliveredAt) - ts(a.deliveredAt)),
+    ...tripOrders.filter((o) => isPendingStatus(o.status)).sort((a, b) => ts(a.createdAt) - ts(b.createdAt)),
+    ...tripOrders.filter((o) => o.status === 'cancelled'),
+    ...tripOrders.filter((o) => !isDeliveredStatus(o.status) && !isPendingStatus(o.status) && o.status !== 'cancelled'),
+  ];
 
   const handleAdvance = () => {
     if (!nextStep) return;
@@ -332,8 +363,24 @@ export default function DriverTripScreen() {
               </View>
             </Card>
 
-            {/* Next Action — Fix 1: dispatch_ready is read-only; Fix 2: returned_inventory has no button */}
-            {assignment.status === 'dispatch_ready' && hasPendingDispatch ? (
+            {/* Next Action — WI-094c Change 6: vehicle-returned waiting state takes
+                priority; then Fix 1 (dispatch_ready read-only) / Fix 2 (returned_inventory). */}
+            {vehicleReturned ? (
+              <Card>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Ionicons name="hourglass-outline" size={20} color={ACCENT.orange} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>Vehicle returned to depot</Text>
+                    <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>
+                      Waiting for the Inventory team to reconcile.
+                    </Text>
+                    <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }}>
+                      You will be notified when the next trip is ready.
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            ) : assignment.status === 'dispatch_ready' && hasPendingDispatch ? (
               <Card>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <Ionicons name="information-circle-outline" size={20} color={ACCENT.blue} />
@@ -355,19 +402,27 @@ export default function DriverTripScreen() {
               )
             )}
 
-            {/* Orders in Trip */}
+            {/* Orders in Trip — WI-094c Change 5: delivered first (recent), then
+                pending (next stops), cancelled last. */}
             <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>Orders in Trip</Text>
-            {assignment.orders?.map((order) => (
+            {sortedOrders.map((order) => (
               <Card key={order.orderId}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                   <View>
                     <Text style={{ fontWeight: '600', color: colors.text }}>{order.orderNumber}</Text>
                     <Text style={{ fontSize: 13, color: ACCENT.blue, marginTop: 2 }}>{order.customerName}</Text>
                   </View>
-                  <Badge label={(order.status || '').replace(/_/g, ' ')} variant={order.status === 'delivered' ? 'success' : 'warning'} />
+                  <Badge
+                    label={(order.status || '').replace(/_/g, ' ')}
+                    variant={
+                      order.status === 'delivered' || order.status === 'modified_delivered' ? 'success'
+                        : order.status === 'cancelled' ? 'danger'
+                        : 'warning'
+                    }
+                  />
                 </View>
                 <View style={{ marginTop: 8, gap: 2 }}>
-                  {order.items?.map((item, i) => (
+                  {order.items?.map((item: any, i: number) => (
                     <Text key={i} style={{ fontSize: 12, color: colors.textSecondary }}>
                       {item.cylinderTypeName} x {item.quantity}
                     </Text>
@@ -376,104 +431,86 @@ export default function DriverTripScreen() {
               </Card>
             ))}
 
-            {/* Fix 6: Trip Sheets section — driven by assignment.tripSheetNo / tripSheetNo2.
-                Not gated on gstEnabled; trip sheets exist regardless of GST mode. */}
-            <>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
-                Trip Sheets
-              </Text>
+            {/* Compliance Docs — WI-094c Change 4: Trip Sheets merged in here.
+                One section: trip-sheet PDF download (when a consolidated sheet
+                exists) + the per-order EWB references for checkpoints. GST-only —
+                GST-disabled tenants have neither EWBs nor consolidated sheets. */}
+            {gstEnabled && (
+              <>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
+                  Compliance Docs
+                </Text>
 
-              {assignment.tripSheetNo || assignment.tripSheetNo2 ? (
-                <>
-                  {assignment.tripSheetNo && (
-                    <Button
-                      title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet'}
-                      onPress={handleDownloadTripSheet}
-                      loading={downloadingPdf}
-                      variant="secondary"
-                    />
-                  )}
-                  {assignment.tripSheetNo2 && (
-                    <Button
-                      title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet (2)'}
-                      onPress={handleDownloadTripSheet}
-                      loading={downloadingPdf}
-                      variant="secondary"
-                    />
-                  )}
-                </>
-              ) : (
-                <Card>
-                  <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
-                    No trip sheet generated yet.
-                  </Text>
-                </Card>
-              )}
+                {(tripSheetNo || tripSheetNo2) && (
+                  <Button
+                    title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet'}
+                    onPress={handleDownloadTripSheet}
+                    loading={downloadingPdf}
+                    variant="secondary"
+                  />
+                )}
 
-              {/* EWB list — only shown for GST-enabled tenants, unchanged */}
-              {gstEnabled && (
-                <>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
-                    Compliance Docs
-                  </Text>
-
-                  {ewbs.length === 0 ? (
-                    <Card>
-                      <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
-                        No EWB documents yet — they appear here once dispatch preflight completes.
-                      </Text>
-                    </Card>
-                  ) : (
-                    ewbs.map((ewb) => (
-                      <Card key={ewb.orderId}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontWeight: '700', color: colors.text }}>{ewb.orderNumber}</Text>
-                            {ewb.customerName && (
-                              <Text style={{ fontSize: 13, color: ACCENT.blue, marginTop: 2 }}>
-                                {ewb.customerName}
-                              </Text>
-                            )}
-                            <Text style={{ fontSize: 13, color: colors.text, marginTop: 6 }}>
-                              <Text style={{ color: colors.textSecondary }}>EWB: </Text>
-                              <Text style={{ fontWeight: '700' }}>{ewb.ewbNo}</Text>
+                {ewbs.length === 0 ? (
+                  <Card>
+                    <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
+                      No EWB documents for this trip yet
+                    </Text>
+                  </Card>
+                ) : (
+                  ewbs.map((ewb) => (
+                    <Card key={ewb.orderId}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontWeight: '700', color: colors.text }}>{ewb.orderNumber}</Text>
+                          {ewb.customerName && (
+                            <Text style={{ fontSize: 13, color: ACCENT.blue, marginTop: 2 }}>
+                              {ewb.customerName}
                             </Text>
-                            {ewb.ewbValidTill && (
-                              <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                                Valid till {formatDate(ewb.ewbValidTill)}
-                              </Text>
-                            )}
-                          </View>
-                          <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                            <Badge
-                              label={ewb.ewbStatus}
-                              variant={ewb.ewbStatus === 'active' ? 'success' : ewb.ewbStatus === 'cancelled' || ewb.ewbStatus === 'failed' ? 'danger' : 'warning'}
-                            />
-                            <TouchableOpacity
-                              onPress={() => handleShareEwb(ewb)}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 4,
-                                paddingHorizontal: 10,
-                                paddingVertical: 6,
-                                borderRadius: 8,
-                                backgroundColor: dark ? 'rgba(59,130,246,0.15)' : '#eef7ff',
-                              }}
-                            >
-                              <Ionicons name="open-outline" size={14} color={ACCENT.blue} />
-                              <Text style={{ fontSize: 12, fontWeight: '600', color: ACCENT.blue }}>
-                                Verify
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
+                          )}
+                          {ewb.cylinderType && (
+                            <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                              {ewb.cylinderType} × {ewb.quantity}
+                            </Text>
+                          )}
+                          <Text style={{ fontSize: 13, color: colors.text, marginTop: 6 }}>
+                            <Text style={{ color: colors.textSecondary }}>EWB: </Text>
+                            <Text style={{ fontWeight: '700' }}>{ewb.ewbNo}</Text>
+                          </Text>
+                          {ewb.ewbValidTill && (
+                            <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                              Valid till {formatDate(ewb.ewbValidTill)}
+                            </Text>
+                          )}
                         </View>
-                      </Card>
-                    ))
-                  )}
-                </>
-              )}
-            </>
+                        <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                          <Badge
+                            label={ewb.ewbStatus}
+                            variant={ewb.ewbStatus === 'active' ? 'success' : ewb.ewbStatus === 'cancelled' || ewb.ewbStatus === 'failed' ? 'danger' : 'warning'}
+                          />
+                          <TouchableOpacity
+                            onPress={() => handleShareEwb(ewb)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              paddingHorizontal: 10,
+                              paddingVertical: 6,
+                              borderRadius: 8,
+                              backgroundColor: dark ? 'rgba(59,130,246,0.15)' : '#eef7ff',
+                            }}
+                          >
+                            <Ionicons name="open-outline" size={14} color={ACCENT.blue} />
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: ACCENT.blue }}>
+                              Verify
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </Card>
+                  ))
+                )}
+              </>
+            )}
           </>
         )}
       </ScrollView>

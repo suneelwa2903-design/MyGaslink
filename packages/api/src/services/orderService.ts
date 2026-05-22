@@ -886,6 +886,16 @@ export async function confirmDelivery(
             tripSheetGeneratedAt: null,
             tripSheetNo2: null,
             tripSheetNo2GeneratedAt: null,
+            // WI-094c: clear the per-trip timeline timestamps when the DVA
+            // rolls to the next trip. The single DVA row is reused across
+            // trips (tripNumber++ in place); without this, the previous
+            // trip's dispatched/returned/reconciled stamps leak onto the
+            // new trip's driver-app timeline. order_status_logs keeps the
+            // real per-order audit trail, so nothing historical is lost.
+            dispatchedAt: null,
+            returnedAt: null,
+            reconciledAt: null,
+            isReconciled: false,
           },
         });
       }

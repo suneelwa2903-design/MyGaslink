@@ -443,10 +443,11 @@ describe('GET /api/drivers/me/trip-ewbs', () => {
    * must return an empty list without querying gst_documents — the GST
    * gate is in the route handler itself, not just downstream emptiness.
    */
-  it('GST-disabled tenant: returns { items: [] } regardless of driver state', async () => {
+  it('GST-disabled tenant: returns empty items regardless of driver state', async () => {
     const res = await request(app).get('/api/drivers/me/trip-ewbs').set(auth(driverAToken));
     expect(res.status).toBe(200);
-    expect(res.body.data).toEqual({ items: [] });
+    // WI-094c: response shape now { tripNumber, tripSheetNo, tripSheetNo2, items }.
+    expect(res.body.data.items).toEqual([]);
   });
 
   it('orphan driver still gets { items: [] } (never 403)', async () => {
