@@ -76,13 +76,23 @@ router.get('/top-sales',
 
 // GET /api/analytics/driver-performance
 router.get('/driver-performance',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  // WI-094 (Issue 9): drivers may view their OWN performance (scoped below).
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver'),
   async (req, res) => {
   try {
+    let scopedDriverId: string | undefined;
+    if (req.user!.role === 'driver') {
+      // Scope strictly to the requesting driver. If the user has no driver
+      // row, return an empty report rather than leaking all drivers.
+      const driverId = await analyticsService.resolveDriverIdForUser(req.user!.distributorId!, req.user!.userId);
+      if (!driverId) return sendSuccess(res, []);
+      scopedDriverId = driverId;
+    }
     const report = await analyticsService.getDriverDeliveryPerformance(
       req.user!.distributorId!,
       req.query.dateFrom as string,
-      req.query.dateTo as string
+      req.query.dateTo as string,
+      scopedDriverId,
     );
     return sendSuccess(res, report);
   } catch (err) {

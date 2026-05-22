@@ -288,7 +288,9 @@ export async function preflightDispatch(params: {
   if (mapping?.id && failed === 0 && succeeded > 0) {
     await prisma.driverVehicleAssignment.update({
       where: { id: mapping.id },
-      data: { status: 'loaded_and_dispatched' },
+      // WI-094: stamp dispatchedAt only on full dispatch success. Left null
+      // on partial/failed dispatch so the timeline reflects reality.
+      data: { status: 'loaded_and_dispatched', dispatchedAt: new Date() },
     });
 
     if (mapping.vehicleId) {

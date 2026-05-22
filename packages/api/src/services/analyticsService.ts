@@ -222,7 +222,23 @@ export async function getTopSales(distributorId: string, dateFrom: string, dateT
 /**
  * Driver delivery performance.
  */
-export async function getDriverDeliveryPerformance(distributorId: string, dateFrom?: string, dateTo?: string) {
+// WI-094 (Issue 9): resolve the driver row for a portal/mobile user (drivers
+// are linked to users by phone, same as resolveDriverFromUser in the driver
+// routes). Returns null when the user has no matching driver.
+export async function resolveDriverIdForUser(distributorId: string, userId: string): Promise<string | null> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
+  if (!user?.phone) return null;
+  const driver = await prisma.driver.findFirst({
+    where: { distributorId, phone: user.phone, deletedAt: null },
+    select: { id: true },
+  });
+  return driver?.id ?? null;
+}
+
+// WI-094 (Issue 9): `driverId` scopes the report to a single driver. The
+// route passes it for the `driver` role so a driver only ever sees their own
+// performance; admins/finance/inventory call without it (unscoped, all drivers).
+export async function getDriverDeliveryPerformance(distributorId: string, dateFrom?: string, dateTo?: string, driverId?: string) {
   const where: any = { distributorId, deletedAt: null };
   if (dateFrom || dateTo) {
     where.deliveryDate = {};
@@ -231,7 +247,7 @@ export async function getDriverDeliveryPerformance(distributorId: string, dateFr
   }
 
   const drivers = await prisma.driver.findMany({
-    where: { distributorId, deletedAt: null },
+    where: { distributorId, deletedAt: null, ...(driverId ? { id: driverId } : {}) },
     select: { id: true, driverName: true },
   });
 

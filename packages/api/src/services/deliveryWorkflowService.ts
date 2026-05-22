@@ -14,6 +14,7 @@
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../utils/logger.js';
 import { toNum } from '../utils/decimal.js';
+import { startOfUtcDay } from '../utils/dateOnly.js';
 
 // ─── Customer Delivery Confirmation ─────────────────────────────────────────
 
@@ -280,6 +281,21 @@ export async function markVehicleReturned(
     where: { id: vehicleId },
     data: { status: 'returned' },
   });
+
+  // WI-094: stamp returnedAt on this vehicle's active DVA for today, so the
+  // driver app's trip timeline can show when the vehicle came back. Scoped
+  // to the latest non-cancelled assignment on this vehicle today.
+  const returnDva = await prisma.driverVehicleAssignment.findFirst({
+    where: { vehicleId, distributorId, assignmentDate: startOfUtcDay(), status: { not: 'cancelled' } },
+    orderBy: { tripNumber: 'desc' },
+    select: { id: true },
+  });
+  if (returnDva) {
+    await prisma.driverVehicleAssignment.update({
+      where: { id: returnDva.id },
+      data: { returnedAt: new Date() },
+    });
+  }
 
   // Build stock summary for inventory team verification
   const stockSummary: Record<string, { typeName: string; cancelledQty: number; undeliveredQty: number; totalOnVehicle: number }> = {};
@@ -552,6 +568,20 @@ export async function confirmVehicleReconciliation(
     where: { id: vehicleId },
     data: { status: 'idle' },
   });
+
+  // WI-094: stamp reconciledAt on this vehicle's active DVA for today (and
+  // flip isReconciled), completing the trip timeline.
+  const reconcileDva = await prisma.driverVehicleAssignment.findFirst({
+    where: { vehicleId, distributorId, assignmentDate: startOfUtcDay(), status: { not: 'cancelled' } },
+    orderBy: { tripNumber: 'desc' },
+    select: { id: true },
+  });
+  if (reconcileDva) {
+    await prisma.driverVehicleAssignment.update({
+      where: { id: reconcileDva.id },
+      data: { reconciledAt: new Date(), isReconciled: true },
+    });
+  }
 
   logger.info('Vehicle reconciliation complete', { vehicleId, distributorId, results });
 

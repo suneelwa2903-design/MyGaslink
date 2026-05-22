@@ -22,6 +22,21 @@ interface DistributorSettings {
 }
 
 /**
+ * Extended assignment shape that includes fields the backend now returns
+ * but the shared package type has not yet been updated to reflect.
+ * The flat `vehicleNumber` is kept for backward compat; the nested
+ * `vehicle` object is the canonical source going forward (Fix 3).
+ */
+interface ExtendedAssignment extends DriverVehicleAssignment {
+  vehicle?: { vehicleNumber: string } | null;
+  dispatchedAt?: string | null;
+  returnedAt?: string | null;
+  reconciledAt?: string | null;
+  tripSheetNo?: string | null;
+  tripSheetNo2?: string | null;
+}
+
+/**
  * One row of the /me/trip-ewbs response. Mirrors the columns we project
  * server-side. `ewbNo` is the 12-digit NIC EWB number the driver reads
  * out at the customer site / shows the road inspector.
@@ -43,7 +58,7 @@ export default function DriverTripScreen() {
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
-  const { data: assignment, isLoading, refetch } = useApiQuery<DriverVehicleAssignment | null>(
+  const { data: assignment, isLoading, refetch } = useApiQuery<ExtendedAssignment | null>(
     ['driver-active-trip'],
     '/drivers/me/assignment',
   );
@@ -233,7 +248,8 @@ export default function DriverTripScreen() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <View>
                   <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>Trip #{assignment.tripNumber}</Text>
-                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>{assignment.assignmentDate}</Text>
+                  {/* Fix 4: formatDate on assignmentDate */}
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>{formatDate(assignment.assignmentDate)}</Text>
                 </View>
                 <Badge
                   label={(assignment.status || '').replace(/_/g, ' ')}
@@ -242,53 +258,93 @@ export default function DriverTripScreen() {
               </View>
             </Card>
 
-            {/* Vehicle */}
+            {/* Vehicle — Fix 3: nested vehicle?.vehicleNumber with flat fallback */}
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1 }}>
-                <MetricCard title="Vehicle" value={assignment.vehicleNumber} color={colors.text} />
+                <MetricCard title="Vehicle" value={assignment.vehicle?.vehicleNumber ?? assignment.vehicleNumber} color={colors.text} />
               </View>
               <View style={{ flex: 1 }}>
                 <MetricCard title="Orders" value={assignment.orders?.length ?? 0} color={ACCENT.blue} />
               </View>
             </View>
 
-            {/* Status Pipeline */}
+            {/* Status Pipeline — Fix 2 + Fix 5 */}
             <Card>
               <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 12 }}>Trip Progress</Text>
               <View style={{ gap: 8 }}>
-                {statusSteps.map((step, i) => (
-                  <View key={step.status} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <View style={{
-                      width: 28, height: 28, borderRadius: 14,
-                      backgroundColor: i <= currentStepIndex ? step.color : (dark ? colors.cardBorder : '#e2e8f0'),
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <Text style={{
-                        color: i <= currentStepIndex ? '#fff' : colors.textMuted,
-                        fontSize: 12, fontWeight: '700',
+                {statusSteps.map((step, i) => {
+                  // Fix 5: timestamp per step
+                  let stamp: string;
+                  if (i === 0) stamp = formatDate(assignment.assignmentDate) || '—';
+                  else if (i === 1) stamp = assignment.dispatchedAt ? formatDate(assignment.dispatchedAt) : '—';
+                  else if (i === 2) stamp = assignment.returnedAt ? formatDate(assignment.returnedAt) : '—';
+                  else stamp = assignment.reconciledAt ? formatDate(assignment.reconciledAt) : '—';
+
+                  // Fix 2: for returned_inventory, step 4 (Reconciled) is pending with subtext
+                  const isPostReturnPending =
+                    assignment.status === 'returned_inventory' && step.status === 'reconciled';
+
+                  return (
+                    <View key={step.status} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+                      <View style={{
+                        width: 28, height: 28, borderRadius: 14,
+                        backgroundColor: i <= currentStepIndex ? step.color : (dark ? colors.cardBorder : '#e2e8f0'),
+                        alignItems: 'center', justifyContent: 'center',
+                        marginTop: 2,
                       }}>
-                        {i <= currentStepIndex ? '✓' : i + 1}
-                      </Text>
+                        <Text style={{
+                          color: i <= currentStepIndex ? '#fff' : colors.textMuted,
+                          fontSize: 12, fontWeight: '700',
+                        }}>
+                          {i <= currentStepIndex ? '✓' : i + 1}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{
+                          fontSize: 14,
+                          fontWeight: i === currentStepIndex ? '700' : '400',
+                          color: i <= currentStepIndex ? colors.text : colors.textMuted,
+                        }}>
+                          {step.label}
+                        </Text>
+                        {/* Fix 2: subtext for reconciliation pending */}
+                        {isPostReturnPending && (
+                          <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                            Inventory team needs to reconcile before next trip.
+                          </Text>
+                        )}
+                        {/* Fix 5: timestamp stamp */}
+                        <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 1 }}>
+                          {stamp}
+                        </Text>
+                      </View>
                     </View>
-                    <Text style={{
-                      fontSize: 14,
-                      fontWeight: i === currentStepIndex ? '700' : '400',
-                      color: i <= currentStepIndex ? colors.text : colors.textMuted,
-                    }}>
-                      {step.label}
-                    </Text>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             </Card>
 
-            {/* Next Action */}
-            {nextStep && (
-              <Button
-                title={isReturnTransition ? 'Mark Vehicle Returned' : `Move to: ${nextStep.label}`}
-                onPress={handleAdvance}
-                loading={isReturnTransition ? markReturned.isPending : updateStatus.isPending}
-              />
+            {/* Next Action — Fix 1: dispatch_ready is read-only; Fix 2: returned_inventory has no button */}
+            {assignment.status === 'dispatch_ready' ? (
+              <Card>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Ionicons name="information-circle-outline" size={20} color={ACCENT.blue} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>Dispatch pending</Text>
+                    <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>
+                      Inventory or Admin must dispatch from the web portal.
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            ) : assignment.status === 'returned_inventory' ? null : (
+              nextStep && (
+                <Button
+                  title={isReturnTransition ? 'Mark Vehicle Returned' : `Move to: ${nextStep.label}`}
+                  onPress={handleAdvance}
+                  loading={isReturnTransition ? markReturned.isPending : updateStatus.isPending}
+                />
+              )
             )}
 
             {/* Orders in Trip */}
@@ -312,88 +368,104 @@ export default function DriverTripScreen() {
               </Card>
             ))}
 
-            {/* Compliance Docs — only rendered when this distributor has
-                GST enabled (sandbox / live). For GST-disabled tenants
-                (e.g. dist-001 in dev) there's nothing to show. */}
-            {gstEnabled && (
-              <>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
-                  Compliance Docs
-                </Text>
+            {/* Fix 6: Trip Sheets section — driven by assignment.tripSheetNo / tripSheetNo2.
+                Not gated on gstEnabled; trip sheets exist regardless of GST mode. */}
+            <>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
+                Trip Sheets
+              </Text>
 
-                {/* Trip Sheet PDF — single button. Saves to cache then
-                    opens the OS share sheet so the driver can WhatsApp /
-                    save / print it. WI-064: hidden after all orders are
-                    delivered — the underlying endpoint can't generate
-                    a useful sheet once nothing is in transit. */}
-                {hasInFlightOrder && (
-                  <Button
-                    title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet (PDF)'}
-                    onPress={handleDownloadTripSheet}
-                    loading={downloadingPdf}
-                    variant="secondary"
-                  />
-                )}
+              {assignment.tripSheetNo || assignment.tripSheetNo2 ? (
+                <>
+                  {assignment.tripSheetNo && (
+                    <Button
+                      title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet'}
+                      onPress={handleDownloadTripSheet}
+                      loading={downloadingPdf}
+                      variant="secondary"
+                    />
+                  )}
+                  {assignment.tripSheetNo2 && (
+                    <Button
+                      title={downloadingPdf ? 'Preparing trip sheet…' : 'Download Trip Sheet (2)'}
+                      onPress={handleDownloadTripSheet}
+                      loading={downloadingPdf}
+                      variant="secondary"
+                    />
+                  )}
+                </>
+              ) : (
+                <Card>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
+                    No trip sheet generated yet.
+                  </Text>
+                </Card>
+              )}
 
-                {/* Per-order EWB list. Each row shows the 12-digit NIC
-                    number, customer, valid-till, and a Share button that
-                    opens the official NIC public lookup for verification. */}
-                {ewbs.length === 0 ? (
-                  <Card>
-                    <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
-                      No EWB documents yet — they appear here once dispatch preflight completes.
-                    </Text>
-                  </Card>
-                ) : (
-                  ewbs.map((ewb) => (
-                    <Card key={ewb.orderId}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontWeight: '700', color: colors.text }}>{ewb.orderNumber}</Text>
-                          {ewb.customerName && (
-                            <Text style={{ fontSize: 13, color: ACCENT.blue, marginTop: 2 }}>
-                              {ewb.customerName}
-                            </Text>
-                          )}
-                          <Text style={{ fontSize: 13, color: colors.text, marginTop: 6 }}>
-                            <Text style={{ color: colors.textSecondary }}>EWB: </Text>
-                            <Text style={{ fontWeight: '700' }}>{ewb.ewbNo}</Text>
-                          </Text>
-                          {ewb.ewbValidTill && (
-                            <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                              Valid till {formatDate(ewb.ewbValidTill)}
-                            </Text>
-                          )}
-                        </View>
-                        <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                          <Badge
-                            label={ewb.ewbStatus}
-                            variant={ewb.ewbStatus === 'active' ? 'success' : ewb.ewbStatus === 'cancelled' || ewb.ewbStatus === 'failed' ? 'danger' : 'warning'}
-                          />
-                          <TouchableOpacity
-                            onPress={() => handleShareEwb(ewb)}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              gap: 4,
-                              paddingHorizontal: 10,
-                              paddingVertical: 6,
-                              borderRadius: 8,
-                              backgroundColor: dark ? 'rgba(59,130,246,0.15)' : '#eef7ff',
-                            }}
-                          >
-                            <Ionicons name="open-outline" size={14} color={ACCENT.blue} />
-                            <Text style={{ fontSize: 12, fontWeight: '600', color: ACCENT.blue }}>
-                              Verify
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
+              {/* EWB list — only shown for GST-enabled tenants, unchanged */}
+              {gstEnabled && (
+                <>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
+                    Compliance Docs
+                  </Text>
+
+                  {ewbs.length === 0 ? (
+                    <Card>
+                      <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
+                        No EWB documents yet — they appear here once dispatch preflight completes.
+                      </Text>
                     </Card>
-                  ))
-                )}
-              </>
-            )}
+                  ) : (
+                    ewbs.map((ewb) => (
+                      <Card key={ewb.orderId}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontWeight: '700', color: colors.text }}>{ewb.orderNumber}</Text>
+                            {ewb.customerName && (
+                              <Text style={{ fontSize: 13, color: ACCENT.blue, marginTop: 2 }}>
+                                {ewb.customerName}
+                              </Text>
+                            )}
+                            <Text style={{ fontSize: 13, color: colors.text, marginTop: 6 }}>
+                              <Text style={{ color: colors.textSecondary }}>EWB: </Text>
+                              <Text style={{ fontWeight: '700' }}>{ewb.ewbNo}</Text>
+                            </Text>
+                            {ewb.ewbValidTill && (
+                              <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                                Valid till {formatDate(ewb.ewbValidTill)}
+                              </Text>
+                            )}
+                          </View>
+                          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                            <Badge
+                              label={ewb.ewbStatus}
+                              variant={ewb.ewbStatus === 'active' ? 'success' : ewb.ewbStatus === 'cancelled' || ewb.ewbStatus === 'failed' ? 'danger' : 'warning'}
+                            />
+                            <TouchableOpacity
+                              onPress={() => handleShareEwb(ewb)}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 4,
+                                paddingHorizontal: 10,
+                                paddingVertical: 6,
+                                borderRadius: 8,
+                                backgroundColor: dark ? 'rgba(59,130,246,0.15)' : '#eef7ff',
+                              }}
+                            >
+                              <Ionicons name="open-outline" size={14} color={ACCENT.blue} />
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: ACCENT.blue }}>
+                                Verify
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </Card>
+                    ))
+                  )}
+                </>
+              )}
+            </>
           </>
         )}
       </ScrollView>

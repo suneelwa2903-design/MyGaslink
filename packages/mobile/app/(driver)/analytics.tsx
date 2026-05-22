@@ -1,4 +1,5 @@
-import { View, Text, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
+import { useState } from 'react';
+import { View, Text, ScrollView, RefreshControl, ActivityIndicator, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
@@ -6,21 +7,40 @@ import { Card, MetricCard } from '../../src/components/ui';
 import { useTheme, ACCENT, formatINR } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 
-interface DriverMetrics {
-  totalOrders?: number;
-  pendingDeliveries?: number;
-  completedToday?: number;
-  deliveredToday?: number;
-  avgOrderValue?: number;
+interface DriverPerformanceRow {
+  driverId: string;
+  driverName: string;
+  totalOrders: number;
+  deliveredOrders: number;
+  cancelledOrders: number;
+  deliveryRate: number;
+}
+
+/** Returns a YYYY-MM-DD string for a date offset by `offsetDays` from today. */
+function offsetDate(offsetDays: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
 }
 
 export default function DriverAnalyticsScreen() {
   const { dark, colors } = useTheme();
 
-  const { data: metrics, isLoading: metricsLoading, refetch: refetchMetrics } = useApiQuery<DriverMetrics>(
-    ['driver-analytics-metrics'],
-    '/analytics/header-metrics',
+  const [dateFrom, setDateFrom] = useState<string>(() => offsetDate(-7));
+  const [dateTo, setDateTo] = useState<string>(() => offsetDate(0));
+
+  const {
+    data: perfData,
+    isLoading: metricsLoading,
+    refetch: refetchMetrics,
+  } = useApiQuery<DriverPerformanceRow[]>(
+    ['driver-analytics-performance', dateFrom, dateTo],
+    '/analytics/driver-performance',
+    { dateFrom, dateTo },
   );
+
+  // data[0] may be undefined when date range has no activity
+  const perf = perfData?.[0];
 
   const { data: recentOrdersResponse, isLoading: ordersLoading, refetch: refetchOrders } = useApiQuery<{ orders: Order[] }>(
     ['driver-recent-deliveries'],
@@ -36,33 +56,26 @@ export default function DriverAnalyticsScreen() {
     refetchOrders();
   };
 
-  const deliveredOrders = recentOrders?.filter((o) => o.status === 'delivered') ?? [];
-  const pendingOrders = recentOrders?.filter((o) => o.status === 'pending_delivery') ?? [];
-
   const metricCards = [
     {
-      title: 'Completed Today',
-      value: metrics?.completedToday ?? metrics?.deliveredToday ?? deliveredOrders.length,
+      title: 'Delivered',
+      value: perf?.deliveredOrders ?? 0,
       color: ACCENT.green,
-      icon: 'checkmark-circle-outline' as const,
     },
     {
-      title: 'Pending Deliveries',
-      value: metrics?.pendingDeliveries ?? pendingOrders.length,
+      title: 'Cancelled',
+      value: perf?.cancelledOrders ?? 0,
       color: ACCENT.orange,
-      icon: 'time-outline' as const,
     },
     {
       title: 'Total Orders',
-      value: metrics?.totalOrders ?? (recentOrders?.length ?? 0),
+      value: perf?.totalOrders ?? 0,
       color: ACCENT.blue,
-      icon: 'receipt-outline' as const,
     },
     {
-      title: 'Avg Order Value',
-      value: metrics?.avgOrderValue ? formatINR(metrics.avgOrderValue) : '--',
+      title: 'Delivery Rate',
+      value: perf != null ? `${perf.deliveryRate.toFixed(1)}%` : '--',
       color: ACCENT.purple,
-      icon: 'stats-chart-outline' as const,
     },
   ];
 
@@ -84,6 +97,48 @@ export default function DriverAnalyticsScreen() {
         <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
           My Performance
         </Text>
+
+        {/* Date range filters */}
+        <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>From (YYYY-MM-DD)</Text>
+            <TextInput
+              value={dateFrom}
+              onChangeText={setDateFrom}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={colors.textMuted}
+              style={{
+                backgroundColor: colors.inputBg,
+                borderWidth: 1,
+                borderColor: colors.inputBorder,
+                borderRadius: 8,
+                paddingHorizontal: 10,
+                paddingVertical: 7,
+                fontSize: 13,
+                color: colors.text,
+              }}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>To (YYYY-MM-DD)</Text>
+            <TextInput
+              value={dateTo}
+              onChangeText={setDateTo}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={colors.textMuted}
+              style={{
+                backgroundColor: colors.inputBg,
+                borderWidth: 1,
+                borderColor: colors.inputBorder,
+                borderRadius: 8,
+                paddingHorizontal: 10,
+                paddingVertical: 7,
+                fontSize: 13,
+                color: colors.text,
+              }}
+            />
+          </View>
+        </View>
 
         {/* Metric cards - 2 column grid. Icons dropped: MetricCard expects
             React.ReactNode but metricCards holds Ionicons name strings —
@@ -156,6 +211,11 @@ export default function DriverAnalyticsScreen() {
                   {order.items && order.items.length > 0 && (
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
                       {order.items.map((item) => `${item.cylinderTypeName} x${item.quantity}`).join(', ')}
+                    </Text>
+                  )}
+                  {order.items && order.items.reduce((sum, item) => sum + (item.emptiesCollected ?? 0), 0) > 0 && (
+                    <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }}>
+                      {'↩'} {order.items.reduce((sum, item) => sum + (item.emptiesCollected ?? 0), 0)} empties collected
                     </Text>
                   )}
                 </View>

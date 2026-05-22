@@ -122,7 +122,10 @@ export async function getCancelledStockByVehicle(distributorId: string, vehicleI
   return prisma.cancelledStockEvent.findMany({
     where: { distributorId, vehicleId },
     include: {
-      order: { select: { orderNumber: true } },
+      // WI-094 (Issue 8): include the customer so the driver app can show
+      // who the cancelled order was for. Nested under order.customer; the
+      // mobile reads item.order?.customer?.customerName.
+      order: { select: { orderNumber: true, customer: { select: { customerName: true } } } },
       cylinderType: { select: { typeName: true } },
       driver: { select: { driverName: true } },
     },

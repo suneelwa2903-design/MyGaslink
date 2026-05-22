@@ -2,7 +2,7 @@ import { View, Text, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, MetricCard, EmptyState } from '../../src/components/ui';
-import { useTheme, ACCENT } from '../../src/theme';
+import { useTheme, ACCENT, formatDate } from '../../src/theme';
 
 interface TripStockItem {
   cylinderTypeId: string;
@@ -17,6 +17,12 @@ interface CancelledItem {
   quantity: number;
   cancellationDate: string;
   status: string;
+  order?: {
+    orderNumber?: string;
+    customer?: {
+      customerName?: string;
+    };
+  };
 }
 
 export default function DriverInventoryScreen() {
@@ -103,7 +109,12 @@ export default function DriverInventoryScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                   <View>
                     <Text style={{ fontWeight: '600', color: colors.text }}>{item.cylinderTypeName}</Text>
-                    <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>Cancelled: {item.cancellationDate}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>Cancelled: {formatDate(item.cancellationDate)}</Text>
+                    {item.order?.customer?.customerName ? (
+                      <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }}>
+                        {item.order.customer.customerName}
+                      </Text>
+                    ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ fontSize: 18, fontWeight: '800', color: ACCENT.red }}>{item.quantity}</Text>

@@ -804,6 +804,12 @@ model DriverVehicleAssignment {
   // carries both. Stays NULL when only one batch was dispatched.
   tripSheetNo2          String?  @map("trip_sheet_no_2")
   tripSheetNo2GeneratedAt DateTime? @map("trip_sheet_no_2_generated_at")
+  // WI-094: trip lifecycle timestamps. Set server-side only — dispatchedAt
+  // on successful preflight, returnedAt on markVehicleReturned, reconciledAt
+  // on reconcileVehicle. No client write path exposes these.
+  dispatchedAt   DateTime?        @map("dispatched_at")
+  returnedAt     DateTime?        @map("returned_at")
+  reconciledAt   DateTime?        @map("reconciled_at")
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
 
