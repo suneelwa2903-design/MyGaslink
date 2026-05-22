@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { View, Animated, type ViewStyle } from 'react-native';
+import { useTheme } from '../../theme';
 
 interface SkeletonProps {
   width?: number | string;
@@ -9,6 +10,9 @@ interface SkeletonProps {
 }
 
 export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style }: SkeletonProps) {
+  // Dark-mode fix: shimmer was hardcoded #e2e8f0 (light) — used theme divider
+  // so the placeholder reads as a subtle block on dark surfaces, not a white flash.
+  const { colors } = useTheme();
   const opacity = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -28,7 +32,7 @@ export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style 
         width: width as any,
         height,
         borderRadius,
-        backgroundColor: '#e2e8f0',
+        backgroundColor: colors.divider,
         opacity,
       }, style]}
     />
@@ -36,10 +40,11 @@ export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style 
 }
 
 export function SkeletonCard() {
+  const { colors } = useTheme();
   return (
     <View style={{
-      backgroundColor: '#fff', borderRadius: 16, padding: 16,
-      borderWidth: 1, borderColor: '#e2e8f0', gap: 10,
+      backgroundColor: colors.cardBg, borderRadius: 16, padding: 16,
+      borderWidth: 1, borderColor: colors.cardBorder, gap: 10,
     }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <Skeleton width="60%" height={18} />
@@ -55,10 +60,11 @@ export function SkeletonCard() {
 }
 
 export function SkeletonMetricCard() {
+  const { colors } = useTheme();
   return (
     <View style={{
-      backgroundColor: '#fff', borderRadius: 16, padding: 16,
-      borderWidth: 1, borderColor: '#e2e8f0', gap: 8,
+      backgroundColor: colors.cardBg, borderRadius: 16, padding: 16,
+      borderWidth: 1, borderColor: colors.cardBorder, gap: 8,
     }}>
       <Skeleton width="50%" height={14} />
       <Skeleton width="70%" height={28} />

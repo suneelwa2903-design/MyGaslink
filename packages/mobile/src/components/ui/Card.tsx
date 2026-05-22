@@ -1,14 +1,18 @@
 import { View, Text, type ViewProps } from 'react-native';
+import { useTheme } from '../../theme';
 
 interface CardProps extends ViewProps {
   children: React.ReactNode;
 }
 
 export function Card({ children, style, ...props }: CardProps) {
+  // Dark-mode fix: Card was hardcoded white (#fff) with a light border, so it
+  // rendered as a white island on dark screens. Use theme card surface/border.
+  const { colors } = useTheme();
   return (
     <View
       style={[{
-        backgroundColor: '#fff',
+        backgroundColor: colors.cardBg,
         borderRadius: 16,
         padding: 16,
         shadowColor: '#000',
@@ -17,7 +21,7 @@ export function Card({ children, style, ...props }: CardProps) {
         shadowRadius: 4,
         elevation: 2,
         borderWidth: 1,
-        borderColor: '#e2e8f0',
+        borderColor: colors.cardBorder,
       }, style]}
       {...props}
     >
@@ -35,16 +39,17 @@ interface MetricCardProps {
 }
 
 export function MetricCard({ title, value, subtitle, color = '#338dff', icon }: MetricCardProps) {
+  const { colors } = useTheme();
   return (
     <Card>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '500' }}>{title}</Text>
+          <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: '500' }}>{title}</Text>
           <Text style={{ fontSize: 24, fontWeight: '700', color, marginTop: 4 }}>
             {typeof value === 'number' ? value.toLocaleString('en-IN') : value}
           </Text>
           {subtitle && (
-            <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{subtitle}</Text>
+            <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }}>{subtitle}</Text>
           )}
         </View>
         {icon && <View style={{ marginLeft: 12 }}>{icon}</View>}

@@ -1,4 +1,5 @@
 import { TouchableOpacity, Text, ActivityIndicator, type TouchableOpacityProps } from 'react-native';
+import { useTheme } from '../../theme';
 
 const variantStyles = {
   primary: { bg: '#338dff', text: '#fff' },
@@ -16,7 +17,16 @@ interface ButtonProps extends TouchableOpacityProps {
 }
 
 export function Button({ title, variant = 'primary', loading, disabled, size = 'md', style, ...props }: ButtonProps) {
-  const s = variantStyles[variant];
+  // Dark-mode contrast: the `secondary` (light grey bg / dark text) and
+  // `ghost` (#64748b text) variants were invisible/inconsistent on dark
+  // screens. Solid-colour variants (primary/accent/danger) are fine in both.
+  const { colors } = useTheme();
+  const base = variantStyles[variant];
+  const s = variant === 'secondary'
+    ? { bg: colors.inputBg, text: colors.text }
+    : variant === 'ghost'
+      ? { bg: 'transparent', text: colors.textSecondary }
+      : base;
   const py = size === 'sm' ? 8 : size === 'lg' ? 16 : 12;
   const fontSize = size === 'sm' ? 13 : size === 'lg' ? 16 : 14;
 

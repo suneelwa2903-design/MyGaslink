@@ -27,7 +27,7 @@ export default function AdminLayout() {
   const headerText = dark ? '#f1f5f9' : '#0f172a';
   const borderColor = dark ? '#334155' : '#e2e8f0';
   const activeColor = '#dc2626';
-  const inactiveColor = dark ? '#64748b' : '#94a3b8';
+  const inactiveColor = dark ? '#94a3b8' : '#94a3b8';
   const tabBg = dark ? '#0f172a' : '#ffffff';
 
   return (

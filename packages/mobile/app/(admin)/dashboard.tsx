@@ -32,9 +32,9 @@ const COLORS = {
     bg: '#0f172a',
     cardBg: '#1e293b',
     cardBorder: '#334155',
-    text: '#f1f5f9',
-    textSecondary: '#94a3b8',
-    textMuted: '#64748b',
+    text: '#f8fafc',
+    textSecondary: '#cbd5e1',
+    textMuted: '#94a3b8',
     divider: '#334155',
   },
 } as const;

@@ -193,7 +193,7 @@ function MiniStat({ label, value, color, prefix, bold, dark }: {
 }) {
   return (
     <View style={{ flex: 1 }}>
-      <Text style={{ fontSize: 11, color: dark ? '#64748b' : '#64748b' }}>{label}</Text>
+      <Text style={{ fontSize: 11, color: dark ? '#94a3b8' : '#64748b' }}>{label}</Text>
       <Text style={{ fontWeight: bold ? '700' : '600', color: color || (dark ? '#f1f5f9' : '#0f172a') }}>
         {prefix || ''}{Math.abs(value)}
       </Text>

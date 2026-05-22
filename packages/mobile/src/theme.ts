@@ -17,10 +17,14 @@ export const COLORS = {
   dark: {
     bg: '#0f172a',
     cardBg: '#1e293b',
+    // Dark-mode text contrast fix: the previous textSecondary (#94a3b8 /
+    // slate-400) and especially textMuted (#64748b / slate-500) failed WCAG
+    // AA against #0f172a/#1e293b — secondary lines were barely legible. Bumped
+    // one notch lighter each (slate-300 / slate-400) for clear contrast.
+    text: '#f8fafc',          // near-white
+    textSecondary: '#cbd5e1', // slate-300 (~0.8 white)
+    textMuted: '#94a3b8',     // slate-400 (was #64748b — too dark)
     cardBorder: '#334155',
-    text: '#f1f5f9',
-    textSecondary: '#94a3b8',
-    textMuted: '#64748b',
     divider: '#334155',
     inputBg: '#334155',
     inputBorder: '#475569',
@@ -85,7 +89,8 @@ export function useTheme() {
 export function getTabBarConfig(dark: boolean) {
   const colors = dark ? COLORS.dark : COLORS.light;
   const activeColor = ACCENT.red;
-  const inactiveColor = dark ? '#64748b' : '#94a3b8';
+  // Dark inactive tab labels were #64748b (too dark) — lighten for legibility.
+  const inactiveColor = dark ? '#94a3b8' : '#94a3b8';
 
   return {
     headerStyle: {
