@@ -10,10 +10,10 @@
 
 | | |
 |---|---|
-| **Code baseline SHA** | `ba45f26` (WI-091b — last CODE commit, Session 4). Prior code baselines: `e178e5b` (WI-091), `07b7619` (WI-090 pt2). |
-| **HEAD when this doc shipped** | a docs-only handoff commit on top of `ba45f26`. **Source of truth = `git rev-parse HEAD`.** Docs/handoff commits change NO code and do NOT affect the 488/488 result — only a `fix(`/`feat(` commit after `ba45f26` in `git log --oneline` would. |
+| **Code baseline SHA** | `362beab` (WI-092 — CN IRN retry + payment allocation + ledger PDF, **HEAD**). Prior code baselines: `9e76896` (WI-092 features), `ba45f26` (WI-091b), `e178e5b` (WI-091). |
+| **HEAD when this doc shipped** | a docs-only pause commit on top of `362beab`. **Source of truth = `git rev-parse HEAD`.** Docs/handoff commits change NO code and do NOT affect the 494/494 result — only a `fix(`/`feat(` commit after `362beab` in `git log --oneline` would. |
 | **Branch** | `master` (all work lands directly on master; no feature branches; remote not pushed) |
-| **API tests** | **488 / 488 passing** (37 files) — `cd packages/api && pnpm test`. ⚠️ Flake: running the suite while `pnpm dev` is up can intermittently drop ~4 tests via shared-dev-DB contention; re-run resolves it. |
+| **API tests** | **494 / 494 passing** (38 files) — `cd packages/api && pnpm test`. ⚠️ Flake: running the suite while `pnpm dev` is up can intermittently drop tests via shared-dev-DB contention; re-run resolves it. WI-092 added 6 tests (`payment-allocation.test.ts` ×5, CN-retry ×1). |
 | **Web typecheck** | clean (2 pre-existing `afterAll` import errors in `credit-debit-note-amount.test.ts` + `invoice-list-badges-cn-pdf.test.ts` — harmless, tests pass) |
 | **Monorepo** | `packages/api` (Express+Prisma+PG), `packages/web` (React19+Vite+Tailwind+Zustand), `packages/mobile` (Expo) |
 
@@ -216,14 +216,30 @@ Status legend: ✅ done · ⏸ pending · 🔁 in_progress · ⛔ wont_fix. "BLO
 
 ## 4. TESTING STATUS
 
-> **Round 1 (dist-admin) — NOT COMPLETE.** Session 4 was spent on the GST/NIC
-> investigation + WI-091/091b fixes; dist-002 data is messy from live diagnostics
-> (stranded/cancelled orders, extra test orders). **Restart tomorrow with a clean
-> seed** (`cleanup-dist002-seed.ts` + `create-dist002-users.ts`) and begin §5
-> Round 1 (sharma@gasdist.com, cases A1–A15) from a fresh baseline.
+> **⏸ WEB TESTING PAUSED FOR MOBILE WORK (2026-05-22).** Code baseline `362beab`,
+> tests **494/494**. **WI-092 is complete**: CN IRN timing fix (PDF retries the
+> `gst_documents` lookup once after 2s to ride through the fire-and-forget IRN race
+> on approval), payment allocation (`POST /payments/:id/allocate` + Allocate button
+> in the Payments tab), and the customer ledger PDF (landscape A4,
+> `GET /customers/:id/ledger/pdf`, staff + customer-own-only).
+>
+> **Web testing — Round 1 partially verified** (visual, dist-002): dispatch,
+> delivery, CN/DN, and payments (incl. WI-092 allocation modal + ledger-PDF download
+> on web **and** customer portal) all confirmed working. **Paused here** to start the
+> mobile/customer-app work.
+>
+> **Resume point (web):** finish **Round 1 Fleet → Mark-as-Returned → Reconciliation**
+> (cases A7 / C7), then **Rounds 2–6** (B finance2, C inventory2, D driver2,
+> E customer2, + tenant-isolation). Restart from a clean seed
+> (`cleanup-dist002-seed.ts` + `create-dist002-users.ts`) per §5.
+
+### Known open (web) — not yet verified
+- **Fleet "Mark as Returned" → Inventory "Vehicle Reconciliation"** flow (A7 + C7) — not yet verified in UI.
+- **Rounds 2–6** — Finance (B), Inventory (C), Driver (D), Customer (E), and tenant-isolation checks — **not started.**
 
 ### Tested & passing
-- **API integration suite: 488/488** (37 files) — auth, inventory, gst-invoicing, gst-toggle, customer-portal, workflow, gst-preflight, gst-trip-sheet, gst-dispatch-trip, gst-reissue (+variants), cancel-order, gst-token-expiry (incl. WI-090 cancel-guard + WI-091b probe-retry tests), gst-payload-shape, anti-pattern-guards, settings, etc.
+- **WI-092 (Session 5):** payment-allocation modal verified end-to-end on web (unallocated row → Allocate → invoice dropdown → submit → row updates to fully allocated); customer ledger PDF verified on web Customers→Ledger tab AND customer portal Payments page (valid `%PDF`, correct Sharma letterhead, all 11 columns, Payment rows, summary, footer; customer role gets own-statement-only).
+- **API integration suite: 494/494** (38 files) — auth, inventory, gst-invoicing, gst-toggle, customer-portal, workflow, gst-preflight, gst-trip-sheet, gst-dispatch-trip, gst-reissue (+variants), cancel-order, gst-token-expiry (incl. WI-090 cancel-guard + WI-091b probe-retry tests), gst-payload-shape, anti-pattern-guards, settings, etc.
 - **Live GST sandbox (dist-002):** B2B intra-state (Maruthi), B2B inter-state IGST (Hyderabad Caterers), B2C (Bangalore Foods) IRN+EWB generation; preflight dispatch; **IRN/EWB cancel succeeds at NIC** (WI-090 verified — production endpoint + standalone retry + direct fetch); add-to-trip → vehicle dispatched; trip-sheet PDF order numbers render with hyphen.
 - **Invoice PDF download** (FB-006) — header bug fixed.
 - **Settings thresholds** (FS-008/009).
@@ -451,4 +467,4 @@ Then move to Phase 2 E2E modules (`docs/E2E_Testing_Guide.xlsx`, 272 cases). Mob
 
 ---
 
-*End of handoff. Code baseline `ba45f26` (WI-091b; HEAD = a later docs-only commit; trust `git rev-parse HEAD`) · 488/488 tests · master · Session 4, 2026-05-22. Round 1 testing still pending — restart with a clean seed.*
+*End of handoff. Code baseline `362beab` (WI-092; HEAD = a later docs-only pause commit; trust `git rev-parse HEAD`) · 494/494 tests · master · Session 5, 2026-05-22. Web testing PAUSED for mobile work — resume Round 1 Fleet/Reconciliation + Rounds 2–6 from a clean seed.*
