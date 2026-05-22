@@ -35,6 +35,7 @@ import {
   getAuthToken,
   clearTokenCache,
   apiCall,
+  pingEinvoiceSession,
   GstError,
 } from '../services/gst/whitebooksClient.js';
 
@@ -318,6 +319,53 @@ describe('WI-090 — apiCall cancel-retry guard', () => {
     expect(calls).toEqual(['auth', 'generate', 'auth']);
     expect(calls.filter(c => c === 'generate')).toHaveLength(1);
   });
+});
+
+/**
+ * WI-091b — pingEinvoiceSession bounded retry (rides through the NIC sandbox
+ * flicker). Up to 3 attempts, 2s apart, fresh auth each. These exercise the
+ * REAL pingEinvoiceSession (apiCall is NOT mocked here — fetch is), unlike the
+ * preflight integration tests which mock the seam. Uses a far-future
+ * TokenExpiry so getAuthToken doesn't take its own stale-retry path, and
+ * returns the SAME pinned token on every auth (matching live WhiteBooks
+ * behaviour) so a 1005 surfaces as SESSION_EXPIRED per attempt.
+ */
+describe('WI-091b — pingEinvoiceSession bounded retry', () => {
+  const AUTH_OK = {
+    ok: true, status: 200,
+    json: async () => ({ status_cd: 'Sucess', data: { AuthToken: 'PROBE-TOK', TokenExpiry: '2099-12-31 23:59:59' } }),
+  } as any;
+  const GSTN_1005 = {
+    ok: true, status: 200,
+    json: async () => ({ status_cd: '0', status_desc: JSON.stringify([{ ErrorCode: '1005', ErrorMessage: 'Invalid Token' }]) }),
+  } as any;
+  const GSTN_OK = {
+    ok: true, status: 200,
+    json: async () => ({ status_cd: '1', status_desc: 'GSTR request succeeds', data: { Gstin: '29AAGCB1286Q000', Status: 'ACT' } }),
+  } as any;
+  const isAuth = (u: string) => u.includes('/authenticate');
+
+  it('fails attempts 1 & 2, succeeds on attempt 3 → resolves (NIC flicker ridden through)', async () => {
+    let gstnCalls = 0;
+    globalThis.fetch = vi.fn(async (url: any) => {
+      const u = String(url);
+      if (isAuth(u)) return AUTH_OK;
+      gstnCalls++;
+      return gstnCalls <= 2 ? GSTN_1005 : GSTN_OK; // dead for 2 ticks, then alive
+    }) as any;
+
+    // Must NOT throw — the 3rd attempt lands in a green window.
+    await expect(pingEinvoiceSession('dist-002', '29AAGCB1286Q000')).resolves.toBeUndefined();
+    expect(gstnCalls).toBe(3); // one GSTNDETAILS per attempt (1005 short-circuits without re-calling)
+  }, 15000);
+
+  it('all 3 attempts fail (1005) → throws (caller maps to PreflightError 503)', async () => {
+    globalThis.fetch = vi.fn(async (url: any) => {
+      return isAuth(String(url)) ? AUTH_OK : GSTN_1005; // dead the whole time
+    }) as any;
+
+    await expect(pingEinvoiceSession('dist-002', '29AAGCB1286Q000')).rejects.toBeInstanceOf(GstError);
+  }, 15000);
 });
 
 describe('WI-060 — getAuthToken fallback (cont.)', () => {

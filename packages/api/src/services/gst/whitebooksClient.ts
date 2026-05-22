@@ -514,15 +514,44 @@ export async function apiCall<T = any>(
  * apiCall mock chains. Goes through apiCall, so a success also warms the
  * einvoice token cache for the dispatch loop that follows.
  */
+const PROBE_MAX_ATTEMPTS = 3;
+const PROBE_RETRY_DELAY_MS = 2000;
+
 export async function pingEinvoiceSession(distributorId: string | null, gstin: string): Promise<void> {
   const creds = await getCredentials(distributorId, 'einvoice');
   const email = encodeURIComponent(creds?.email || 'info@mygaslink.com');
-  await apiCall<any>(
-    distributorId, 'GET',
-    `/einvoice/type/GSTNDETAILS/version/V1_03?param1=${gstin}&email=${email}`,
-    undefined, 'einvoice',
-    { apiType: 'NIC_HEALTH_PROBE' },
-  );
+
+  // WI-091b — bounded retry to ride through the NIC sandbox flicker.
+  // Flicker profile (2026-05-22, dist-002, 4 min @3s): NIC e-Invoice is up
+  // ~93.8% of the time, dead blips are ≤6s, flips every ~30s. A single-shot
+  // probe fails on the FIRST blip while a human in the WhiteBooks UI just
+  // retries until a green window. So we do the same: up to 3 attempts, 2s
+  // apart, evicting the token cache before EACH attempt to force a fresh auth
+  // (re-establishes the NIC session). Any attempt succeeding ⇒ NIC is alive,
+  // return normally. All 3 failing ⇒ a genuine outage (or a >~6s dead window)
+  // ⇒ re-throw; probeNicEinvoiceSession maps that to PreflightError 503.
+  let lastErr: any;
+  for (let attempt = 1; attempt <= PROBE_MAX_ATTEMPTS; attempt++) {
+    clearTokenCache(distributorId); // fresh auth on every attempt
+    try {
+      await apiCall<any>(
+        distributorId, 'GET',
+        `/einvoice/type/GSTNDETAILS/version/V1_03?param1=${gstin}&email=${email}`,
+        undefined, 'einvoice',
+        { apiType: 'NIC_HEALTH_PROBE' },
+      );
+      return; // alive — probe passed
+    } catch (err: any) {
+      lastErr = err;
+      if (attempt < PROBE_MAX_ATTEMPTS) {
+        logger.warn(`NIC health probe attempt ${attempt}/${PROBE_MAX_ATTEMPTS} failed, retrying in 2s`, {
+          distributorId, code: err?.code, msg: err?.message,
+        });
+        await new Promise((r) => setTimeout(r, PROBE_RETRY_DELAY_MS));
+      }
+    }
+  }
+  throw lastErr; // all attempts failed — caller converts to PreflightError 503
 }
 
 /**
