@@ -16,8 +16,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
+import { api, getErrorMessage } from '../../src/lib/api';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -49,11 +52,10 @@ interface Payment {
   amount: number;
   paymentMethod: string;
   referenceNumber?: string;
-  paymentDate: string;
+  transactionDate: string;
   notes?: string;
   allocationStatus?: string;
-  invoiceId?: string;
-  invoiceNumber?: string;
+  allocations?: { invoiceId: string; invoiceNumber?: string; allocatedAmount: number }[];
 }
 
 interface Customer {
@@ -314,6 +316,27 @@ function InvoicesTab({
   setPayInvoice,
 }: InvoicesTabProps) {
   const invoices = invoicesData?.invoices ?? [];
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const downloadInvoicePdf = async (invoiceId: string) => {
+    try {
+      setDownloadingId(invoiceId);
+      const res = await api.get(`/invoices/${invoiceId}/pdf`, { responseType: 'arraybuffer' });
+      const bytes = new Uint8Array(res.data);
+      const file = new File(Paths.cache, `invoice-${invoiceId}.pdf`);
+      try { file.create(); } catch {}
+      file.write(bytes);
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, { mimeType: 'application/pdf', dialogTitle: 'Invoice', UTI: 'com.adobe.pdf' });
+    } catch (err) {
+      Alert.alert('Could not download invoice', getErrorMessage(err));
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const renderStatusFilter = () => (
     <View style={{ paddingVertical: 10 }}>
@@ -492,10 +515,8 @@ function InvoicesTab({
               {/* Action Buttons */}
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <TouchableOpacity
-                  onPress={() => {
-                    // TODO: trigger PDF download
-                    Alert.alert('Download', 'PDF download will be available soon.');
-                  }}
+                  onPress={() => downloadInvoicePdf(inv.invoiceId)}
+                  disabled={downloadingId === inv.invoiceId}
                   style={{
                     flex: 1,
                     flexDirection: 'row',
@@ -505,10 +526,17 @@ function InvoicesTab({
                     paddingVertical: 10,
                     borderRadius: 8,
                     backgroundColor: dark ? '#334155' : '#f1f5f9',
+                    opacity: downloadingId === inv.invoiceId ? 0.6 : 1,
                   }}
                 >
-                  <Ionicons name="download-outline" size={16} color={C.text} />
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>Download PDF</Text>
+                  {downloadingId === inv.invoiceId ? (
+                    <ActivityIndicator size="small" color={C.text} />
+                  ) : (
+                    <Ionicons name="download-outline" size={16} color={C.text} />
+                  )}
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>
+                    {downloadingId === inv.invoiceId ? 'Downloading...' : 'Download PDF'}
+                  </Text>
                 </TouchableOpacity>
 
                 {inv.outstandingAmount > 0 && inv.status !== 'cancelled' && (
@@ -535,7 +563,7 @@ function InvoicesTab({
         </TouchableOpacity>
       );
     },
-    [expandedInvoiceId, C, dark, setExpandedInvoiceId, setPayInvoice],
+    [expandedInvoiceId, C, dark, setExpandedInvoiceId, setPayInvoice, downloadingId, downloadInvoicePdf],
   );
 
   const renderEmpty = () => {
@@ -615,7 +643,7 @@ function PaymentsTab({
 
       const allocationLabel = pmt.allocationStatus
         ? capitalizeStatus(pmt.allocationStatus)
-        : pmt.invoiceId
+        : (pmt.allocations && pmt.allocations.length > 0)
         ? 'Fully Allocated'
         : 'Unallocated';
 
@@ -641,7 +669,7 @@ function PaymentsTab({
           {/* Top Row: Date + Customer + Amount */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 12, color: C.textMuted }}>{formatDate(pmt.paymentDate)}</Text>
+              <Text style={{ fontSize: 12, color: C.textMuted }}>{formatDate(pmt.transactionDate)}</Text>
               <Text style={{ fontSize: 15, fontWeight: '700', color: C.text, marginTop: 2 }}>
                 {pmt.customerName}
               </Text>
@@ -697,11 +725,11 @@ function PaymentsTab({
           </View>
 
           {/* Invoice link */}
-          {pmt.invoiceNumber && (
+          {(pmt.allocations?.[0]?.invoiceNumber ?? pmt.allocations?.[0]?.invoiceId) && (
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 4 }}>
               <Ionicons name="link-outline" size={13} color={C.textMuted} />
               <Text style={{ fontSize: 12, color: C.textSecondary }}>
-                Invoice: {pmt.invoiceNumber}
+                Invoice: {pmt.allocations?.[0]?.invoiceNumber ?? pmt.allocations?.[0]?.invoiceId}
               </Text>
             </View>
           )}
@@ -794,11 +822,12 @@ function PayInvoiceModal({ C, dark, invoice, onClose }: PayInvoiceModalProps) {
   const [methodPickerVisible, setMethodPickerVisible] = useState(false);
 
   const payMutation = useApiMutation<unknown, {
-    invoiceId: string;
+    customerId: string;
     amount: number;
     paymentMethod: string;
-    referenceNumber: string;
-    paymentDate: string;
+    referenceNumber?: string;
+    transactionDate: string;
+    allocations: { invoiceId: string; amount: number }[];
   }>('post', '/payments', {
     invalidateKeys: [['admin-invoices'], ['admin-payments']],
     successMessage: 'Payment recorded successfully',
@@ -821,11 +850,12 @@ function PayInvoiceModal({ C, dark, invoice, onClose }: PayInvoiceModalProps) {
     }
 
     payMutation.mutate({
-      invoiceId: invoice.invoiceId,
+      customerId: invoice.customerId,
       amount: parsedAmount,
       paymentMethod,
-      referenceNumber: referenceNumber.trim(),
-      paymentDate,
+      referenceNumber: referenceNumber.trim() || undefined,
+      transactionDate: paymentDate,
+      allocations: [{ invoiceId: invoice.invoiceId, amount: parsedAmount }],
     });
   };
 
@@ -1059,7 +1089,7 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
     amount: number;
     paymentMethod: string;
     referenceNumber: string;
-    paymentDate: string;
+    transactionDate: string;
     notes: string;
   }>('post', '/payments', {
     invalidateKeys: [['admin-payments'], ['admin-invoices']],
@@ -1087,7 +1117,7 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
       amount: parsedAmount,
       paymentMethod,
       referenceNumber: referenceNumber.trim(),
-      paymentDate,
+      transactionDate: paymentDate,
       notes: notes.trim(),
     });
   };

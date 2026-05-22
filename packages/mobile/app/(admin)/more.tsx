@@ -26,29 +26,29 @@ const ACCENT = ACCENT_COLORS.red;
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Customer {
-  id: string;
-  name: string;
+  customerId: string;
+  customerName: string;
   businessName?: string;
   phone: string;
   email?: string;
   gstin?: string;
   customerType: 'B2B' | 'B2C';
   status: 'active' | 'suspended';
-  creditPeriod?: number;
+  creditPeriodDays?: number;
   outstandingBalance?: number;
   totalOrders?: number;
 }
 
 interface Driver {
-  id: string;
-  name: string;
+  driverId: string;
+  driverName: string;
   phone: string;
   licenseNumber?: string;
   status: 'active' | 'inactive';
 }
 
 interface Vehicle {
-  id: string;
+  vehicleId: string;
   vehicleNumber: string;
   vehicleType: string;
   capacity?: number;
@@ -63,15 +63,17 @@ interface VehicleMapping {
 }
 
 interface GstSettings {
-  mode: 'disabled' | 'sandbox' | 'live';
-  gstin?: string;
-  clientId?: string;
-  clientSecret?: string;
-  username?: string;
+  gstMode: 'disabled' | 'sandbox' | 'live' | null;
+  gstCredentials?: {
+    gstin?: string;
+    clientId?: string;
+    clientSecret?: string;
+    username?: string;
+  } | null;
 }
 
 interface UserRecord {
-  id: string;
+  userId: string;
   firstName: string;
   lastName: string;
   email: string;
@@ -457,12 +459,21 @@ function CustomersModal({
     },
   );
 
-  const toggleStatusMutation = useApiMutation<any, { id: string; status: string }>(
-    'patch',
-    (vars) => `/customers/${vars.id}/status`,
+  const stopSupplyMutation = useApiMutation<any, { id: string }>(
+    'post',
+    (vars) => `/customers/${vars.id}/stop-supply`,
     {
       invalidateKeys: [['customers']],
-      successMessage: 'Customer status updated',
+      successMessage: 'Supply stopped',
+    },
+  );
+
+  const resumeSupplyMutation = useApiMutation<any, { id: string }>(
+    'post',
+    (vars) => `/customers/${vars.id}/resume-supply`,
+    {
+      invalidateKeys: [['customers']],
+      successMessage: 'Supply resumed',
     },
   );
 
@@ -482,25 +493,31 @@ function CustomersModal({
       return;
     }
     createMutation.mutate({
-      name: formName.trim(),
+      customerName: formName.trim(),
       businessName: formBusiness.trim() || undefined,
       phone: formPhone.trim(),
       email: formEmail.trim() || undefined,
       gstin: formGstin.trim() || undefined,
       customerType: formType,
-      creditPeriod: formCredit ? parseInt(formCredit, 10) : undefined,
+      creditPeriodDays: formCredit ? parseInt(formCredit, 10) : undefined,
     });
   };
 
   const handleToggleStatus = (customer: Customer) => {
-    const newStatus = customer.status === 'active' ? 'suspended' : 'active';
-    const label = newStatus === 'active' ? 'Resume Supply' : 'Stop Supply';
-    Alert.alert(label, `Are you sure you want to ${label.toLowerCase()} for ${customer.name}?`, [
+    const isSuspending = customer.status === 'active';
+    const label = isSuspending ? 'Stop Supply' : 'Resume Supply';
+    Alert.alert(label, `Are you sure you want to ${label.toLowerCase()} for ${customer.customerName}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: label,
-        style: newStatus === 'suspended' ? 'destructive' : 'default',
-        onPress: () => toggleStatusMutation.mutate({ id: customer.id, status: newStatus }),
+        style: isSuspending ? 'destructive' : 'default',
+        onPress: () => {
+          if (isSuspending) {
+            stopSupplyMutation.mutate({ id: customer.customerId });
+          } else {
+            resumeSupplyMutation.mutate({ id: customer.customerId });
+          }
+        },
       },
     ]);
   };
@@ -511,18 +528,18 @@ function CustomersModal({
     const q = search.toLowerCase();
     return customers.filter(
       (c) =>
-        c.name?.toLowerCase().includes(q) ||
+        c.customerName?.toLowerCase().includes(q) ||
         c.phone?.includes(q) ||
         c.businessName?.toLowerCase().includes(q),
     );
   }, [customers, search]);
 
   const renderCustomer = ({ item }: { item: Customer }) => {
-    const expanded = expandedId === item.id;
+    const expanded = expandedId === item.customerId;
     return (
       <View>
         <TouchableOpacity
-          onPress={() => setExpandedId(expanded ? null : item.id)}
+          onPress={() => setExpandedId(expanded ? null : item.customerId)}
           activeOpacity={0.7}
           style={{
             flexDirection: 'row',
@@ -544,11 +561,11 @@ function CustomersModal({
             }}
           >
             <Text style={{ fontSize: 16, fontWeight: '700', color: ACCENT }}>
-              {item.name?.[0]?.toUpperCase() || '?'}
+              {item.customerName?.[0]?.toUpperCase() || '?'}
             </Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>{item.name}</Text>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>{item.customerName}</Text>
             <Text style={{ fontSize: 12, color: theme.textMuted, marginTop: 1 }}>{item.phone}</Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
@@ -581,8 +598,8 @@ function CustomersModal({
             ) : null}
             {item.email ? <DetailRow label="Email" value={item.email} theme={theme} /> : null}
             {item.gstin ? <DetailRow label="GSTIN" value={item.gstin} theme={theme} /> : null}
-            {item.creditPeriod != null ? (
-              <DetailRow label="Credit Period" value={`${item.creditPeriod} days`} theme={theme} />
+            {item.creditPeriodDays != null ? (
+              <DetailRow label="Credit Period" value={`${item.creditPeriodDays} days`} theme={theme} />
             ) : null}
             {item.totalOrders != null ? (
               <DetailRow label="Total Orders" value={`${item.totalOrders}`} theme={theme} />
@@ -750,7 +767,7 @@ function CustomersModal({
             ) : (
               <FlatList
                 data={filtered}
-                keyExtractor={(item) => item.id}
+                keyExtractor={(item) => item.customerId}
                 renderItem={renderCustomer}
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: theme.divider }} />}
                 ListEmptyComponent={<EmptyList message="No customers found" theme={theme} />}
@@ -856,7 +873,7 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
       return;
     }
     createDriverMutation.mutate({
-      name: driverName.trim(),
+      driverName: driverName.trim(),
       phone: driverPhone.trim(),
       licenseNumber: driverLicense.trim() || undefined,
     });
@@ -922,7 +939,7 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
       <View style={{ flex: 1 }}>
         <FlatList
           data={drivers || []}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.driverId}
           renderItem={({ item }) => (
             <View
               style={{
@@ -939,7 +956,7 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
                 <Ionicons name="person" size={18} color="#3b82f6" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>{item.name}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>{item.driverName}</Text>
                 <Text style={{ fontSize: 12, color: theme.textMuted }}>{item.phone}</Text>
               </View>
               <StatusBadge label={item.status} color={item.status === 'active' ? '#10b981' : '#94a3b8'} />
@@ -1002,7 +1019,7 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
       <View style={{ flex: 1 }}>
         <FlatList
           data={vehicles || []}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.vehicleId}
           renderItem={({ item }) => (
             <View
               style={{
@@ -1374,11 +1391,11 @@ function ReportsModal({ visible, onClose }: { visible: boolean; onClose: () => v
           </View>
         )}
         {topCustomers.map((c, i) => (
-          <View key={c.id}>
+          <View key={c.customerId}>
             {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
             <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 12, alignItems: 'center' }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }} numberOfLines={1}>{c.name}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }} numberOfLines={1}>{c.customerName}</Text>
                 <Text style={{ fontSize: 11, color: theme.textMuted }}>{c.customerType}</Text>
               </View>
               <Text style={{ width: 60, fontSize: 14, fontWeight: '700', color: theme.text, textAlign: 'right' }}>
@@ -1420,11 +1437,11 @@ function ReportsModal({ visible, onClose }: { visible: boolean; onClose: () => v
           </View>
         )}
         {drivers?.map((d, i) => (
-          <View key={d.id}>
+          <View key={d.driverId}>
             {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
             <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 12, alignItems: 'center' }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }}>{d.name}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }}>{d.driverName}</Text>
                 <Text style={{ fontSize: 11, color: theme.textMuted }}>{d.phone}</Text>
               </View>
               <StatusBadge label={d.status} color={d.status === 'active' ? '#10b981' : '#94a3b8'} />
@@ -1463,7 +1480,7 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
 
   const { data: gstSettings, isLoading, refetch } = useApiQuery<GstSettings>(
     ['gst-settings'],
-    '/settings/gst',
+    '/settings',
     undefined,
     { enabled: visible },
   );
@@ -1477,10 +1494,10 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
   // Sync form with fetched data once
   React.useEffect(() => {
     if (gstSettings && !initialized) {
-      setGstin(gstSettings.gstin || '');
-      setClientId(gstSettings.clientId || '');
-      setClientSecret(gstSettings.clientSecret || '');
-      setUsername(gstSettings.username || '');
+      setGstin(gstSettings.gstCredentials?.gstin || '');
+      setClientId(gstSettings.gstCredentials?.clientId || '');
+      setClientSecret(gstSettings.gstCredentials?.clientSecret || '');
+      setUsername(gstSettings.gstCredentials?.username || '');
       setInitialized(true);
     }
   }, [gstSettings, initialized]);
@@ -1524,7 +1541,7 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
     });
   };
 
-  const currentMode = gstSettings?.mode || 'disabled';
+  const currentMode = gstSettings?.gstMode || 'disabled';
 
   const modeColors: Record<string, string> = {
     disabled: '#94a3b8',
@@ -1635,7 +1652,7 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
 
   const { data: prices, isLoading, refetch } = useApiQuery<any[]>(
     ['cylinder-prices'],
-    '/settings/cylinder-prices',
+    '/cylinder-types/prices/list',
     undefined,
     { enabled: visible },
   );
@@ -1711,7 +1728,7 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
 
   const { data: thresholds, isLoading, refetch } = useApiQuery<any[]>(
     ['inventory-thresholds'],
-    '/inventory/thresholds',
+    '/settings/cylinder-thresholds/list',
     undefined,
     { enabled: visible },
   );
@@ -1801,19 +1818,19 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
   const [formLast, setFormLast] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPassword, setFormPassword] = useState('');
-  const [formRole, setFormRole] = useState('admin');
+  const [formRole, setFormRole] = useState('distributor_admin');
 
-  const ROLES = ['admin', 'manager', 'driver', 'customer'];
+  const ROLES = ['distributor_admin', 'finance', 'inventory', 'driver', 'customer'];
 
   const { data: usersResponse, isLoading, refetch } = useApiQuery<{ users: UserRecord[] }>(
     ['users'],
-    '/auth/users',
+    '/users',
     undefined,
     { enabled: visible },
   );
   const users: UserRecord[] = usersResponse?.users ?? [];
 
-  const createMutation = useApiMutation<any, any>('post', '/auth/register', {
+  const createMutation = useApiMutation<any, any>('post', '/users', {
     invalidateKeys: [['users']],
     successMessage: 'User created successfully',
     onSuccess: () => {
@@ -1827,17 +1844,17 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
     setFormLast('');
     setFormEmail('');
     setFormPassword('');
-    setFormRole('admin');
+    setFormRole('distributor_admin');
   };
 
   const handleCreate = () => {
-    if (!formFirst.trim() || !formEmail.trim() || !formPassword.trim()) {
-      Alert.alert('Validation', 'First name, email, and password are required.');
+    if (!formFirst.trim() || !formLast.trim() || !formEmail.trim() || !formPassword.trim()) {
+      Alert.alert('Validation', 'First name, last name, email, and password are required.');
       return;
     }
     createMutation.mutate({
       firstName: formFirst.trim(),
-      lastName: formLast.trim() || undefined,
+      lastName: formLast.trim(),
       email: formEmail.trim(),
       password: formPassword,
       role: formRole,
@@ -1846,8 +1863,9 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
 
   const roleColors: Record<string, string> = {
     super_admin: '#dc2626',
-    admin: '#3b82f6',
-    manager: '#8b5cf6',
+    distributor_admin: '#3b82f6',
+    finance: '#8b5cf6',
+    inventory: '#06b6d4',
     driver: '#f59e0b',
     customer: '#10b981',
   };
@@ -1867,7 +1885,7 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
                 Add User
               </Text>
               <FormInput label="First Name *" value={formFirst} onChangeText={setFormFirst} placeholder="First name" theme={theme} />
-              <FormInput label="Last Name" value={formLast} onChangeText={setFormLast} placeholder="Last name" theme={theme} />
+              <FormInput label="Last Name *" value={formLast} onChangeText={setFormLast} placeholder="Last name" theme={theme} />
               <FormInput label="Email *" value={formEmail} onChangeText={setFormEmail} placeholder="Email address" keyboardType="email-address" autoCapitalize="none" theme={theme} />
               <FormInput label="Password *" value={formPassword} onChangeText={setFormPassword} placeholder="Minimum 8 characters" secureTextEntry autoCapitalize="none" theme={theme} />
 
@@ -1938,7 +1956,7 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
             ) : (
               <FlatList
                 data={users || []}
-                keyExtractor={(item) => item.id}
+                keyExtractor={(item) => item.userId}
                 renderItem={({ item }) => (
                   <View
                     style={{

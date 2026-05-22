@@ -161,7 +161,7 @@ export default function AdminOrdersScreen() {
 
   // ─── Queries ────────────────────────────────────────────────────────────
 
-  const queryParams: Record<string, unknown> = { limit: 50 };
+  const queryParams: Record<string, unknown> = { pageSize: 50, page: 1 };
   if (statusFilter !== 'all') queryParams.status = statusFilter;
 
   const {
@@ -206,7 +206,7 @@ export default function AdminOrdersScreen() {
   // ─── Mutations ──────────────────────────────────────────────────────────
 
   const cancelMutation = useApiMutation<unknown, { orderId: string }>(
-    'put',
+    'post',
     (vars) => `/orders/${vars.orderId}/cancel`,
     {
       invalidateKeys: [['admin-orders']],
@@ -931,8 +931,8 @@ function AssignDriverModal({
   const [vehicleId, setVehicleId] = useState(order.vehicleId ?? '');
 
   const assignMutation = useApiMutation<unknown, { driverId: string; vehicleId?: string }>(
-    'put',
-    `/orders/${order.orderId}/assign`,
+    'post',
+    `/orders/${order.orderId}/assign-driver`,
     {
       invalidateKeys: [['admin-orders']],
       successMessage: 'Driver assigned successfully',
@@ -1095,7 +1095,7 @@ function BulkAssignModal({
 
   const bulkMutation = useApiMutation<unknown, unknown>(
     'post',
-    '/orders/bulk-assign',
+    '/orders/bulk-assign-driver',
     {
       invalidateKeys: [['admin-orders']],
       successMessage: `Driver assigned to ${orderIds.length} orders`,

@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useRouter } from 'expo-router';
 import {
   View,
   Text,
@@ -191,6 +192,7 @@ const KPI_CARDS: KpiCardConfig[] = [
 
 export default function AdminDashboardScreen() {
   const { dark: isDark, colors: theme } = useTheme();
+  const router = useRouter();
 
   const user = useAuthStore((s) => s.user);
   const firstName = user?.firstName ?? 'Admin';
@@ -402,6 +404,7 @@ export default function AdminDashboardScreen() {
                 <TouchableOpacity
                   style={[styles.viewAllButton, { borderTopColor: theme.divider }]}
                   activeOpacity={0.7}
+                  onPress={() => router.push('/(admin)/more')}
                 >
                   <Text style={styles.viewAllText}>
                     View All ({pendingActions.length})
