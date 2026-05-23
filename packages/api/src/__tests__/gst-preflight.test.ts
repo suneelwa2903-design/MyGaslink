@@ -1213,30 +1213,57 @@ describe('Audit + side-effects', () => {
     }
   });
 
-  it('preflight does not create inventory events (those are at delivery time)', async () => {
+  // WI-106: dispatch inventory events are gated by INVENTORY_DISPATCH_DEBIT.
+  it('preflight inventory events: zero when flag OFF, one dispatch event per item when ON', async () => {
     const ctx = await getSharmaContext();
-    const orders = await seedOrders({
-      customerId: ctx.b2bCust.id, count: 1,
-      cylinderTypeId: ctx.cyl.id, qty: 5,
-      driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
-    });
-    try {
-      apiCallMock.mockResolvedValueOnce(irnSuccessWithInlineEwb());
-      const eventsBefore = await prisma.inventoryEvent.count({
-        where: { distributorId: 'dist-002', referenceId: orders[0].id },
+
+    // Flag OFF — legacy behaviour preserved: no inventory events at dispatch.
+    {
+      const orders = await seedOrders({
+        customerId: ctx.b2bCust.id, count: 1,
+        cylinderTypeId: ctx.cyl.id, qty: 5,
+        driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
       });
-      await preflightDispatch({
-        distributorId: 'dist-002',
-        driverId: ctx.driver.id,
-        assignmentDate: today(),
-        userId: 'test-user',
+      try {
+        apiCallMock.mockResolvedValueOnce(irnSuccessWithInlineEwb());
+        const before = await prisma.inventoryEvent.count({
+          where: { distributorId: 'dist-002', referenceId: orders[0].id },
+        });
+        await preflightDispatch({
+          distributorId: 'dist-002', driverId: ctx.driver.id, assignmentDate: today(), userId: 'test-user',
+        });
+        const after = await prisma.inventoryEvent.count({
+          where: { distributorId: 'dist-002', referenceId: orders[0].id },
+        });
+        expect(after).toBe(before);
+      } finally {
+        await clearPreflightArtifacts(orders.map((o) => o.id));
+      }
+    }
+
+    // Flag ON — one `dispatch` event per item, fullsChange = -ordered_qty.
+    {
+      process.env.INVENTORY_DISPATCH_DEBIT = 'true';
+      const orders = await seedOrders({
+        customerId: ctx.b2bCust.id, count: 1,
+        cylinderTypeId: ctx.cyl.id, qty: 5,
+        driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
       });
-      const eventsAfter = await prisma.inventoryEvent.count({
-        where: { distributorId: 'dist-002', referenceId: orders[0].id },
-      });
-      expect(eventsAfter).toBe(eventsBefore);
-    } finally {
-      await clearPreflightArtifacts(orders.map((o) => o.id));
+      try {
+        apiCallMock.mockResolvedValueOnce(irnSuccessWithInlineEwb());
+        await preflightDispatch({
+          distributorId: 'dist-002', driverId: ctx.driver.id, assignmentDate: today(), userId: 'test-user',
+        });
+        const dispatchEvents = await prisma.inventoryEvent.findMany({
+          where: { distributorId: 'dist-002', referenceId: orders[0].id, eventType: 'dispatch' },
+        });
+        expect(dispatchEvents).toHaveLength(1);
+        expect(dispatchEvents[0].fullsChange).toBe(-5);
+      } finally {
+        delete process.env.INVENTORY_DISPATCH_DEBIT;
+        await prisma.inventoryEvent.deleteMany({ where: { referenceId: orders[0].id } });
+        await clearPreflightArtifacts(orders.map((o) => o.id));
+      }
     }
   });
 
