@@ -386,64 +386,38 @@ export function buildEwbPayload(
 
     actFromStateCode: parseInt(seller.Stcd),
     actToStateCode: parseInt(buyer.Stcd),
-    // WI-074 — transactionType semantics (NIC EWB spec):
-    //   1 = Regular: Bill-To party and Ship-To party are the SAME
-    //                registered legal entity (same GSTIN).
-    //   2 = Bill-To different from Ship-To (different registered
-    //                entities).
-    //   3 = Bill-From different from Dispatch-From.
-    //   4 = Both 2 and 3.
+    // WI-077 (2026-05-23) — transactionType is 1 (Regular) for BOTH B2C and
+    // B2B. NIC EWB spec: type 1 = Bill-To and Ship-To are the same party AND
+    // Bill-From == Dispatch-From; 2/3/4 are for genuinely DIFFERENT ship-to /
+    // dispatch-from parties. In our flow the customer (registered OR URP) is
+    // simultaneously Bill-To and Ship-To, and the depot is both Bill-From and
+    // Dispatch-From — no distinct parties → Regular (1).
     //
-    // WI-057 forced this to always 1 on the misreading that "single
-    // recipient" = type 1. The correct criterion is "are Bill-To and
-    // Ship-To the same registered entity?" A URP customer (no GSTIN)
-    // can never be a registered Ship-To — so a B2C dispatch with
-    // toGstin='URP' is structurally NOT type 1. NIC's catch-all 240
-    // on B2C dispatches with type=1 + URP toGstin (live 2026-05-19
-    // ORD-MPCFG9LCQ3W, codes 240 and 240_3) was the symptom.
-    //
-    // For B2C: URP customer is the Bill-To party, depot/distributor
-    // is the Ship-To party (registered entity receiving the goods on
-    // behalf of the delivery chain). Two distinct entities → type=2.
-    // Bill-From and Dispatch-From remain the same depot → we do NOT
-    // claim type=3 or 4, so dispatchFromGSTIN/dispatchFromTradeName
-    // are correctly OMITTED.
-    //
-    // For B2B (real customer GSTIN): Bill-To == Ship-To == customer
-    // GSTIN, one registered entity → type=1 (matches NIC's lenient
-    // acceptance of the redundant ship-to/dispatch-from fields when
-    // they match). Currently working in production — preserved.
-    //
-    // The legacy New_GasLink/.../gstEwayPayloadBuilder.js used the
-    // same type-2 mapping for B2C (line 664) and was production
-    // validated. WI-074 brings our payload back in line with that
-    // mapping after the WI-057/071/072/073 detour.
-    transactionType: isB2C ? 2 : 1,
+    // NIC-sandbox flip-flop history on the B2C/URP path (do NOT re-toggle
+    // without a fresh live A/B):
+    //   - 2026-05-19: type=1 + URP started returning 240 → WI-074 switched
+    //     B2C to type=2 + shipToGSTIN=seller; worked 05-19 → 05-22.
+    //   - 2026-05-23: type=2 now returns 863, type=1 succeeds. Proven by a
+    //     live sandbox A/B matrix on dist-002:
+    //       S1 type=1, no shipTo            → ewayBillNo 181012065220 ✅
+    //       S2 type=2, shipToGSTIN=seller   → 863 ✗  (was our code)
+    //       S3 type=2, shipToGSTIN=URP      → JSON-schema reject (needs 15-char GSTIN)
+    //       S4 type=1, WITH shipTo=seller   → 616 ✗  (redundant ship-to)
+    //       S6 registered buyer, type=1     → ewayBillNo 151012065221 ✅
+    //   Corroborated by: our already-working B2B path (type=1), a real
+    //   production IndianOil e-Way Bill (Bhargavi Gas — "Transaction Type:
+    //   Regular"), and NIC's own genewaybill sample (URP ship-to carries
+    //   shipToTradeName WITHOUT shipToGSTIN; never the literal 'URP' or the
+    //   seller's GSTIN).
+    transactionType: 1,
     subSupplyDesc: sanitize(doc.Typ === 'INV' ? 'Supply of LPG' : 'Return of LPG', 20, 'Supply'),
 
-    // Ship-To / Dispatch-From field handling:
-    //   B2C (type=2): MUST send shipToGSTIN/shipToTradeName. Use the
-    //                 depot's own GSTIN — the depot is the registered
-    //                 entity receiving the goods (URP customer has no
-    //                 GSTIN). dispatchFromGSTIN omitted (Bill-From ==
-    //                 Dispatch-From, no type-3 claim).
-    //   B2B (type=1): OMIT all four fields. Under transactionType=1
-    //                 ("Bill-To == Ship-To, same registered entity"),
-    //                 these fields are redundant — toGstin already
-    //                 IS shipToGSTIN, fromGstin already IS
-    //                 dispatchFromGSTIN. WI-076 (2026-05-19): NIC's
-    //                 sandbox validator now rejects payloads carrying
-    //                 these redundant fields with error 616. Live A/B
-    //                 confirmed on fresh docNo INV-MPCJV99K: same
-    //                 payload minus the four fields → success
-    //                 (ewayBillNo 101012061787). WI-073 made the same
-    //                 omission for B2C; this extends it to B2B.
-    ...(isB2C
-      ? {
-          shipToGSTIN: seller.Gstin,
-          shipToTradeName: seller.TrdNm || seller.LglNm,
-        }
-      : {}),
+    // Ship-To / Dispatch-From: OMITTED for both B2C and B2B. Under
+    // transactionType=1 they are redundant (toGstin already IS shipTo,
+    // fromGstin already IS dispatchFrom) and NIC rejects the redundant fields
+    // with 616 (proven live: S4 above). Re-introduce ONLY with type 2/3/4 for
+    // a genuine different-site ship-to — and for a URP ship-to send
+    // shipToTradeName WITHOUT shipToGSTIN (per the NIC sample).
 
     // NIC EWB validator rule: totInvValue must be >= totalValue + cgstValue +
     // sgstValue + igstValue + cessValue. Violating it returns error 620:

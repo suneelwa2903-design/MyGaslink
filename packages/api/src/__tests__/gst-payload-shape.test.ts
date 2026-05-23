@@ -216,7 +216,7 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
     expect(ewb.transactionType).toBe(1);
   });
 
-  it('WI-074 — transactionType is 2 (Bill-To ≠ Ship-To) for B2C / URP', () => {
+  it('WI-077 — transactionType is 1 (Regular) for B2C / URP, shipTo omitted', () => {
     // B2C fixture: drop buyer GSTIN so buildIrnPayload picks SupTyp=B2C.
     const irn = buildIrnPayload(b2bFixture({
       buyer: { ...b2bFixture().buyer, gstin: null },
@@ -225,22 +225,18 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
     const ewb = buildEwbPayload(irn, {
       vehicleNumber: 'KA01MN9999', transportMode: '1', distance: 1,
     });
-    // WI-057 forced type=1 for B2C on the misreading that "single
-    // recipient" = type 1. The correct criterion is "are Bill-To and
-    // Ship-To the same REGISTERED entity?" A URP customer (no GSTIN)
-    // can never be a registered Ship-To, so a URP Bill-To plus a
-    // depot Ship-To are two distinct registered entities — that maps
-    // to type=2. Live failures 240 / 240_3 under WI-073's type=1
-    // payload (2026-05-19 ORD-MPCFG9LCQ3W) were the symptom of the
-    // type=1 + URP semantic mismatch.
-    //
-    // Also pins Bill-From == Dispatch-From (no type=3/4 claim):
-    // dispatchFromGSTIN must be ABSENT for B2C.
-    expect(ewb.transactionType).toBe(2);
+    // WI-077 (2026-05-23): B2C/URP is Regular (type 1). The consumer (URP) is
+    // both Bill-To and Ship-To, and the depot is both Bill-From and
+    // Dispatch-From — no distinct parties. shipTo/dispatchFrom are omitted
+    // (they return 616 under type=1). The WI-074 type=2 + shipToGSTIN=seller
+    // form began returning 863 on the sandbox 2026-05-23; type=1 succeeds.
+    // Live proof: real B2C dispatch generated ewayBillNo 161012065224
+    // (matrix S1: 181012065220). Matches our B2B path, a production IndianOil
+    // e-Way Bill ("Transaction Type: Regular"), and NIC's genewaybill sample.
+    expect(ewb.transactionType).toBe(1);
     expect('dispatchFromGSTIN' in ewb).toBe(false);
-    // B2C ship-to party is the depot (registered Ship-To entity for
-    // a URP customer): shipToGSTIN === seller.Gstin.
-    expect(ewb.shipToGSTIN).toBe('29AAGCB1286Q000');
+    expect(ewb.shipToGSTIN).toBeUndefined();
+    expect(ewb.shipToTradeName).toBeUndefined();
   });
 
   it('WI-057 — vehicleNo strips hyphens / slashes / spaces (NIC regex disallows them)', () => {

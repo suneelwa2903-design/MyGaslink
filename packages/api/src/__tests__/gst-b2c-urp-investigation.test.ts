@@ -92,39 +92,27 @@ describe('WI-071 investigation — B2C EWB toGstin should be URP, not seller GST
     expect(irn.BuyerDtls.Gstin).toBe('URP');
   });
 
-  it('B2C EWB payload — WI-074 final contract: type=2, URP Bill-To, depot Ship-To, no dispatchFrom', () => {
-    // Iterative history (all 2026-05-19):
-    //   Pre-WI-071: toGstin=shipToGSTIN=seller.Gstin, type=1
-    //               → NIC 611 (recipient == dispatcher inconsistent
-    //               with type=1 single-distinct-recipient semantics).
-    //   WI-071:     toGstin='URP', shipToGSTIN='URP', type=1
-    //               → NIC schema error 0 (shipToGSTIN regex rejects 'URP').
-    //   WI-072:     toGstin='URP', shipToGSTIN=seller.Gstin, type=1
-    //               → NIC 616 (prep-tools spec: "Ship to GSTIN
-    //               cannot be sent as the transaction type selected
-    //               is Regular").
-    //   WI-073:     toGstin='URP', ship-to/dispatch-from omitted, type=1
-    //               → NIC 240 / 240_3 (catch-all "contact helpdesk";
-    //               structural mismatch — URP Bill-To can never equal
-    //               a registered Ship-To, so type=1 is semantically
-    //               invalid for B2C).
-    //   WI-074:     toGstin='URP', shipToGSTIN=seller.Gstin (depot is
-    //               the registered Ship-To party), type=2 (Bill-To
-    //               and Ship-To are different registered entities).
-    //               dispatchFromGSTIN/dispatchFromTradeName OMITTED
-    //               because Bill-From == Dispatch-From for our depot
-    //               (not claiming type=3 or type=4). Transporter
-    //               fields populated for Part-A capability.
+  it('B2C EWB payload — WI-077 contract: type=1 (Regular), URP, shipTo/dispatchFrom omitted', () => {
+    // Iterative history of the NIC-sandbox flip-flop on the B2C/URP EWB:
+    //   2026-05-19 WI-071→074: type=1 variants returned 611/616/240; team
+    //               settled on type=2 + shipToGSTIN=seller (worked 05-19→05-22).
+    //   2026-05-23 WI-077: type=2 now returns 863; type=1 (no shipTo) succeeds.
+    //               Live A/B matrix on dist-002 — S1 type=1 → ewayBillNo
+    //               181012065220 ✅; S2 type=2 → 863 ✗; S3 type=2 shipTo=URP →
+    //               JSON-schema reject; S4 type=1 + shipTo → 616. Real dispatch
+    //               through the app → ewayBillNo 161012065224. Corroborated by
+    //               our working B2B path, a production IndianOil EWB ("Regular"),
+    //               and NIC's genewaybill sample. type=1 is the spec-correct
+    //               Regular mapping (consumer is both Bill-To and Ship-To).
     //
-    // The B2C semantic model under NIC's spec is:
-    //   Bill-To  party = URP customer (no GSTIN)
-    //   Ship-To  party = the depot (registered, has GSTIN)
-    //   Bill-From party = the depot
-    //   Dispatch-From party = the depot
-    // Two of those parties are URP, two are the same depot — and the
-    // two distinct registered entities (depot as Ship-From, depot as
-    // Ship-To) happen to coincide here. transactionType=2 is the
-    // mapping NIC offers for "Bill-To != Ship-To".
+    // WI-077 (2026-05-23): B2C/URP is Regular (type 1). The consumer (URP) is
+    // both Bill-To and Ship-To; the depot is both Bill-From and Dispatch-From
+    // — no distinct parties, so shipTo/dispatchFrom are OMITTED (they return
+    // NIC 616 under type=1). The WI-074 type=2 + shipToGSTIN=seller form began
+    // returning 863 on the sandbox 2026-05-23; type=1 succeeds (live A/B:
+    // matrix S1 → ewayBillNo 181012065220; real dispatch → 161012065224).
+    // Matches our B2B path, a production IndianOil EWB ("Regular"), and NIC's
+    // genewaybill sample (URP ship-to carries shipToTradeName, never shipToGSTIN).
     const irn = buildIrnPayload(bangaloreFoodsB2cFixture());
     const ewb = buildEwbPayload(irn, {
       vehicleNumber: 'KA01MN9999',
@@ -132,29 +120,22 @@ describe('WI-071 investigation — B2C EWB toGstin should be URP, not seller GST
       distance: 1,
     });
 
-    // Core Bill-To / Ship-To contract
+    // Core Bill-To contract
     expect(ewb.toGstin).toBe('URP');
     expect(ewb.fromGstin).toBe('29AAGCB1286Q000');
-    expect(ewb.transactionType).toBe(2);
+    expect(ewb.transactionType).toBe(1);
 
-    // Ship-To party — the depot
-    expect(ewb.shipToGSTIN).toBe('29AAGCB1286Q000');
-    expect(ewb.shipToGSTIN).toMatch(/^[0-9]{2}[0-9A-Z]{13}$/);
-    expect(ewb.shipToGSTIN.length).toBe(15);
-    expect(ewb.shipToTradeName).toBe('Sharma Gas Distributors'); // seller.TrdNm
-    expect(ewb.shipToTradeName).not.toBe('Bangalore Foods'); // NOT the customer
-
-    // Transporter fields re-introduced (legacy line 690-691)
-    expect(ewb.transporterId).toBe('29AAGCB1286Q000');
-    expect(ewb.transporterName).toBe('Sharma Gas Distributors');
-
-    // Dispatch-From fields OMITTED under type=2 (Bill-From == Dispatch-From)
-    expect('dispatchFromGSTIN' in ewb).toBe(false);
-    expect('dispatchFromTradeName' in ewb).toBe(false);
+    // Ship-To / Dispatch-From OMITTED under type=1 (redundant → NIC 616)
+    expect(ewb.shipToGSTIN).toBeUndefined();
+    expect(ewb.shipToTradeName).toBeUndefined();
     expect(ewb.dispatchFromGSTIN).toBeUndefined();
     expect(ewb.dispatchFromTradeName).toBeUndefined();
 
-    // Defect A invariant from WI-071: Bill-To party distinct from dispatcher
+    // Transporter fields still present
+    expect(ewb.transporterId).toBe('29AAGCB1286Q000');
+    expect(ewb.transporterName).toBe('Sharma Gas Distributors');
+
+    // Bill-To party distinct from dispatcher
     expect(ewb.toGstin).not.toBe(ewb.fromGstin);
   });
 
