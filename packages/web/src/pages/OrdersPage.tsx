@@ -35,7 +35,7 @@ import {
   type ReturnsOnlyOrderInput,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
-import { useAuthStore, selectRole } from '@/stores/authStore';
+import { useAuthStore, selectRole, selectDistributorId } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -70,6 +70,7 @@ export default function OrdersPage() {
   // morning depot dispatch is an inventory task). Driver role sees only
   // the Orders tab.
   const role = useAuthStore(selectRole);
+  const distributorId = useAuthStore(selectDistributorId);
   const canAssignDrivers =
     role === UserRole.DISTRIBUTOR_ADMIN ||
     role === UserRole.SUPER_ADMIN ||
@@ -112,7 +113,7 @@ export default function OrdersPage() {
   });
 
   const { data: customers } = useQuery({
-    queryKey: ['customers-list'],
+    queryKey: ['customers-list', distributorId],
     queryFn: () => apiGet<{ customers: Customer[] }>('/customers', { pageSize: 100 }),
     staleTime: 5 * 60 * 1000,
   });

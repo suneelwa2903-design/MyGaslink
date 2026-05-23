@@ -1,4 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { type IconType } from 'react-icons';
 import {
@@ -199,6 +200,7 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: SidebarProps) {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { t } = useTranslation();
   // Resolve a menu item's label — prefer the i18n key when present so
   // EN/TE switching works without re-rendering each item explicitly.
@@ -216,6 +218,9 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
   });
 
   function handleLogout() {
+    // Wipe ALL cached tenant data before clearing auth (#31) — see
+    // DashboardLayout.handleLogout for rationale.
+    queryClient.clear();
     logout();
     navigate('/login');
   }

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   HiOutlineBell,
   HiBars3,
@@ -27,6 +27,7 @@ export function DashboardLayout() {
   const notifRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuthStore();
   const distributorId = useAuthStore(selectDistributorId);
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -74,6 +75,11 @@ export function DashboardLayout() {
 
   function handleLogout() {
     setUserMenuOpen(false);
+    // Wipe ALL cached tenant data before clearing auth — query keys are
+    // largely static (['orders'], ['invoices'], ['customers-list'], …) so a
+    // same-tab login as a different tenant would otherwise serve the prior
+    // tenant's lists from cache until refetch (#31).
+    queryClient.clear();
     logout();
     navigate('/login');
   }

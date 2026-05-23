@@ -1399,10 +1399,11 @@ function PayInvoiceModal({ open, onClose, invoice }: { open: boolean; onClose: (
 
 function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore(selectDistributorId);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
 
   const { data: customers } = useQuery({
-    queryKey: ['customers-list'],
+    queryKey: ['customers-list', distributorId],
     queryFn: () => apiGet<{ customers: Customer[] }>('/customers', { pageSize: 100 }),
     staleTime: 5 * 60 * 1000,
   });

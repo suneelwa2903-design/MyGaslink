@@ -269,8 +269,18 @@ router.get('/:id/gst-documents',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
     try {
+      const invoiceId = param(req.params.id);
+      // Tenant-scope via the invoice — match credit-notes/debit-notes routes
+      // (#30 IDOR fix). Without this any tenant could read another tenant's
+      // IRN/EWB numbers + NIC payloads by guessing an invoiceId. 404 (not 403)
+      // on cross-tenant access for consistency with the rest of the API.
+      const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, distributorId: req.user!.distributorId! },
+        select: { id: true },
+      });
+      if (!invoice) return sendNotFound(res, 'Invoice');
       const docs = await prisma.gstDocument.findMany({
-        where: { invoiceId: param(req.params.id) },
+        where: { invoiceId },
         orderBy: { createdAt: 'desc' },
       });
       return sendSuccess(res, docs);

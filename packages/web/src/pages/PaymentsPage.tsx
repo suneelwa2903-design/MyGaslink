@@ -19,6 +19,7 @@ import {
   type CreatePaymentInput,
 } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
+import { useAuthStore, selectDistributorId } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 
 const ALLOCATION_VARIANTS: Record<string, 'success' | 'warning' | 'neutral'> = {
@@ -191,10 +192,11 @@ export default function PaymentsPage() {
 
 function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const distributorId = useAuthStore(selectDistributorId);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
 
   const { data: customers } = useQuery({
-    queryKey: ['customers-list'],
+    queryKey: ['customers-list', distributorId],
     queryFn: () => apiGet<{ customers: Customer[] }>('/customers', { pageSize: 100 }),
     staleTime: 5 * 60 * 1000,
   });
