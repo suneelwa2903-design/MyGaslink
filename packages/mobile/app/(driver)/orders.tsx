@@ -142,6 +142,7 @@ export default function DriverOrdersScreen() {
   const handleConfirmFromModal = () => {
     if (!selectedOrder) return;
     const items: { cylinderTypeId: string; deliveredQuantity: number; emptiesCollected: number }[] = [];
+    let hasQtyMismatch = false;
     for (const orderItem of selectedOrder.items ?? []) {
       const entry = deliveryItems[orderItem.cylinderTypeId];
       const delivered = Number.parseInt(entry?.delivered ?? '0', 10);
@@ -150,13 +151,30 @@ export default function DriverOrdersScreen() {
         Alert.alert('Invalid quantity', `Check "${orderItem.cylinderTypeName}" — quantities must be 0 or higher.`);
         return;
       }
+      // WI-104: a delivered count that differs from the ordered qty triggers
+      // a GST reissue on the invoice — warn the driver before submitting.
+      if (delivered !== orderItem.quantity) hasQtyMismatch = true;
       items.push({
         cylinderTypeId: orderItem.cylinderTypeId,
         deliveredQuantity: delivered,
         emptiesCollected: empties,
       });
     }
-    submitDelivery(selectedOrder.orderId, items);
+
+    const orderId = selectedOrder.orderId;
+    if (hasQtyMismatch) {
+      Alert.alert(
+        'Quantity mismatch',
+        'Delivered quantity differs from ordered quantity. This will trigger a GST reissue on the invoice. Do you want to continue?',
+        [
+          { text: 'Review', style: 'cancel' },
+          { text: 'Continue', onPress: () => submitDelivery(orderId, items) },
+        ],
+      );
+      return;
+    }
+
+    submitDelivery(orderId, items);
   };
 
   return (
