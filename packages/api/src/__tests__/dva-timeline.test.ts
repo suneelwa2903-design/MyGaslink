@@ -224,4 +224,34 @@ describe('WI-094 — DVA timeline timestamps', () => {
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
     expect(after.dispatchedAt?.toISOString()).toBe(dispatchedAt.toISOString());
   });
+
+  it('✅ 8. WI-098 — partial dispatch (1 ok, 1 fail) still stamps dispatchedAt; DVA stays dispatch_ready', async () => {
+    const v = await makeVehicle(DIST, 'TEST-TL-PARTIAL');
+    const dva = await makeDva({ driverId: pfDriverId, vehicleId: v.id, date: new Date(PF_DATE), status: 'dispatch_ready', tripNumber: 8 });
+    // One B2C order (succeeds: standalone EWB) + one B2B order (fails: IRN 3028).
+    await seedB2cOrder(pfDriverId, v.id, PF_DATE);
+    const b2b = await prisma.customer.findFirstOrThrow({ where: { distributorId: DIST, customerType: 'B2B', gstin: { not: null }, deletedAt: null } });
+    const cyl = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId: DIST } });
+    const b2bOrder = await prisma.order.create({
+      data: {
+        distributorId: DIST, customerId: b2b.id, driverId: pfDriverId, vehicleId: v.id,
+        orderNumber: `TL-PARTIAL-B2B-${Date.now().toString(36)}`, orderDate: new Date(PF_DATE), deliveryDate: new Date(PF_DATE),
+        status: 'pending_dispatch', orderType: 'delivery', totalAmount: 2000,
+        items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 2000, totalPrice: 2000 }] },
+      },
+    });
+    createdOrderIds.push(b2bOrder.id);
+    // Route by endpoint: IRN GENERATE → 3028 (B2B fails); genewaybill → success (B2C ok).
+    apiCallMock.mockImplementation(async (_d: any, _m: any, path: string) => {
+      if (typeof path === 'string' && path.includes('/einvoice/type/GENERATE')) { const e: any = new Error('GSTIN is invalid'); e.code = '3028'; throw e; }
+      if (typeof path === 'string' && path.includes('genewaybill')) return ewbGenOk('TL-PARTIAL-EWB') as any;
+      return { status_cd: '1' } as any;
+    });
+    const result = await preflightDispatch({ distributorId: DIST, driverId: pfDriverId, assignmentDate: PF_DATE, userId: 'tl-user' } as any);
+    expect(result.summary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(result.summary.failed).toBeGreaterThanOrEqual(1);
+    const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+    expect(after.dispatchedAt).not.toBeNull();      // WI-098: stamped even on partial dispatch
+    expect(after.status).toBe('dispatch_ready');     // NOT advanced (failed > 0 → retryable)
+  });
 });

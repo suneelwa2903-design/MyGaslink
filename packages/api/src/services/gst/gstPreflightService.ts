@@ -290,15 +290,24 @@ export async function preflightDispatch(params: {
   const succeeded = results.filter((r) => r.success).length;
   const failed = results.length - succeeded;
 
+  // WI-098: stamp dispatchedAt whenever ANY order in the batch dispatched —
+  // the vehicle physically left the depot, so the timeline should reflect when
+  // it went, even on a partial dispatch. (WI-094 previously gated this on full
+  // success, leaving partial dispatches with a null dispatchedAt — BUG F.)
+  if (mapping?.id && succeeded > 0) {
+    await prisma.driverVehicleAssignment.update({
+      where: { id: mapping.id },
+      data: { dispatchedAt: new Date() },
+    });
+  }
+
   // Drive the driver-vehicle assignment forward only when every order
   // succeeded — partial dispatch leaves it dispatch_ready so a retry of
   // the failing orders can still flip it.
   if (mapping?.id && failed === 0 && succeeded > 0) {
     await prisma.driverVehicleAssignment.update({
       where: { id: mapping.id },
-      // WI-094: stamp dispatchedAt only on full dispatch success. Left null
-      // on partial/failed dispatch so the timeline reflects reality.
-      data: { status: 'loaded_and_dispatched', dispatchedAt: new Date() },
+      data: { status: 'loaded_and_dispatched' }, // dispatchedAt already set above (WI-098)
     });
 
     if (mapping.vehicleId) {
