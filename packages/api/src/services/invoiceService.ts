@@ -2,6 +2,12 @@ import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { GST_RATES } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
+import { allocateNumber } from './numberingService.js';
+
+// WI-108: legacy random number generators, kept as the fallback when a
+// distributor has no docCode set (structured numbering not activated).
+const legacyNumber = (prefix: string) =>
+  `${prefix}-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
 
 type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
@@ -105,7 +111,7 @@ export async function createInvoiceFromOrder(
   // Get distributor state and GST mode for calculation
   const distributor = await tx.distributor.findUnique({
     where: { id: distributorId },
-    select: { state: true, gstin: true, gstMode: true },
+    select: { state: true, gstin: true, gstMode: true, docCode: true },
   });
 
   const gstEnabled = distributor?.gstMode === 'sandbox' || distributor?.gstMode === 'live';
@@ -113,8 +119,12 @@ export async function createInvoiceFromOrder(
     ? distributor.state !== order.customer.billingState
     : false;
 
-  const invoiceNumber = `INV-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
   const issueDate = new Date();
+  // WI-108: structured number when docCode is set, else legacy random.
+  // Allocated on `tx` so it rolls back with the invoice on failure.
+  const invoiceNumber = distributor?.docCode
+    ? await allocateNumber(tx, distributorId, 'I', issueDate, distributor.docCode)
+    : legacyNumber('INV');
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + (order.customer?.creditPeriodDays ?? 30));
 
@@ -235,7 +245,7 @@ export async function createManualInvoice(
 ) {
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
-    select: { state: true },
+    select: { state: true, docCode: true },
   });
   const customer = await prisma.customer.findFirst({
     where: { id: data.customerId, distributorId, deletedAt: null },
@@ -248,7 +258,6 @@ export async function createManualInvoice(
     ? distributor.state !== customer.billingState
     : false;
 
-  const invoiceNumber = `INV-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
   let totalBeforeGst = 0;
 
   const invoiceItems = data.items.map(item => {
@@ -274,6 +283,10 @@ export async function createManualInvoice(
   const totalAmount = totalBeforeGst + cgstValue + sgstValue + igstValue;
 
   const invoice = await prisma.$transaction(async (tx) => {
+    // WI-108: structured number when docCode is set, else legacy random.
+    const invoiceNumber = distributor?.docCode
+      ? await allocateNumber(tx, distributorId, 'I', new Date(data.issueDate), distributor.docCode)
+      : legacyNumber('INV');
     const created = await tx.invoice.create({
       data: {
         invoiceNumber,
@@ -359,18 +372,27 @@ export async function createCreditNote(
     );
   }
 
-  const creditNoteNumber = `CN-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
+  // WI-108: structured number when docCode is set, else legacy random.
+  // Allocated inside the same tx as the create so the counter rolls back on failure.
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId }, select: { docCode: true },
+  });
 
-  return prisma.creditNote.create({
-    data: {
-      invoiceId: data.invoiceId,
-      creditNoteNumber,
-      totalAmount: data.amount,
-      reason: data.reason,
-      note: data.note ?? null,
-      status: 'pending_cn',
-      issuedBy: userId,
-    },
+  return prisma.$transaction(async (tx) => {
+    const creditNoteNumber = distributor?.docCode
+      ? await allocateNumber(tx, distributorId, 'C', new Date(), distributor.docCode)
+      : legacyNumber('CN');
+    return tx.creditNote.create({
+      data: {
+        invoiceId: data.invoiceId,
+        creditNoteNumber,
+        totalAmount: data.amount,
+        reason: data.reason,
+        note: data.note ?? null,
+        status: 'pending_cn',
+        issuedBy: userId,
+      },
+    });
   });
 }
 
@@ -474,18 +496,26 @@ export async function createDebitNote(
     throw new InvoiceError('Debit amount must be greater than 0', 400);
   }
 
-  const debitNoteNumber = `DN-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
+  // WI-108: structured number when docCode is set, else legacy random.
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId }, select: { docCode: true },
+  });
 
-  return prisma.debitNote.create({
-    data: {
-      invoiceId: data.invoiceId,
-      debitNoteNumber,
-      totalAmount: data.amount,
-      reason: data.reason,
-      note: data.note ?? null,
-      status: 'pending_dn',
-      issuedBy: userId,
-    },
+  return prisma.$transaction(async (tx) => {
+    const debitNoteNumber = distributor?.docCode
+      ? await allocateNumber(tx, distributorId, 'D', new Date(), distributor.docCode)
+      : legacyNumber('DN');
+    return tx.debitNote.create({
+      data: {
+        invoiceId: data.invoiceId,
+        debitNoteNumber,
+        totalAmount: data.amount,
+        reason: data.reason,
+        note: data.note ?? null,
+        status: 'pending_dn',
+        issuedBy: userId,
+      },
+    });
   });
 }
 

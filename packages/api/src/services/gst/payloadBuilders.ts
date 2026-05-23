@@ -112,8 +112,17 @@ function formatDate(date: Date): string {
 }
 
 function truncateDocNumber(docNo: string): string {
-  // Max 16 chars for NIC
-  return docNo.substring(0, 16);
+  // WI-108: NIC caps DocDtls.No at 16 chars. Previously this silently
+  // truncated, which could collapse two distinct DB numbers onto the same
+  // NIC document (re-tripping the 2278 duplicate trap). Fail loud instead —
+  // both the structured 14-char format and the legacy random/revision
+  // numbers stay ≤16, so a >16 value is a configuration bug, not data.
+  if (docNo.length > 16) {
+    throw new Error(
+      `Doc number '${docNo}' exceeds the NIC 16-char limit. This is a configuration error.`,
+    );
+  }
+  return docNo;
 }
 
 /**

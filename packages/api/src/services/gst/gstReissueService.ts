@@ -26,6 +26,7 @@ import { toNum } from '../../utils/decimal.js';
 import { getCredentials } from './whitebooksClient.js';
 import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
+import { allocateNumber } from '../numberingService.js';
 import {
   cancelEwb,
   cancelIrn,
@@ -58,6 +59,7 @@ export async function reissueForDeliveryMismatch(args: {
     select: {
       id: true, gstMode: true, gstin: true, legalName: true, businessName: true,
       address: true, city: true, state: true, pincode: true, phone: true, email: true,
+      docCode: true,
     },
   });
   if (!distributor || distributor.gstMode === 'disabled') {
@@ -346,7 +348,7 @@ async function regenerateB2bIrn(
     where: { id: invoiceId },
     select: { invoiceNumber: true },
   });
-  const freshNumber = bumpInvoiceNumber(inv0.invoiceNumber);
+  const freshNumber = await freshRevisionNumber(distributorId, distributor, inv0.invoiceNumber);
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: { invoiceNumber: freshNumber },
@@ -381,7 +383,7 @@ async function regenerateB2bIrn(
       where: { id: invoiceId },
       select: { invoiceNumber: true },
     });
-    const newNumber = bumpInvoiceNumber(inv.invoiceNumber);
+    const newNumber = await freshRevisionNumber(distributorId, distributor, inv.invoiceNumber);
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: { invoiceNumber: newNumber },
@@ -615,4 +617,28 @@ function bumpInvoiceNumber(invoiceNumber: string): string {
   const room = Math.max(MAX - suffix.length, 1);
   const baseTrimmed = base.length > room ? base.substring(0, room) : base;
   return `${baseTrimmed}${suffix}`;
+}
+
+/**
+ * WI-108: produce the doc number for a regenerated (revised) invoice.
+ *
+ * - docCode set → allocate a fresh structured number of type 'R' (e.g.
+ *   RSHD2526000045). This is a brand-new number NIC has never seen, so it
+ *   sidesteps the 2278 "cancelled doc number" trap entirely AND keeps the
+ *   14-char NIC-safe length (the legacy `-R{n}` suffix pushed to 16). The
+ *   counter increment is atomic in its own short transaction; the invoice
+ *   already exists, so same-tx-as-create gaplessness doesn't apply here.
+ * - docCode null → fall back to the legacy `-R{n}` suffix bump.
+ */
+async function freshRevisionNumber(
+  distributorId: string,
+  distributor: { docCode?: string | null },
+  currentNumber: string,
+): Promise<string> {
+  if (distributor.docCode) {
+    return prisma.$transaction((tx) =>
+      allocateNumber(tx, distributorId, 'R', new Date(), distributor.docCode!),
+    );
+  }
+  return bumpInvoiceNumber(currentNumber);
 }

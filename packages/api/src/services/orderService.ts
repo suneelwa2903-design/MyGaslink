@@ -6,6 +6,12 @@ import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
 import { createInvoiceFromOrder } from './invoiceService.js';
 import { logger } from '../utils/logger.js';
 import { toNum } from '../utils/decimal.js';
+import { allocateNumber } from './numberingService.js';
+
+// WI-108: legacy random order-number generator, kept as the fallback when a
+// distributor has no docCode set (structured numbering not activated).
+const legacyOrderNumber = (prefix: string) =>
+  `${prefix}-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
 
 const orderInclude = {
   customer: { select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true } },
@@ -90,7 +96,11 @@ export async function createOrder(
   if (customer.stopSupply) throw new OrderError('Supply is stopped for this customer', 400);
 
   const deliveryDate = new Date(data.deliveryDate);
-  const orderNumber = `ORD-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
+  // WI-108: structured number when docCode is set, else legacy random
+  // (allocated inside the tx below so it rolls back with the order).
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId }, select: { docCode: true },
+  });
 
   // Calculate prices for each item
   const itemsWithPrices = await Promise.all(data.items.map(async (item) => {
@@ -140,6 +150,9 @@ export async function createOrder(
   }
 
   return prisma.$transaction(async (tx) => {
+    const orderNumber = distributor?.docCode
+      ? await allocateNumber(tx, distributorId, 'O', deliveryDate, distributor.docCode)
+      : legacyOrderNumber('ORD');
     const order = await tx.order.create({
       data: {
         orderNumber,
@@ -200,7 +213,10 @@ export async function createReturnsOnlyOrder(
   if (!customer) throw new OrderError('Customer not found', 404);
 
   const scheduledDate = new Date(data.scheduledDate);
-  const orderNumber = `RET-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
+  // WI-108: structured number (type O) when docCode is set, else legacy RET-.
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId }, select: { docCode: true },
+  });
 
   // Returns orders have no pricing - just cylinder tracking
   const itemsData = data.items.map(item => ({
@@ -236,6 +252,9 @@ export async function createReturnsOnlyOrder(
   }
 
   return prisma.$transaction(async (tx) => {
+    const orderNumber = distributor?.docCode
+      ? await allocateNumber(tx, distributorId, 'O', scheduledDate, distributor.docCode)
+      : legacyOrderNumber('RET');
     const order = await tx.order.create({
       data: {
         orderNumber,
@@ -303,7 +322,10 @@ export async function createOrderFromCancelledStock(
   if (customer.stopSupply) throw new OrderError('Supply is stopped for this customer', 400);
 
   const deliveryDate = new Date(data.deliveryDate);
-  const orderNumber = `ORD-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
+  // WI-108: structured number when docCode is set, else legacy random.
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId }, select: { docCode: true },
+  });
 
   const unitPrice = await getEffectivePrice(distributorId, cancelledStock.cylinderTypeId, deliveryDate);
   const discount = await prisma.customerCylinderDiscount.findUnique({
@@ -314,6 +336,9 @@ export async function createOrderFromCancelledStock(
   const totalPrice = effectivePrice * cancelledStock.quantity;
 
   return prisma.$transaction(async (tx) => {
+    const orderNumber = distributor?.docCode
+      ? await allocateNumber(tx, distributorId, 'O', deliveryDate, distributor.docCode)
+      : legacyOrderNumber('ORD');
     const order = await tx.order.create({
       data: {
         orderNumber,

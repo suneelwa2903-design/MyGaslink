@@ -130,6 +130,25 @@ function GeneralTab() {
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  // WI-108: structured invoice/order numbering tenant code.
+  const [docCodeInput, setDocCodeInput] = useState<string | null>(null);
+  const docCodeValue = docCodeInput ?? settings?.docCode ?? '';
+  const docCodeMutation = useMutation({
+    mutationFn: (code: string) => apiPut('/settings/doc-code', { docCode: code }),
+    onSuccess: () => { toast.success('Invoice code saved'); queryClient.invalidateQueries({ queryKey: ['settings'] }); },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+  const handleSaveDocCode = () => {
+    const code = docCodeValue.trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(code)) { toast.error('Invoice code must be exactly 3 letters (A–Z)'); return; }
+    // Warn before changing an already-set code — it breaks the sequence.
+    if (settings?.docCode && settings.docCode !== code &&
+        !window.confirm('Changing this code will break your invoice sequence. Are you sure?')) {
+      return;
+    }
+    docCodeMutation.mutate(code);
+  };
+
   if (isLoading) return <div className="flex justify-center py-20"><Loader size="lg" /></div>;
 
   return (
@@ -144,6 +163,25 @@ function GeneralTab() {
         </div>
         <Button type="submit" loading={mutation.isPending}>Save Settings</Button>
       </form>
+
+      {/* WI-108: structured invoice/order numbering */}
+      <div className="border-t border-surface-200 dark:border-surface-700 pt-6 space-y-3">
+        <h3 className="font-semibold text-surface-900 dark:text-white">Invoice Code</h3>
+        <p className="text-sm text-surface-500 dark:text-surface-400">
+          Once set, this code appears in all invoice and order numbers
+          (e.g. <span className="font-mono">ISHD2526000123</span>). Setting this activates structured numbering.
+        </p>
+        <div className="flex items-end gap-3">
+          <Input
+            label="Invoice Code (3 letters)"
+            value={docCodeValue}
+            maxLength={3}
+            placeholder="SHD"
+            onChange={(e) => setDocCodeInput(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3))}
+          />
+          <Button type="button" onClick={handleSaveDocCode} loading={docCodeMutation.isPending}>Save Code</Button>
+        </div>
+      </div>
     </div>
   );
 }

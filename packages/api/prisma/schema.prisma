@@ -328,6 +328,11 @@ model Distributor {
   email           String?
   status          DistributorStatus @default(active)
   gstMode         GstMode           @default(disabled) @map("gst_mode")
+  // WI-108: 3-letter tenant code embedded in structured invoice/order
+  // numbers (e.g. "SHD" → ISHD2526000123). Nullable: when unset the legacy
+  // random INV-/ORD- format is used. Globally unique so codes never clash
+  // across tenants (which keeps the per-tenant sequence globally unique too).
+  docCode         String?           @unique @map("doc_code")
   providerCodes   String[]          @default([]) @map("provider_codes")
   subscriptionPlan SubscriptionPlan? @map("subscription_plan")
   billingTier     BillingTier?      @map("billing_tier")
@@ -378,6 +383,7 @@ model Distributor {
   contactSubmissions    ContactSubmission[]
   gstApiUsage           GstApiUsage[]
   seatRequests          SeatRequest[]
+  invoiceCounters       InvoiceCounter[]
 
   @@map("distributors")
 }
@@ -861,6 +867,26 @@ model VehicleInventory {
 }
 
 // ─── Invoices ────────────────────────────────────────────────────────────────
+
+/// WI-108: per-(distributor, docType, financialYear) sequence counter for
+/// structured invoice/order numbering. The unique key serialises concurrent
+/// allocations on a single row (atomic `{ increment: 1 }`); a new financial
+/// year inserts a fresh row so the sequence resets automatically every April.
+/// docType is a single char: I=invoice R=revision C=credit D=debit O=order.
+model InvoiceCounter {
+  id            String   @id @default(cuid()) @map("counter_id")
+  distributorId String   @map("distributor_id")
+  type          String
+  financialYear String   @map("financial_year")
+  lastSequence  Int      @default(0) @map("last_sequence")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  distributor   Distributor @relation(fields: [distributorId], references: [id])
+
+  @@unique([distributorId, type, financialYear])
+  @@index([distributorId])
+  @@map("invoice_counters")
+}
 
 model Invoice {
   id                String        @id @default(uuid()) @map("invoice_id")

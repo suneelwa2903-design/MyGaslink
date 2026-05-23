@@ -748,6 +748,9 @@ export interface DistributorSettings {
   cylinderThresholds: CylinderThreshold[];
   approvalWorkflows: ApprovalWorkflowConfig[];
   pendingActionSlaHours: Record<string, number>;
+  // WI-108: 3-letter tenant code that activates structured invoice/order
+  // numbering. null when not yet set (legacy random format in use).
+  docCode?: string | null;
 }
 
 export interface GstCredentials {

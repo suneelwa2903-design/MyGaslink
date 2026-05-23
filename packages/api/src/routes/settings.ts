@@ -33,7 +33,7 @@ router.get('/', async (req, res) => {
       settingsService.getSettings(distributorId),
       (await import('../lib/prisma.js')).prisma.distributor.findUnique({
         where: { id: distributorId },
-        select: { gstMode: true },
+        select: { gstMode: true, docCode: true },
       }),
       settingsService.getGstCredentials(distributorId, 'einvoice'),
     ]);
@@ -41,12 +41,45 @@ router.get('/', async (req, res) => {
       distributorId,
       gstMode: distributor?.gstMode ?? null,
       gstCredentials: gstCred ?? null,
+      docCode: distributor?.docCode ?? null,
       rawSettings,
     });
   } catch (err) {
     return sendError(res, (err as Error).message);
   }
 });
+
+// WI-108: structured-numbering tenant code. Registered BEFORE the generic
+// `/:key` routes so "doc-code" isn't swallowed as a JSONB setting key.
+router.put('/doc-code',
+  requireRole('super_admin', 'distributor_admin'),
+  validate(z.object({ docCode: z.string().trim().regex(/^[A-Z]{3}$/, 'Must be exactly 3 uppercase letters (A–Z)') })),
+  auditLog('upsert', 'doc_code'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      const docCode: string = req.body.docCode;
+      const { prisma } = await import('../lib/prisma.js');
+      // Globally unique — reject if another tenant already owns the code.
+      const clash = await prisma.distributor.findFirst({
+        where: { docCode, id: { not: distributorId } },
+        select: { id: true },
+      });
+      if (clash) {
+        return sendError(res, 'This invoice code is already in use by another distributor', 409, 'DOC_CODE_TAKEN');
+      }
+      const updated = await prisma.distributor.update({
+        where: { id: distributorId },
+        data: { docCode },
+        select: { docCode: true },
+      });
+      return sendSuccess(res, updated);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
 
 router.get('/:key', async (req, res) => {
   try {

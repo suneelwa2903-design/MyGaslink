@@ -49,7 +49,9 @@ beforeAll(async () => {
   });
   const fixture = await prisma.invoice.create({
     data: {
-      invoiceNumber: `WI057-FIXTURE-${Date.now()}`,
+      // WI-108: ≤16 chars — processInvoiceGst builds the IRN payload from
+      // this and truncateDocNumber now throws on >16-char doc numbers.
+      invoiceNumber: `WI57F${Date.now().toString(36)}`,
       distributorId: 'dist-002',
       customerId: b2bCustomer.id,
       issueDate: new Date(),

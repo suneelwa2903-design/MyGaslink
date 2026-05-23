@@ -124,7 +124,9 @@ async function seedReissueFixture(opts: {
 
   const invoice = await prisma.invoice.create({
     data: {
-      invoiceNumber: `INV-RIS-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      // WI-108: kept ≤16 chars — truncateDocNumber now throws on longer
+      // numbers (the B2C reissue builds an EWB payload from this verbatim).
+      invoiceNumber: `IR${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       distributorId: 'dist-002',
       customerId: customer.id,
       orderId: order.id,
