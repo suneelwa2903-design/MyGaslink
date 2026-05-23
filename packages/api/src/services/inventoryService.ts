@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
+import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
 
 type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
@@ -98,6 +99,12 @@ export async function computeSummaryForDate(
   let collectedEmpties = 0;
   let cancelledStockQty = 0;
   let manualAdjustment = 0;
+  // WI-106: dispatch-debit accumulators. Always computed (cheap); only used by
+  // the flag-on closingFulls formula below. When the flag is off there are no
+  // `dispatch` events and the old formula ignores these, so flag-off totals are
+  // byte-for-byte unchanged.
+  let dispatchedQty = 0; // Σ |dispatch.fullsChange| — fulls that left the depot
+  let returnedQty = 0;   // Σ cancellation_return.fullsChange — fulls that came back
   // WI-083: initial_balance events carry an emptiesChange (set during onboarding).
   // The closingEmpties formula only has collectedEmpties and outgoingEmpties, so
   // the initial empties were silently ignored. Track them separately to avoid
@@ -118,6 +125,11 @@ export async function computeSummaryForDate(
       case 'collection':
         collectedEmpties += event.emptiesChange;
         break;
+      case 'dispatch':
+        // WI-106: cylinders leaving the depot onto a vehicle (fullsChange is
+        // negative). Only produced when the flag is on.
+        dispatchedQty += Math.abs(event.fullsChange);
+        break;
       case 'cancellation':
         cancelledStockQty += event.fullsChange;
         break;
@@ -127,6 +139,9 @@ export async function computeSummaryForDate(
         // (formula: + cancelledStockQty), so the balance is unchanged — only the
         // display column changes. Incoming is for IOC refills; this is a return.
         cancelledStockQty += event.fullsChange;
+        // WI-106: under the flag-on formula this is the ONLY credit for returned
+        // stock (the `cancellation` event is no longer produced).
+        returnedQty += event.fullsChange;
         break;
       case 'manual_adjustment':
         manualAdjustment += event.fullsChange;
@@ -146,7 +161,13 @@ export async function computeSummaryForDate(
     }
   }
 
-  const closingFulls = openingFulls + incomingFulls - deliveredQty + cancelledStockQty + manualAdjustment;
+  // WI-106: dispatch-based closing when the flag is on — fulls are debited at
+  // dispatch (− dispatchedQty), credited back on return (+ returnedQty), and
+  // `delivery` no longer drives the balance (it's display-only). When off, the
+  // original delivered-based formula runs unchanged.
+  const closingFulls = isDispatchDebitEnabled(distributorId)
+    ? openingFulls + incomingFulls - dispatchedQty + returnedQty + manualAdjustment
+    : openingFulls + incomingFulls - deliveredQty + cancelledStockQty + manualAdjustment;
   const closingEmpties = openingEmpties + collectedEmpties + initialEmpties - outgoingEmpties;
 
   return {
@@ -155,7 +176,7 @@ export async function computeSummaryForDate(
     incomingFulls,
     outgoingEmpties,
     deliveredQty,
-    dispatchedQty: 0, // WI-106: real value computed under the flag in step 5
+    dispatchedQty,
     collectedEmpties,
     cancelledStockQty,
     manualAdjustment,
