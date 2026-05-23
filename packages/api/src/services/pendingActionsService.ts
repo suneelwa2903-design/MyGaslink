@@ -58,9 +58,38 @@ export async function approvePendingAction(actionId: string, distributorId: stri
   });
 }
 
+// WI-105 PART 3 — resolving one of these is the admin's "retry the NIC call"
+// signal, so we pre-flight NIC health first and refuse if the portal is down.
+const NIC_RETRY_ACTION_TYPES = new Set(['IRN_GENERATION', 'EWB_GENERATION', 'IRN_CANCEL_BLOCKED']);
+
+export class NicUnavailableError extends Error {
+  code = 'NIC_UNAVAILABLE';
+  constructor(message: string) {
+    super(message);
+    this.name = 'NicUnavailableError';
+  }
+}
+
 export async function resolvePendingAction(actionId: string, distributorId: string, userId: string, notes?: string) {
   const action = await prisma.pendingAction.findFirst({ where: { id: actionId, distributorId } });
   if (!action) return null;
+
+  // WI-105 PART 3 — NIC pre-flight on the resolve (retry) path only. The
+  // approve path is intentionally NOT gated: it routes through the dispatch
+  // flow, which runs its own pre-dispatch NIC probe.
+  if (NIC_RETRY_ACTION_TYPES.has(action.actionType)) {
+    const distributor = await prisma.distributor.findUnique({
+      where: { id: distributorId },
+      select: { gstin: true },
+    });
+    const { pingEinvoiceSession } = await import('./gst/whitebooksClient.js');
+    try {
+      await pingEinvoiceSession(distributorId, distributor?.gstin ?? '');
+    } catch {
+      throw new NicUnavailableError('NIC portal is currently unavailable. Please try again in a few minutes.');
+    }
+  }
+
   return prisma.pendingAction.update({
     where: { id: actionId },
     data: {

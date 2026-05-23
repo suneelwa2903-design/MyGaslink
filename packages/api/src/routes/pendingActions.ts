@@ -80,6 +80,11 @@ router.put('/:id/resolve',
       if (!action) return sendNotFound(res, 'Pending action');
       return sendSuccess(res, mapPendingAction(action));
     } catch (err) {
+      // WI-105 PART 3 — NIC pre-flight failed: surface a 503 so the UI tells
+      // the admin to retry later instead of marking the action resolved.
+      if (err instanceof pendingActionsService.NicUnavailableError) {
+        return sendError(res, err.message, 503, 'NIC_UNAVAILABLE');
+      }
       return sendError(res, (err as Error).message);
     }
   }

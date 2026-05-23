@@ -85,6 +85,18 @@ export default function PendingActionsPage() {
     return acc;
   }, {});
 
+  // WI-105 PART 4 — the action button label reflects what resolving actually
+  // does for this action. errorCode (a normalized cause set by the GST layer)
+  // distinguishes the 2150 / GSTIN sub-cases; everything else keys off actionType.
+  function getActionLabel(action: PendingAction): string {
+    if (action.errorCode === 'DUPLICATE_IRN') return 'Look Up IRN';
+    if (action.errorCode === 'GSTIN_INVALID') return 'Fix GSTIN';
+    if (action.actionType === 'IRN_CANCEL_BLOCKED') return 'Manual Action Required';
+    if (action.actionType === 'MODIFIED_DELIVERY_REVIEW') return 'Review & Approve';
+    if (action.actionType === 'IRN_GENERATION' || action.actionType === 'EWB_GENERATION') return 'Retry';
+    return 'Resolve';
+  }
+
   const moduleOptions = Object.values(PendingActionModule).map((m) => ({ value: m, label: m.replace(/_/g, ' ') }));
   const statusOptions = Object.values(PendingActionStatus).map((s) => ({ value: s, label: s.replace(/_/g, ' ') }));
 
@@ -187,7 +199,7 @@ export default function PendingActionsPage() {
                               size="sm"
                               onClick={() => setResolveAction(action)}
                             >
-                              Resolve
+                              {getActionLabel(action)}
                             </Button>
                           </div>
                         )}

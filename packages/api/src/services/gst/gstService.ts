@@ -1321,6 +1321,99 @@ export async function cancelAndRegenerateInvoice(
 /**
  * Create a pending action for GST failures
  */
+// WI-105 PART 1 — raw-error classifiers. NIC rarely echoes the offending field,
+// so we pattern-match the message we captured at the call site.
+const DUPLICATE_IRN_PATTERNS = /\b2150\b|duplicate irn|already exists/i;
+const GSTIN_INVALID_PATTERNS = /invalid gstin|gstin[^.]*invalid|\b3028\b|\b3029\b|gstin.*not.*valid/i;
+const NIC_OUTAGE_PATTERNS = /\b5002\b|\b503\b|temporarily unavailable|service unavailable|timed?\s*out|timeout|session expired|ENOTFOUND|ECONNRESET|gateway/i;
+
+/**
+ * WI-105 PART 1 — turn a raw GST/NIC error into an admin-readable description
+ * plus a normalized cause code (the web uses the code to pick the action-button
+ * label). `ctx` carries the invoice / order / customer identifiers that make the
+ * message actionable. Pure function (no I/O) so it is unit-testable.
+ */
+export function buildPendingActionDescription(
+  actionType: string,
+  rawMessage: string,
+  ctx: { invoiceNumber?: string | null; orderNumber?: string | null; customerName?: string | null },
+): { description: string; errorCode: string | null } {
+  const inv = ctx.invoiceNumber ?? 'this invoice';
+  const ord = ctx.orderNumber ?? 'this order';
+  const who = ctx.customerName ?? 'customer';
+  const raw = rawMessage ?? '';
+
+  // Duplicate IRN (NIC 2150) — the IRN likely already exists; admin links it.
+  if (DUPLICATE_IRN_PATTERNS.test(raw)) {
+    return {
+      description: `Invoice ${inv} for ${who}: NIC flagged this as a duplicate IRN. The IRN may already exist — click Look Up IRN to find and link it.`,
+      errorCode: 'DUPLICATE_IRN',
+    };
+  }
+
+  // Invalid customer GSTIN — admin fixes the GSTIN, then retries.
+  if (GSTIN_INVALID_PATTERNS.test(raw)) {
+    return {
+      description: `Order ${ord} for ${who}: GSTIN on file is invalid. Update the customer GSTIN in Customers → ${who} → Edit, then click Retry.`,
+      errorCode: 'GSTIN_INVALID',
+    };
+  }
+
+  // NIC portal outage / 5002 — no admin action, just retry once NIC is back.
+  if (NIC_OUTAGE_PATTERNS.test(raw)) {
+    return {
+      description: `Invoice ${inv}: NIC portal is temporarily unavailable. No action needed — click Retry when NIC is back online.`,
+      errorCode: 'NIC_OUTAGE',
+    };
+  }
+
+  // IRN cancellation could not complete at NIC — manual portal action.
+  if (actionType === 'IRN_CANCEL_BLOCKED') {
+    return {
+      description: `Invoice ${inv}: Could not cancel the original IRN on NIC. Manual cancellation required on the NIC portal before the revised invoice is valid.`,
+      errorCode: 'IRN_CANCEL_BLOCKED',
+    };
+  }
+
+  // e-Way Bill generation crashed / returned an undefined error — retry.
+  if (
+    actionType === 'EWB_GENERATION' ||
+    actionType === 'EWB_REGENERATION_FAILED' ||
+    actionType === 'CONSOLIDATED_EWB_FAILED' ||
+    actionType === 'DISPATCH_EWB_GENERATION'
+  ) {
+    return {
+      description: `Invoice ${inv} for ${who}: e-Way Bill generation failed unexpectedly. Click Retry to attempt again.`,
+      errorCode: null,
+    };
+  }
+
+  // WI-099 prep — the MODIFIED_DELIVERY_REVIEW call site does NOT exist yet.
+  // When WI-099 adds it, format the description as:
+  //   `Order ${ord} for ${who}: Driver delivered [X] [KG], ordered [Y] [KG]. ` +
+  //   `Review the difference and approve to update the GST invoice.`
+  // (X/Y/UOM come from the order's delivered vs ordered quantities.)
+
+  // IRN generation (incl. CN/DN IRN) — retry.
+  if (
+    actionType === 'IRN_GENERATION' ||
+    actionType === 'IRN_REGENERATION_FAILED' ||
+    actionType === 'CRN_IRN_GENERATION' ||
+    actionType === 'DBN_IRN_GENERATION'
+  ) {
+    return {
+      description: `Invoice ${inv} for ${who}: e-Invoice (IRN) generation failed. Click Retry to attempt again.`,
+      errorCode: null,
+    };
+  }
+
+  // Unknown actionType — prefix the invoice number onto the raw message.
+  return {
+    description: `Invoice ${inv} for ${who}: ${raw || 'Action required.'}`.substring(0, 500),
+    errorCode: null,
+  };
+}
+
 export async function createPendingAction(
   distributorId: string,
   invoiceId: string,
@@ -1329,6 +1422,43 @@ export async function createPendingAction(
   severity: 'low' | 'medium' | 'high' | 'critical' = 'high',
 ): Promise<{ id: string } | null> {
   try {
+    // Look up invoice context (number, customer, order) so the message is
+    // actionable. entityId is usually an invoiceId, but some callers (e.g.
+    // CONSOLIDATED_EWB_FAILED passes a DVA id) won't match — degrade gracefully.
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: invoiceId, distributorId },
+      select: {
+        invoiceNumber: true,
+        customer: { select: { customerName: true } },
+        order: { select: { orderNumber: true } },
+      },
+    });
+    const { description, errorCode } = buildPendingActionDescription(actionType, errorMessage, {
+      invoiceNumber: invoice?.invoiceNumber,
+      orderNumber: invoice?.order?.orderNumber,
+      customerName: invoice?.customer?.customerName,
+    });
+
+    // WI-105 PART 2 — dedup. No DB unique constraint exists on
+    // (distributorId, entityId, actionType, status), so findFirst the OPEN row
+    // and refresh it instead of piling up a new row on every retry.
+    const existing = await prisma.pendingAction.findFirst({
+      where: { distributorId, entityId: invoiceId, actionType, status: 'open' },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.pendingAction.update({
+        where: { id: existing.id },
+        data: {
+          description: description.substring(0, 500),
+          errorCode,
+          errorMessage: errorMessage.substring(0, 500),
+          // updatedAt is bumped automatically (@updatedAt).
+        },
+      });
+      return existing;
+    }
+
     const row = await prisma.pendingAction.create({
       data: {
         distributorId,
@@ -1336,7 +1466,9 @@ export async function createPendingAction(
         entityId: invoiceId,
         entityType: 'invoice',
         actionType,
-        description: errorMessage.substring(0, 500),
+        description: description.substring(0, 500),
+        errorCode,
+        errorMessage: errorMessage.substring(0, 500),
         severity,
         status: 'open',
       },

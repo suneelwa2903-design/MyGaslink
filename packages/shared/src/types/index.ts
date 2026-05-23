@@ -617,6 +617,7 @@ export interface PendingAction {
   resolvedBy: string | null;
   resolvedAt: string | null;
   resolutionNotes: string | null;
+  errorCode: string | null;
   slaDeadline: string | null;
   createdAt: string;
   updatedAt: string;

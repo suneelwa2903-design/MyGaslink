@@ -178,7 +178,9 @@ describe('WI-057 G2 — processInvoiceGst 2150 path recovers the IRN', () => {
       orderBy: { createdAt: 'desc' },
     });
     expect(pa).toBeTruthy();
-    expect(pa?.description ?? '').toMatch(/2150/);
+    // WI-105: raw "2150" string replaced by a readable duplicate-IRN message.
+    expect(pa?.description ?? '').toMatch(/duplicate IRN/i);
+    expect(pa?.errorCode).toBe('DUPLICATE_IRN');
 
     // Cleanup pending action so test reruns stay clean.
     if (pa) await prisma.pendingAction.delete({ where: { id: pa.id } });
