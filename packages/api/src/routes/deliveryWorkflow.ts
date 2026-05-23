@@ -86,6 +86,10 @@ router.post('/driver/vehicle-returned',
       if (message.startsWith('Cannot mark vehicle as returned')) {
         return sendError(res, message, 409);
       }
+      // WI-100 Gap C: already-reconciled guard → 409 Conflict
+      if (message.startsWith('Vehicle has already been reconciled')) {
+        return sendError(res, message, 409);
+      }
       if (message === 'Vehicle not found') return sendError(res, message, 404);
       return sendError(res, message, 500);
     }

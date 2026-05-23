@@ -230,6 +230,19 @@ export async function markVehicleReturned(
   });
   if (!vehicle) throw new Error('Vehicle not found');
 
+  // WI-100 Gap C: block re-running on a trip already returned + reconciled.
+  // After reconciliation the vehicle is back to 'idle' and its DVA is
+  // isReconciled — without this the driver app could re-trigger the return
+  // endlessly (the Mark-Vehicle-Returned loop). 409 via the route's message map.
+  const guardDva = await prisma.driverVehicleAssignment.findFirst({
+    where: { vehicleId, distributorId, assignmentDate: startOfUtcDay(), status: { not: 'cancelled' } },
+    orderBy: { tripNumber: 'desc' },
+    select: { isReconciled: true },
+  });
+  if (vehicle.status === 'idle' || guardDva?.isReconciled) {
+    throw new Error('Vehicle has already been reconciled for this trip.');
+  }
+
   // Get all pending cancelled stock on this vehicle
   const cancelledStock = await prisma.cancelledStockEvent.findMany({
     where: {
@@ -579,7 +592,13 @@ export async function confirmVehicleReconciliation(
   if (reconcileDva) {
     await prisma.driverVehicleAssignment.update({
       where: { id: reconcileDva.id },
-      data: { reconciledAt: new Date(), isReconciled: true },
+      // WI-100 Gap A: advance the DVA to its terminal state for a completed
+      // trip — dispatch_ready (vehicle idle, waiting for the next dispatch).
+      // Without this the DVA stuck at loaded_and_dispatched after reconcile, so
+      // the driver app re-showed "Mark Vehicle Returned" forever (the loop).
+      // preflightDispatch (WI-100 Gap B) rolls this dispatch_ready+isReconciled
+      // DVA to the next trip when a new batch is dispatched.
+      data: { status: 'dispatch_ready', reconciledAt: new Date(), isReconciled: true },
     });
   }
 

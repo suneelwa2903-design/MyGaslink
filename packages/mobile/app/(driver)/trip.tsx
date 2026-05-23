@@ -214,8 +214,14 @@ export default function DriverTripScreen() {
   // (POST /delivery/driver/vehicle-returned) which handles vehicle status,
   // inventory events, and the DVA transition atomically. All other
   // status advances use the generic DVA status PUT.
+  // WI-100 Gap D: also require !isReconciled — once Inventory has reconciled the
+  // trip the DVA still reads loaded_and_dispatched (until the next dispatch
+  // rolls it), so without this the "Mark Vehicle Returned" button reappeared
+  // after reconcile (the loop). The server guard (Gap C) is the real fix; this
+  // hides the button so the driver never taps it.
   const isReturnTransition =
-    assignment?.status === 'loaded_and_dispatched' && nextStep?.status === 'returned_inventory';
+    assignment?.status === 'loaded_and_dispatched' && nextStep?.status === 'returned_inventory'
+    && !(assignment as any).isReconciled;
 
   // WI-094b Fix 2: only surface the "Dispatch pending" note when the DVA is
   // dispatch_ready AND there is actually an order waiting to be dispatched.

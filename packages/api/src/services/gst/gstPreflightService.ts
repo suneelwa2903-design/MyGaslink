@@ -135,7 +135,7 @@ export async function preflightDispatch(params: {
       status: { not: 'cancelled' },
     },
     orderBy: { tripNumber: 'desc' },  // WI-083: prefer highest tripNumber to avoid stale-row collisions
-    select: { id: true, vehicleId: true, status: true, vehicle: { select: { vehicleNumber: true } } },
+    select: { id: true, vehicleId: true, status: true, isReconciled: true, vehicle: { select: { vehicleNumber: true } } },
   });
   if (distributor.gstMode !== 'disabled' && !mapping?.vehicleId) {
     throw new PreflightError(
@@ -170,19 +170,19 @@ export async function preflightDispatch(params: {
     );
   }
 
+  // WI-100 Gap B: decide whether this dispatch starts a NEW trip on an
+  // already-used DVA (→ roll tripNumber + clear the prior trip's state). Two
+  // trigger cases:
+  //   (a) status === 'dispatch_ready' && isReconciled — the NORMAL post-reconcile
+  //       path. confirmVehicleReconciliation now leaves the DVA dispatch_ready
+  //       (WI-100 Gap A). A brand-new first-trip DVA is also dispatch_ready but
+  //       has isReconciled === false, so it does NOT roll (keeps tripNumber 1).
+  //   (b) status === 'loaded_and_dispatched' with 0 in-flight orders —
+  //       defence-in-depth for a completed trip whose DVA never got reconciled
+  //       (escaped/pre-WI-100 rows). If orders ARE in flight the caller wanted
+  //       "Add to Trip", so refuse the second dispatch with a 409.
+  let shouldRoll = false;
   if (mapping?.status === 'loaded_and_dispatched') {
-    // The assignment row says "vehicle on the road". That's the right
-    // block when orders are genuinely in flight — refuse the second
-    // dispatch. But the old behaviour also blocked the legitimate case
-    // where all the morning's orders have already been delivered: the
-    // driver returned, new orders piled up for trip 2, but the
-    // assignment status was never advanced (no auto-transition from
-    // loaded_and_dispatched → returned_inventory after deliveries
-    // complete). Gate on actual in-flight orders instead.
-    //
-    // WI-065 note: when this gate fires, the caller likely wanted Add to
-    // Trip — they have a live trip AND new orders ready. Surface that as
-    // an actionable error rather than a flat refusal.
     const inFlightCount = await prisma.order.count({
       where: {
         distributorId,
@@ -199,21 +199,16 @@ export async function preflightDispatch(params: {
         409,
       );
     }
-    // WI-096b: this is now the PRIMARY trip-roll site. The roll used to live
-    // in confirmDelivery (WI-068/070) and fire at the LAST delivery, but that
-    // rolled too early (hid Mark-Returned, cleared dispatchedAt, mis-scoped the
-    // driver app). The roll was removed from confirmDelivery, so a fully-
-    // delivered trip leaves its DVA at loaded_and_dispatched with 0 in-flight
-    // orders — and we reach here on the NEXT Dispatch click for a brand-new
-    // batch. That is exactly when the new trip should start.
-    //
-    // Bump tripNumber for the audit trail, reset the row to dispatch_ready so
-    // the standard flow can write a fresh consolidated EWB for the new batch,
-    // and clear the prior trip's sheet + timeline stamps (the new trip needs
-    // its own). order_status_logs keeps the per-order audit trail.
-    //
-    // No double-roll risk: confirmDelivery no longer touches the DVA, so this
-    // is the single roll path out of loaded_and_dispatched on a new dispatch.
+    shouldRoll = true; // completed trip, 0 in-flight
+  } else if (mapping?.status === 'dispatch_ready' && mapping.isReconciled) {
+    shouldRoll = true; // reconciled trip → start the next one
+  }
+
+  if (shouldRoll && mapping?.id) {
+    // Roll to a fresh trip: bump tripNumber, reset to dispatch_ready, clear the
+    // prior trip's consolidated-EWB + timeline stamps (the new trip writes its
+    // own). order_status_logs keeps the per-order audit trail. WI-096b moved
+    // this roll out of confirmDelivery (which fired too early at last delivery).
     await prisma.driverVehicleAssignment.update({
       where: { id: mapping.id },
       data: {
@@ -223,10 +218,6 @@ export async function preflightDispatch(params: {
         tripSheetGeneratedAt: null,
         tripSheetNo2: null,
         tripSheetNo2GeneratedAt: null,
-        // WI-094c: clear the per-trip timeline timestamps on the trip roll
-        // (mirrors the confirmDelivery auto-reset in orderService.ts). Keeps
-        // the previous trip's dispatched/returned/reconciled stamps from
-        // leaking onto the new trip's timeline.
         dispatchedAt: null,
         returnedAt: null,
         reconciledAt: null,
