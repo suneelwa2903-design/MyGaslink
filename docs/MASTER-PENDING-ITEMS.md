@@ -258,3 +258,21 @@ Priority: `critical` · `high` · `medium` · `low`.
 - Status: **PENDING** · Priority: medium
 - Not started. (Testing task — not code-verifiable.)
 - Gap / What remains: execute the customer-app test pass and log results.
+
+---
+
+## UX (post-launch)
+
+**#27 — Trip tab: "Trip Complete" state**
+- Status: **PENDING** · Priority: low (post-launch UX)
+- After all deliveries on a trip are done, the driver Trip tab still shows
+  "dispatch ready" instead of a "Trip Complete" state. Add a terminal
+  "Trip Complete" view once every order on the effective trip is
+  delivered/modified_delivered (and reconciliation is pending/done).
+
+**#28 — Vehicle Stock: show trip number**
+- Status: **PENDING** · Priority: low (post-launch UX)
+- Vehicle Stock (driver trip-stock view) doesn't indicate which trip number
+  the displayed stock belongs to. Surface the effective trip number on the
+  Vehicle Stock screen so the driver knows the stock is scoped to the current
+  trip.
