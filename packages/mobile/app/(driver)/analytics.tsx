@@ -210,7 +210,14 @@ export default function DriverAnalyticsScreen() {
                   </Text>
                   {order.items && order.items.length > 0 && (
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                      {order.items.map((item) => `${item.cylinderTypeName} x${item.quantity}`).join(', ')}
+                      {order.items.map((item) => {
+                        // WI-103: for modified deliveries show the qty actually
+                        // delivered, not the ordered qty.
+                        const qty = order.status === 'modified_delivered' && item.deliveredQuantity && item.deliveredQuantity > 0
+                          ? item.deliveredQuantity
+                          : item.quantity;
+                        return `${item.cylinderTypeName} x${qty}`;
+                      }).join(', ')}
                     </Text>
                   )}
                   {order.items && order.items.reduce((sum, item) => sum + (item.emptiesCollected ?? 0), 0) > 0 && (

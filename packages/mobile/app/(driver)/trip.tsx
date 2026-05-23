@@ -440,11 +440,18 @@ export default function DriverTripScreen() {
                   />
                 </View>
                 <View style={{ marginTop: 8, gap: 2 }}>
-                  {order.items?.map((item: any, i: number) => (
-                    <Text key={i} style={{ fontSize: 12, color: colors.textSecondary }}>
-                      {item.cylinderTypeName} x {item.quantity}
-                    </Text>
-                  ))}
+                  {order.items?.map((item: any, i: number) => {
+                    // WI-103: for modified deliveries show the qty actually
+                    // delivered, not the ordered qty.
+                    const qty = order.status === 'modified_delivered' && item.deliveredQuantity && item.deliveredQuantity > 0
+                      ? item.deliveredQuantity
+                      : item.quantity;
+                    return (
+                      <Text key={i} style={{ fontSize: 12, color: colors.textSecondary }}>
+                        {item.cylinderTypeName} x {qty}
+                      </Text>
+                    );
+                  })}
                 </View>
               </Card>
             ))}
