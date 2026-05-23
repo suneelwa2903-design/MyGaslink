@@ -366,6 +366,81 @@ describe('cancelOrder — B2B with active IRN + EWB', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe('WI-102 — cancelling a dispatched order leaves DVA tripNumber unchanged', () => {
+  let cancelOrderId: string;
+  let keepOrderId: string;
+  let driverId: string;
+  let vehicleId: string;
+
+  it('seeds two dispatched orders on the same trip (tripNumber 3)', async () => {
+    const customer = seedData.customers[0];
+    const cyl = seedData.cylinderTypes[0];
+    driverId = seedData.drivers[0].id;
+    vehicleId = seedData.vehicles[0].id;
+
+    await prisma.driverVehicleAssignment.upsert({
+      where: { driverId_assignmentDate_tripNumber: { driverId, assignmentDate: new Date(TEST_DATE), tripNumber: 3 } },
+      create: {
+        driverId,
+        vehicleId,
+        distributorId,
+        assignmentDate: new Date(TEST_DATE),
+        tripNumber: 3,
+        status: 'loaded_and_dispatched',
+      },
+      update: { status: 'loaded_and_dispatched', vehicleId },
+    });
+
+    const mk = async (suffix: string) =>
+      prisma.order.create({
+        data: {
+          orderNumber: `TEST-WI102-${suffix}-${Date.now()}`,
+          distributorId,
+          customerId: customer.id,
+          driverId,
+          vehicleId,
+          orderDate: new Date(),
+          deliveryDate: new Date(TEST_DATE),
+          tripNumber: 3,
+          status: 'pending_delivery',
+          totalAmount: 500,
+          items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 500, discountPerUnit: 0, totalPrice: 500 }] },
+        },
+      });
+
+    cancelOrderId = (await mk('CANCEL')).id;
+    keepOrderId = (await mk('KEEP')).id;
+  });
+
+  it('cancels one order — DVA tripNumber stays 3, status stays loaded_and_dispatched', async () => {
+    cancelEwbMock.mockClear();
+    cancelIrnMock.mockClear();
+
+    const res = await request(app)
+      .post(`/api/orders/${cancelOrderId}/cancel`)
+      .set(auth(adminToken))
+      .send({ reason: 'WI-102 test' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('cancelled');
+
+    const dva = await prisma.driverVehicleAssignment.findFirst({
+      where: { driverId, distributorId, assignmentDate: new Date(TEST_DATE), tripNumber: 3 },
+    });
+    // tripNumber must NOT have been decremented (was the WI-102 bug).
+    expect(dva?.tripNumber).toBe(3);
+    // Other live order still on trip 3 → status must remain dispatched.
+    expect(dva?.status).toBe('loaded_and_dispatched');
+
+    // Sanity: the kept order is still live on trip 3.
+    const keep = await prisma.order.findUnique({ where: { id: keepOrderId } });
+    expect(keep?.status).toBe('pending_delivery');
+    expect(keep?.tripNumber).toBe(3);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe('cancelOrder — NIC EWB cancel failure creates pending action', () => {
   let orderId: string;
   let invoiceId: string;

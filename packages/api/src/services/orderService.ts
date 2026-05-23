@@ -1210,9 +1210,10 @@ export async function cancelOrder(
           },
         });
         const dvaUpdates: Record<string, unknown> = {};
-        if (dva.status === 'loaded_and_dispatched' as any) {
-          dvaUpdates.tripNumber = Math.max(1, dva.tripNumber - 1);
-        }
+        // WI-102: do NOT decrement tripNumber here. Under WI-096b's per-order
+        // tripNumber scoping, decrementing makes the DVA point at trip N-1,
+        // hiding other live orders still on trip N. Only flip status to
+        // dispatch_ready once no live orders remain (trip genuinely complete).
         if (activeOrders === 0 && ['loaded_and_dispatched', 'dispatch_ready'].includes(dva.status as string)) {
           dvaUpdates.status = 'dispatch_ready';
         }
