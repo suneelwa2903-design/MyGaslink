@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
 // vi.mock must hoist above the imports below so the reissue service
 // sees the mocked apiCall when it pulls in whitebooksClient.
@@ -19,8 +19,13 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
   };
 });
 
+import request from 'supertest';
+import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma.js';
 import * as whitebooksClient from '../services/gst/whitebooksClient.js';
+import { createApp } from '../app.js';
+import { generateToken } from './helpers.js';
+import { startOfUtcDay } from '../utils/dateOnly.js';
 
 // CLAUDE.md anti-pattern #7: tests that seed time-sensitive data use
 // a fixed future date so real dev-DB rows never get swept into service
@@ -529,5 +534,168 @@ describe('gstReissueService — delivery mismatch flow', () => {
     } finally {
       await teardown(f.orderId);
     }
+  });
+
+  // ── WI-107: B2B reissue generates a NEW EWB linked to the new IRN ──────────
+  it('WI-107: B2B reissue generates a new EWB entry in gst_documents (ewbStatus active, cancelledAt cleared)', async () => {
+    const f = await seedReissueFixture({ isB2B: true, withActiveEwb: true });
+    // Step 4 needs a vehicle on the order to build the EWB payload.
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: 'dist-002' } });
+    await prisma.order.update({ where: { id: f.orderId }, data: { vehicleId: vehicle.id } });
+    try {
+      apiCallMock
+        .mockResolvedValueOnce(ewbCancelOk())          // Step 1 cancelEwb
+        .mockResolvedValueOnce(irnCancelOk())          // Step 2 cancelIrn
+        .mockResolvedValueOnce(irnSuccess())           // Step 3 regenerate IRN
+        .mockResolvedValueOnce(ewbGenOk('151012065439')); // Step 4 NEW EWB
+      const result = await reissue({
+        invoiceId: f.invoiceId, distributorId: 'dist-002', userId: 'test-user',
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok && 'revisionId' in result) {
+        expect(result.mode).toBe('B2B');
+        expect(result.newIrn).toBeTruthy();
+        expect(result.newEwbNo).toBe('151012065439');
+      }
+      // The latest gst_documents row reflects the NEW active EWB and the
+      // stale cancelledAt (set by Step 1 cancelEwb) has been cleared.
+      const doc = await prisma.gstDocument.findFirstOrThrow({
+        where: { invoiceId: f.invoiceId, isLatest: true },
+      });
+      expect(doc.ewbStatus).toBe('active');
+      expect(doc.ewbNo).toBe('151012065439');
+      expect(doc.cancelledAt).toBeNull();
+      // Invoice mirrors the active EWB.
+      const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
+      expect(inv.ewbStatus).toBe('active');
+    } finally {
+      await teardown(f.orderId);
+    }
+  });
+
+  it('WI-107: Step 4 EWB failure is non-fatal — IRN revision stays committed, EWB_GENERATION pending action raised', async () => {
+    const f = await seedReissueFixture({ isB2B: true, withActiveEwb: false });
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: 'dist-002' } });
+    await prisma.order.update({ where: { id: f.orderId }, data: { vehicleId: vehicle.id } });
+    try {
+      apiCallMock
+        .mockResolvedValueOnce(irnCancelOk())                              // Step 2 cancelIrn
+        .mockResolvedValueOnce(irnSuccess({ Irn: 'irn_new_committed_77' })) // Step 3 regenerate IRN
+        .mockRejectedValueOnce(whitebooksError('620', 'EWB value mismatch')); // Step 4 NEW EWB fails
+      const result = await reissue({
+        invoiceId: f.invoiceId, distributorId: 'dist-002', userId: 'test-user',
+      });
+      // Non-fatal: the reissue still succeeds overall.
+      expect(result.ok).toBe(true);
+      const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
+      // IRN revision (Step 3) stays committed despite the EWB failure.
+      expect(inv.irnStatus).toBe('success');
+      expect(inv.irn).toBe('irn_new_committed_77');
+      // EWB marked failed; pending action raised for manual cleanup.
+      expect(inv.ewbStatus).toBe('failed');
+      const pa = await prisma.pendingAction.findFirst({
+        where: { entityId: f.invoiceId, actionType: 'EWB_GENERATION' },
+      });
+      expect(pa).toBeTruthy();
+      // The revision audit row was still written (Step 5).
+      const rev = await prisma.invoiceRevision.findFirst({ where: { invoiceId: f.invoiceId } });
+      expect(rev).toBeTruthy();
+    } finally {
+      await teardown(f.orderId);
+    }
+  });
+});
+
+// ── WI-107: the reissued EWB surfaces in the driver Compliance Docs feed ──────
+// reissueForDeliveryMismatch is invoiceId-scoped (it never sweeps by date), so
+// this fixture safely uses TODAY — which the trip-ewbs endpoint requires — with
+// synthetic phones / order numbers / EWB numbers to keep cleanup off real rows.
+describe('WI-107 — trip-ewbs Compliance Docs shows the new EWB after B2B reissue', () => {
+  let app: import('express').Express;
+  const TODAY = startOfUtcDay();
+  const PHONE = '9914207107';
+  let reissue: typeof import('../services/gst/gstReissueService.js').reissueForDeliveryMismatch;
+
+  async function cleanup() {
+    const orders = await prisma.order.findMany({ where: { orderNumber: { startsWith: 'TEST-W107-' } }, select: { id: true } });
+    const orderIds = orders.map((o) => o.id);
+    const invoices = await prisma.invoice.findMany({ where: { orderId: { in: orderIds } }, select: { id: true } });
+    const invoiceIds = invoices.map((i) => i.id);
+    // pendingAction.entityId is a plain string (no FK relation) — delete by id list.
+    await prisma.pendingAction.deleteMany({ where: { entityId: { in: [...invoiceIds, ...orderIds] } } });
+    await prisma.gstDocument.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+    await prisma.invoiceRevision.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+    await prisma.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+    await prisma.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+    await prisma.orderStatusLog.deleteMany({ where: { orderId: { in: orderIds } } });
+    await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+    await prisma.driverVehicleAssignment.deleteMany({ where: { driver: { phone: PHONE } } });
+    await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+    await prisma.vehicle.deleteMany({ where: { vehicleNumber: { startsWith: 'TEST-W107-VEH' } } });
+    await prisma.driver.deleteMany({ where: { phone: PHONE } });
+    await prisma.user.deleteMany({ where: { email: { endsWith: '@test-w107.local' } } });
+  }
+
+  beforeAll(async () => {
+    app = createApp();
+    reissue = (await import('../services/gst/gstReissueService.js')).reissueForDeliveryMismatch;
+    await cleanup();
+  });
+  afterAll(cleanup);
+  beforeEach(() => apiCallMock.mockReset());
+
+  it('reissue updates the latest EWB in place → endpoint returns the new number, not the cancelled original', async () => {
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId: 'dist-002', customerType: 'B2B', gstin: { not: null }, deletedAt: null },
+    });
+    const cyl = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId: 'dist-002', typeName: '19 KG' } });
+    const passwordHash = await bcrypt.hash('TestDriver@123', 10);
+    const user = await prisma.user.create({
+      data: { email: 'driver@test-w107.local', passwordHash, firstName: 'W107', lastName: 'Drv', phone: PHONE, role: 'driver', status: 'active', distributorId: 'dist-002' },
+    });
+    const driver = await prisma.driver.create({ data: { distributorId: 'dist-002', driverName: 'W107 Drv', phone: PHONE, status: 'active' } });
+    const vehicle = await prisma.vehicle.create({ data: { distributorId: 'dist-002', vehicleNumber: 'TEST-W107-VEH', vehicleType: 'Truck', status: 'dispatched' } });
+    await prisma.driverVehicleAssignment.create({
+      data: { distributorId: 'dist-002', driverId: driver.id, vehicleId: vehicle.id, assignmentDate: TODAY, status: 'loaded_and_dispatched', tripNumber: 1 },
+    });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: 'TEST-W107-O1', distributorId: 'dist-002', customerId: customer.id, driverId: driver.id, vehicleId: vehicle.id,
+        orderDate: TODAY, deliveryDate: TODAY, status: 'modified_delivered', orderType: 'delivery', totalAmount: 16000, tripNumber: 1,
+        items: { create: [{ cylinderTypeId: cyl.id, quantity: 10, deliveredQuantity: 8, unitPrice: 2000, totalPrice: 20000 }] },
+      },
+    });
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: 'INV-TEST-W107-O1', distributorId: 'dist-002', customerId: customer.id, orderId: order.id,
+        issueDate: TODAY, dueDate: TODAY, totalAmount: 20000, outstandingAmount: 20000, status: 'issued',
+        irnStatus: 'success', ewbStatus: 'active', irn: 'irn_w107_seed',
+        cgstValue: 1000, sgstValue: 1000, igstValue: 0,
+        items: { create: [{ cylinderTypeId: cyl.id, description: '19 KG', quantity: 10, unitPrice: 2000, discountPerUnit: 0, gstRate: 18, totalPrice: 20000 }] },
+      },
+    });
+    await prisma.gstDocument.create({
+      data: {
+        invoiceId: invoice.id, orderId: order.id, distributorId: 'dist-002', docType: 'INV', gstDocNo: invoice.invoiceNumber,
+        irnStatus: 'success', irn: 'irn_w107_seed', ewbStatus: 'active', ewbNo: 'EWB-W107-OLD',
+        ewbDate: TODAY, ewbValidTill: new Date(TODAY.getTime() + 86_400_000), isLatest: true,
+      },
+    });
+    const token = generateToken({ userId: user.id, email: user.email, role: 'driver' as any, distributorId: 'dist-002' });
+
+    apiCallMock
+      .mockResolvedValueOnce(ewbCancelOk())            // Step 1 cancelEwb
+      .mockResolvedValueOnce(irnCancelOk())            // Step 2 cancelIrn
+      .mockResolvedValueOnce(irnSuccess())             // Step 3 regenerate IRN
+      .mockResolvedValueOnce(ewbGenOk('EWB-W107-NEW')); // Step 4 NEW EWB
+
+    const result = await reissue({ invoiceId: invoice.id, distributorId: 'dist-002', userId: 'test-user' });
+    expect(result.ok).toBe(true);
+
+    const res = await request(app).get('/api/drivers/me/trip-ewbs').set({ Authorization: `Bearer ${token}` });
+    expect(res.status).toBe(200);
+    const ewbNos = res.body.data.items.map((i: any) => i.ewbNo);
+    expect(ewbNos).toContain('EWB-W107-NEW');
+    expect(ewbNos).not.toContain('EWB-W107-OLD');
   });
 });

@@ -109,6 +109,112 @@ export function parseEwbResponse(resp: any): {
  * Process GST compliance for an invoice.
  * Called after invoice creation. Non-blocking - failures create pending actions.
  */
+/**
+ * Generate a NEW EWB linked to an already-generated IRN, and persist it
+ * onto the invoice's latest gst_documents row.
+ *
+ * WI-107: extracted from the EWB-by-IRN block that previously lived inline
+ * inside processInvoiceGst, so the SAME logic is reused by both the
+ * dispatch path (processInvoiceGst) and the post-modified-delivery B2B
+ * reissue path (gstReissueService.regenerateB2bEwb). The live NIC test
+ * (Q8) confirmed NIC accepts a fresh EWB on the new IRN after the full
+ * cancel-EWB → cancel-IRN → new-IRN sequence.
+ *
+ * Non-fatal by contract: on a NIC failure it marks ewbStatus='failed' and
+ * raises an EWB_GENERATION pending action, then returns
+ * { status: 'failed' } — it never throws for a NIC-side error, so a
+ * caller's already-committed IRN is never rolled back. A 604 ("EWB already
+ * exists") is recovered via the IRN-details endpoint.
+ *
+ * Clears any stale `cancelledAt` on the latest gst_documents row — the
+ * reissue path cancels the prior EWB in Step 1, and that timestamp must
+ * not survive onto the new active EWB.
+ */
+export async function generateEwbFromIrn(
+  distributorId: string,
+  invoiceId: string,
+  irnData: {
+    irnPayload: any;
+    vehicleNumber: string;
+    email: string;
+    irn: string;
+    orderId?: string | null;
+    apiType?: string;
+  },
+): Promise<{ ewbNo?: string | null; status: 'active' | 'already_exists' | 'failed'; source?: string; error?: string }> {
+  const { irnPayload, vehicleNumber, email, irn, orderId, apiType = 'EWB_GENERATE_BY_IRN' } = irnData;
+  try {
+    const ewbPayload = buildEwbPayload(irnPayload, {
+      vehicleNumber,
+      transportMode: '1',
+      distance: 1,
+    });
+
+    const ewbResponse = await callWithLog<any>(
+      distributorId, 'POST',
+      `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(email)}`,
+      ewbPayload, 'ewaybill',
+      { apiType, invoiceId, orderId: orderId ?? undefined },
+    );
+
+    const parsed = parseEwbResponse(ewbResponse);
+    if (!parsed.ewbNo) {
+      logger.warn('EWB response missing ewayBillNo', {
+        invoiceId, responseKeys: Object.keys(ewbResponse ?? {}),
+        dataKeys: ewbResponse?.data && typeof ewbResponse.data === 'object'
+          ? Object.keys(ewbResponse.data) : null,
+      });
+    }
+
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { ewbStatus: 'active' },
+    });
+
+    await prisma.gstDocument.updateMany({
+      where: { invoiceId, isLatest: true },
+      data: {
+        ewbStatus: 'active',
+        ewbNo: parsed.ewbNo,
+        ewbDate: parsed.validFromDate,
+        ewbValidTill: parsed.validToDate,
+        // WI-107: clear stale cancelledAt left by a prior EWB cancel
+        // (reissue Step 1) so the row reflects the new live EWB.
+        cancelledAt: null,
+        // Keep raw EWB response so we can audit response-shape drift.
+        responsePayload: ewbResponse,
+      },
+    });
+
+    logger.info('EWB generated from IRN', { invoiceId, ewbNo: parsed.ewbNo, apiType });
+    return { ewbNo: parsed.ewbNo, status: 'active' };
+  } catch (ewbErr: any) {
+    const errCode = ewbErr.code || '';
+    const errMsg = ewbErr.message || '';
+    // Per NIC: 604 = "EWB already exists for this document". The EWB exists
+    // on the portal but the API doesn't return it — recover via IRN-details.
+    const isAlreadyExists = errCode === '604' || errMsg.includes('604');
+    if (isAlreadyExists) {
+      await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
+      await prisma.gstDocument.updateMany({
+        where: { invoiceId, isLatest: true },
+        data: { ewbStatus: 'active', cancelledAt: null },
+      });
+      const recovered = await recoverEwbFromIrn(invoiceId, distributorId, irn);
+      logger.info('EWB already exists on portal (604)', { invoiceId, recovered: !!recovered });
+      return recovered
+        ? { ewbNo: recovered.ewbNo, status: 'active', source: 'recovered_from_irn' }
+        : { status: 'already_exists' };
+    }
+    // Non-fatal: surface the failure, mark EWB failed, raise pending action.
+    // (Includes 620 "Total invoice value < assessable + taxes", a payload
+    // bug we want surfaced rather than silently marked active.)
+    await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'failed' } });
+    await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', errMsg);
+    return { status: 'failed', error: errMsg };
+  }
+}
+
 export async function processInvoiceGst(invoiceId: string, distributorId: string) {
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
@@ -290,75 +396,24 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           result.ewb = { ewbNo: existingEwb.ewbNo, status: 'active', source: 'dispatch' };
           logger.info('Linked dispatch EWB to invoice', { invoiceId, ewbNo: existingEwb.ewbNo });
         } else if (invoice.order?.vehicle) {
-          try {
-            const ewbPayload = buildEwbPayload(irnPayload, {
-              vehicleNumber: invoice.order.vehicle.vehicleNumber,
-              transportMode: '1',
-              distance: 1,
-            });
-
-            const ewbResponse = await callWithLog<any>(
-              distributorId, 'POST',
-              `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(email)}`,
-              ewbPayload, 'ewaybill',
-              { apiType: 'EWB_GENERATE_BY_IRN', invoiceId, orderId: invoice.orderId },
-            );
-
-            const parsed = parseEwbResponse(ewbResponse);
-            if (!parsed.ewbNo) {
-              logger.warn('EWB response missing ewayBillNo', {
-                invoiceId, responseKeys: Object.keys(ewbResponse ?? {}),
-                dataKeys: ewbResponse?.data && typeof ewbResponse.data === 'object'
-                  ? Object.keys(ewbResponse.data) : null,
-              });
-            }
-
-            await prisma.invoice.update({
-              where: { id: invoiceId },
-              data: { ewbStatus: 'active' },
-            });
-
-            await prisma.gstDocument.updateMany({
-              where: { invoiceId, isLatest: true },
-              data: {
-                ewbStatus: 'active',
-                ewbNo: parsed.ewbNo,
-                ewbDate: parsed.validFromDate,
-                ewbValidTill: parsed.validToDate,
-                // Keep raw EWB response so we can audit response-shape
-                // drift instead of guessing.
-                responsePayload: ewbResponse,
-              },
-            });
-
-            result.ewb = { ewbNo: parsed.ewbNo, status: 'active' };
-            logger.info('EWB generated separately', { invoiceId, ewbNo: parsed.ewbNo });
-          } catch (ewbErr: any) {
-            const errCode = ewbErr.code || '';
-            const errMsg = ewbErr.message || '';
-            // Per NIC: 604 = "EWB already exists for this document". The
-            // EWB exists on the portal but the API doesn't return it —
-            // recover the number via the IRN-details endpoint.
-            const isAlreadyExists = errCode === '604' || errMsg.includes('604');
-            if (isAlreadyExists) {
-              await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
-              await prisma.gstDocument.updateMany({
-                where: { invoiceId, isLatest: true },
-                data: { ewbStatus: 'active' },
-              });
-              const recovered = await recoverEwbFromIrn(invoiceId, distributorId, irn);
-              result.ewb = recovered
-                ? { ewbNo: recovered.ewbNo, status: 'active', source: 'recovered_from_irn' }
-                : { status: 'already_exists' };
-              logger.info('EWB already exists on portal (604)', { invoiceId, recovered: !!recovered });
-            } else {
-              // Includes 620 ("Total invoice value < assessable + taxes"),
-              // which is a payload bug, not a 'already exists' — surface
-              // it so it gets noticed instead of silently marking active.
-              result.errors.push(`EWB failed: ${errMsg}`);
-              await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'failed' } });
-              await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', errMsg);
-            }
+          // WI-107: delegate to the shared helper (also used by the B2B
+          // reissue path). Non-fatal — never throws for a NIC error.
+          const ewbResult = await generateEwbFromIrn(distributorId, invoiceId, {
+            irnPayload,
+            vehicleNumber: invoice.order.vehicle.vehicleNumber,
+            email,
+            irn,
+            orderId: invoice.orderId,
+            apiType: 'EWB_GENERATE_BY_IRN',
+          });
+          if (ewbResult.status === 'failed') {
+            result.errors.push(`EWB failed: ${ewbResult.error ?? 'unknown error'}`);
+          } else {
+            result.ewb = {
+              ewbNo: ewbResult.ewbNo,
+              status: ewbResult.status === 'already_exists' ? 'already_exists' : 'active',
+              ...(ewbResult.source ? { source: ewbResult.source } : {}),
+            };
           }
         }
       }

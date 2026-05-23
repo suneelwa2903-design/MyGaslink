@@ -30,6 +30,7 @@ import {
   cancelEwb,
   cancelIrn,
   createPendingAction,
+  generateEwbFromIrn,
   parseEwbResponse,
   parseWhitebooksDate,
 } from './gstService.js';
@@ -256,6 +257,28 @@ export async function reissueForDeliveryMismatch(args: {
     // manual cleanup.
   }
 
+  // WI-107 — Step 4 (B2B only): generate a NEW EWB linked to the new IRN.
+  // Confirmed by the live NIC test (Q8): after cancel-EWB → cancel-IRN →
+  // new-IRN, NIC accepts a fresh EWB on the revised invoice number. This
+  // runs in its OWN try so an EWB failure can never roll back or mislabel
+  // the already-committed IRN revision (Step 3). generateEwbFromIrn is
+  // itself non-fatal — it raises an EWB_GENERATION pending action on a NIC
+  // failure — so here we only guard pre-call errors (e.g. no vehicle).
+  if (isB2B && newIrn) {
+    try {
+      newEwbNo = await regenerateB2bEwb(invoiceId, distributorId, distributor);
+      logger.info('Reissue B2B: new EWB generated', { invoiceId, newEwbNo });
+    } catch (ewbErr: any) {
+      logger.error('Reissue B2B: new EWB generation failed (non-fatal)', { invoiceId, err: ewbErr.message });
+      await createPendingAction(
+        distributorId, invoiceId,
+        'EWB_GENERATION',
+        ewbErr.message ?? 'New EWB generation failed during reissue',
+        'medium',
+      );
+    }
+  }
+
   // Step 5 — write the revision audit row.
   const revisionRow = await prisma.invoiceRevision.create({
     data: {
@@ -389,6 +412,55 @@ async function regenerateB2bIrn(
     signedQr,
   });
   return irn;
+}
+
+/**
+ * WI-107: Generate a new EWB linked to the freshly regenerated B2B IRN
+ * (post-reissue Step 4). Mirrors regenerateB2cEwb but delegates the NIC
+ * call + persistence to the shared generateEwbFromIrn helper so the
+ * payload (transactionType:1, ship-to/dispatch-from omitted — anti-pattern
+ * #14) and the gst_documents update (incl. clearing the stale cancelledAt)
+ * are identical to the dispatch path.
+ *
+ * NIC failures are handled non-fatally INSIDE generateEwbFromIrn (it raises
+ * the EWB_GENERATION pending action and returns status 'failed'); this
+ * function only throws for pre-call problems (no vehicle / no IRN), which
+ * the caller catches and converts to its own pending action.
+ */
+async function regenerateB2bEwb(
+  invoiceId: string,
+  distributorId: string,
+  distributor: any,
+): Promise<string | null> {
+  const invoice = await prisma.invoice.findFirstOrThrow({
+    where: { id: invoiceId },
+    include: { order: { include: { vehicle: true } } },
+  });
+  const vehicleNumber = invoice.order?.vehicle?.vehicleNumber;
+  if (!vehicleNumber) {
+    throw new Error('Cannot regenerate EWB: no vehicle on order');
+  }
+  if (!invoice.irn) {
+    throw new Error('Cannot regenerate EWB: no IRN on revised invoice');
+  }
+  const invoiceData = await buildInvoiceDataForIrn(invoiceId, distributor);
+  const credEmail =
+    (await getCredentials(distributorId, 'ewaybill'))?.email ||
+    (await getCredentials(distributorId, 'einvoice'))?.email ||
+    distributor.email ||
+    'info@mygaslink.com';
+
+  const result = await generateEwbFromIrn(distributorId, invoiceId, {
+    irnPayload: buildIrnPayload(invoiceData),
+    vehicleNumber,
+    email: credEmail,
+    irn: invoice.irn,
+    orderId: invoice.orderId,
+    apiType: 'EWB_GENERATE_REISSUE_B2B',
+  });
+  // 'failed' already raised an EWB_GENERATION pending action inside the
+  // helper — return null rather than double-raising at the call site.
+  return result.ewbNo ?? null;
 }
 
 /** Generate a new standalone EWB for a B2C invoice post-reissue. */
