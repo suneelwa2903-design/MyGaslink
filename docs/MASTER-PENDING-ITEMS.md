@@ -276,3 +276,92 @@ Priority: `critical` · `high` · `medium` · `low`.
   the displayed stock belongs to. Surface the effective trip number on the
   Vehicle Stock screen so the driver knows the stock is scoped to the current
   trip.
+
+---
+
+## Comprehensive audit findings (2026-05-24)
+
+> Items #29–#36 surfaced by the four-part read-only audit on 2026-05-24.
+> Items marked **IN PROGRESS** are being fixed in the current session.
+
+**#29 — Inventory recompute silent no-op after reconciliation**
+- Status: **IN PROGRESS** (WI-113) · Priority: high
+- `confirmVehicleReconciliation` calls `recalculateSummariesFromDate(..., new Date())`
+  ([deliveryWorkflowService.ts:469,554](packages/api/src/services/deliveryWorkflowService.ts))
+  with a current **timestamp**, but `summary_date` / `event_date` are `@db.Date`
+  (midnight). The `gte: fromDate` filter ([inventoryService.ts:202](packages/api/src/services/inventoryService.ts))
+  then never matches today's events, so depot closing stock is never recomputed
+  after a reconciliation — wrong inventory numbers every day (425KG off by −1,
+  5KG off by −2 on 2026-05-23). Fix: pass `startOfDay(new Date())`. ~2-line change,
+  low risk.
+
+**#30 — IDOR: `GET /api/invoices/:id/gst-documents` not tenant-scoped**
+- Status: **IN PROGRESS** (CRITICAL-FIX-A) · Priority: critical
+- The route queries `prisma.gstDocument.findMany({ where: { invoiceId } })` with
+  **no `distributorId` / ownership check** ([invoices.ts:272-275](packages/api/src/routes/invoices.ts)).
+  Role allows distributor_admin/finance/inventory, so any tenant can pass another
+  tenant's invoiceId and read its IRN/EWB numbers, signed QR, and NIC request/
+  response payloads. The adjacent credit-notes ([line 293-296](packages/api/src/routes/invoices.ts))
+  and debit-notes routes do the ownership pre-check first; this one was missed.
+  Fix: add the same invoice-ownership pre-check (404 if not owned). Low risk.
+
+**#31 — React Query cache not cleared on logout (systemic)**
+- Status: **IN PROGRESS** (CRITICAL-FIX-A) · Priority: critical
+- `logout()` clears only the Zustand auth store and SPA-navigates to /login
+  ([DashboardLayout.tsx:75-79](packages/web/src/components/layout/DashboardLayout.tsx),
+  [Sidebar.tsx:218-221](packages/web/src/components/layout/Sidebar.tsx)) — it never
+  clears the TanStack Query cache. Combined with static query keys (`['orders']`,
+  `['invoices']`, `['payments']`, `['vehicles']`, `['drivers']`, `['users']`,
+  `['inventory']`, `['customers-list']`, …), a same-tab logout→login as a different
+  tenant serves the prior tenant's lists from cache until refetch. The super-admin
+  distributor *switch* is already mitigated (`DistributorSelector.resetQueries`);
+  logout is not. Fix: `queryClient.clear()` in both logout handlers + scope the
+  `customers-list` key by distributorId (belt-and-suspenders).
+
+**#32 — WhiteBooks GSP credentials hardcoded in seed.ts**
+- Status: **IN PROGRESS** (WI-114) · Priority: high
+- `clientSecret`, `username`, and `password: 'Wbooks@0142'` for both einvoice and
+  ewaybill scopes are committed in plaintext ([seed.ts:471-498](packages/api/prisma/seed.ts)).
+  Sandbox, but live API secrets in the repo. Fix: read from env vars, fail loud if
+  missing, add placeholders to `.env.example`, keep real values out of tracked files.
+
+**#33 — Customer mobile: no invoice/statement PDF download**
+- Status: **PENDING** · Priority: medium
+- [(customer)/invoices.tsx](packages/mobile/app/(customer)/invoices.tsx) lists
+  invoices + detail in-app but offers no PDF/statement download (no Linking/
+  WebBrowser/FileSystem). The server route `GET /api/invoices/:id/pdf` already
+  exists ([invoices.ts:165-172](packages/api/src/routes/invoices.ts)) — UI wiring
+  only. Deferred (logged not built this session).
+
+**#34 — Customer mobile: confirm-delivery & dispute not built**
+- Status: **PENDING** · Priority: medium
+- The confirm/dispute mutation hooks exist but point at routes that don't exist
+  ([account.tsx:71-87,250](packages/mobile/app/(customer)/account.tsx), `TODO WI-093`);
+  buttons are hard-disabled (`{false && …}`). `/customer-portal` has no
+  confirm-delivery or dispute route. Needs 2 endpoints + a `customerAcknowledgedAt`
+  column + mobile UI. Deferred (logged not built this session).
+
+**#35 — Driver "My Deliveries" has no auto-refresh**
+- Status: **IN PROGRESS** (WI-115) · Priority: medium
+- `['driver-orders']` `useApiQuery` ([(driver)/orders.tsx:66-70](packages/mobile/app/(driver)/orders.tsx))
+  passes no `refetchInterval`; My Deliveries refreshes only on pull-to-refresh +
+  post-submit invalidation, while the Trip tab polls every 30s. Fix: add
+  `refetchInterval: 30000`.
+
+**#36 — Swagger: invoice PDF documented as 501 but implemented**
+- Status: **PENDING** · Priority: low
+- [swagger.ts:805-807](packages/api/src/swagger.ts) marks `/invoices/{id}/pdf` as
+  "not yet implemented" / 501, but the route is fully implemented
+  ([invoices.ts:165-172](packages/api/src/routes/invoices.ts)). Stale doc only.
+
+**#25 — EWB cancellation timing (cancel at order-cancel vs reconciliation)**
+- Status: **PARKED** · Priority: medium
+- Investigation confirmed: the EWB is cancelled at NIC at order-cancel time
+  ([orderService.ts:1064](packages/api/src/services/orderService.ts), STEP 2,
+  outside the TX), not at reconciliation — so a cancelled order's EWB disappears
+  from Compliance Docs while the cylinders may still be physically on the truck.
+  Moving the cancel to `confirmVehicleReconciliation` requires a ~30-50 line change
+  in `cancelOrder` + `deliveryWorkflowService.ts` (reconciliation only handles
+  still-`pending_*` orders, and currently cancels IRN but not EWB there), medium-high
+  risk touching live NIC cancel ordering and the EWB-active-blocks-IRN invariant.
+  Parked pre-launch.
