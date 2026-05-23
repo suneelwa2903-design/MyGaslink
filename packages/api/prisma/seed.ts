@@ -1,7 +1,22 @@
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
+
+/**
+ * WI-114 — read a required seed-time env var or fail loud (anti-pattern #11).
+ * WhiteBooks GSP credentials must never be committed to a tracked file; they
+ * live in packages/api/.env (gitignored). A missing var should produce a
+ * clear, actionable error — not a cryptic `undefined` written into the DB.
+ */
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) {
+    throw new Error(`${name} is required in packages/api/.env for seeding (see .env.example)`);
+  }
+  return v;
+}
 
 async function main() {
   console.log('Seeding database...');
@@ -472,10 +487,10 @@ async function main() {
     data: {
       distributor: { connect: { id: gstDist.id } },
       scope: 'einvoice',
-      clientId: 'EINSc0e87f75-51b3-4284-a57f-639a7582514c',
-      clientSecret: 'EINSda1f2b7a-feea-46b2-9054-0e4371da3fd4',
-      username: 'BVMGSP',
-      password: 'Wbooks@0142',
+      clientId: requireEnv('WHITEBOOKS_EINVOICE_CLIENT_ID'),
+      clientSecret: requireEnv('WHITEBOOKS_EINVOICE_CLIENT_SECRET'),
+      username: requireEnv('WHITEBOOKS_EINVOICE_USERNAME'),
+      password: requireEnv('WHITEBOOKS_EINVOICE_PASSWORD'),
       gstin: '29AAGCB1286Q000',
       email: 'mvsuneelkumar2903@gmail.com',
       isValid: true,
@@ -487,10 +502,10 @@ async function main() {
     data: {
       distributor: { connect: { id: gstDist.id } },
       scope: 'ewaybill',
-      clientId: 'EWBSa82587b9-88ca-43d0-a514-7457a38eb813',
-      clientSecret: 'EWBS68034a54-66a6-41d5-b7df-4acd0b17b525',
-      username: 'BVMGSP',
-      password: 'Wbooks@0142',
+      clientId: requireEnv('WHITEBOOKS_EWAYBILL_CLIENT_ID'),
+      clientSecret: requireEnv('WHITEBOOKS_EWAYBILL_CLIENT_SECRET'),
+      username: requireEnv('WHITEBOOKS_EWAYBILL_USERNAME'),
+      password: requireEnv('WHITEBOOKS_EWAYBILL_PASSWORD'),
       gstin: '29AAGCB1286Q000',
       email: 'mvsuneelkumar2903@gmail.com',
       isValid: true,
