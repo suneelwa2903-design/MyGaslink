@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, Alert, Linking, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -71,6 +72,7 @@ interface TripEwbsResponse {
 export default function DriverTripScreen() {
   const { dark, colors } = useTheme();
   const user = useAuthStore((s) => s.user);
+  const queryClient = useQueryClient();
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
@@ -89,11 +91,13 @@ export default function DriverTripScreen() {
 
   // Only fetch EWBs when GST is on. TanStack's `enabled` skips the call
   // entirely otherwise — no wasted round-trip, no 200 + [] spinner flash.
-  const { data: ewbsResponse } = useApiQuery<TripEwbsResponse>(
+  const { data: ewbsResponse, refetch: refetchEwbs } = useApiQuery<TripEwbsResponse>(
     ['driver-trip-ewbs'],
     '/drivers/me/trip-ewbs',
     undefined,
-    { enabled: gstEnabled },
+    // WI-101: poll every 30s so Compliance Docs picks up EWBs generated at
+    // dispatch without waiting for the first delivery confirm to invalidate.
+    { enabled: gstEnabled, refetchInterval: 30_000 },
   );
   const ewbs: TripEwb[] = ewbsResponse?.items ?? [];
   // WI-094c: trip-sheet numbers now come from the trip-ewbs response (so the
@@ -101,6 +105,14 @@ export default function DriverTripScreen() {
   // assignment row.
   const tripSheetNo = ewbsResponse?.tripSheetNo ?? null;
   const tripSheetNo2 = ewbsResponse?.tripSheetNo2 ?? null;
+
+  // WI-101: pull-to-refresh must refresh ALL trip data, not just the
+  // assignment — previously the EWB list and Vehicle Stock stayed stale.
+  const onRefresh = useCallback(() => {
+    refetch();
+    refetchEwbs();
+    queryClient.invalidateQueries({ queryKey: ['driver-trip-stock'] });
+  }, [refetch, refetchEwbs, queryClient]);
 
   /**
    * Download the consolidated trip-sheet PDF, save to the app's cache
@@ -276,7 +288,7 @@ export default function DriverTripScreen() {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       <ScrollView
         contentContainerStyle={{ padding: 16, gap: 16 }}
-        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} />}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={onRefresh} />}
       >
         {!assignment ? (
           <View style={{ alignItems: 'center', paddingVertical: 60 }}>
