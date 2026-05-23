@@ -21,7 +21,7 @@
  * service-layer queries (filter by driver+date) never sweep up live
  * dev-DB rows.
  */
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import request from 'supertest';
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {

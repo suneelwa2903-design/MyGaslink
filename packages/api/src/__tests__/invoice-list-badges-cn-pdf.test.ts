@@ -11,7 +11,7 @@
  *     successful CRN row exists for the invoice; falls back gracefully
  *     when none.
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
