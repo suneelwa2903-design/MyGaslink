@@ -426,6 +426,7 @@ export interface InventorySummary {
   openingEmpties: number;
   incomingFulls: number;
   outgoingEmpties: number;
+  dispatchedQty: number;
   deliveredQty: number;
   collectedEmpties: number;
   cancelledStockQty: number;

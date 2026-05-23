@@ -318,9 +318,10 @@ export default function InventoryPage() {
                   <th colSpan={2} className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Depot</th>
                   <th rowSpan={2} className="text-center align-bottom">Opening Fulls</th>
                   <th rowSpan={2} className="text-center align-bottom">Opening Empties</th>
-                  <th rowSpan={2} className="text-center align-bottom">Delivered</th>
+                  <th rowSpan={2} className="text-center align-bottom">Dispatched</th>
+                  <th rowSpan={2} className="text-center align-bottom">Delivered<br /><span className="text-[10px] font-normal opacity-70">(to customer)</span></th>
                   <th rowSpan={2} className="text-center align-bottom">Collected Empties</th>
-                  <th rowSpan={2} className="text-center align-bottom">Cancelled</th>
+                  <th rowSpan={2} className="text-center align-bottom">Returned</th>
                   <th rowSpan={2} className="text-center align-bottom">Manual Adj</th>
                   <th rowSpan={2} className="text-center align-bottom">Closing Fulls</th>
                   <th rowSpan={2} className="text-center align-bottom">Closing Empties</th>
@@ -348,6 +349,9 @@ export default function InventoryPage() {
                       </td>
                       <td className="text-center">{item.openingFulls}</td>
                       <td className="text-center">{item.openingEmpties}</td>
+                      <td className="text-center text-amber-600 dark:text-amber-400">
+                        {item.dispatchedQty > 0 ? `${item.dispatchedQty}` : '0'}
+                      </td>
                       <td className="text-center text-brand-600 dark:text-brand-400">
                         {item.deliveredQty > 0 ? `${item.deliveredQty}` : '0'}
                       </td>
