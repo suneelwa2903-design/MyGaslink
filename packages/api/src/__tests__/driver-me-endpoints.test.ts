@@ -221,6 +221,7 @@ beforeAll(async () => {
       orderDate: today,
       deliveryDate: today,
       status: 'pending_delivery',
+      tripNumber: 1, // WI-096b: dispatched orders carry their trip number
       totalAmount: 5400,
       items: {
         create: [{ cylinderTypeId: cylinderTypeXId, quantity: 3, unitPrice: 1800, totalPrice: 5400 }],
@@ -236,6 +237,7 @@ beforeAll(async () => {
       orderDate: today,
       deliveryDate: today,
       status: 'pending_delivery',
+      tripNumber: 1, // WI-096b
       totalAmount: 3600,
       items: {
         create: [{ cylinderTypeId: cylinderTypeXId, quantity: 2, unitPrice: 1800, totalPrice: 3600 }],
@@ -253,6 +255,7 @@ beforeAll(async () => {
       orderDate: today,
       deliveryDate: today,
       status: 'pending_delivery',
+      tripNumber: 1, // WI-096b
       totalAmount: 7200,
       items: {
         create: [{ cylinderTypeId: cylinderTypeYId, quantity: 4, unitPrice: 1800, totalPrice: 7200 }],
@@ -325,6 +328,7 @@ beforeAll(async () => {
         orderDate: today,
         deliveryDate: today,
         status: 'pending_delivery',
+        tripNumber: 1, // WI-096b
         totalAmount: 1800,
         items: {
           create: [{ cylinderTypeId: dist2Cyl.id, quantity: 1, unitPrice: 1800, totalPrice: 1800 }],

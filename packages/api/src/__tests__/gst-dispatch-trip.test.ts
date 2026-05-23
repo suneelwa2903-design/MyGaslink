@@ -595,7 +595,7 @@ describe('WI-068 — DVA auto-reset + Add-to-Trip in-flight gate', () => {
     return { orderId: order.id, customerId: customer.id, cylinderTypeId: cyl.id };
   }
 
-  it('Auto-reset: DVA flips to dispatch_ready when the LAST in-flight order is delivered', async () => {
+  it('WI-096b: DVA STAYS loaded_and_dispatched after the last delivery (roll deferred to dispatch)', async () => {
     const dva = await ensureDva({
       distributorId, driverId, vehicleId, date: TEST_DATE,
       status: 'loaded_and_dispatched', tripNumber: 5,
@@ -610,12 +610,15 @@ describe('WI-068 — DVA auto-reset + Add-to-Trip in-flight gate', () => {
       const dvaMid = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
       expect(dvaMid.status).toBe('loaded_and_dispatched');
 
-      // Deliver order 2 (the last one) → DVA should auto-reset
+      // Deliver order 2 (the last one) → WI-096b: DVA stays loaded_and_dispatched
+      // at the same tripNumber (the roll now happens at the NEXT dispatch, not
+      // here — preserving the Mark-Returned flow + timeline).
       await orderService.confirmDelivery(o2.orderId, distributorId, 'test-user', {
         items: [{ cylinderTypeId: o2.cylinderTypeId, deliveredQuantity: 1, emptiesCollected: 0 }],
       });
       const dvaAfter = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
-      expect(dvaAfter.status).toBe('dispatch_ready');
+      expect(dvaAfter.status).toBe('loaded_and_dispatched');
+      expect(dvaAfter.tripNumber).toBe(5);
     } finally {
       await teardown([o1.orderId, o2.orderId], [dva.id]);
     }
@@ -898,12 +901,12 @@ describe('WI-070 — confirmDelivery bumps tripNumber + EWB road circuity', () =
     return { orderId: order.id, cylinderTypeId: cyl.id };
   }
 
-  it('Test 1 — tripNumber + trip-sheet fields update on last delivery (auto-reset)', async () => {
+  it('Test 1 — WI-096b: last delivery does NOT roll/clear (trip sheet preserved; roll deferred to dispatch)', async () => {
     const dva = await ensureDva({
       distributorId, driverId, vehicleId, date: TEST_DATE,
       status: 'loaded_and_dispatched', tripNumber: 1,
     });
-    // Pre-stamp the trip sheet so the auto-reset clear is observable.
+    // Pre-stamp the trip sheet — WI-096b must NOT clear it at delivery time.
     await prisma.driverVehicleAssignment.update({
       where: { id: dva.id },
       data: {
@@ -925,17 +928,17 @@ describe('WI-070 — confirmDelivery bumps tripNumber + EWB road circuity', () =
       expect(dvaMid.tripNumber).toBe(1);
       expect(dvaMid.tripSheetNo).toBe('CEWB-TRIP-1');
 
-      // Deliver order 2 (the last) — auto-reset must bump tripNumber AND clear trip sheets
+      // Deliver order 2 (the last) — WI-096b: no roll. DVA stays
+      // loaded_and_dispatched at tripNumber 1; trip sheet preserved (the next
+      // dispatch performs the roll + clear, not the delivery).
       await orderService.confirmDelivery(o2.orderId, distributorId, 'test-user', {
         items: [{ cylinderTypeId: o2.cylinderTypeId, deliveredQuantity: 1, emptiesCollected: 0 }],
       });
       const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
-      expect(after.status).toBe('dispatch_ready');
-      expect(after.tripNumber).toBe(2);
-      expect(after.tripSheetNo).toBeNull();
-      expect(after.tripSheetGeneratedAt).toBeNull();
-      expect(after.tripSheetNo2).toBeNull();
-      expect(after.tripSheetNo2GeneratedAt).toBeNull();
+      expect(after.status).toBe('loaded_and_dispatched');
+      expect(after.tripNumber).toBe(1);
+      expect(after.tripSheetNo).toBe('CEWB-TRIP-1');
+      expect(after.tripSheetNo2).toBe('CEWB-TRIP-1-ADDITION');
     } finally {
       await teardown([o1.orderId, o2.orderId], [dva.id]);
     }

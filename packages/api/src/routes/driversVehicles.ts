@@ -300,17 +300,19 @@ driverRouter.get('/me/assignment',
       //     upcoming load, so the pre-dispatch view isn't empty
       //   - legacy NULL-tripNumber pending_delivery dispatched before WI-065
       //     (pinned via the DVA updatedAt window, same as tripSheetPdfService)
+      // WI-096b Fix 2: scope "Orders in Trip" to the effective trip ONLY.
+      // The previous OR also pulled NULL-tripNumber pending_dispatch orders,
+      // which belong to the NEXT (not-yet-dispatched) trip — so a trip in
+      // fallback showed Trip N's delivered orders mixed with Trip N+1's
+      // pending-dispatch orders. Orders are "in the trip" once dispatched
+      // (tripNumber stamped); pre-dispatch pending_dispatch orders are not.
       const orders = await prisma.order.findMany({
         where: {
           distributorId,
           driverId: driver.id,
           deliveryDate: today,
           deletedAt: null,
-          OR: [
-            { tripNumber: effectiveTrip },
-            { tripNumber: null, status: 'pending_dispatch' },
-            { tripNumber: null, status: 'pending_delivery', updatedAt: { gte: assignment.updatedAt } },
-          ],
+          tripNumber: effectiveTrip,
         },
         include: {
           customer: { select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true } },

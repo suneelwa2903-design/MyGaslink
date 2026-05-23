@@ -1,20 +1,24 @@
 /**
- * WI-094c (Change 1) — DVA per-trip timestamps cleared on trip roll.
+ * WI-096b — the DVA trip roll moved from confirmDelivery (last delivery) to
+ * preflightDispatch (start of the next dispatch).
  *
- * The single DVA row per driver/day is reused across trips (tripNumber++ in
- * place). When the trip rolls, the previous trip's dispatchedAt/returnedAt/
- * reconciledAt must be cleared, or they leak onto the new trip's driver-app
- * timeline. The roll happens in confirmDelivery's auto-reset (orderService.ts)
- * and the legacy recovery branch (gstPreflightService.ts).
+ * Previously confirmDelivery rolled the DVA the instant the last order was
+ * delivered (WI-068/070): tripNumber++, status → dispatch_ready, and the
+ * per-trip timestamps (dispatchedAt/returnedAt/reconciledAt) were cleared. That
+ * rolled too early — it hid the Mark-Vehicle-Returned button, cleared
+ * dispatchedAt, and mis-scoped the driver app. Now:
+ *   - confirmDelivery does NOT touch the DVA — after the last delivery the DVA
+ *     STAYS loaded_and_dispatched at the same tripNumber, timestamps intact.
+ *   - preflightDispatch performs the roll (tripNumber++, clear timestamps/sheet)
+ *     when it starts a new batch on a loaded_and_dispatched DVA with 0 in-flight.
  *
- * 1 ✅ timestamps cleared + tripNumber++ when the last order is delivered
- * 2 ✅ a fresh dispatch after the roll sets dispatchedAt; returnedAt stays null
- * 3 ❌ partial delivery does NOT roll (timestamps + tripNumber unchanged)
- * 4 ❌ cross-tenant — a dist-001 caller cannot roll/clear a dist-002 DVA
+ * 1 ✅ confirmDelivery on the last order does NOT roll (DVA + timestamps intact)
+ * 2 ✅ next preflightDispatch rolls: tripNumber++, OLD timestamps cleared, new dispatchedAt set
+ * 3 ❌ partial delivery does NOT roll (unchanged)
+ * 4 ❌ cross-tenant — a dist-001 caller cannot mutate a dist-002 DVA
  *
  * Uses dist-001 (GST disabled) so no WhiteBooks mock is needed. Far-future
- * TEST_DATE (anti-pattern #7) keeps the confirmDelivery auto-reset updateMany
- * — which matches by (distributorId, driverId, assignmentDate) — off real rows.
+ * TEST_DATE (anti-pattern #7) keeps the date-scoped service queries off real rows.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import bcrypt from 'bcryptjs';
@@ -25,7 +29,7 @@ import { preflightDispatch } from '../services/gst/gstPreflightService.js';
 const D1 = 'dist-001', D2 = 'dist-002';
 const TEST_DATE = '2099-12-31';
 const date = new Date(TEST_DATE);
-const PHONES = ['9914000001', '9914000002', '9914000003'];
+const PHONES = ['9914000001', '9914000002', '9914000003', '9914000004'];
 const STAMP = new Date('2099-12-30T08:00:00.000Z');
 
 const createdOrderIds: string[] = [];
@@ -73,9 +77,6 @@ async function mkOrder(distributorId: string, driverId: string, vehicleId: strin
   return order;
 }
 
-// Shared across Test 1 → Test 2 (the fresh dispatch must run on the rolled DVA).
-let rollDriverId = '', rollVehicleId = '', rollDvaId = '';
-
 beforeAll(async () => {
   await cleanup();
 });
@@ -95,12 +96,10 @@ async function cleanup() {
 
 afterAll(cleanup);
 
-describe('WI-094c — DVA timestamp reset on trip roll', () => {
-  it('✅ 1. clears dispatched/returned/reconciled + bumps tripNumber when last order delivered', async () => {
-    const d = await mkDriver(D1, PHONES[0], 'Roll');
-    rollDriverId = d.driverId; rollVehicleId = d.vehicleId;
+describe('WI-096b — DVA roll deferred to dispatch (not delivery)', () => {
+  it('✅ 1. confirmDelivery on the last order does NOT roll the DVA', async () => {
+    const d = await mkDriver(D1, PHONES[0], 'NoRoll');
     const dva = await mkDva(D1, d.driverId, d.vehicleId, { status: 'loaded_and_dispatched', tripNumber: 1, stamped: true });
-    rollDvaId = dva.id;
     const order = await mkOrder(D1, d.driverId, d.vehicleId, { status: 'pending_delivery', tripNumber: 1 });
 
     await confirmDelivery(order.id, D1, 'tsr-user', {
@@ -108,32 +107,35 @@ describe('WI-094c — DVA timestamp reset on trip roll', () => {
     });
 
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
-    expect(after.tripNumber).toBe(2);
-    expect(after.status).toBe('dispatch_ready');
-    expect(after.dispatchedAt).toBeNull();
-    expect(after.returnedAt).toBeNull();
+    expect(after.tripNumber).toBe(1);                       // NOT rolled
+    expect(after.status).toBe('loaded_and_dispatched');     // stays — Mark Returned still available
+    expect(after.dispatchedAt?.toISOString()).toBe(STAMP.toISOString()); // timestamp preserved
+  });
+
+  it('✅ 2. next preflightDispatch rolls: tripNumber++, OLD timestamps cleared, new dispatchedAt set', async () => {
+    const d = await mkDriver(D1, PHONES[1], 'Roll');
+    // Simulate a completed + reconciled trip 1: DVA still loaded_and_dispatched
+    // (confirmDelivery no longer rolls), with stale stamps from trip 1.
+    const dva = await mkDva(D1, d.driverId, d.vehicleId, { status: 'loaded_and_dispatched', tripNumber: 1, stamped: true });
+    await mkOrder(D1, d.driverId, d.vehicleId, { status: 'delivered', tripNumber: 1 }); // 0 in-flight
+    // New batch ready for the next trip.
+    await mkOrder(D1, d.driverId, d.vehicleId, { status: 'pending_dispatch', tripNumber: null });
+
+    const result = await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: TEST_DATE, userId: 'tsr-user' } as any);
+    expect(result.summary.succeeded).toBeGreaterThan(0);
+
+    const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
+    expect(after.tripNumber).toBe(2);                       // rolled at dispatch
+    expect(after.status).toBe('loaded_and_dispatched');     // dispatched the new batch
+    expect(after.dispatchedAt).not.toBeNull();
+    expect(after.dispatchedAt?.toISOString()).not.toBe(STAMP.toISOString()); // fresh stamp, not the old one
+    expect(after.returnedAt).toBeNull();                    // OLD trip stamps cleared
     expect(after.reconciledAt).toBeNull();
     expect(after.isReconciled).toBe(false);
   });
 
-  it('✅ 2. fresh dispatch after the roll sets dispatchedAt; returnedAt stays null', async () => {
-    // Reuses the rolled DVA from Test 1 (now dispatch_ready, tripNumber=2, all
-    // timestamps cleared). A new pending_dispatch order + preflight should
-    // stamp dispatchedAt only — returnedAt must remain null (dispatch never
-    // sets it, and the roll already cleared it).
-    await mkOrder(D1, rollDriverId, rollVehicleId, { status: 'pending_dispatch', tripNumber: null });
-    const result = await preflightDispatch({ distributorId: D1, driverId: rollDriverId, assignmentDate: TEST_DATE, userId: 'tsr-user' } as any);
-    expect(result.summary.succeeded).toBeGreaterThan(0);
-
-    const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: rollDvaId } });
-    expect(after.status).toBe('loaded_and_dispatched');
-    expect(after.dispatchedAt).not.toBeNull();
-    expect(after.returnedAt).toBeNull();
-    expect(after.reconciledAt).toBeNull();
-  });
-
   it('❌ 3. partial delivery does NOT roll — timestamps + tripNumber unchanged', async () => {
-    const d = await mkDriver(D1, PHONES[1], 'Partial');
+    const d = await mkDriver(D1, PHONES[2], 'Partial');
     const dva = await mkDva(D1, d.driverId, d.vehicleId, { status: 'loaded_and_dispatched', tripNumber: 1, stamped: true });
     const o1 = await mkOrder(D1, d.driverId, d.vehicleId, { status: 'pending_delivery', tripNumber: 1 });
     await mkOrder(D1, d.driverId, d.vehicleId, { status: 'pending_delivery', tripNumber: 1 }); // 2nd stays in-flight
@@ -143,16 +145,13 @@ describe('WI-094c — DVA timestamp reset on trip roll', () => {
     });
 
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
-    expect(after.tripNumber).toBe(1);                       // NOT rolled
-    expect(after.status).toBe('loaded_and_dispatched');     // unchanged
+    expect(after.tripNumber).toBe(1);
+    expect(after.status).toBe('loaded_and_dispatched');
     expect(after.dispatchedAt?.toISOString()).toBe(STAMP.toISOString());
-    expect(after.returnedAt?.toISOString()).toBe(STAMP.toISOString());
-    expect(after.reconciledAt?.toISOString()).toBe(STAMP.toISOString());
-    expect(after.isReconciled).toBe(true);
   });
 
-  it('❌ 4. cross-tenant — a dist-001 caller cannot roll/clear a dist-002 DVA', async () => {
-    const d = await mkDriver(D2, PHONES[2], 'XTenant');
+  it('❌ 4. cross-tenant — a dist-001 caller cannot mutate a dist-002 DVA', async () => {
+    const d = await mkDriver(D2, PHONES[3], 'XTenant');
     const dva = await mkDva(D2, d.driverId, d.vehicleId, { status: 'loaded_and_dispatched', tripNumber: 1, stamped: true });
     const order = await mkOrder(D2, d.driverId, d.vehicleId, { status: 'pending_delivery', tripNumber: 1 });
 
@@ -167,7 +166,5 @@ describe('WI-094c — DVA timestamp reset on trip roll', () => {
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
     expect(after.tripNumber).toBe(1);
     expect(after.dispatchedAt?.toISOString()).toBe(STAMP.toISOString());
-    expect(after.returnedAt?.toISOString()).toBe(STAMP.toISOString());
-    expect(after.reconciledAt?.toISOString()).toBe(STAMP.toISOString());
   });
 });

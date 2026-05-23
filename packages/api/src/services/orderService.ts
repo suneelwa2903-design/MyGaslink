@@ -828,78 +828,23 @@ export async function confirmDelivery(
       // Non-blocking - log but don't fail delivery
     }
 
-    // WI-068: auto-reset DVA when this was the LAST in-flight order of
-    // the trip. Without this, the DVA sits in 'loaded_and_dispatched'
-    // forever after the last delivery, so the next dispatch click
-    // shows "+ Add to Trip" instead of "Dispatch ▶". The investigation
-    // report on 2026-05-19 traced today's 3 orders all stamped with
-    // tripNumber=1 to exactly this gap: each dispatch went through
-    // /preflight-add-to-trip because the DVA never advanced.
+    // WI-096b: the DVA trip roll (tripNumber++ + clear timestamps/trip-sheet,
+    // status → dispatch_ready) used to happen HERE, at the last delivery
+    // confirmation (WI-068/070). That rolled the trip too early — the instant
+    // the driver delivered the last order the DVA snapped to a new EMPTY trip,
+    // which (a) hid the "Mark Vehicle Returned" button (DVA was no longer
+    // loaded_and_dispatched), (b) cleared dispatchedAt, and (c) mis-scoped the
+    // driver app's Compliance Docs / Vehicle Stock to an empty trip.
     //
-    // Scope: count pending_delivery + preflight_in_progress for the
-    // SAME (driverId, distributorId, deliveryDate, tripNumber). If zero
-    // remain (i.e. this update we just committed was the last one),
-    // bump the DVA back to dispatch_ready inside the same transaction.
-    // tripNumber filter ensures we don't false-positive on a different
-    // trip on the same day (rare but possible if a driver does two
-    // trips on the same date).
-    if (order.driverId && updated.tripNumber != null) {
-      const remainingInFlight = await tx.order.count({
-        where: {
-          distributorId,
-          driverId: order.driverId,
-          deliveryDate: order.deliveryDate,
-          tripNumber: updated.tripNumber,
-          status: { in: ['pending_delivery', 'preflight_in_progress'] },
-          deletedAt: null,
-        },
-      });
-      if (remainingInFlight === 0) {
-        // WI-070: also bump tripNumber and clear trip-sheet fields
-        // here. WI-065 originally lived the increment inside
-        // preflightDispatch's `if (mapping.status ===
-        // loaded_and_dispatched)` branch — but WI-068 split the trip
-        // lifecycle so the DVA reaches dispatch_ready BEFORE the next
-        // dispatch click, which left the increment unreachable. Every
-        // dispatch after the first then stamped orders with the same
-        // tripNumber=1 forever (live evidence: dist-002 2026-05-19,
-        // 9 orders all tripNumber=1 across 4 dispatch cycles).
-        //
-        // The next preflightDispatch picks the already-incremented
-        // tripNumber up from the dispatch_ready DVA. The legacy
-        // increment branch in gstPreflightService.ts:171-188 is
-        // retained as defence-in-depth for any DVA that ends up stuck
-        // in loaded_and_dispatched without going through this path
-        // (historical pre-WI-068 rows, a future non-transactional
-        // confirmDelivery variant, etc.).
-        await tx.driverVehicleAssignment.updateMany({
-          where: {
-            distributorId,
-            driverId: order.driverId,
-            assignmentDate: order.deliveryDate,
-            status: 'loaded_and_dispatched',
-          },
-          data: {
-            status: 'dispatch_ready',
-            tripNumber: { increment: 1 },
-            tripSheetNo: null,
-            tripSheetGeneratedAt: null,
-            tripSheetNo2: null,
-            tripSheetNo2GeneratedAt: null,
-            // WI-094c: clear the per-trip timeline timestamps when the DVA
-            // rolls to the next trip. The single DVA row is reused across
-            // trips (tripNumber++ in place); without this, the previous
-            // trip's dispatched/returned/reconciled stamps leak onto the
-            // new trip's driver-app timeline. order_status_logs keeps the
-            // real per-order audit trail, so nothing historical is lost.
-            dispatchedAt: null,
-            returnedAt: null,
-            reconciledAt: null,
-            isReconciled: false,
-          },
-        });
-      }
-    }
+    // The roll now lives ONLY at the START of the next dispatch
+    // (gstPreflightService.preflightDispatch — the loaded_and_dispatched +
+    // 0-in-flight branch). After the last delivery the DVA STAYS
+    // loaded_and_dispatched at the same tripNumber, preserving the return /
+    // reconcile flow and the trip timeline. Safe because the dispatch-vs-add-to-
+    // trip decision already keys on in-flight order count, not DVA.status
+    // (orders.ts /in-transit, WI-069): a "stuck" loaded_and_dispatched DVA with
+    // 0 in-flight orders drops out of "In Transit" and the next Dispatch click
+    // self-heals via the preflight roll.
 
     return updated;
   });
