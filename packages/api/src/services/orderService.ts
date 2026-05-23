@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import { getEffectivePrice } from './cylinderTypeService.js';
 import { createInventoryEvent, recalculateSummariesFromDate } from './inventoryService.js';
+import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
 import { createInvoiceFromOrder } from './invoiceService.js';
 import { logger } from '../utils/logger.js';
 import { toNum } from '../utils/decimal.js';
@@ -1128,7 +1129,21 @@ export async function cancelOrder(
     // that may write 'returned_to_depot' is returnCancelledStock (manual return)
     // or reconcileVehicle Step 1 (end-of-trip). Never set it here directly.
     if (['pending_dispatch', 'pending_delivery'].includes(order.status) && order.vehicleId) {
+      // WI-106: under the dispatch-debit model, `order.status` (the pre-cancel
+      // status) discriminates physical location — NOT order.vehicleId, which is
+      // set at assign time (pending_dispatch) before any dispatch.
+      //   - pending_delivery (Case A): cylinders were dispatched (already
+      //     debited). Keep the CSE so reconciliation's cancellation_return
+      //     credits them back; SKIP the +qty cancellation event (would double).
+      //   - pending_dispatch (Case B): assigned but never dispatched — cylinders
+      //     never left the depot. Create NEITHER a CSE nor a cancellation event.
+      // Flag OFF: both branches below run unchanged (CSE + cancellation event).
+      const dispatchDebit = isDispatchDebitEnabled(distributorId);
       for (const item of order.items) {
+        if (dispatchDebit && order.status === 'pending_dispatch') {
+          continue; // Case B — nothing physically on the vehicle.
+        }
+
         await tx.cancelledStockEvent.create({
           data: {
             orderId,
@@ -1142,18 +1157,20 @@ export async function cancelOrder(
           },
         });
 
-        await createInventoryEvent(tx, {
-          distributorId,
-          cylinderTypeId: item.cylinderTypeId,
-          eventType: 'cancellation',
-          fullsChange: item.quantity,
-          emptiesChange: 0,
-          eventDate: order.deliveryDate,
-          referenceId: orderId,
-          referenceType: 'order',
-          createdBy: userId,
-          notes: `Order ${order.orderNumber} cancelled`,
-        });
+        if (!dispatchDebit) {
+          await createInventoryEvent(tx, {
+            distributorId,
+            cylinderTypeId: item.cylinderTypeId,
+            eventType: 'cancellation',
+            fullsChange: item.quantity,
+            emptiesChange: 0,
+            eventDate: order.deliveryDate,
+            referenceId: orderId,
+            referenceType: 'order',
+            createdBy: userId,
+            notes: `Order ${order.orderNumber} cancelled`,
+          });
+        }
       }
     }
 
