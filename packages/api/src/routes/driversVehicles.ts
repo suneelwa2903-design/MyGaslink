@@ -36,6 +36,47 @@ async function resolveDriverFromUser(userId: string, distributorId: string) {
   });
 }
 
+/**
+ * WI-096: resolve which trip number to DISPLAY for a driver today.
+ *
+ * The single DVA row rolls `tripNumber++` the instant the last order of a trip
+ * is delivered (confirmDelivery auto-reset). So the latest DVA can point at a
+ * brand-new EMPTY trip while the just-completed trip still holds the orders /
+ * EWBs / cargo the driver needs to see. The driver-facing screens
+ * (assignment, trip-stock, trip-ewbs) were scoping blindly to the latest
+ * tripNumber and snapping to that empty trip — so Compliance Docs went empty
+ * (BUG A), the Trip tab jumped to the next trip on reload (BUG B), and Vehicle
+ * Stock reset to 0 (BUG C).
+ *
+ * Rule: if the latest trip has NO real orders (none in
+ * pending_delivery/delivered/modified_delivered), fall back to the most recent
+ * trip that does. A genuine "no orders yet" state (brand-new driver / first
+ * trip) has no earlier trip with orders, so we return the latest tripNumber
+ * unchanged — the screens correctly show an empty trip, not a crash.
+ */
+const TRIP_CONTENT_STATUSES = ['pending_delivery', 'delivered', 'modified_delivered'] as const;
+async function resolveEffectiveTripNumber(
+  distributorId: string, driverId: string, today: Date, latestTripNumber: number,
+): Promise<number> {
+  const latestHasOrders = await prisma.order.count({
+    where: {
+      distributorId, driverId, deliveryDate: today, deletedAt: null,
+      tripNumber: latestTripNumber, status: { in: [...TRIP_CONTENT_STATUSES] },
+    },
+  });
+  if (latestHasOrders > 0) return latestTripNumber;
+  // Latest trip is empty — find the most recent EARLIER trip that has orders.
+  const prev = await prisma.order.findFirst({
+    where: {
+      distributorId, driverId, deliveryDate: today, deletedAt: null,
+      tripNumber: { not: null, lt: latestTripNumber }, status: { in: [...TRIP_CONTENT_STATUSES] },
+    },
+    orderBy: { tripNumber: 'desc' },
+    select: { tripNumber: true },
+  });
+  return prev?.tripNumber ?? latestTripNumber;
+}
+
 // We export two routers: one for drivers, one for vehicles
 const driverRouter = Router();
 const vehicleRouter = Router();
@@ -240,6 +281,11 @@ driverRouter.get('/me/assignment',
       });
       if (!assignment) return sendSuccess(res, null);
 
+      // WI-096: if the latest DVA rolled to a new empty trip, display the most
+      // recent trip that actually has orders (else the Trip tab jumps to an
+      // empty trip on reload — BUG B).
+      const effectiveTrip = await resolveEffectiveTripNumber(distributorId, driver.id, today, assignment.tripNumber);
+
       // Pull today's orders separately so mapAssignment stays a pure
       // shape transform and the orders query can opt into the heavier
       // orderInclude (items + cylinderType + customer). We scope to the
@@ -261,7 +307,7 @@ driverRouter.get('/me/assignment',
           deliveryDate: today,
           deletedAt: null,
           OR: [
-            { tripNumber: assignment.tripNumber },
+            { tripNumber: effectiveTrip },
             { tripNumber: null, status: 'pending_dispatch' },
             { tripNumber: null, status: 'pending_delivery', updatedAt: { gte: assignment.updatedAt } },
           ],
@@ -274,6 +320,9 @@ driverRouter.get('/me/assignment',
       });
 
       const mapped = mapAssignment(assignment);
+      // WI-096: surface the effective trip so the header matches the orders
+      // shown (avoids "Trip #N" with the previous trip's deliveries).
+      mapped.tripNumber = effectiveTrip;
       mapped.orders = mapOrders(orders);
       return sendSuccess(res, mapped);
     } catch (err) {
@@ -324,6 +373,10 @@ driverRouter.get('/me/trip-stock',
       });
       if (!currentDva) return sendSuccess(res, { items: [] });
 
+      // WI-096: if the latest DVA rolled to a new empty trip, report cargo for
+      // the most recent trip that has orders (else stock resets to 0 — BUG C).
+      const effectiveTrip = await resolveEffectiveTripNumber(distributorId, driver.id, today, currentDva.tripNumber);
+
       const orders = await prisma.order.findMany({
         where: {
           distributorId,
@@ -334,7 +387,7 @@ driverRouter.get('/me/trip-stock',
           status: { not: 'cancelled' },
           OR: [
             // On/returned with this trip: dispatched + delivered fulls/empties.
-            { tripNumber: currentDva.tripNumber, status: { in: ['pending_delivery', 'delivered', 'modified_delivered'] } },
+            { tripNumber: effectiveTrip, status: { in: ['pending_delivery', 'delivered', 'modified_delivered'] } },
             // Queued for the next load (not yet dispatched → tripNumber NULL).
             { tripNumber: null, status: 'pending_dispatch' },
             // Legacy fallback (mirrors tripSheetPdfService.ts:112): orders
@@ -436,6 +489,11 @@ driverRouter.get('/me/trip-ewbs',
       });
       if (!assignment) return sendSuccess(res, empty);
 
+      // WI-096: if the latest DVA rolled to a new empty trip, show the EWBs of
+      // the most recent trip that has orders (else Compliance Docs is empty
+      // right after the driver delivers — BUG A).
+      const effectiveTrip = await resolveEffectiveTripNumber(distributorId, driver.id, today, assignment.tripNumber);
+
       // We need order_id + ewb_no + ewb_status + valid_till, joined to orders
       // for the customer name, order number, and cylinder type/qty. doc_type
       // ='INV' filters out CN/DN docs which carry separate EWBs on the same
@@ -452,7 +510,7 @@ driverRouter.get('/me/trip-ewbs',
             deliveryDate: today,
             deletedAt: null,
             OR: [
-              { tripNumber: assignment.tripNumber, status: { in: ['pending_delivery', 'delivered', 'modified_delivered'] } },
+              { tripNumber: effectiveTrip, status: { in: ['pending_delivery', 'delivered', 'modified_delivered'] } },
               { tripNumber: null, status: 'pending_delivery', updatedAt: { gte: assignment.updatedAt } },
             ],
           },
@@ -491,7 +549,8 @@ driverRouter.get('/me/trip-ewbs',
         };
       });
       return sendSuccess(res, {
-        tripNumber: assignment.tripNumber,
+        // WI-096: report the effective (orders-bearing) trip, matching the items.
+        tripNumber: effectiveTrip,
         tripSheetNo: assignment.tripSheetNo,
         tripSheetNo2: assignment.tripSheetNo2,
         items,
