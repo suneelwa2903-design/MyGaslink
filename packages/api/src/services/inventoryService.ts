@@ -62,6 +62,7 @@ export async function computeSummaryForDate(
   incomingFulls: number;
   outgoingEmpties: number;
   deliveredQty: number;
+  dispatchedQty: number;
   collectedEmpties: number;
   cancelledStockQty: number;
   manualAdjustment: number;
@@ -154,6 +155,7 @@ export async function computeSummaryForDate(
     incomingFulls,
     outgoingEmpties,
     deliveredQty,
+    dispatchedQty: 0, // WI-106: real value computed under the flag in step 5
     collectedEmpties,
     cancelledStockQty,
     manualAdjustment,

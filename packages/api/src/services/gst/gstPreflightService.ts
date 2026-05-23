@@ -29,6 +29,8 @@ import {
   createPendingAction,
 } from './gstService.js';
 import { createInvoiceFromOrder } from '../invoiceService.js';
+import { createInventoryEvent } from '../inventoryService.js';
+import { isDispatchDebitEnabled } from '../../utils/inventoryFlags.js';
 
 const orderInclude = {
   customer: true,
@@ -638,7 +640,7 @@ async function preflightOne(params: {
 
     // GST-disabled tenants: just transition to pending_delivery.
     if (distributor.gstMode === 'disabled') {
-      await transitionToPendingDelivery(orderId, userId, 'GST disabled — preflight skipped', tripNumber);
+      await transitionToPendingDelivery(orderId, userId, 'GST disabled — preflight skipped', tripNumber, buildDispatchCtx(order, vehicleNumber));
       return {
         orderId,
         orderNumber: order.orderNumber,
@@ -709,11 +711,33 @@ async function preflightOne(params: {
  * with the status change. NULL trip numbers stay possible for any future
  * caller that wants the legacy behaviour (e.g. a one-off recovery).
  */
+// WI-106: assemble the dispatch-debit context from an order (with items).
+// Passed to transitionToPendingDelivery; only consumed when the flag is on.
+function buildDispatchCtx(order: any, vehicleNumber: string | null) {
+  return {
+    distributorId: order.distributorId as string,
+    deliveryDate: order.deliveryDate as Date,
+    vehicleNumber,
+    items: (order.items ?? []).map((i: any) => ({
+      cylinderTypeId: i.cylinderTypeId as string,
+      quantity: i.quantity as number,
+    })),
+  };
+}
+
 async function transitionToPendingDelivery(
   orderId: string,
   userId: string,
   notes: string,
   tripNumber?: number,
+  // WI-106: when present AND the flag is on, a `dispatch` inventory event
+  // (−qty fulls) is written per item inside the same transaction.
+  dispatchCtx?: {
+    distributorId: string;
+    deliveryDate: Date;
+    vehicleNumber: string | null;
+    items: { cylinderTypeId: string; quantity: number }[];
+  },
 ) {
   await prisma.$transaction(async (tx) => {
     await tx.order.update({
@@ -732,6 +756,27 @@ async function transitionToPendingDelivery(
         notes,
       },
     });
+
+    // WI-106 — debit depot fulls at dispatch (cylinders leaving onto the
+    // vehicle). Flag-gated: when off OR no dispatchCtx, this block is skipped
+    // and the transaction is byte-for-byte identical to pre-WI-106.
+    if (dispatchCtx && isDispatchDebitEnabled(dispatchCtx.distributorId)) {
+      for (const item of dispatchCtx.items) {
+        await createInventoryEvent(tx as any, {
+          distributorId: dispatchCtx.distributorId,
+          cylinderTypeId: item.cylinderTypeId,
+          eventType: 'dispatch',
+          fullsChange: -item.quantity,
+          emptiesChange: 0,
+          eventDate: dispatchCtx.deliveryDate,
+          referenceId: orderId,
+          referenceType: 'order',
+          vehicleNumber: dispatchCtx.vehicleNumber ?? undefined,
+          createdBy: userId,
+          notes: 'Dispatched to vehicle',
+        });
+      }
+    }
   });
 }
 
@@ -1036,6 +1081,7 @@ async function runB2bPreflight(params: {
       orderId, userId,
       `Preflight succeeded: IRN=${irn?.substring(0, 16)}… EWB=${ewbNo ?? 'n/a'}`,
       tripNumber,
+      buildDispatchCtx(order, vehicleNumber),
     );
 
     return {
@@ -1060,6 +1106,7 @@ async function runB2bPreflight(params: {
       await transitionToPendingDelivery(
         orderId, userId, 'Preflight: duplicate IRN (2150) — accepted',
         tripNumber,
+        buildDispatchCtx(order, vehicleNumber),
       );
       return {
         orderId, orderNumber: order.orderNumber, customerName,
@@ -1199,6 +1246,7 @@ async function runB2cPreflight(params: {
       orderId, userId,
       ewbOk ? `B2C preflight succeeded: EWB=${parsed.ewbNo}` : 'B2C dispatched; EWB pending (no number returned by NIC)',
       tripNumber,
+      buildDispatchCtx(order, vehicleNumber),
     );
 
     return {
