@@ -76,6 +76,11 @@ export default function DriverOrdersScreen() {
       await apiPost(`/orders/${orderId}/confirm-delivery`, { items, notes: deliveryNotes || undefined });
       Alert.alert('Success', 'Delivery confirmed!');
       queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+      // WI-097: also refresh the Trip tab so the order's new status (delivered/
+      // modified_delivered) and updated stock/EWBs show without a manual reload.
+      queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
+      queryClient.invalidateQueries({ queryKey: ['driver-trip-stock'] });
+      queryClient.invalidateQueries({ queryKey: ['driver-trip-ewbs'] });
       setSelectedOrder(null);
       setDeliveryNotes('');
       setProofPhoto(null);
@@ -97,6 +102,10 @@ export default function DriverOrdersScreen() {
   const handleManualSync = async () => {
     const r = await syncPendingDeliveries();
     queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+    // WI-097: queued deliveries that just synced also changed trip state.
+    queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
+    queryClient.invalidateQueries({ queryKey: ['driver-trip-stock'] });
+    queryClient.invalidateQueries({ queryKey: ['driver-trip-ewbs'] });
     Alert.alert(
       r.synced > 0 ? 'Synced' : 'Sync attempted',
       `${r.synced} delivery${r.synced === 1 ? '' : 'ies'} synced. ${r.remaining} still pending.`,
