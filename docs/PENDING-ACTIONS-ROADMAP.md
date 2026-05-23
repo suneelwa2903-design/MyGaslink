@@ -34,3 +34,28 @@
   amount doesn't match invoice
 - STOCK_MISMATCH_REVIEW — physical stock differs
   from system at reconciliation
+
+## Delivery Flow
+
+### Over-delivery guard (parked)
+When a driver enters a delivered qty greater than
+ordered, the system currently allows it with only
+a warning (WI-104). No upper bound is enforced.
+
+The correct guard: total delivered of a cylinder
+type across all orders on the trip cannot exceed
+total loaded of that type on the vehicle.
+
+Implementation path (all data already available):
+- trip-stock endpoint already returns fullQuantity
+  per cylinder type (remaining deliverable)
+- delivery modal needs to call trip-stock before
+  submit and cap input at fullQuantity per type
+- No new API queries needed
+
+Dependencies:
+- Needs dispatch event (inventory work item) to
+  be accurate, otherwise "loaded" is derived from
+  order quantities not actual physical load
+- Park until post-launch alongside dispatch event
+  implementation
