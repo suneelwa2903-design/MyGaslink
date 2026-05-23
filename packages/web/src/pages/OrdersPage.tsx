@@ -341,7 +341,7 @@ export default function OrdersPage() {
                             <HiOutlineCheckCircle className="h-4 w-4" />
                           </button>
                         )}
-                        {order.status !== OrderStatus.DELIVERED && order.status !== OrderStatus.CANCELLED && (
+                        {(order.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT || order.status === OrderStatus.PENDING_DISPATCH) && (
                           <button
                             onClick={() => setEditOrder(order)}
                             className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500"
