@@ -428,6 +428,12 @@ describe('gstReissueService — delivery mismatch flow', () => {
       }
       const rev = await prisma.invoiceRevision.findFirstOrThrow({ where: { invoiceId: f.invoiceId } });
       expect(rev.reason).toBe('delivery_mismatch');
+      // WI-128: B2C reissue now bumps the invoice number to a fresh structured
+      // RSHD revision number (parity with B2B), not left on the original ISHD/IR.
+      const updatedInv = await prisma.invoice.findUniqueOrThrow({
+        where: { id: f.invoiceId }, select: { invoiceNumber: true },
+      });
+      expect(updatedInv.invoiceNumber).toMatch(/^R[A-Z]+\d+$/);
     } finally {
       await teardown(f.orderId);
     }

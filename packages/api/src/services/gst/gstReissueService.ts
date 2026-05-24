@@ -536,6 +536,20 @@ async function regenerateB2cEwb(
   if (!vehicleNumber) {
     throw new Error('Cannot regenerate EWB: no vehicle on order');
   }
+  // WI-128: bump the invoice number to a fresh RSHD revision number IN PLACE,
+  // mirroring regenerateB2bIrn, so the B2C reissue invoice carries an RSHD
+  // prefix consistent with B2B. buildInvoiceDataForIrn below reads the new
+  // docNumber, and the regenerated standalone EWB references it. The old ISHD
+  // EWB was already cancelled earlier in the reissue flow.
+  const freshNumber = await freshRevisionNumber(distributorId, distributor, invoice.invoiceNumber);
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: { invoiceNumber: freshNumber },
+  });
+  logger.info('Reissue B2C: bumped invoice number to RSHD', {
+    invoiceId, oldNumber: invoice.invoiceNumber, newNumber: freshNumber,
+  });
+
   const invoiceData = await buildInvoiceDataForIrn(invoiceId, distributor);
   const ewbPayload = buildEwbPayload(buildIrnPayload(invoiceData), {
     vehicleNumber, transportMode: '1', distance: 1,
