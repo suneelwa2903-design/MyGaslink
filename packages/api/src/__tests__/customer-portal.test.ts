@@ -296,4 +296,52 @@ describe('Customer Portal - Account', () => {
     expect(res.status).toBe(200);
     expect(res.body.data).toBeDefined();
   });
+
+  // WI-120 — account full profile
+  it('account returns cylinderDiscounts as an array (never null) and currentPrices', async () => {
+    const res = await request(app)
+      .get('/api/customer-portal/account')
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(200);
+    const d = res.body.data;
+    expect(Array.isArray(d.cylinderDiscounts)).toBe(true);
+    expect(Array.isArray(d.currentPrices)).toBe(true);
+  });
+
+  it('currentPrices uses the distributor catalog price and applies any customer discount', async () => {
+    // Seed a known price + a discount for one cylinder type, then assert the
+    // customerPrice = basePrice - discountPerUnit.
+    const ct = await prisma.cylinderType.findFirst({ where: { distributorId, isActive: true } });
+    if (!ct) throw new Error('No cylinder type for distributor');
+
+    await prisma.cylinderPrice.create({
+      data: { distributorId, cylinderTypeId: ct.id, price: 2000, effectiveDate: new Date() },
+    });
+    await prisma.customerCylinderDiscount.upsert({
+      where: { customerId_cylinderTypeId: { customerId, cylinderTypeId: ct.id } },
+      create: { customerId, cylinderTypeId: ct.id, discountPerUnit: 150 },
+      update: { discountPerUnit: 150 },
+    });
+
+    const res = await request(app)
+      .get('/api/customer-portal/account')
+      .set(auth(customerToken));
+    expect(res.status).toBe(200);
+
+    // basePrice must equal whatever the shared price resolver returns from the
+    // distributor catalog (deterministic regardless of same-day price ties);
+    // customerPrice must be basePrice net of the customer discount.
+    const { getEffectivePrice } = await import('../services/cylinderTypeService.js');
+    const expectedBase = await getEffectivePrice(distributorId, ct.id, new Date());
+    const row = res.body.data.currentPrices.find((p: any) => p.cylinderTypeId === ct.id);
+    expect(row).toBeDefined();
+    expect(row.basePrice).toBe(expectedBase);
+    expect(row.discountPerUnit).toBe(150);
+    expect(row.customerPrice).toBe(Math.max(expectedBase - 150, 0));
+
+    // The discount also surfaces in the cylinderDiscounts list.
+    const disc = res.body.data.cylinderDiscounts.find((d: any) => d.cylinderTypeName === ct.typeName);
+    expect(disc?.discountPerUnit).toBe(150);
+  });
 });

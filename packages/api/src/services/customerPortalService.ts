@@ -399,7 +399,7 @@ export async function getMyBalance(distributorId: string, customerId: string) {
  * Get customer's account info.
  */
 export async function getMyAccount(distributorId: string, customerId: string) {
-  return prisma.customer.findFirst({
+  const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
     select: {
       id: true,
@@ -420,8 +420,47 @@ export async function getMyAccount(distributorId: string, customerId: string) {
       shippingPincode: true,
       creditPeriodDays: true,
       contacts: true,
+      // WI-120: per-customer cylinder discounts. mapCustomer flattens each
+      // entry to { cylinderTypeName, discountPerUnit } for the account screen.
+      cylinderDiscounts: {
+        select: {
+          id: true,
+          cylinderTypeId: true,
+          discountPerUnit: true,
+          cylinderType: { select: { typeName: true, capacity: true } },
+        },
+      },
     },
   });
+  if (!customer) return null;
+
+  // WI-120: current effective prices for every active cylinder type, net of
+  // this customer's discount. Built manually (no mapper) so the mobile account
+  // screen reads a stable shape:
+  //   { cylinderTypeId, typeName, capacity, basePrice, discountPerUnit, customerPrice }
+  const types = await prisma.cylinderType.findMany({
+    where: { distributorId, isActive: true },
+    select: { id: true, typeName: true, capacity: true },
+    orderBy: { capacity: 'asc' },
+  });
+  const discountMap = new Map(
+    customer.cylinderDiscounts.map((d) => [d.cylinderTypeId, toNum(d.discountPerUnit)]),
+  );
+  const asOf = new Date();
+  const currentPrices = await Promise.all(types.map(async (t) => {
+    const basePrice = await getEffectivePrice(distributorId, t.id, asOf);
+    const discountPerUnit = discountMap.get(t.id) ?? 0;
+    return {
+      cylinderTypeId: t.id,
+      typeName: t.typeName,
+      capacity: t.capacity,
+      basePrice,
+      discountPerUnit,
+      customerPrice: Math.max(basePrice - discountPerUnit, 0),
+    };
+  }));
+
+  return { ...customer, currentPrices };
 }
 
 /**

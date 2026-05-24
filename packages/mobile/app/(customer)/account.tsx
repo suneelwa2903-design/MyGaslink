@@ -11,17 +11,45 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Button, Card, EmptyState } from '../../src/components/ui';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 
-interface AccountData {
+interface AddressParts {
+  billingAddressLine1?: string | null;
+  billingAddressLine2?: string | null;
+  billingCity?: string | null;
+  billingState?: string | null;
+  billingPincode?: string | null;
+  shippingAddressLine1?: string | null;
+  shippingAddressLine2?: string | null;
+  shippingCity?: string | null;
+  shippingState?: string | null;
+  shippingPincode?: string | null;
+}
+
+interface CurrentPrice {
+  cylinderTypeId: string;
+  typeName: string;
+  capacity: number;
+  basePrice: number;
+  discountPerUnit: number;
+  customerPrice: number;
+}
+
+interface AccountData extends AddressParts {
   customerName: string;
   businessName: string | null;
   gstin: string | null;
   phone: string;
   email: string | null;
-  billingAddressLine1: string | null;
-  shippingAddressLine1: string | null;
   creditPeriodDays: number;
   status: string;
   cylinderDiscounts: Array<{ cylinderTypeName: string; discountPerUnit: number }>;
+  currentPrices: CurrentPrice[];
+}
+
+// Flatten the billing/shipping address parts into one readable line,
+// skipping null/empty segments so the row never shows "undefined".
+function flattenAddress(parts: Array<string | null | undefined>): string | undefined {
+  const joined = parts.map((p) => (p ?? '').trim()).filter(Boolean).join(', ');
+  return joined || undefined;
 }
 
 interface DeliveredOrder {
@@ -205,20 +233,62 @@ export default function CustomerAccountScreen() {
           <InfoRow label="GSTIN" value={data?.gstin} />
           <InfoRow label="Phone" value={data?.phone} />
           <InfoRow label="Email" value={data?.email} />
-          <InfoRow label="Billing Address" value={data?.billingAddressLine1} />
-          <InfoRow label="Shipping Address" value={data?.shippingAddressLine1} />
+          <InfoRow
+            label="Billing Address"
+            value={flattenAddress([
+              data?.billingAddressLine1, data?.billingAddressLine2,
+              data?.billingCity, data?.billingState, data?.billingPincode,
+            ])}
+          />
+          <InfoRow
+            label="Shipping Address"
+            value={flattenAddress([
+              data?.shippingAddressLine1, data?.shippingAddressLine2,
+              data?.shippingCity, data?.shippingState, data?.shippingPincode,
+            ])}
+          />
           <InfoRow label="Credit Period" value={data?.creditPeriodDays ? `${data.creditPeriodDays} days` : undefined} />
           <InfoRow label="Status" value={data?.status?.toUpperCase()} />
         </Card>
 
-        {/* Cylinder Discounts */}
+        {/* My Discounts */}
         {data?.cylinderDiscounts && data.cylinderDiscounts.length > 0 && (
           <Card>
             <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 8 }}>
-              Your Cylinder Discounts
+              My Discounts
             </Text>
             {data.cylinderDiscounts.map((d, i) => (
               <InfoRow key={i} label={d.cylinderTypeName} value={`${formatINR(d.discountPerUnit)}/unit`} />
+            ))}
+          </Card>
+        )}
+
+        {/* Current Prices — live distributor catalog, net of my discount */}
+        {data?.currentPrices && data.currentPrices.length > 0 && (
+          <Card>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 8 }}>
+              Current Prices
+            </Text>
+            {data.currentPrices.map((p) => (
+              <View
+                key={p.cylinderTypeId}
+                style={{
+                  flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                  paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider,
+                }}
+              >
+                <Text style={{ fontSize: 14, color: colors.textSecondary, flex: 1 }}>{p.typeName}</Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>
+                    {formatINR(p.customerPrice)}/unit
+                  </Text>
+                  {p.discountPerUnit > 0 && (
+                    <Text style={{ fontSize: 11, color: colors.textMuted }}>
+                      {formatINR(p.basePrice)} − {formatINR(p.discountPerUnit)} disc.
+                    </Text>
+                  )}
+                </View>
+              </View>
             ))}
           </Card>
         )}
