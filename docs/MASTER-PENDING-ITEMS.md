@@ -424,6 +424,42 @@ Priority: `critical` · `high` · `medium` · `low`.
   - Fleet/dispatch screen should surface a "Scheduled" section showing upcoming
     future orders grouped by delivery date.
 
+**#39 — Full dispute resolution loop with notification infrastructure**
+- Status: **PARKED** (post-launch) · Priority: medium
+- WI-127 shipped the dispute mechanics: customer raises/reopens (one reopen max),
+  admin resolves with a note + optional credit note, customer sees the resolution
+  in-app on next open. What's missing is the *push* — the customer is not actively
+  notified when the admin resolves; they only see it when they reopen the app.
+- Requires a real notification channel (push or WhatsApp), currently stubbed
+  ([mobile/src/services/notifications.ts](packages/mobile/src/services/notifications.ts)
+  is all no-ops; the only live outbound channel is OTP email). Bundles with #13
+  (WhatsApp). When built: customer is notified on resolution, with full dispute
+  history visible in-app.
+
+**#40 — Pending Actions: configurable SLA per action type**
+- Status: **PARKED** (post-launch) · Priority: medium
+- Each actionType gets a configurable SLA (e.g. CUSTOMER_DISPUTE: same day,
+  IRN_CANCEL_FAILED: 2 hours). Distributor Admin sets the SLA once in Settings;
+  actions approaching/breaching SLA are highlighted. Today SLA is derived from
+  severity via `DEFAULT_SLA_HOURS` (WI-127 added an optional per-action
+  `slaDeadline` override on `createPendingAction`, used for CUSTOMER_DISPUTE =
+  end-of-today). Schema: new `PendingActionSlaConfig` table per distributor per
+  actionType.
+
+**#41 — Pending Actions: custom resolution UI per action type**
+- Status: **PARKED** (post-launch) · Priority: medium
+- All action types currently use the same generic resolve/reject flow, with
+  actionTypes shown as raw strings, surfaced inside the Analytics page (the
+  `/app/pending-actions` route redirects there). Each type needs a tailored modal:
+  - CUSTOMER_DISPUTE: free text + optional credit note (WI-127 added the API
+    support — `POST /api/orders/:id/resolve-dispute`).
+  - IRN_CANCEL_FAILED: retry button + manual override option.
+  - EWB_GENERATION: retry button.
+  - OVERDUE_ORDER_OVERRIDE: approve/reject with customer context.
+  - CREDIT_NOTE / DEBIT_NOTE: view linked invoice, approve/reject.
+- Investigate before designing: read the full Pending Actions web UI + all
+  actionTypes in use.
+
 **#25 — EWB cancellation timing (cancel at order-cancel vs reconciliation)**
 - Status: **PARKED** · Priority: medium
 - Investigation confirmed: the EWB is cancelled at NIC at order-cancel time
