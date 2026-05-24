@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Badge, EmptyState } from '../../src/components/ui';
+import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Invoice } from '@gaslink/shared';
 
@@ -47,9 +48,14 @@ export default function CustomerInvoicesScreen() {
   const { dark, colors, accent } = useTheme();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // WI-124: collapsible date-range filter (issueDate), default last 30 days.
+  const [dateFrom, setDateFrom] = useState(() => last30Days().from);
+  const [dateTo, setDateTo] = useState(() => last30Days().to);
+
   const { data: invoicesResponse, isLoading, refetch } = useApiQuery<{ invoices: Invoice[] }>(
-    ['customer-invoices'],
+    ['customer-invoices', dateFrom, dateTo],
     '/customer-portal/invoices',
+    { from: dateFrom, to: dateTo },
   );
   const invoices: Invoice[] = invoicesResponse?.invoices ?? [];
 
@@ -117,6 +123,7 @@ export default function CustomerInvoicesScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
+      <DateRangeFilter from={dateFrom} to={dateTo} setFrom={setDateFrom} setTo={setDateTo} />
       <FlatList
         data={invoices ?? []}
         keyExtractor={(inv) => inv.invoiceId}

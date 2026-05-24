@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { getErrorMessage, parseStructuredError } from '../../src/lib/api';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
+import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 
@@ -52,9 +53,14 @@ export default function CustomerOrdersScreen() {
   const [ack, setAck] = useState(false);
   const [lastOrderVars, setLastOrderVars] = useState<CreateOrderVars | null>(null);
 
+  // WI-124: collapsible date-range filter (deliveryDate), default last 30 days.
+  const [dateFrom, setDateFrom] = useState(() => last30Days().from);
+  const [dateTo, setDateTo] = useState(() => last30Days().to);
+
   const { data: ordersResponse, isLoading, refetch } = useApiQuery<{ orders: Order[] }>(
-    ['customer-orders'],
+    ['customer-orders', dateFrom, dateTo],
     '/customer-portal/orders',
+    { from: dateFrom, to: dateTo },
   );
   const orders: Order[] = ordersResponse?.orders ?? [];
 
@@ -281,6 +287,8 @@ export default function CustomerOrdersScreen() {
         <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>My Orders</Text>
         <Button title="+ New Order" size="sm" onPress={() => setShowForm(true)} />
       </View>
+
+      <DateRangeFilter from={dateFrom} to={dateTo} setFrom={setDateFrom} setTo={setDateTo} />
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingTop: 0, gap: 10 }}

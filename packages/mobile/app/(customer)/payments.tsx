@@ -6,6 +6,7 @@ import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Button, EmptyState, MetricCard } from '../../src/components/ui';
+import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useAuthStore } from '../../src/stores/authStore';
 import { api, getErrorMessage } from '../../src/lib/api';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
@@ -29,9 +30,15 @@ export default function CustomerPaymentsScreen() {
   // { payments, meta } — NOT a bare array. Read .payments to match the
   // pattern in invoices.tsx (was previously typed as Payment[] and crashed
   // .reduce on the wrong shape).
+  // WI-124: collapsible date-range filter (transactionDate) for the payment
+  // LIST, default last 30 days. Distinct from the statement-PDF range below.
+  const [listFrom, setListFrom] = useState(() => last30Days().from);
+  const [listTo, setListTo] = useState(() => last30Days().to);
+
   const { data, isLoading, refetch } = useApiQuery<{ payments: Payment[]; meta?: unknown }>(
-    ['customer-payments'],
+    ['customer-payments', listFrom, listTo],
     '/customer-portal/payments',
+    { from: listFrom, to: listTo },
   );
   const payments = data?.payments ?? [];
 
@@ -147,6 +154,7 @@ export default function CustomerPaymentsScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
+      <DateRangeFilter from={listFrom} to={listTo} setFrom={setListFrom} setTo={setListTo} />
       <FlatList
         data={payments}
         keyExtractor={(p) => p.paymentId}

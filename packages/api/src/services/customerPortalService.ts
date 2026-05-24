@@ -151,7 +151,7 @@ export async function getCustomerDashboard(
 export async function getMyOrders(
   distributorId: string,
   customerId: string,
-  filters: { status?: string; page?: number; pageSize?: number }
+  filters: { status?: string; page?: number; pageSize?: number; from?: string; to?: string }
 ) {
   const where: Prisma.OrderWhereInput = { customerId, distributorId, deletedAt: null };
   // `status` accepts a single value or a comma-separated list (e.g.
@@ -160,6 +160,15 @@ export async function getMyOrders(
   if (filters.status) {
     const statuses = filters.status.split(',').map((s) => s.trim()).filter(Boolean);
     where.status = statuses.length > 1 ? { in: statuses as any } : (statuses[0] as any);
+  }
+  // WI-124: optional deliveryDate range filter.
+  if (filters.from || filters.to) {
+    where.deliveryDate = {};
+    if (filters.from) where.deliveryDate.gte = new Date(filters.from);
+    if (filters.to) {
+      const toEnd = new Date(filters.to); toEnd.setHours(23, 59, 59, 999);
+      where.deliveryDate.lte = toEnd;
+    }
   }
 
   const page = filters.page || 1;
@@ -356,10 +365,19 @@ export async function modifyMyOrder(
 export async function getMyInvoices(
   distributorId: string,
   customerId: string,
-  filters: { status?: string; page?: number; pageSize?: number }
+  filters: { status?: string; page?: number; pageSize?: number; from?: string; to?: string }
 ) {
   const where: Prisma.InvoiceWhereInput = { customerId, distributorId, deletedAt: null, isGaslinkBilling: false };
   if (filters.status) where.status = filters.status as any;
+  // WI-124: optional issueDate range filter.
+  if (filters.from || filters.to) {
+    where.issueDate = {};
+    if (filters.from) where.issueDate.gte = new Date(filters.from);
+    if (filters.to) {
+      const toEnd = new Date(filters.to); toEnd.setHours(23, 59, 59, 999);
+      where.issueDate.lte = toEnd;
+    }
+  }
 
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 25;
@@ -408,14 +426,25 @@ export async function getMyInvoiceById(distributorId: string, customerId: string
 export async function getMyPayments(
   distributorId: string,
   customerId: string,
-  filters: { page?: number; pageSize?: number }
+  filters: { page?: number; pageSize?: number; from?: string; to?: string }
 ) {
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 25;
 
+  const where: Prisma.PaymentTransactionWhereInput = { customerId, distributorId, deletedAt: null };
+  // WI-124: optional transactionDate range filter.
+  if (filters.from || filters.to) {
+    where.transactionDate = {};
+    if (filters.from) where.transactionDate.gte = new Date(filters.from);
+    if (filters.to) {
+      const toEnd = new Date(filters.to); toEnd.setHours(23, 59, 59, 999);
+      where.transactionDate.lte = toEnd;
+    }
+  }
+
   const [payments, total] = await Promise.all([
     prisma.paymentTransaction.findMany({
-      where: { customerId, distributorId, deletedAt: null },
+      where,
       include: {
         allocations: {
           include: { invoice: { select: { invoiceNumber: true } } },
@@ -425,9 +454,7 @@ export async function getMyPayments(
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
-    prisma.paymentTransaction.count({
-      where: { customerId, distributorId, deletedAt: null },
-    }),
+    prisma.paymentTransaction.count({ where }),
   ]);
 
   return {

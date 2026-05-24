@@ -206,6 +206,51 @@ describe('Customer Portal - Dashboard date range (WI-121)', () => {
   });
 });
 
+describe('Customer Portal - Date filters (WI-124)', () => {
+  it('orders: far-past range returns none; wide range keeps every row within deliveryDate bounds', async () => {
+    const none = await request(app)
+      .get('/api/customer-portal/orders').query({ from: '1990-01-01', to: '1990-12-31' })
+      .set(auth(customerToken));
+    expect(none.status).toBe(200);
+    expect(none.body.data.orders.length).toBe(0);
+
+    const wide = await request(app)
+      .get('/api/customer-portal/orders').query({ from: '2000-01-01', to: '2100-01-01' })
+      .set(auth(customerToken));
+    expect(wide.status).toBe(200);
+    for (const o of wide.body.data.orders) {
+      const d = new Date(o.deliveryDate).getTime();
+      expect(d).toBeGreaterThanOrEqual(new Date('2000-01-01').getTime());
+      expect(d).toBeLessThanOrEqual(new Date('2100-01-01T23:59:59.999Z').getTime());
+    }
+  });
+
+  it('invoices: far-past range returns none; wide range keeps every row within issueDate bounds', async () => {
+    const none = await request(app)
+      .get('/api/customer-portal/invoices').query({ from: '1990-01-01', to: '1990-12-31' })
+      .set(auth(customerToken));
+    expect(none.status).toBe(200);
+    expect(none.body.data.invoices.length).toBe(0);
+
+    const wide = await request(app)
+      .get('/api/customer-portal/invoices').query({ from: '2000-01-01', to: '2100-01-01' })
+      .set(auth(customerToken));
+    expect(wide.status).toBe(200);
+    for (const inv of wide.body.data.invoices) {
+      const d = new Date(inv.issueDate).getTime();
+      expect(d).toBeGreaterThanOrEqual(new Date('2000-01-01').getTime());
+    }
+  });
+
+  it('payments: far-past range returns none', async () => {
+    const none = await request(app)
+      .get('/api/customer-portal/payments').query({ from: '1990-01-01', to: '1990-12-31' })
+      .set(auth(customerToken));
+    expect(none.status).toBe(200);
+    expect(none.body.data.payments.length).toBe(0);
+  });
+});
+
 describe('Customer Portal - Cancelled invoice outstanding (WI-123)', () => {
   let orderId: string;
   let invoiceId: string;

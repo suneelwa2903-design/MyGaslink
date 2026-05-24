@@ -45,6 +45,8 @@ router.get('/orders',
       req.user!.distributorId!, req.user!.customerId,
       {
         status: req.query.status as string,
+        from: req.query.from as string,
+        to: req.query.to as string,
         page: req.query.page ? parseInt(req.query.page as string, 10) : undefined,
         pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
       }
@@ -173,6 +175,8 @@ router.get('/invoices',
       req.user!.distributorId!, req.user!.customerId,
       {
         status: req.query.status as string,
+        from: req.query.from as string,
+        to: req.query.to as string,
         page: req.query.page ? parseInt(req.query.page as string, 10) : undefined,
         pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
       }
@@ -256,6 +260,8 @@ router.get('/payments',
     const result = await portalService.getMyPayments(
       req.user!.distributorId!, req.user!.customerId,
       {
+        from: req.query.from as string,
+        to: req.query.to as string,
         page: req.query.page ? parseInt(req.query.page as string, 10) : undefined,
         pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
       }
