@@ -244,6 +244,22 @@ export async function getMyOrderById(distributorId: string, customerId: string, 
 }
 
 /**
+ * WI-125: the customer portal limits delivery dates to TODAY or TOMORROW.
+ * Future orders are a parked post-launch feature (MASTER-PENDING-ITEMS #38).
+ * Compared on date boundaries so client/server timezone skew can't reject a
+ * legitimate "tomorrow". Throws PortalError 400 when out of window.
+ */
+function assertCustomerDeliveryWindow(deliveryDate: string) {
+  const d = new Date(deliveryDate);
+  if (Number.isNaN(d.getTime())) throw new PortalError('Invalid delivery date', 400);
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(); end.setDate(end.getDate() + 1); end.setHours(23, 59, 59, 999);
+  if (d < start || d > end) {
+    throw new PortalError('Delivery date must be today or tomorrow', 400);
+  }
+}
+
+/**
  * Create an order from the customer portal.
  */
 export async function createMyOrder(
@@ -260,6 +276,7 @@ export async function createMyOrder(
     acknowledged?: boolean;
   }
 ) {
+  assertCustomerDeliveryWindow(data.deliveryDate);
   const { createOrder } = await import('./orderService.js');
   const hasCommitment = data.promisedDate != null || data.promisedAmount != null || data.acknowledged != null;
   const options = hasCommitment
@@ -297,6 +314,9 @@ export async function modifyMyOrder(
   customerId: string,
   orderId: string,
   items: { cylinderTypeId: string; quantity: number }[],
+  // WI-125: optionally reschedule the delivery date (today/tomorrow only)
+  // while the order is still editable.
+  deliveryDate?: string,
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, customerId, distributorId, deletedAt: null },
@@ -306,6 +326,7 @@ export async function modifyMyOrder(
   if (!['pending_driver_assignment', 'pending_dispatch'].includes(order.status)) {
     throw new PortalError('This order can no longer be modified', 400);
   }
+  if (deliveryDate) assertCustomerDeliveryWindow(deliveryDate);
   if (!items || items.length === 0) {
     throw new PortalError('At least one item is required', 400);
   }
@@ -350,7 +371,7 @@ export async function modifyMyOrder(
 
     return tx.order.update({
       where: { id: orderId },
-      data: { totalAmount },
+      data: { totalAmount, ...(deliveryDate ? { deliveryDate: new Date(deliveryDate) } : {}) },
       include: {
         items: { include: { cylinderType: { select: { typeName: true } } } },
         customer: true,

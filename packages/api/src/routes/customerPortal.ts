@@ -144,6 +144,9 @@ router.patch('/orders/:id',
       cylinderTypeId: z.string().uuid(),
       quantity: z.number().int().positive(),
     })).min(1),
+    // WI-125: optionally reschedule the delivery date (today/tomorrow only,
+    // enforced in the service).
+    deliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })),
   auditLog('update', 'customer_order'),
   async (req, res) => {
@@ -152,7 +155,7 @@ router.patch('/orders/:id',
         return sendError(res, 'No customer linked to this account', 400);
       }
       const order = await portalService.modifyMyOrder(
-        req.user!.distributorId!, req.user!.customerId, param(req.params.id), req.body.items,
+        req.user!.distributorId!, req.user!.customerId, param(req.params.id), req.body.items, req.body.deliveryDate,
       );
       return sendSuccess(res, mapOrder(order));
     } catch (err: any) {

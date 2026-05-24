@@ -34,11 +34,26 @@ type CommitmentPrompt = {
   mode: 'commitment' | 'acknowledgment' | 'blocked';
 };
 
+// WI-125: customers may pick today or tomorrow only (future orders parked).
+function todayISO() { return new Date().toISOString().split('T')[0]; }
+function tomorrowISO() {
+  const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.toISOString().split('T')[0];
+}
+// Sensible default: after 2pm a same-day delivery is unlikely, so default to
+// tomorrow; otherwise today.
+function defaultDeliveryISO() {
+  return new Date().getHours() >= 14 ? tomorrowISO() : todayISO();
+}
+
 export default function CustomerOrdersScreen() {
   const { dark, colors, accent } = useTheme();
 
   const [showForm, setShowForm] = useState(false);
   const [orderItems, setOrderItems] = useState<Record<string, number>>({});
+  // WI-125: selected delivery date for the New Order + Modify flows.
+  const [orderDate, setOrderDate] = useState(defaultDeliveryISO);
+  const [modifyDate, setModifyDate] = useState(todayISO);
 
   // Modify order state
   const [modifyOrder, setModifyOrder] = useState<Order | null>(null);
@@ -85,6 +100,7 @@ export default function CustomerOrdersScreen() {
       setCommitmentPrompt(null);
       setLastOrderVars(null);
       setAck(false);
+      setOrderDate(defaultDeliveryISO());
     },
     // WI-122: intercept the overdue-gate 409 and route to the commitment
     // prompt instead of showing a raw error alert.
@@ -105,7 +121,7 @@ export default function CustomerOrdersScreen() {
     },
   });
 
-  const updateOrder = useApiMutation<Order, { orderId: string; items: Array<{ cylinderTypeId: string; quantity: number }> }>(
+  const updateOrder = useApiMutation<Order, { orderId: string; items: Array<{ cylinderTypeId: string; quantity: number }>; deliveryDate?: string }>(
     'patch',
     (vars) => `/customer-portal/orders/${vars.orderId}`,
     {
@@ -136,8 +152,11 @@ export default function CustomerOrdersScreen() {
     }
   };
 
+  // WI-125: Modify/Cancel are allowed only before a driver is assigned —
+  // i.e. while the order is pending_driver_assignment or pending_dispatch.
+  // Matches the server gate in modifyMyOrder / the portal cancel route.
   const isPending = (status: string) =>
-    ['pending', 'pending_delivery', 'confirmed'].includes(status);
+    ['pending_driver_assignment', 'pending_dispatch'].includes(status);
 
   const updateQuantity = (
     setter: React.Dispatch<React.SetStateAction<Record<string, number>>>,
@@ -165,11 +184,7 @@ export default function CustomerOrdersScreen() {
       return;
     }
 
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const deliveryDate = tomorrow.toISOString().split('T')[0];
-
-    const vars: CreateOrderVars = { deliveryDate, items };
+    const vars: CreateOrderVars = { deliveryDate: orderDate, items };
     setLastOrderVars(vars);
     createOrder.mutate(vars);
   };
@@ -200,7 +215,7 @@ export default function CustomerOrdersScreen() {
       return;
     }
 
-    updateOrder.mutate({ orderId: modifyOrder.orderId, items });
+    updateOrder.mutate({ orderId: modifyOrder.orderId, items, deliveryDate: modifyDate });
   };
 
   const handleCancelOrder = (order: Order) => {
@@ -220,8 +235,37 @@ export default function CustomerOrdersScreen() {
       if (item.cylinderTypeId) itemMap[item.cylinderTypeId] = item.quantity;
     });
     setModifyItems(itemMap);
+    // Seed the date selector with the order's current date if it's still
+    // today/tomorrow, else fall back to the default.
+    const current = (order.deliveryDate || '').split('T')[0];
+    setModifyDate([todayISO(), tomorrowISO()].includes(current) ? current : defaultDeliveryISO());
     setModifyOrder(order);
   };
+
+  // WI-125: today/tomorrow delivery-date selector shared by both modals.
+  const renderDateSelector = (selected: string, onSelect: (v: string) => void) => (
+    <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+      {[{ label: 'Today', val: todayISO() }, { label: 'Tomorrow', val: tomorrowISO() }].map((opt) => {
+        const active = selected === opt.val;
+        return (
+          <TouchableOpacity
+            key={opt.val}
+            onPress={() => onSelect(opt.val)}
+            style={{
+              flex: 1, paddingVertical: 10, borderRadius: 10, borderWidth: 1, alignItems: 'center',
+              borderColor: active ? accent.blue : colors.inputBorder,
+              backgroundColor: active ? (dark ? 'rgba(59, 130, 246, 0.15)' : '#eff6ff') : colors.inputBg,
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '600', color: active ? accent.blue : colors.textSecondary }}>
+              {opt.label}
+            </Text>
+            <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>{formatDate(opt.val)}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
 
   const renderQuantityPicker = (
     items: Record<string, number>,
@@ -417,8 +461,13 @@ export default function CustomerOrdersScreen() {
                 New Order
               </Text>
               <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 16 }}>
-                Select quantity for each cylinder type. Delivery will be scheduled for tomorrow.
+                Choose a delivery date and quantities.
               </Text>
+
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 8 }}>
+                Delivery date
+              </Text>
+              {renderDateSelector(orderDate, setOrderDate)}
 
               {renderQuantityPicker(orderItems, setOrderItems)}
 
@@ -470,8 +519,13 @@ export default function CustomerOrdersScreen() {
                 Modify Order
               </Text>
               <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 16 }}>
-                Update quantities for {modifyOrder?.orderNumber}
+                Update the delivery date and quantities for {modifyOrder?.orderNumber}
               </Text>
+
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 8 }}>
+                Delivery date
+              </Text>
+              {renderDateSelector(modifyDate, setModifyDate)}
 
               {renderQuantityPicker(modifyItems, setModifyItems)}
 
