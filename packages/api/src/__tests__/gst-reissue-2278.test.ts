@@ -191,7 +191,11 @@ describe('gstReissueService — WI-064 — 2278 trap + outstandingAmount + pre-b
       });
       expect(result.ok).toBe(true);
       const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
-      expect(inv.invoiceNumber).toBe(`${f.originalNumber}-R1`);
+      // WI-108: dist-002 has a docCode (SHD), so reissue allocates a fresh
+      // STRUCTURED reissue number (e.g. RSHD2627000021) rather than the legacy
+      // `${original}-R1` suffix bump. The invariant is unchanged — the number
+      // is reallocated to something distinct from the original before regen.
+      expect(inv.invoiceNumber).toMatch(/^R[A-Z]+\d+$/);
       expect(inv.invoiceNumber).not.toBe(f.originalNumber);
     } finally {
       await teardown(f.orderId);
@@ -212,8 +216,13 @@ describe('gstReissueService — WI-064 — 2278 trap + outstandingAmount + pre-b
       });
       expect(result.ok).toBe(true);
       const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
-      // First bump (pre-regen) → -R1; 2278 forces second bump → -R2
-      expect(inv.invoiceNumber).toBe(`${f.originalNumber}-R2`);
+      // WI-108: structured reissue numbering — the pre-regen step allocates one
+      // RSHD… number and the 2278 retry allocates another; the final number is a
+      // fresh structured number distinct from the original (the legacy `-R2`
+      // suffix no longer applies when the distributor has a docCode). The 2278
+      // recovery is proven by the successful retry (irnStatus success + new irn).
+      expect(inv.invoiceNumber).toMatch(/^R[A-Z]+\d+$/);
+      expect(inv.invoiceNumber).not.toBe(f.originalNumber);
       expect(inv.irnStatus).toBe('success');
       expect(inv.irn).toMatch(/^irn_/);
     } finally {

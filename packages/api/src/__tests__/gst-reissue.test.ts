@@ -331,9 +331,12 @@ describe('gstReissueService — delivery mismatch flow', () => {
         userId: 'test-user',
       });
       expect(result.ok).toBe(true);
-      // Two bumps: original → -R1 (pre-first-regen) → -R2 (after 2150 retry).
+      // WI-108: dist-002 has a docCode, so both the pre-regen bump and the 2150
+      // retry allocate STRUCTURED reissue numbers (RSHD…) rather than the legacy
+      // `-R2` suffix. The fixture's original number is `IR…`, so a final number
+      // matching the structured reissue pattern proves it was reallocated.
       const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
-      expect(inv.invoiceNumber).toMatch(/-R2$/);
+      expect(inv.invoiceNumber).toMatch(/^R[A-Z]+\d+$/);
     } finally {
       await teardown(f.orderId);
     }
