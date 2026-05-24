@@ -3,6 +3,7 @@ import { logger } from './utils/logger.js';
 import { Sentry } from './lib/sentry.js';
 import { prisma } from './lib/prisma.js';
 import { createApp } from './app.js';
+import { startOverdueInvoicesCron } from './jobs/overdueInvoicesJob.js';
 
 // ─── Validate Environment ────────────────────────────────────────────────────
 
@@ -50,6 +51,9 @@ const server = app.listen(port, host, () => {
     env: config.nodeEnv,
     cors: config.cors.origins,
   });
+  // WI-132: schedule the daily overdue-invoice sweep. Non-blocking — only
+  // registers the cron; first run is the next midnight.
+  startOverdueInvoicesCron();
 });
 
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
