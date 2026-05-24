@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
+import { getErrorMessage, parseStructuredError } from '../../src/lib/api';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
@@ -17,6 +18,21 @@ interface CylinderType {
   latestPrice?: number;
 }
 
+type CreateOrderVars = {
+  deliveryDate: string;
+  items: Array<{ cylinderTypeId: string; quantity: number }>;
+  promisedDate?: string;
+  promisedAmount?: number;
+  acknowledged?: boolean;
+};
+
+// WI-122: the overdue gate returns a 409 with one of these shapes.
+type CommitmentPrompt = {
+  overdueAmount: number;
+  escalationLevel: number;
+  mode: 'commitment' | 'acknowledgment' | 'blocked';
+};
+
 export default function CustomerOrdersScreen() {
   const { dark, colors, accent } = useTheme();
 
@@ -26,6 +42,15 @@ export default function CustomerOrdersScreen() {
   // Modify order state
   const [modifyOrder, setModifyOrder] = useState<Order | null>(null);
   const [modifyItems, setModifyItems] = useState<Record<string, number>>({});
+
+  // WI-122: payment-commitment prompt state.
+  const [commitmentPrompt, setCommitmentPrompt] = useState<CommitmentPrompt | null>(null);
+  const [promisedDate, setPromisedDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 7);
+    return d.toISOString().split('T')[0];
+  });
+  const [ack, setAck] = useState(false);
+  const [lastOrderVars, setLastOrderVars] = useState<CreateOrderVars | null>(null);
 
   const { data: ordersResponse, isLoading, refetch } = useApiQuery<{ orders: Order[] }>(
     ['customer-orders'],
@@ -38,14 +63,39 @@ export default function CustomerOrdersScreen() {
     '/customer-portal/dashboard',
   );
 
+  const { data: distributor } = useApiQuery<{ phone?: string | null }>(
+    ['customer-distributor'],
+    '/customer-portal/distributor',
+  );
+
   const cylinderTypes: CylinderType[] = dashboard?.cylinderTypes || [];
 
-  const createOrder = useApiMutation<Order>('post', '/customer-portal/orders', {
+  const createOrder = useApiMutation<Order, CreateOrderVars>('post', '/customer-portal/orders', {
     invalidateKeys: [['customer-orders'], ['customer-dashboard']],
     successMessage: 'Order placed successfully!',
     onSuccess: () => {
       setShowForm(false);
       setOrderItems({});
+      setCommitmentPrompt(null);
+      setLastOrderVars(null);
+      setAck(false);
+    },
+    // WI-122: intercept the overdue-gate 409 and route to the commitment
+    // prompt instead of showing a raw error alert.
+    onError: (error) => {
+      const payload = parseStructuredError(error) as
+        | { overdueAmount?: number; escalationLevel?: number; blocked?: boolean; requiresCommitment?: boolean; requiresAcknowledgment?: boolean }
+        | null;
+      if (payload && (payload.requiresCommitment || payload.requiresAcknowledgment || payload.blocked)) {
+        setShowForm(false);
+        setCommitmentPrompt({
+          overdueAmount: payload.overdueAmount ?? 0,
+          escalationLevel: payload.escalationLevel ?? 1,
+          mode: payload.blocked ? 'blocked' : payload.requiresAcknowledgment ? 'acknowledgment' : 'commitment',
+        });
+      } else {
+        Alert.alert('Error', getErrorMessage(error));
+      }
     },
   });
 
@@ -113,7 +163,24 @@ export default function CustomerOrdersScreen() {
     tomorrow.setDate(tomorrow.getDate() + 1);
     const deliveryDate = tomorrow.toISOString().split('T')[0];
 
-    createOrder.mutate({ deliveryDate, items });
+    const vars: CreateOrderVars = { deliveryDate, items };
+    setLastOrderVars(vars);
+    createOrder.mutate(vars);
+  };
+
+  // WI-122: re-submit the same order with the commitment the customer just made.
+  const submitWithCommitment = () => {
+    if (!lastOrderVars || !commitmentPrompt) return;
+    if (commitmentPrompt.mode === 'commitment') {
+      createOrder.mutate({ ...lastOrderVars, promisedDate });
+    } else if (commitmentPrompt.mode === 'acknowledgment') {
+      createOrder.mutate({ ...lastOrderVars, acknowledged: true, promisedDate });
+    }
+  };
+
+  const callDistributor = () => {
+    if (distributor?.phone) Linking.openURL(`tel:${distributor.phone}`);
+    else Alert.alert('Unavailable', 'No distributor phone number on file.');
   };
 
   const handleModifyOrder = () => {
@@ -428,6 +495,96 @@ export default function CustomerOrdersScreen() {
                   />
                 </View>
               </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* WI-122: payment-commitment prompt (overdue gate). */}
+      <Modal
+        visible={!!commitmentPrompt}
+        animationType="slide"
+        transparent
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+      >
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <View style={{
+              backgroundColor: dark ? colors.cardBg : colors.bg,
+              borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24,
+            }}>
+              {commitmentPrompt?.mode === 'blocked' ? (
+                <>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: accent.red, marginBottom: 8 }}>
+                    Account on hold
+                  </Text>
+                  <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 16 }}>
+                    You have {formatINR(commitmentPrompt.overdueAmount)} overdue. Please contact your
+                    distributor to resolve this before placing another order.
+                  </Text>
+                  <Button title="Call Distributor" onPress={callDistributor} />
+                  <View style={{ height: 10 }} />
+                  <Button title="Close" variant="secondary" onPress={() => setCommitmentPrompt(null)} />
+                </>
+              ) : (
+                <>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
+                    {commitmentPrompt?.mode === 'acknowledgment' ? 'Overdue payment (2nd notice)' : 'Overdue payment'}
+                  </Text>
+                  <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 16 }}>
+                    You have {formatINR(commitmentPrompt?.overdueAmount)} overdue.
+                    {commitmentPrompt?.mode === 'acknowledgment'
+                      ? ' A previous commitment is still open — please acknowledge and confirm a payment date.'
+                      : ' Please confirm when you will pay to continue.'}
+                  </Text>
+
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
+                    Promised payment date
+                  </Text>
+                  <TextInput
+                    value={promisedDate}
+                    onChangeText={setPromisedDate}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={{
+                      backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder,
+                      borderRadius: 10, padding: 12, fontSize: 15, color: colors.text, marginBottom: 16,
+                    }}
+                  />
+
+                  {commitmentPrompt?.mode === 'acknowledgment' && (
+                    <TouchableOpacity
+                      onPress={() => setAck((v) => !v)}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}
+                    >
+                      <Ionicons
+                        name={ack ? 'checkbox' : 'square-outline'}
+                        size={22}
+                        color={ack ? accent.blue : colors.textMuted}
+                      />
+                      <Text style={{ flex: 1, fontSize: 13, color: colors.textSecondary }}>
+                        I acknowledge my overdue balance and commit to pay by the date above.
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <Button
+                    title="Continue"
+                    loading={createOrder.isPending}
+                    disabled={commitmentPrompt?.mode === 'acknowledgment' && !ack}
+                    onPress={submitWithCommitment}
+                  />
+                  <View style={{ height: 10 }} />
+                  <Button
+                    title="Cancel"
+                    variant="secondary"
+                    onPress={() => { setCommitmentPrompt(null); setAck(false); }}
+                  />
+                </>
+              )}
             </View>
           </View>
         </KeyboardAvoidingView>

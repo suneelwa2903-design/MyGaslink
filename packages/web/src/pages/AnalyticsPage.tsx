@@ -714,7 +714,7 @@ export default function AnalyticsPage() {
                         <td className="font-medium text-surface-900 dark:text-white">{c.customerName}</td>
                         <td className="font-medium">{formatCurrency(c.totalDue)}</td>
                         <td className={cn('font-medium', c.overdueDue > 0 && 'text-red-500')}>{formatCurrency(c.overdueDue)}</td>
-                        <td>{c.overduesDays > 0 ? <Badge variant="danger">{c.overduesDays}d</Badge> : '-'}</td>
+                        <td>{c.overdueDays > 0 ? <Badge variant="danger">{c.overdueDays}d</Badge> : '-'}</td>
                         <td>{c.missingCylinders > 0 ? <span className="text-red-500 font-medium">{c.missingCylinders}</span> : 0}</td>
                         <td>{c.missingCylinderValue > 0 ? <span className="text-red-500">{formatCurrency(c.missingCylinderValue)}</span> : '-'}</td>
                         <td>{c.excessEmptyCylinders > 0 ? <span className="text-amber-500">{c.excessEmptyCylinders}</span> : 0}</td>

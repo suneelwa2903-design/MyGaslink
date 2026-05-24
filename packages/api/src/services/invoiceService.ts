@@ -604,6 +604,12 @@ export async function updateInvoiceStatus(id: string, distributorId: string, sta
 
 /**
  * Mark overdue invoices (for cron job usage).
+ *
+ * WI-122: this is now SUPPLEMENTARY. The canonical "overdue" amount is the
+ * ledger formula in paymentService.computeCustomerOverdue (used by the
+ * dashboard, collections, and the order-placement gate). This flag only
+ * affects the invoice.status badge and the admin "overdue invoice count".
+ * TODO: wire a daily cron to call this so the status badge stays fresh.
  */
 export async function markOverdueInvoices(distributorId?: string) {
   const where: Prisma.InvoiceWhereInput = {

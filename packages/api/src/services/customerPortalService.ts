@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 import { getEffectivePrice } from './cylinderTypeService.js';
+import { computeCustomerOverdue } from './paymentService.js';
 
 /**
  * Get customer dashboard stats.
@@ -64,7 +65,7 @@ export async function getCustomerDashboard(
   }
 
   const deliveredStatuses = ['delivered', 'modified_delivered'];
-  const [pendingOrders, totalOrders, deliveredAgg, paymentsAgg, outstandingResult, overdueResult, balances, recent] = await Promise.all([
+  const [pendingOrders, totalOrders, deliveredAgg, paymentsAgg, outstandingResult, overdueAmount, balances, recent] = await Promise.all([
     // ── Always-current (state) ──
     prisma.order.count({
       where: {
@@ -98,10 +99,8 @@ export async function getCustomerDashboard(
       },
       _sum: { outstandingAmount: true },
     }),
-    prisma.invoice.aggregate({
-      where: { customerId, distributorId, deletedAt: null, status: 'overdue' },
-      _sum: { outstandingAmount: true },
-    }),
+    // WI-122: canonical overdue (ledger formula), not the status flag.
+    computeCustomerOverdue(distributorId, customerId),
     prisma.customerInventoryBalance.findMany({
       where: { customerId, customer: { distributorId, deletedAt: null } },
       select: { withCustomerQty: true },
@@ -117,7 +116,7 @@ export async function getCustomerDashboard(
   return {
     // Always-current
     outstandingAmount: toNum(outstandingResult._sum.outstandingAmount),
-    overdueAmount: toNum(overdueResult._sum.outstandingAmount),
+    overdueAmount,
     pendingOrders,
     emptyCylinders: balances.reduce((sum, b) => sum + b.withCustomerQty, 0),
     // Date-filtered activity (within range)
@@ -239,15 +238,29 @@ export async function createMyOrder(
     deliveryDate: string;
     specialInstructions?: string;
     items: { cylinderTypeId: string; quantity: number }[];
+    // WI-122: optional commitment fields when re-submitting after the gate.
+    promisedDate?: string;
+    promisedAmount?: number;
+    acknowledged?: boolean;
   }
 ) {
   const { createOrder } = await import('./orderService.js');
+  const hasCommitment = data.promisedDate != null || data.promisedAmount != null || data.acknowledged != null;
+  const options = hasCommitment
+    ? {
+        commitment: {
+          promisedDate: data.promisedDate ? new Date(data.promisedDate) : undefined,
+          promisedAmount: data.promisedAmount,
+          acknowledged: data.acknowledged,
+        },
+      }
+    : undefined;
   return createOrder(distributorId, userId, {
     customerId,
     deliveryDate: data.deliveryDate,
     specialInstructions: data.specialInstructions,
     items: data.items,
-  });
+  }, options);
 }
 
 /**

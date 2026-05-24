@@ -545,6 +545,74 @@ export async function getCustomerLedger(
   return { rows, summary };
 }
 
+/**
+ * WI-122: the single canonical "overdue" amount for a customer.
+ *
+ * Replicates getCustomerLedger's (unranged) summary.overdueAmount exactly:
+ * total payments are FIFO-allocated to the oldest delivered amounts first,
+ * and any unpaid portion whose delivery date is older than the customer's
+ * credit period counts as overdue. This is the source of truth for the
+ * dashboard, collections, and the order-placement gate — replacing the
+ * fragile invoice.status === 'overdue' flag (which only flips when the
+ * supplementary markOverdueInvoices job runs).
+ */
+export async function computeCustomerOverdue(
+  distributorId: string,
+  customerId: string,
+  asOf: Date = new Date(),
+): Promise<number> {
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, distributorId, deletedAt: null },
+    select: { creditPeriodDays: true },
+  });
+  if (!customer) return 0;
+  const creditDays = customer.creditPeriodDays;
+
+  const [orders, payments] = await Promise.all([
+    prisma.order.findMany({
+      where: {
+        distributorId, customerId,
+        status: { in: ['delivered', 'modified_delivered'] },
+        deletedAt: null,
+      },
+      include: { items: true },
+      orderBy: { deliveryDate: 'asc' },
+    }),
+    prisma.paymentTransaction.findMany({
+      where: { distributorId, customerId, deletedAt: null },
+      select: { amount: true },
+    }),
+  ]);
+
+  // Delivered amounts oldest-first: deliveredQty * (unitPrice - discount).
+  const deliveries: { date: Date; amount: number }[] = [];
+  for (const order of orders) {
+    const date = order.deliveryDate ?? order.orderDate;
+    for (const item of order.items) {
+      const delivered = item.deliveredQuantity ?? item.quantity;
+      const amount = delivered * (toNum(item.unitPrice) - toNum(item.discountPerUnit));
+      if (amount > 0) deliveries.push({ date, amount });
+    }
+  }
+  deliveries.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  const totalReceived = payments.reduce((s, p) => s + toNum(p.amount), 0);
+
+  let remainingPayments = totalReceived;
+  let overdue = 0;
+  for (const d of deliveries) {
+    if (remainingPayments >= d.amount) {
+      remainingPayments -= d.amount;
+      continue;
+    }
+    const unpaidPortion = d.amount - remainingPayments;
+    remainingPayments = 0;
+    const daysSinceDelivery = Math.floor((asOf.getTime() - d.date.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysSinceDelivery > creditDays) overdue += unpaidPortion;
+  }
+  return Math.round(overdue * 100) / 100;
+}
+
 export class PaymentError extends Error {
   constructor(message: string, public statusCode: number) {
     super(message);

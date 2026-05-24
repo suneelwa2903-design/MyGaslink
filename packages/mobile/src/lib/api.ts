@@ -137,3 +137,16 @@ export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return 'Something went wrong';
 }
+
+// WI-122: some endpoints encode a structured payload in the error message
+// (e.g. the order-placement overdue gate returns a JSON string describing the
+// escalation level). Returns the parsed object, or null for plain-text errors.
+export function parseStructuredError(error: unknown): Record<string, unknown> | null {
+  const msg = getErrorMessage(error);
+  try {
+    const parsed = JSON.parse(msg);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}

@@ -232,6 +232,7 @@ enum PendingActionModule {
   order
   driver
   billing
+  collections
 }
 
 enum PendingActionStatus {
@@ -376,6 +377,7 @@ model Distributor {
   settings              DistributorSetting[]
   billingCycles         BillingCycle[]
   pendingActions        PendingAction[]
+  paymentCommitments    PaymentCommitment[]
   accountabilityLogs    AccountabilityLog[]
   auditLogs             AuditLog[]
   licenses              License[]
@@ -465,6 +467,7 @@ model Customer {
   modificationRequests  CustomerModificationRequest[]
   auditTrail            CustomerAuditTrail[]
   accountabilityLogs    AccountabilityLog[]
+  paymentCommitments    PaymentCommitment[]
 
   @@index([distributorId, status])
   @@index([distributorId, customerName])
@@ -697,6 +700,7 @@ model Order {
   cancelledStockEventId String?              @unique @map("cancelled_stock_event_id")
   cancelledStockEvent   CancelledStockEvent? @relation("TaggedOrder", fields: [cancelledStockEventId], references: [id])
   gstDocuments         GstDocument[]
+  paymentCommitments   PaymentCommitment[]
 
   @@index([distributorId, status, deliveryDate])
   @@index([distributorId, customerId, createdAt(sort: Desc)])
@@ -1392,6 +1396,36 @@ model PendingAction {
   @@index([module, status])
   @@index([slaDeadline])
   @@map("pending_actions")
+}
+
+// WI-122: a customer's promise-to-pay recorded when they place an order while
+// carrying an overdue balance. escalationLevel is derived from how many open
+// commitments already exist (1 = first overdue order, 2 = second, 3 = blocked
+// pending an admin override). status drives the collections view + the next
+// escalation level.
+model PaymentCommitment {
+  id                    String    @id @default(uuid()) @map("commitment_id")
+  distributorId         String    @map("distributor_id")
+  customerId            String    @map("customer_id")
+  orderId               String?   @map("order_id")
+  escalationLevel       Int       @map("escalation_level")
+  overdueAmountSnapshot Decimal   @map("overdue_amount_snapshot") @db.Decimal(18, 4)
+  promisedDate          DateTime? @map("promised_date") @db.Date
+  promisedAmount        Decimal?  @map("promised_amount") @db.Decimal(18, 4)
+  status                String    @default("open") // open | kept | broken | waived
+  acknowledged          Boolean   @default(false)
+  createdBy             String    @map("created_by")
+  resolvedAt            DateTime? @map("resolved_at")
+  resolvedBy            String?   @map("resolved_by")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  distributor Distributor @relation(fields: [distributorId], references: [id])
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  order       Order?      @relation(fields: [orderId], references: [id])
+
+  @@index([distributorId, customerId, status])
+  @@map("payment_commitments")
 }
 
 // ─── Accountability ──────────────────────────────────────────────────────────

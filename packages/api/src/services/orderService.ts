@@ -85,15 +85,87 @@ export async function createOrder(
     deliveryDate: string;
     specialInstructions?: string;
     items: { cylinderTypeId: string; quantity: number }[];
-  }
+  },
+  options?: {
+    commitment?: { promisedDate?: Date; promisedAmount?: number; acknowledged?: boolean };
+  },
 ) {
   // Validate customer belongs to distributor and supply is not stopped
   const customer = await prisma.customer.findFirst({
     where: { id: data.customerId, distributorId, deletedAt: null },
-    select: { id: true, stopSupply: true, preferredDriverId: true },
+    select: { id: true, customerName: true, stopSupply: true, preferredDriverId: true },
   });
   if (!customer) throw new OrderError('Customer not found', 404);
   if (customer.stopSupply) throw new OrderError('Supply is stopped for this customer', 400);
+
+  // WI-122: payment-commitment gate. Runs at the SERVICE layer so admin-created
+  // orders are gated too — not just the customer portal. Single source of truth
+  // for overdue is paymentService.computeCustomerOverdue.
+  const { computeCustomerOverdue } = await import('./paymentService.js');
+  const overdueAmount = await computeCustomerOverdue(distributorId, data.customerId);
+  let commitmentToCreate:
+    | { escalationLevel: number; promisedDate?: Date; promisedAmount?: number; acknowledged: boolean }
+    | null = null;
+  if (overdueAmount > 0) {
+    const openCommitments = await prisma.paymentCommitment.count({
+      where: { customerId: data.customerId, distributorId, status: 'open' },
+    });
+    const escalationLevel = Math.min(openCommitments + 1, 3);
+    const commitment = options?.commitment;
+
+    if (escalationLevel === 3) {
+      // Blocked unless an admin granted a one-time override (an approved
+      // OVERDUE_ORDER_OVERRIDE pending-action within the last 24h).
+      const grant = await prisma.pendingAction.findFirst({
+        where: {
+          distributorId, entityType: 'customer', entityId: data.customerId,
+          actionType: 'OVERDUE_ORDER_OVERRIDE', status: 'in_progress',
+          approvedAt: { gte: new Date(Date.now() - 24 * 3600000) },
+        },
+        orderBy: { approvedAt: 'desc' },
+      });
+      if (!grant) {
+        const existing = await prisma.pendingAction.findFirst({
+          where: {
+            distributorId, entityType: 'customer', entityId: data.customerId,
+            actionType: 'OVERDUE_ORDER_OVERRIDE', status: 'open',
+          },
+        });
+        if (!existing) {
+          const { createPendingAction } = await import('./pendingActionsService.js');
+          await createPendingAction(distributorId, {
+            module: 'collections', entityType: 'customer', entityId: data.customerId,
+            actionType: 'OVERDUE_ORDER_OVERRIDE', severity: 'high', requiresApproval: true,
+            description: `${customer.customerName} has an overdue balance of ${overdueAmount} and is blocked from placing new orders. Approve to allow one order.`,
+          });
+        }
+        throw new OrderError(JSON.stringify({ blocked: true, overdueAmount, escalationLevel: 3 }), 409);
+      }
+      // One approved override allows exactly one order — consume it.
+      await prisma.pendingAction.update({
+        where: { id: grant.id },
+        data: { status: 'resolved', resolvedAt: new Date(), resolutionNotes: 'Override consumed by new order' },
+      });
+      commitmentToCreate = { escalationLevel: 3, acknowledged: true };
+    } else if (escalationLevel === 1) {
+      if (!commitment?.promisedDate) {
+        throw new OrderError(JSON.stringify({ blocked: false, overdueAmount, escalationLevel, requiresCommitment: true }), 409);
+      }
+      commitmentToCreate = {
+        escalationLevel, promisedDate: commitment.promisedDate,
+        promisedAmount: commitment.promisedAmount, acknowledged: false,
+      };
+    } else {
+      // Level 2: stricter — requires explicit acknowledgment (date optional).
+      if (!commitment?.acknowledged) {
+        throw new OrderError(JSON.stringify({ blocked: false, overdueAmount, escalationLevel, requiresAcknowledgment: true }), 409);
+      }
+      commitmentToCreate = {
+        escalationLevel, promisedDate: commitment.promisedDate,
+        promisedAmount: commitment.promisedAmount, acknowledged: true,
+      };
+    }
+  }
 
   const deliveryDate = new Date(data.deliveryDate);
   // WI-108: structured number when docCode is set, else legacy random
@@ -180,6 +252,24 @@ export async function createOrder(
         notes: 'Order created',
       },
     });
+
+    // WI-122: persist the payment commitment captured by the gate above.
+    if (commitmentToCreate) {
+      await tx.paymentCommitment.create({
+        data: {
+          distributorId,
+          customerId: data.customerId,
+          orderId: order.id,
+          escalationLevel: commitmentToCreate.escalationLevel,
+          overdueAmountSnapshot: overdueAmount,
+          promisedDate: commitmentToCreate.promisedDate ?? null,
+          promisedAmount: commitmentToCreate.promisedAmount ?? null,
+          status: 'open',
+          acknowledged: commitmentToCreate.acknowledged,
+          createdBy: userId,
+        },
+      });
+    }
 
     // If driver assigned, create driver assignment record
     if (driverId) {

@@ -83,6 +83,11 @@ router.post('/orders',
       cylinderTypeId: z.string().uuid(),
       quantity: z.number().int().positive(),
     })).min(1),
+    // WI-122: optional payment-commitment fields supplied when the customer
+    // confirms a promise-to-pay after the overdue gate prompts them.
+    promisedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    promisedAmount: z.number().positive().optional(),
+    acknowledged: z.boolean().optional(),
   })),
   auditLog('create', 'customer_order'),
   async (req, res) => {

@@ -158,7 +158,7 @@ export default function FinanceDashboardScreen() {
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontWeight: '600', color: colors.text }}>{c.customerName}</Text>
                         <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }}>
-                          {c.overduesDays}d overdue
+                          {c.overdueDays}d overdue
                         </Text>
                       </View>
                       <Text style={{ fontWeight: '800', fontSize: 16, color: '#ef4444' }}>{formatINR(c.overdueDue)}</Text>
@@ -214,7 +214,7 @@ function OverdueCustomersView({
                   </Text>
                 )}
               </View>
-              <Badge label={`${c.overduesDays}d`} variant="danger" />
+              <Badge label={`${c.overdueDays}d`} variant="danger" />
             </View>
 
             <View style={{ backgroundColor: overdueCardBg, borderRadius: 10, padding: 12, gap: 6 }}>

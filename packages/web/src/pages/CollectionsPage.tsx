@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { HiOutlineArrowDownTray, HiOutlinePhone } from 'react-icons/hi2';
 import type { CollectionsDashboard, OverdueCallListEntry } from '@gaslink/shared';
-import { apiGet } from '@/lib/api';
+import { apiGet, apiPut } from '@/lib/api';
 import { Button, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -11,8 +11,24 @@ function formatCurrency(n: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 }
 
+function formatDate(d: string | null) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// WI-122: OVERDUE_ORDER_OVERRIDE pending actions — customers blocked at
+// escalation level 3 who need a one-time admin override to place an order.
+interface OverrideAction {
+  actionId: string;
+  entityId: string;
+  description: string;
+  status: string;
+  createdAt: string;
+}
+
 export default function CollectionsPage() {
-  const [view, setView] = useState<'call-list' | 'all'>('call-list');
+  const [view, setView] = useState<'call-list' | 'all' | 'blocked'>('call-list');
+  const queryClient = useQueryClient();
 
   const { data: collections, isLoading } = useQuery({
     queryKey: ['collections-dashboard'],
@@ -23,6 +39,24 @@ export default function CollectionsPage() {
   const { data: callList, isLoading: callListLoading } = useQuery({
     queryKey: ['overdue-call-list'],
     queryFn: () => apiGet<OverdueCallListEntry[]>('/analytics/overdue-call-list'),
+  });
+
+  // WI-122: blocked customers (level-3) awaiting a one-time override approval.
+  const { data: blocked, isLoading: blockedLoading } = useQuery({
+    queryKey: ['collections-overrides'],
+    queryFn: () => apiGet<{ actions: OverrideAction[] }>('/pending-actions?module=collections&status=open'),
+  });
+  const overrideActions = (blocked?.actions ?? []).filter(
+    (a) => (a as unknown as { actionType?: string }).actionType === 'OVERDUE_ORDER_OVERRIDE',
+  );
+
+  const approveOverride = useMutation({
+    mutationFn: (actionId: string) => apiPut(`/pending-actions/${actionId}/approve`, {}),
+    onSuccess: () => {
+      toast.success('Override approved — the customer may place one order.');
+      queryClient.invalidateQueries({ queryKey: ['collections-overrides'] });
+    },
+    onError: () => toast.error('Could not approve override'),
   });
 
   const handleExport = async () => {
@@ -95,6 +129,15 @@ export default function CollectionsPage() {
             )}
           >
             All collections
+          </button>
+          <button
+            onClick={() => setView('blocked')}
+            className={cn(
+              'pb-2 text-sm font-medium border-b-2 transition-colors',
+              view === 'blocked' ? 'border-brand-500 text-brand-600 dark:text-brand-400' : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+            )}
+          >
+            Blocked {overrideActions.length ? `(${overrideActions.length})` : ''}
           </button>
         </div>
       </div>
@@ -187,6 +230,7 @@ export default function CollectionsPage() {
                 <th>Overdue</th>
                 <th>Days Overdue</th>
                 <th>Credit Period</th>
+                <th>Commitment</th>
                 <th>Missing Cylinders</th>
                 <th>Missing Value</th>
                 <th>Excess Empties</th>
@@ -199,8 +243,20 @@ export default function CollectionsPage() {
                   <td className="font-medium text-surface-900 dark:text-white">{c.customerName}</td>
                   <td className="font-medium">{formatCurrency(c.totalDue)}</td>
                   <td className={cn('font-medium', c.overdueDue > 0 && 'text-red-500')}>{formatCurrency(c.overdueDue)}</td>
-                  <td>{c.overduesDays > 0 ? <Badge variant="danger">{c.overduesDays}d</Badge> : <span className="text-surface-400">-</span>}</td>
+                  <td>{c.overdueDays > 0 ? <Badge variant="danger">{c.overdueDays}d</Badge> : <span className="text-surface-400">-</span>}</td>
                   <td>{c.creditPeriodDays}d</td>
+                  <td>
+                    {c.latestCommitment ? (
+                      <div className="text-xs">
+                        <Badge variant={c.latestCommitment.status === 'broken' ? 'danger' : 'warning'}>
+                          L{c.latestCommitment.escalationLevel}
+                        </Badge>
+                        <p className="text-surface-500 mt-1">{formatDate(c.latestCommitment.promisedDate)}</p>
+                      </div>
+                    ) : (
+                      <span className="text-surface-400">—</span>
+                    )}
+                  </td>
                   <td>{c.missingCylinders > 0 ? <span className="text-red-500 font-medium">{c.missingCylinders}</span> : <span className="text-surface-400">0</span>}</td>
                   <td>{c.missingCylinderValue > 0 ? <span className="text-red-500">{formatCurrency(c.missingCylinderValue)}</span> : <span className="text-surface-400">-</span>}</td>
                   <td>{c.excessEmptyCylinders > 0 ? <span className="text-amber-500 font-medium">{c.excessEmptyCylinders}</span> : <span className="text-surface-400">0</span>}</td>
@@ -218,6 +274,34 @@ export default function CollectionsPage() {
           </table>
         </div>
       )
+      )}
+
+      {/* WI-122: customers blocked at escalation level 3, awaiting a one-time
+          override approval before they can place another order. */}
+      {view === 'blocked' && (
+        blockedLoading ? (
+          <div className="flex justify-center py-20"><Loader size="lg" /></div>
+        ) : !overrideActions.length ? (
+          <EmptyState title="No blocked customers" description="No customers are currently blocked pending an override." />
+        ) : (
+          <div className="space-y-3">
+            {overrideActions.map((a) => (
+              <div key={a.actionId} className="card p-4 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm text-surface-900 dark:text-white">{a.description}</p>
+                  <p className="text-xs text-surface-400 mt-1">Requested {formatDate(a.createdAt)}</p>
+                </div>
+                <Button
+                  variant="primary"
+                  onClick={() => approveOverride.mutate(a.actionId)}
+                  disabled={approveOverride.isPending}
+                >
+                  Approve Override
+                </Button>
+              </div>
+            ))}
+          </div>
+        )
       )}
     </div>
   );

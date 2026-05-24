@@ -51,7 +51,7 @@ export default function FinanceCollectionsScreen() {
 
   const renderItem = ({ item: c }: { item: CollectionsDashboard }) => {
     const badgeVariant = c.overdueDue > 0 ? 'danger' : c.totalDue > 0 ? 'warning' : 'success';
-    const badgeLabel = c.overdueDue > 0 ? `${c.overduesDays}d overdue` : c.totalDue > 0 ? 'Due' : 'Clear';
+    const badgeLabel = c.overdueDue > 0 ? `${c.overdueDays}d overdue` : c.totalDue > 0 ? 'Due' : 'Clear';
 
     return (
       <Card>

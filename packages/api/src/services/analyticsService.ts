@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { toNum } from '../utils/decimal.js';
+import { computeCustomerOverdue } from './paymentService.js';
 
 /**
  * Dashboard statistics for the distributor.
@@ -71,16 +72,19 @@ export async function getDashboardStats(distributorId: string) {
  */
 export async function getHeaderMetrics(distributorId: string) {
   const [
-    totalOutstanding, overdueResult, paidResult,
+    totalOutstanding, overdueCustomers, paidResult,
     customerBalances, emptyPrices,
   ] = await Promise.all([
     prisma.invoice.aggregate({
       where: { distributorId, outstandingAmount: { gt: 0 }, deletedAt: null },
       _sum: { outstandingAmount: true, totalAmount: true, amountPaid: true },
     }),
-    prisma.invoice.aggregate({
-      where: { distributorId, status: 'overdue', deletedAt: null },
-      _sum: { outstandingAmount: true },
+    // WI-122: overdue is the ledger formula summed across customers, not the
+    // status flag. Only customers with an outstanding balance can be overdue,
+    // so we scope the fan-out to them.
+    prisma.customer.findMany({
+      where: { distributorId, deletedAt: null, invoices: { some: { outstandingAmount: { gt: 0 }, deletedAt: null } } },
+      select: { id: true },
     }),
     prisma.paymentTransaction.aggregate({
       where: { distributorId, deletedAt: null },
@@ -95,10 +99,14 @@ export async function getHeaderMetrics(distributorId: string) {
     }),
   ]);
 
+  const overduePerCustomer = await Promise.all(
+    overdueCustomers.map((c) => computeCustomerOverdue(distributorId, c.id)),
+  );
+  const overdueAmount = overduePerCustomer.reduce((s, a) => s + a, 0);
+
   const totalCapital = toNum(totalOutstanding._sum.totalAmount);
   const collectedAmount = toNum(paidResult._sum.amount);
   const dueAmount = toNum(totalOutstanding._sum.outstandingAmount);
-  const overdueAmount = toNum(overdueResult._sum.outstandingAmount);
 
   // Calculate amount in market (cylinder value with customers)
   const emptyPriceMap = new Map(emptyPrices.map(p => [p.cylinderTypeId, toNum(p.emptyCylinderPrice)]));
@@ -155,29 +163,33 @@ export async function getDueAmountsReport(distributorId: string) {
     },
   });
 
-  return customers
-    .filter(c => c.invoices.length > 0)
-    .map(c => {
-      const totalDue = c.invoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
-      const overdueInvoices = c.invoices.filter(inv => inv.status === 'overdue');
-      const overdueDue = overdueInvoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
-      const oldestOverdue = overdueInvoices.reduce((oldest, inv) => {
-        const days = Math.floor((Date.now() - new Date(inv.dueDate).getTime()) / 86400000);
-        return Math.max(oldest, days);
-      }, 0);
+  const rows = await Promise.all(
+    customers
+      .filter(c => c.invoices.length > 0)
+      .map(async c => {
+        const totalDue = c.invoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
+        // WI-122: overdue amount via the ledger formula (single source of truth).
+        const overdueDue = await computeCustomerOverdue(distributorId, c.id);
+        // Days overdue = age of the oldest invoice already past its due date.
+        const now = Date.now();
+        const overdueDays = c.invoices.reduce((oldest, inv) => {
+          const days = Math.floor((now - new Date(inv.dueDate).getTime()) / 86400000);
+          return days > 0 ? Math.max(oldest, days) : oldest;
+        }, 0);
 
-      return {
-        customerId: c.id,
-        customerName: c.customerName,
-        phone: c.phone,
-        totalDue,
-        overdueDue,
-        overdueDays: oldestOverdue,
-        invoiceCount: c.invoices.length,
-        creditPeriodDays: c.creditPeriodDays,
-      };
-    })
-    .sort((a, b) => b.totalDue - a.totalDue);
+        return {
+          customerId: c.id,
+          customerName: c.customerName,
+          phone: c.phone,
+          totalDue,
+          overdueDue,
+          overdueDays,
+          invoiceCount: c.invoices.length,
+          creditPeriodDays: c.creditPeriodDays,
+        };
+      }),
+  );
+  return rows.sort((a, b) => b.totalDue - a.totalDue);
 }
 
 /**
@@ -374,12 +386,15 @@ export async function getCollectionsDashboard(distributorId: string) {
   });
   const priceMap = new Map(emptyPrices.map(p => [p.cylinderTypeId, toNum(p.emptyCylinderPrice)]));
 
-  return customers.map(c => {
+  const rows = await Promise.all(customers.map(async c => {
     const totalDue = c.invoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
-    const overdueInvoices = c.invoices.filter(inv => inv.status === 'overdue');
-    const overdueDue = overdueInvoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
-    const overdueDays = overdueInvoices.reduce((max, inv) => {
-      return Math.max(max, Math.floor((Date.now() - new Date(inv.dueDate).getTime()) / 86400000));
+    // WI-122: overdue via the ledger formula (single source of truth).
+    const overdueDue = await computeCustomerOverdue(distributorId, c.id);
+    // Days overdue = age of the oldest invoice past its due date.
+    const now = Date.now();
+    const overdueDays = c.invoices.reduce((max, inv) => {
+      const days = Math.floor((now - new Date(inv.dueDate).getTime()) / 86400000);
+      return days > 0 ? Math.max(max, days) : max;
     }, 0);
 
     const missingCylinders = c.inventoryBalances.reduce((sum, b) => sum + b.missingQty, 0);
@@ -389,6 +404,16 @@ export async function getCollectionsDashboard(distributorId: string) {
     const excessEmptyCylinders = c.inventoryBalances.reduce((sum, b) => sum + b.withCustomerQty, 0);
 
     const lastPayment = c.payments[0];
+
+    // WI-122: most recent open commitment for the collections view.
+    const commitment = await prisma.paymentCommitment.findFirst({
+      where: { distributorId, customerId: c.id, status: 'open' },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        promisedDate: true, overdueAmountSnapshot: true,
+        status: true, escalationLevel: true, createdAt: true,
+      },
+    });
 
     return {
       customerId: c.id,
@@ -402,8 +427,16 @@ export async function getCollectionsDashboard(distributorId: string) {
       lastPaymentDate: lastPayment?.transactionDate?.toISOString() || null,
       lastPaymentAmount: lastPayment?.amount != null ? toNum(lastPayment.amount) : null,
       creditPeriodDays: c.creditPeriodDays,
+      latestCommitment: commitment ? {
+        promisedDate: commitment.promisedDate?.toISOString() || null,
+        overdueAmountSnapshot: toNum(commitment.overdueAmountSnapshot),
+        status: commitment.status,
+        escalationLevel: commitment.escalationLevel,
+        createdAt: commitment.createdAt.toISOString(),
+      } : null,
     };
-  }).sort((a, b) => b.totalDue - a.totalDue);
+  }));
+  return rows.sort((a, b) => b.totalDue - a.totalDue);
 }
 
 /**

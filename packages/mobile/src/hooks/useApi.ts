@@ -26,6 +26,10 @@ export function useApiMutation<TData, TVariables = unknown>(
     invalidateKeys?: string[][];
     successMessage?: string;
     onSuccess?: (data: TData) => void;
+    // When provided, REPLACES the default error Alert — the caller takes full
+    // responsibility for surfacing the error (e.g. the WI-122 commitment flow
+    // intercepts 409s instead of showing a raw alert).
+    onError?: (error: Error) => void;
   },
 ) {
   const queryClient = useQueryClient();
@@ -52,6 +56,10 @@ export function useApiMutation<TData, TVariables = unknown>(
       options?.onSuccess?.(data);
     },
     onError: (error) => {
+      if (options?.onError) {
+        options.onError(error);
+        return;
+      }
       Alert.alert('Error', getErrorMessage(error));
     },
   });

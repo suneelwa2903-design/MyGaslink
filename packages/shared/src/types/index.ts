@@ -591,13 +591,22 @@ export interface CollectionsDashboard {
   customerName: string;
   totalDue: number;
   overdueDue: number;
-  overduesDays: number;
+  // Matches the service field name (was the mismatched `overduesDays`).
+  overdueDays: number;
   missingCylinders: number;
   missingCylinderValue: number;
   excessEmptyCylinders: number;
   lastPaymentDate: string | null;
   lastPaymentAmount: number | null;
   creditPeriodDays: number;
+  // WI-122: most recent open payment commitment for this customer (or null).
+  latestCommitment: {
+    promisedDate: string | null;
+    overdueAmountSnapshot: number;
+    status: string;
+    escalationLevel: number;
+    createdAt: string;
+  } | null;
 }
 
 // ─── Pending Actions ─────────────────────────────────────────────────────────
