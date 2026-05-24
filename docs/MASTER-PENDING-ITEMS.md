@@ -365,6 +365,17 @@ Priority: `critical` · `high` · `medium` · `low`.
   "not yet implemented" / 501, but the route is fully implemented
   ([invoices.ts:165-172](packages/api/src/routes/invoices.ts)). Stale doc only.
 
+**#37 — Daily cron for markOverdueInvoices**
+- Status: **PENDING** · Priority: medium
+- `computeCustomerOverdue` (the ledger FIFO formula,
+  [paymentService.ts](packages/api/src/services/paymentService.ts)) is now the
+  source of truth for overdue **amounts** (dashboard, collections, due-amounts,
+  header metrics, order-placement gate — WI-122). But the `invoice.status`
+  **badge** still relies on the manual `markOverdueInvoices`
+  ([invoiceService.ts](packages/api/src/services/invoiceService.ts)), which only
+  flips `issued`/`partially_paid` → `overdue` when explicitly invoked. Wire a
+  daily cron to run it automatically so status badges stay current. Post-launch.
+
 **#25 — EWB cancellation timing (cancel at order-cancel vs reconciliation)**
 - Status: **PARKED** · Priority: medium
 - Investigation confirmed: the EWB is cancelled at NIC at order-cancel time
