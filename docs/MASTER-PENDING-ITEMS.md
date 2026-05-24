@@ -376,6 +376,54 @@ Priority: `critical` · `high` · `medium` · `low`.
   flips `issued`/`partially_paid` → `overdue` when explicitly invoked. Wire a
   daily cron to run it automatically so status badges stay current. Post-launch.
 
+**#38 — Future Orders: customer can place orders up to 7 days ahead**
+- Status: **PARKED** (post-launch) · Priority: medium · Category: Customer App / Operations
+- Background: WI-125 fixes order date selection to allow today or tomorrow.
+  Orders beyond tomorrow are parked here as a separate feature.
+- Business case:
+  - High-volume B2B customers (e.g. 425KG bulk buyers) plan purchases in advance.
+  - Distributor gains 3–7 day demand visibility for route planning and inventory
+    procurement.
+  - Feeds AI Demand Forecast with real committed orders rather than historical
+    inference alone.
+  - Reduces panic same-day ordering and last-minute dispatch changes.
+- Proposed design:
+  - Allow delivery date selection up to 7 days ahead (configurable per distributor).
+  - Orders placed for future dates sit in `pending_dispatch` until the day before
+    or day of delivery — driver assignment and dispatch happen on the actual
+    delivery date.
+  - Customer can edit or cancel a future order freely until T-1 (day before
+    delivery); after that, cancellation requires admin action.
+- Dependencies that must be built first:
+  1. DVA/dispatch flow must support advance scheduling — the driver-vehicle
+     assignment (DVA) is per-day and created at dispatch time; future orders need
+     a way to queue for a future DVA without blocking today's dispatch.
+  2. Admin needs a "Future Orders" view on the web Orders page (tab/filter for
+     deliveryDate > today) so dispatchers can plan ahead.
+  3. Demand Forecast integration — future orders should optionally feed the
+     forecast module as "committed demand" distinct from historical patterns.
+  4. Cancellation policy — define whether cancelled future orders incur a hold or
+     are free cancels; high cancellation-rate risk must be monitored at launch.
+- Risks to assess before building:
+  - Inventory over-commitment: 7 days of future orders may lock stock other
+    customers need sooner.
+  - Cancellation rate: customers may place speculative orders and cancel — need
+    monitoring and a cancellation limit rule.
+  - DVA complexity: advance orders cannot be dispatched early; the dispatch gate
+    must enforce deliveryDate = today before allowing dispatch.
+  - GST/EWB: e-Way Bills have a validity window; generating EWBs more than 1 day
+    early for a far-future delivery is not permitted by NIC — IRN+EWB generation
+    must still happen on the day of dispatch, not at order placement.
+- Implementation notes when building:
+  - Extend the New Order date picker max from tomorrow to +7 days (one config
+    change in WI-125's date picker / `assertCustomerDeliveryWindow`).
+  - Add a `distributorSettings.futureDaysWindow` field (default 1, max 7) so each
+    distributor controls their own window.
+  - The order gate in `createOrder` must validate `deliveryDate <= today +
+    futureDaysWindow`.
+  - Fleet/dispatch screen should surface a "Scheduled" section showing upcoming
+    future orders grouped by delivery date.
+
 **#25 — EWB cancellation timing (cancel at order-cancel vs reconciliation)**
 - Status: **PARKED** · Priority: medium
 - Investigation confirmed: the EWB is cancelled at NIC at order-cancel time
