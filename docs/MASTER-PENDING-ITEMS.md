@@ -284,16 +284,27 @@ Priority: `critical` · `high` · `medium` · `low`.
 > Items #29–#36 surfaced by the four-part read-only audit on 2026-05-24.
 > Items marked **IN PROGRESS** are being fixed in the current session.
 
-**#29 — Inventory recompute silent no-op after reconciliation**
-- Status: **IN PROGRESS** (WI-113) · Priority: high
-- `confirmVehicleReconciliation` calls `recalculateSummariesFromDate(..., new Date())`
-  ([deliveryWorkflowService.ts:469,554](packages/api/src/services/deliveryWorkflowService.ts))
-  with a current **timestamp**, but `summary_date` / `event_date` are `@db.Date`
-  (midnight). The `gte: fromDate` filter ([inventoryService.ts:202](packages/api/src/services/inventoryService.ts))
-  then never matches today's events, so depot closing stock is never recomputed
-  after a reconciliation — wrong inventory numbers every day (425KG off by −1,
-  5KG off by −2 on 2026-05-23). Fix: pass `startOfDay(new Date())`. ~2-line change,
-  low risk.
+**#29 — Inventory recompute "silent no-op" after reconciliation — NOT A BUG (misdiagnosed)**
+- Status: **CLOSED / NOT A BUG** (WI-113 abandoned 2026-05-24) · superseded by **#18**
+- Original theory: `confirmVehicleReconciliation` calls
+  `recalculateSummariesFromDate(..., new Date())` with a timestamp, and since
+  `summary_date`/`event_date` are `@db.Date` (midnight) the `gte: fromDate`
+  filter would exclude today's events → silent no-op.
+- **Disproven by direct Prisma probe (2026-05-24):** Prisma binds a `@db.Date`
+  `gte` value as a DATE, so `gte: <today 16:53>` matches today's date-only
+  events. `new Date()` is NOT a no-op — recompute works for both create and
+  update, midnight or timestamp. The `startOfDay` change is behaviourally
+  identical; reverted.
+- **Real explanation of the 2026-05-23 5KG (32 vs 34) / 425KG (5 vs 6)
+  discrepancy:** under dispatch-debit OFF, `cancelOrder` writes a `cancellation`
+  (+qty) event AND reconciliation writes a `cancellation_return` (+qty) event
+  for the SAME cancelled cylinders — a double-count. `computeSummaryForDate`
+  folding in both yields 34 (double-counted, *wrong*); the stored 32 is the
+  un-doubled (closer-to-physical) value. The staleness was a flag-OFF
+  manual-testing artifact, not a recompute-date bug — and "fixing" the recompute
+  would have made the number worse. The double-count is eliminated by the
+  WI-106 dispatch-debit cutover (**#18**, flag-ON skips the `cancellation`
+  event). No standalone fix; track under #18.
 
 **#30 — IDOR: `GET /api/invoices/:id/gst-documents` not tenant-scoped**
 - Status: **IN PROGRESS** (CRITICAL-FIX-A) · Priority: critical
