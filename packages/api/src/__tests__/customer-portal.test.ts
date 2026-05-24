@@ -90,10 +90,11 @@ describe('Customer Portal - Dashboard', () => {
     expect(typeof d.emptyCylinders).toBe('number');
     expect(Array.isArray(d.recentOrders)).toBe(true);
     expect(Array.isArray(d.cylinderTypes)).toBe(true);
+    // WI-123: per-type empties breakdown for the dashboard card.
+    expect(Array.isArray(d.emptiesByType)).toBe(true);
     // Legacy field names must be gone (these caused the silent-zero bug).
     expect(d.amountOutstanding).toBeUndefined();
     expect(d.ordersPending).toBeUndefined();
-    expect(d.emptiesByType).toBeUndefined();
     // cylinderTypes feed the New Order modal — shape { id, typeName, capacity, latestPrice }.
     if (d.cylinderTypes.length > 0) {
       const ct = d.cylinderTypes[0];
@@ -202,6 +203,52 @@ describe('Customer Portal - Dashboard date range (WI-121)', () => {
     expect(past.overdueAmount).toBe(dflt.overdueAmount);
     expect(past.emptyCylinders).toBe(dflt.emptyCylinders);
     expect(past.pendingOrders).toBe(dflt.pendingOrders);
+  });
+});
+
+describe('Customer Portal - Cancelled invoice outstanding (WI-123)', () => {
+  let orderId: string;
+  let invoiceId: string;
+
+  beforeAll(async () => {
+    const far = new Date('2099-12-31');
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-WI123-${Date.now()}`,
+        distributorId, customerId,
+        orderDate: far, deliveryDate: far,
+        status: 'pending_dispatch', totalAmount: 5000,
+      },
+    });
+    orderId = order.id;
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `TEST-INV-WI123-${Date.now()}`,
+        distributorId, customerId, orderId: order.id,
+        issueDate: far, dueDate: far,
+        status: 'issued', totalAmount: 5000, outstandingAmount: 5000,
+      },
+    });
+    invoiceId = invoice.id;
+  });
+
+  afterAll(async () => {
+    await prisma.invoice.deleteMany({ where: { id: invoiceId } });
+    await prisma.order.deleteMany({ where: { id: orderId } });
+  });
+
+  it('zeroes the invoice outstanding when the order is cancelled', async () => {
+    const cancel = await request(app)
+      .patch(`/api/customer-portal/orders/${orderId}/cancel`)
+      .set(auth(customerToken));
+    expect(cancel.status).toBe(200);
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${invoiceId}`)
+      .set(auth(customerToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('cancelled');
+    expect(res.body.data.outstandingAmount).toBe(0);
   });
 });
 

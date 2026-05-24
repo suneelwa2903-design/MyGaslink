@@ -57,6 +57,7 @@ export async function getCustomerDashboard(
       paymentsReceived: 0,
       pendingOrders: 0,
       emptyCylinders: 0,
+      emptiesByType: [],
       recentOrders: [],
       cylinderTypes,
       range: periodRange,
@@ -103,7 +104,7 @@ export async function getCustomerDashboard(
     computeCustomerOverdue(distributorId, customerId),
     prisma.customerInventoryBalance.findMany({
       where: { customerId, customer: { distributorId, deletedAt: null } },
-      select: { withCustomerQty: true },
+      select: { withCustomerQty: true, cylinderType: { select: { typeName: true, capacity: true } } },
     }),
     prisma.order.findMany({
       where: { customerId, distributorId, deletedAt: null },
@@ -119,6 +120,12 @@ export async function getCustomerDashboard(
     overdueAmount,
     pendingOrders,
     emptyCylinders: balances.reduce((sum, b) => sum + b.withCustomerQty, 0),
+    // WI-123: per-type breakdown for the dashboard Empty Cylinders card.
+    emptiesByType: balances.map((b) => ({
+      cylinderTypeName: b.cylinderType.typeName,
+      capacity: b.cylinderType.capacity,
+      withCustomerQty: b.withCustomerQty,
+    })),
     // Date-filtered activity (within range)
     totalOrders,
     ordersDelivered: deliveredAgg._count,

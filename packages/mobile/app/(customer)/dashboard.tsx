@@ -2,8 +2,11 @@ import { useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { MetricCard } from '../../src/components/ui';
-import { useTheme, formatINR, getBadgeColors, formatDate } from '../../src/theme';
+import { MetricCard, Card } from '../../src/components/ui';
+import { useTheme, formatINR } from '../../src/theme';
+
+// Uniform height so all four Current Status cards line up regardless of content.
+const CARD_MIN_HEIGHT = 116;
 
 interface CustomerDashboard {
   // Always-current (state)
@@ -11,33 +14,13 @@ interface CustomerDashboard {
   overdueAmount: number;
   pendingOrders: number;
   emptyCylinders: number;
+  emptiesByType: Array<{ cylinderTypeName: string; capacity: number; withCustomerQty: number }>;
   // Date-filtered (activity within range)
   totalOrders: number;
   ordersDelivered: number;
   amountDelivered: number;
   paymentsReceived: number;
   range: { from: string; to: string };
-  recentOrders: Array<{
-    orderId: string;
-    orderNumber: string;
-    status: string;
-    deliveryDate: string;
-    totalAmount: number;
-  }>;
-}
-
-function getOrderBadgeVariant(status: string) {
-  switch (status) {
-    case 'delivered':
-    case 'modified_delivered':
-      return 'success' as const;
-    case 'cancelled':
-      return 'danger' as const;
-    case 'pending_delivery':
-      return 'warning' as const;
-    default:
-      return 'info' as const;
-  }
 }
 
 function firstOfMonth(): string {
@@ -46,7 +29,7 @@ function firstOfMonth(): string {
 }
 
 export default function CustomerDashboardScreen() {
-  const { dark, colors, accent } = useTheme();
+  const { colors, accent } = useTheme();
 
   // Activity date range — defaults to the current month (1st → today).
   const [fromDate, setFromDate] = useState(firstOfMonth);
@@ -57,6 +40,8 @@ export default function CustomerDashboardScreen() {
     '/customer-portal/dashboard',
     { from: fromDate, to: toDate },
   );
+
+  const emptiesWithYou = (data?.emptiesByType ?? []).filter((t) => t.withCustomerQty > 0);
 
   const dateInputStyle = {
     borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10,
@@ -80,23 +65,43 @@ export default function CustomerDashboardScreen() {
         </Text>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
-            <MetricCard title="Outstanding" value={formatINR(data?.outstandingAmount)} color={accent.orange} />
+            <MetricCard title="Outstanding" value={formatINR(data?.outstandingAmount)} color={accent.orange} minHeight={CARD_MIN_HEIGHT} />
           </View>
           <View style={{ flex: 1 }}>
-            <MetricCard title="Overdue" value={formatINR(data?.overdueAmount)} color={accent.red} />
+            <MetricCard title="Overdue" value={formatINR(data?.overdueAmount)} color={accent.red} minHeight={CARD_MIN_HEIGHT} />
           </View>
         </View>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
-            <MetricCard title="Pending Orders" value={data?.pendingOrders ?? 0} color={accent.blue} />
+            <MetricCard title="Pending Orders" value={data?.pendingOrders ?? 0} color={accent.blue} minHeight={CARD_MIN_HEIGHT} />
           </View>
           <View style={{ flex: 1 }}>
-            <MetricCard
-              title="Empty Cylinders"
-              value={data?.emptyCylinders ?? 0}
-              color={accent.green}
-              subtitle="With you"
-            />
+            <Card style={{ minHeight: CARD_MIN_HEIGHT }}>
+              <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: '500' }}>
+                Empty Cylinders With You
+              </Text>
+              {emptiesWithYou.length > 0 ? (
+                <>
+                  <Text style={{ fontSize: 24, fontWeight: '700', color: accent.green, marginTop: 4 }}>
+                    {data?.emptyCylinders ?? 0}
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 }}>
+                    {emptiesWithYou.map((t) => (
+                      <Text
+                        key={t.cylinderTypeName}
+                        style={{ fontSize: 12, color: colors.textSecondary, width: '50%', marginTop: 2 }}
+                      >
+                        {t.cylinderTypeName}: {t.withCustomerQty}
+                      </Text>
+                    ))}
+                  </View>
+                </>
+              ) : (
+                <Text style={{ fontSize: 13, color: colors.textMuted, marginTop: 8 }}>
+                  0 — All cylinders returned
+                </Text>
+              )}
+            </Card>
           </View>
         </View>
 
@@ -132,73 +137,19 @@ export default function CustomerDashboardScreen() {
         </View>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
-            <MetricCard title="Orders" value={data?.totalOrders ?? 0} color={accent.blue} />
+            <MetricCard title="Orders" value={data?.totalOrders ?? 0} color={accent.blue} minHeight={CARD_MIN_HEIGHT} />
           </View>
           <View style={{ flex: 1 }}>
-            <MetricCard title="Delivered" value={data?.ordersDelivered ?? 0} color={accent.green} />
+            <MetricCard title="Delivered" value={data?.ordersDelivered ?? 0} color={accent.green} minHeight={CARD_MIN_HEIGHT} />
           </View>
         </View>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
-            <MetricCard title="Amount Delivered" value={formatINR(data?.amountDelivered)} color={accent.purple} />
+            <MetricCard title="Amount Delivered" value={formatINR(data?.amountDelivered)} color={accent.purple} minHeight={CARD_MIN_HEIGHT} />
           </View>
           <View style={{ flex: 1 }}>
-            <MetricCard title="Payments Made" value={formatINR(data?.paymentsReceived)} color={accent.green} />
+            <MetricCard title="Payments Made" value={formatINR(data?.paymentsReceived)} color={accent.green} minHeight={CARD_MIN_HEIGHT} />
           </View>
-        </View>
-
-        {/* Recent Orders */}
-        <View style={{ marginTop: 8 }}>
-          <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 12 }}>
-            Recent Orders
-          </Text>
-          {data?.recentOrders?.length ? (
-            data.recentOrders.map((order) => {
-              const badge = getBadgeColors(getOrderBadgeVariant(order.status), dark);
-              return (
-                <View
-                  key={order.orderId}
-                  style={{
-                    backgroundColor: colors.cardBg,
-                    borderRadius: 12,
-                    padding: 14,
-                    marginBottom: 8,
-                    borderWidth: 1,
-                    borderColor: colors.cardBorder,
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <View>
-                    <Text style={{ fontWeight: '600', color: colors.text }}>
-                      {order.orderNumber}
-                    </Text>
-                    <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                      {formatDate(order.deliveryDate)}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontWeight: '700', color: colors.text }}>
-                      {formatINR(order.totalAmount)}
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        fontWeight: '600',
-                        marginTop: 2,
-                        color: badge.text,
-                      }}
-                    >
-                      {(order.status || '').replace(/_/g, ' ').toUpperCase()}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })
-          ) : (
-            <Text style={{ color: colors.textMuted, textAlign: 'center' }}>No recent orders</Text>
-          )}
         </View>
       </ScrollView>
     </SafeAreaView>

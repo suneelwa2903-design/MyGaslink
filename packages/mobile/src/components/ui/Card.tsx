@@ -36,12 +36,14 @@ interface MetricCardProps {
   subtitle?: string;
   color?: string;
   icon?: React.ReactNode;
+  // WI-123: fix a uniform card height so cards in a row always line up.
+  minHeight?: number;
 }
 
-export function MetricCard({ title, value, subtitle, color = '#338dff', icon }: MetricCardProps) {
+export function MetricCard({ title, value, subtitle, color = '#338dff', icon, minHeight }: MetricCardProps) {
   const { colors } = useTheme();
   return (
-    <Card>
+    <Card style={minHeight ? { minHeight, justifyContent: 'center' } : undefined}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: '500' }}>{title}</Text>

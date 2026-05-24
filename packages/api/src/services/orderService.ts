@@ -1290,10 +1290,12 @@ export async function cancelOrder(
     }
 
     // STEP 4: Void the invoice (preserve irnStatus/ewbStatus already updated by GST calls)
+    // WI-123: a cancelled invoice owes nothing — zero its outstanding so it
+    // never shows a balance in the portal/collections.
     if (invoiceId) {
       await tx.invoice.update({
         where: { id: invoiceId },
-        data: { status: 'cancelled' },
+        data: { status: 'cancelled', outstandingAmount: 0 },
       });
     }
 
