@@ -6,7 +6,11 @@ import { getEffectivePrice } from './cylinderTypeService.js';
 /**
  * Get customer dashboard stats.
  */
-export async function getCustomerDashboard(distributorId: string, customerId: string) {
+export async function getCustomerDashboard(
+  distributorId: string,
+  customerId: string,
+  range?: { from?: string; to?: string },
+) {
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
     select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true },
@@ -31,27 +35,61 @@ export async function getCustomerDashboard(distributorId: string, customerId: st
     latestPrice: await getEffectivePrice(distributorId, t.id, asOf),
   })));
 
+  // WI-121: ACTIVITY metrics (orders, delivered, payments) are scoped to a
+  // date range; BALANCE/STATE metrics (outstanding, overdue, empties, pending)
+  // always reflect the present and ignore the range. Default range = current
+  // month (1st → end of today).
+  const now = new Date();
+  const from = range?.from ? new Date(range.from) : new Date(now.getFullYear(), now.getMonth(), 1);
+  const to = range?.to ? new Date(range.to) : now;
+  const toEnd = new Date(to);
+  toEnd.setHours(23, 59, 59, 999);
+  const periodRange = { from: from.toISOString(), to: toEnd.toISOString() };
+
   if (customer.stopSupply) {
     return {
       outstandingAmount: 0,
       overdueAmount: 0,
       totalOrders: 0,
+      ordersDelivered: 0,
+      amountDelivered: 0,
+      paymentsReceived: 0,
       pendingOrders: 0,
       emptyCylinders: 0,
       recentOrders: [],
       cylinderTypes,
+      range: periodRange,
       supplyStopped: true,
     };
   }
 
-  const [pendingOrders, totalOrders, outstandingResult, overdueResult, balances, recent] = await Promise.all([
+  const deliveredStatuses = ['delivered', 'modified_delivered'];
+  const [pendingOrders, totalOrders, deliveredAgg, paymentsAgg, outstandingResult, overdueResult, balances, recent] = await Promise.all([
+    // ── Always-current (state) ──
     prisma.order.count({
       where: {
         customerId, distributorId, deletedAt: null,
         status: { in: ['pending_driver_assignment', 'pending_dispatch', 'pending_delivery'] },
       },
     }),
-    prisma.order.count({ where: { customerId, distributorId, deletedAt: null } }),
+    // ── Date-filtered (activity) ──
+    prisma.order.count({
+      where: { customerId, distributorId, deletedAt: null, deliveryDate: { gte: from, lte: toEnd } },
+    }),
+    prisma.order.aggregate({
+      where: {
+        customerId, distributorId, deletedAt: null,
+        status: { in: deliveredStatuses as any },
+        deliveryDate: { gte: from, lte: toEnd },
+      },
+      _count: true,
+      _sum: { totalAmount: true },
+    }),
+    prisma.paymentTransaction.aggregate({
+      where: { customerId, distributorId, deletedAt: null, transactionDate: { gte: from, lte: toEnd } },
+      _sum: { amount: true },
+    }),
+    // ── Always-current (balance) ──
     prisma.invoice.aggregate({
       where: {
         customerId, distributorId, deletedAt: null,
@@ -77,11 +115,18 @@ export async function getCustomerDashboard(distributorId: string, customerId: st
   ]);
 
   return {
+    // Always-current
     outstandingAmount: toNum(outstandingResult._sum.outstandingAmount),
     overdueAmount: toNum(overdueResult._sum.outstandingAmount),
-    totalOrders,
     pendingOrders,
     emptyCylinders: balances.reduce((sum, b) => sum + b.withCustomerQty, 0),
+    // Date-filtered activity (within range)
+    totalOrders,
+    ordersDelivered: deliveredAgg._count,
+    amountDelivered: toNum(deliveredAgg._sum.totalAmount),
+    paymentsReceived: toNum(paymentsAgg._sum.amount),
+    range: periodRange,
+    // Lists / catalog
     recentOrders: recent.map((o) => ({
       orderId: o.id,
       orderNumber: o.orderNumber,

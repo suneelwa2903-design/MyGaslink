@@ -163,6 +163,48 @@ describe('Customer Portal - Orders', () => {
   });
 });
 
+describe('Customer Portal - Dashboard date range (WI-121)', () => {
+  it('no params → defaults to the current month and returns activity + balance fields', async () => {
+    const res = await request(app)
+      .get('/api/customer-portal/dashboard')
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(200);
+    const d = res.body.data;
+    expect(d.range).toBeDefined();
+    const firstOfMonth = new Date();
+    firstOfMonth.setDate(1);
+    expect(new Date(d.range.from).getMonth()).toBe(firstOfMonth.getMonth());
+    expect(typeof d.totalOrders).toBe('number');
+    expect(typeof d.ordersDelivered).toBe('number');
+    expect(typeof d.amountDelivered).toBe('number');
+    expect(typeof d.paymentsReceived).toBe('number');
+  });
+
+  it('a far-past range yields zero activity but unchanged balances', async () => {
+    const dflt = (await request(app)
+      .get('/api/customer-portal/dashboard')
+      .set(auth(customerToken))).body.data;
+
+    const past = (await request(app)
+      .get('/api/customer-portal/dashboard')
+      .query({ from: '1990-01-01', to: '1990-01-31' })
+      .set(auth(customerToken))).body.data;
+
+    // Activity metrics scoped to 1990 → zero.
+    expect(past.totalOrders).toBe(0);
+    expect(past.ordersDelivered).toBe(0);
+    expect(past.amountDelivered).toBe(0);
+    expect(past.paymentsReceived).toBe(0);
+
+    // Balance/state metrics ignore the range — identical to the default call.
+    expect(past.outstandingAmount).toBe(dflt.outstandingAmount);
+    expect(past.overdueAmount).toBe(dflt.overdueAmount);
+    expect(past.emptyCylinders).toBe(dflt.emptyCylinders);
+    expect(past.pendingOrders).toBe(dflt.pendingOrders);
+  });
+});
+
 describe('Customer Portal - Driver disclosure on order card (WI-119)', () => {
   let pendingOrderId: string;
   let deliveredOrderId: string;

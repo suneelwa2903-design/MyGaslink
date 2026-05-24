@@ -22,7 +22,8 @@ router.get('/dashboard',
       return sendError(res, 'No customer linked to this account', 400);
     }
     const stats = await portalService.getCustomerDashboard(
-      req.user!.distributorId!, req.user!.customerId
+      req.user!.distributorId!, req.user!.customerId,
+      { from: req.query.from as string, to: req.query.to as string }
     );
     return sendSuccess(res, stats);
   } catch (err: any) {
