@@ -457,6 +457,51 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     }
   });
 
+  it('WI-131: B2B by-IRN EWB status_cd=1 with NO ewayBillNo → ewbStatus=failed + pending action, IRN intact, dispatch NOT blocked', async () => {
+    const ctx = await getSharmaContext();
+    const orders = await seedOrders({
+      customerId: ctx.b2bCust.id, count: 1,
+      cylinderTypeId: ctx.cyl.id, qty: 5,
+      driverId: ctx.driver.id, vehicleId: ctx.vehicle.id,
+    });
+    try {
+      // IRN succeeds (no inline EWB) → standalone genewaybill returns the
+      // degenerate "Sucess" envelope: status_cd=1 but NO ewayBillNo. WI-131
+      // must mark the EWB failed + raise a HIGH pending action while leaving
+      // the IRN intact and NOT blocking dispatch.
+      apiCallMock
+        .mockResolvedValueOnce(irnSuccessNoInlineEwb())
+        .mockResolvedValueOnce({ status_cd: '1', status_desc: 'Sucess' });
+      const result = await preflightDispatch({
+        distributorId: 'dist-002',
+        driverId: ctx.driver.id,
+        assignmentDate: today(),
+        userId: 'test-user',
+      });
+
+      expect(result.summary).toMatchObject({ total: 1, succeeded: 1, failed: 0 });
+      expect(result.results[0]).toMatchObject({ mode: 'B2B', success: true });
+      expect(result.results[0].irn).toBeTruthy();
+      expect(result.results[0].ewbNo == null).toBe(true);
+
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: orders[0].id } });
+      expect(order.status).toBe('pending_delivery'); // dispatch NOT blocked
+
+      const inv = await prisma.invoice.findFirstOrThrow({ where: { orderId: orders[0].id } });
+      expect(inv.irnStatus).toBe('success'); // IRN intact
+      expect(inv.ewbStatus).toBe('failed');
+
+      const pa = await prisma.pendingAction.findFirst({
+        where: { entityId: inv.id, actionType: 'EWB_GENERATION' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(pa).not.toBeNull();
+      expect(pa?.severity).toBe('high');
+    } finally {
+      await clearPreflightArtifacts(orders.map((o) => o.id));
+    }
+  });
+
   it('WI-091: pre-dispatch NIC health probe failure → PreflightError NIC_SESSION_DOWN (503), no orders touched', async () => {
     const ctx = await getSharmaContext();
     const orders = await seedOrders({

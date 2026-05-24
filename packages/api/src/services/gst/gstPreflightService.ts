@@ -1075,7 +1075,20 @@ async function runB2bPreflight(params: {
             },
           });
         } else {
-          logger.warn('EWB response missing ewayBillNo after IRN success', { invoiceId });
+          // WI-131: NIC returned status_cd=1 but NO ewayBillNo. Previously this
+          // was a silent logger.warn — the order looked dispatched with no EWB
+          // and no follow-up. Treat it as a failure (same as a thrown EWB error
+          // below): mark the EWB failed + raise a HIGH pending action for retry.
+          logger.error('EWB response had status_cd success but no ewayBillNo after IRN success', { orderId, invoiceId });
+          await prisma.invoice.update({
+            where: { id: invoiceId },
+            data: { ewbStatus: 'failed' },
+          });
+          await createPendingAction(
+            distributorId, invoiceId, 'EWB_GENERATION',
+            `Order ${order.orderNumber}: NIC returned success but no EWB number. Manual retry required.`,
+            'high',
+          );
         }
       } catch (ewbErr: any) {
         // IRN already succeeded — don't fail the dispatch on a missed
