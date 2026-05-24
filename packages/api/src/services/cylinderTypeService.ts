@@ -75,12 +75,29 @@ export async function createPrice(distributorId: string, data: {
   price: number;
   effectiveDate: string;
 }) {
+  const effectiveDate = new Date(data.effectiveDate);
+  // WI-133 Fix 2: there is no DB unique constraint on
+  // (distributorId, cylinderTypeId, effectiveDate), so a re-submit of the
+  // same date used to pile up duplicate rows — which then made
+  // getEffectivePrice non-deterministic. Find-or-update instead: setting a
+  // price for a date that already has one overwrites it rather than
+  // duplicating. (Upsert avoided because there is no unique key to target.)
+  const existing = await prisma.cylinderPrice.findFirst({
+    where: { distributorId, cylinderTypeId: data.cylinderTypeId, effectiveDate },
+  });
+  if (existing) {
+    return prisma.cylinderPrice.update({
+      where: { id: existing.id },
+      data: { price: data.price },
+      include: { cylinderType: { select: { typeName: true } } },
+    });
+  }
   return prisma.cylinderPrice.create({
     data: {
       distributorId,
       cylinderTypeId: data.cylinderTypeId,
       price: data.price,
-      effectiveDate: new Date(data.effectiveDate),
+      effectiveDate,
     },
     include: { cylinderType: { select: { typeName: true } } },
   });
@@ -103,7 +120,12 @@ export async function getEffectivePrice(
       cylinderTypeId,
       effectiveDate: { lte: date },
     },
-    orderBy: { effectiveDate: 'desc' },
+    // WI-133 Fix 1: deterministic tie-break. Two prices can share the same
+    // effective_date (it's @db.Date — day granularity). Without a secondary
+    // sort, Postgres returns an arbitrary one of the duplicates, so the
+    // effective price flickers between requests. createdAt desc picks the
+    // most recently entered price for that date.
+    orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
   });
   return toNum(price?.price);
 }
