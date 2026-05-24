@@ -526,8 +526,9 @@ driverRouter.get('/me/trip-ewbs',
           order: {
             select: {
               orderNumber: true,
+              status: true,
               customer: { select: { customerName: true } },
-              items: { select: { quantity: true, cylinderType: { select: { typeName: true } } } },
+              items: { select: { quantity: true, deliveredQuantity: true, cylinderType: { select: { typeName: true } } } },
             },
           },
           invoice: { select: { invoiceNumber: true } },
@@ -537,6 +538,12 @@ driverRouter.get('/me/trip-ewbs',
 
       const items = docs.map((d) => {
         const orderItems = d.order?.items ?? [];
+        // WI-111: once the order is delivered the EWB reflects what actually
+        // moved, so Compliance Docs must show the DELIVERED qty (e.g. 19KG×3
+        // after a modified-MORE delivery), not the ordered qty. For
+        // pending_delivery orders deliveredQuantity is null → fall back to the
+        // ordered quantity.
+        const isDelivered = d.order?.status === 'delivered' || d.order?.status === 'modified_delivered';
         return {
           orderId: d.orderId,
           orderNumber: d.order?.orderNumber ?? null,
@@ -547,7 +554,10 @@ driverRouter.get('/me/trip-ewbs',
           ewbValidTill: d.ewbValidTill,
           ewbStatus: d.ewbStatus,
           cylinderType: orderItems[0]?.cylinderType?.typeName ?? null,
-          quantity: orderItems.reduce((s, it) => s + (it.quantity ?? 0), 0),
+          quantity: orderItems.reduce(
+            (s, it) => s + (isDelivered ? (it.deliveredQuantity ?? it.quantity ?? 0) : (it.quantity ?? 0)),
+            0,
+          ),
         };
       });
       return sendSuccess(res, {

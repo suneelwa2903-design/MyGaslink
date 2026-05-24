@@ -30,10 +30,10 @@ import type { Express } from 'express';
 const D2 = 'dist-002', D1 = 'dist-001';
 const today = startOfUtcDay();
 const validTill = new Date(today.getTime() + 86_400_000);
-const PHONES = ['9914200001', '9914200002', '9914200003', '9914200004', '9914200005'];
+const PHONES = ['9914200001', '9914200002', '9914200003', '9914200004', '9914200005', '9914200006'];
 
 let app: Express;
-let aToken = '', bToken = '', cToken = '', eToken = '', fToken = '';
+let aToken = '', bToken = '', cToken = '', eToken = '', fToken = '', gToken = '';
 
 async function cleanup() {
   await prisma.gstDocument.deleteMany({ where: { order: { orderNumber: { startsWith: 'TEST-CD-' } } } });
@@ -59,14 +59,16 @@ async function mkDriver(distributorId: string, phone: string, name: string, trip
 
 async function mkOrderWithEwb(distributorId: string, driverId: string, vehicleId: string, opts: {
   orderNumber: string; status: string; ewbStatus: string; ewbNo: string | null;
+  orderedQty?: number; deliveredQty?: number;
 }) {
   const customer = await prisma.customer.findFirstOrThrow({ where: { distributorId, deletedAt: null } });
   const cyl = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId } });
+  const orderedQty = opts.orderedQty ?? 2;
   const order = await prisma.order.create({
     data: {
       orderNumber: opts.orderNumber, distributorId, customerId: customer.id, driverId, vehicleId,
       orderDate: today, deliveryDate: today, status: opts.status as any, orderType: 'delivery', totalAmount: 1800, tripNumber: 1,
-      items: { create: [{ cylinderTypeId: cyl.id, quantity: 2, unitPrice: 900, totalPrice: 1800 }] },
+      items: { create: [{ cylinderTypeId: cyl.id, quantity: orderedQty, deliveredQuantity: opts.deliveredQty ?? null, unitPrice: 900, totalPrice: orderedQty * 900 }] },
     },
   });
   const invoice = await prisma.invoice.create({
@@ -109,6 +111,11 @@ beforeAll(async () => {
   const e = await mkDriver(D2, PHONES[3], 'E');
   eToken = e.token;
   await mkOrderWithEwb(D2, e.driverId, e.vehicleId, { orderNumber: 'TEST-CD-E1', status: 'pending_delivery', ewbStatus: 'failed', ewbNo: null });
+
+  // G (dist-002): WI-111 — modified_delivered MORE (ordered 2, delivered 3).
+  const g = await mkDriver(D2, PHONES[5], 'G');
+  gToken = g.token;
+  await mkOrderWithEwb(D2, g.driverId, g.vehicleId, { orderNumber: 'TEST-CD-G1', status: 'modified_delivered', ewbStatus: 'active', ewbNo: 'EWB-CD-G1', orderedQty: 2, deliveredQty: 3 });
 
   // F (dist-001): GST disabled → cross-tenant isolation baseline
   const f = await mkDriver(D1, PHONES[4], 'F');
@@ -162,5 +169,21 @@ describe('WI-094c — GET /drivers/me/trip-ewbs (Compliance Docs)', () => {
     const resB = await request(app).get('/api/drivers/me/trip-ewbs').set(auth(bToken));
     expect(ewbNos(resA.body.data.items)).not.toEqual(expect.arrayContaining(['EWB-CD-B1', 'EWB-CD-B2']));
     expect(ewbNos(resB.body.data.items)).not.toEqual(expect.arrayContaining(['EWB-CD-A1', 'EWB-CD-A2']));
+  });
+
+  it('✅ 7. WI-111 — modified_delivered EWB shows DELIVERED qty (3), not ordered (2)', async () => {
+    const res = await request(app).get('/api/drivers/me/trip-ewbs').set(auth(gToken));
+    expect(res.status).toBe(200);
+    const g1 = res.body.data.items.find((i: any) => i.ewbNo === 'EWB-CD-G1');
+    expect(g1).toBeTruthy();
+    expect(g1.quantity).toBe(3);
+  });
+
+  it('✅ 7b. WI-111 — pending_delivery EWB still shows ordered qty (deliveredQuantity null)', async () => {
+    // driver A's orders are pending_delivery with deliveredQuantity null →
+    // must fall back to the ordered quantity (2), proving the fallback path.
+    const res = await request(app).get('/api/drivers/me/trip-ewbs').set(auth(aToken));
+    const a1 = res.body.data.items.find((i: any) => i.ewbNo === 'EWB-CD-A1');
+    expect(a1.quantity).toBe(2);
   });
 });
