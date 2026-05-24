@@ -100,6 +100,63 @@ export async function reissueForDeliveryMismatch(args: {
   }));
   const originalTotal = toNum(invoice.totalAmount);
 
+  // WI-112 — zero-delivery void path. If the driver delivered NOTHING (every
+  // item deliveredQuantity 0), there is nothing to invoice: regenerating a
+  // ₹0 IRN is meaningless (and NIC would reject it). Instead cancel the live
+  // compliance docs and VOID the invoice, then return — do NOT fall through to
+  // the regenerate path. Both NIC cancels are non-fatal (NIC may 5002 on the
+  // IRN cancel — see #30/anti-pattern #9 era bug); failures raise a pending
+  // action and the invoice is still voided so the ledger reads ₹0.
+  const orderItemsForDelivery = invoice.order?.items ?? [];
+  const totalDelivered = orderItemsForDelivery.reduce(
+    (sum, it) => sum + (it.deliveredQuantity ?? 0), 0,
+  );
+  if (totalDelivered === 0) {
+    if (invoice.ewbStatus === 'active') {
+      try {
+        await cancelEwb(invoiceId, distributorId, 'Zero-quantity delivery — voiding invoice');
+        logger.info('Zero-delivery void: EWB cancelled', { invoiceId });
+      } catch (err: any) {
+        logger.warn('Zero-delivery void: EWB cancel failed (non-blocking)', { invoiceId, err: err.message });
+        await createPendingAction(
+          distributorId, invoiceId,
+          'EWB_CANCEL_FAILED', err.message ?? 'EWB cancel failure during zero-delivery void',
+          'medium',
+        );
+      }
+    }
+    if (isB2B && invoice.irnStatus === 'success' && invoice.irn) {
+      try {
+        await cancelIrn(invoiceId, distributorId, 'Zero-quantity delivery — voiding invoice');
+        logger.info('Zero-delivery void: IRN cancelled', { invoiceId, irn: invoice.irn });
+      } catch (err: any) {
+        // NIC may return 5002 — non-fatal. cancelIrn left irnStatus as 'success';
+        // the pending action flags that NIC still holds a live IRN to clear.
+        logger.error('Zero-delivery void: IRN cancel failed (non-fatal)', { invoiceId, err: err.message });
+        await createPendingAction(
+          distributorId, invoiceId,
+          'IRN_CANCEL_BLOCKED', err.message ?? 'IRN cancel failed during zero-delivery void',
+          'high',
+        );
+      }
+    }
+    // Void the invoice regardless of the NIC cancel outcomes. irnStatus is left
+    // to whatever cancelIrn set ('cancelled' on success, untouched 'success' on
+    // a 5002 — flagged by the pending action above).
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        totalAmount: 0,
+        outstandingAmount: 0,
+        status: 'cancelled',
+        ewbStatus: 'cancelled',
+        revisedPostDeliveryAt: new Date(),
+      },
+    });
+    logger.info('Zero-delivery void: invoice voided (₹0, cancelled)', { invoiceId });
+    return { ok: true, skipped: true, reason: 'Zero-quantity delivery — invoice voided' };
+  }
+
   // Step 1 — cancel EWB if active. Non-fatal: a soft pending action is
   // raised but the flow continues regardless of the outcome.
   const hasActiveEwb = invoice.ewbStatus === 'active';

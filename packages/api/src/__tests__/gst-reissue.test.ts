@@ -704,3 +704,81 @@ describe('WI-107 — trip-ewbs Compliance Docs shows the new EWB after B2B reiss
     expect(ewbNos).not.toContain('EWB-W107-OLD');
   });
 });
+
+// ── WI-112: zero-delivery void path ──────────────────────────────────────────
+describe('WI-112 — zero-delivery voids the invoice instead of reissuing', () => {
+  let reissue: typeof import('../services/gst/gstReissueService.js').reissueForDeliveryMismatch;
+  beforeAll(async () => {
+    reissue = (await import('../services/gst/gstReissueService.js')).reissueForDeliveryMismatch;
+  });
+  beforeEach(() => apiCallMock.mockReset());
+
+  it('B2B zero delivery: cancels EWB+IRN, voids invoice (₹0, cancelled), does NOT regenerate', async () => {
+    const f = await seedReissueFixture({ isB2B: true, withActiveEwb: true, orderedQty: 10, deliveredQty: 0 });
+    try {
+      apiCallMock
+        .mockResolvedValueOnce(ewbCancelOk())  // cancelEwb
+        .mockResolvedValueOnce(irnCancelOk()); // cancelIrn (no regenerate after)
+
+      const result = await reissue({ invoiceId: f.invoiceId, distributorId: 'dist-002', userId: 'test-user' });
+      expect(result.ok).toBe(true);
+      // exactly two NIC calls — EWB cancel + IRN cancel, no regenerate
+      expect(apiCallMock).toHaveBeenCalledTimes(2);
+
+      const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
+      expect(Number(inv.totalAmount)).toBe(0);
+      expect(Number(inv.outstandingAmount)).toBe(0);
+      expect(inv.status).toBe('cancelled');
+      expect(inv.ewbStatus).toBe('cancelled');
+      expect(inv.irnStatus).toBe('cancelled'); // cancelIrn succeeded
+      expect(inv.revisedPostDeliveryAt).toBeTruthy();
+      // no reissue revision row written on the void path
+      const rev = await prisma.invoiceRevision.findFirst({ where: { invoiceId: f.invoiceId } });
+      expect(rev).toBeNull();
+    } finally {
+      await teardown(f.orderId);
+    }
+  });
+
+  it('B2B zero delivery with NIC 5002 on IRN cancel: raises IRN_CANCEL_BLOCKED, still voids, no throw', async () => {
+    const f = await seedReissueFixture({ isB2B: true, withActiveEwb: true, orderedQty: 5, deliveredQty: 0 });
+    try {
+      apiCallMock
+        .mockResolvedValueOnce(ewbCancelOk())                                  // cancelEwb ok
+        .mockRejectedValueOnce(whitebooksError('5002', 'Application error'));   // cancelIrn fails
+
+      const result = await reissue({ invoiceId: f.invoiceId, distributorId: 'dist-002', userId: 'test-user' });
+      expect(result.ok).toBe(true); // does not throw
+
+      const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
+      expect(Number(inv.totalAmount)).toBe(0);
+      expect(inv.status).toBe('cancelled');
+      expect(inv.ewbStatus).toBe('cancelled');
+      // IRN cancel failed → irnStatus left as 'success', flagged by pending action
+      expect(inv.irnStatus).toBe('success');
+      const pa = await prisma.pendingAction.findFirst({
+        where: { entityId: f.invoiceId, actionType: 'IRN_CANCEL_BLOCKED', status: 'open' },
+      });
+      expect(pa).toBeTruthy();
+    } finally {
+      await teardown(f.orderId);
+    }
+  });
+
+  it('B2C zero delivery (no IRN): cancels EWB, voids invoice, no IRN call', async () => {
+    const f = await seedReissueFixture({ isB2B: false, withActiveEwb: true, orderedQty: 4, deliveredQty: 0 });
+    try {
+      apiCallMock.mockResolvedValueOnce(ewbCancelOk()); // only EWB cancel
+      const result = await reissue({ invoiceId: f.invoiceId, distributorId: 'dist-002', userId: 'test-user' });
+      expect(result.ok).toBe(true);
+      expect(apiCallMock).toHaveBeenCalledTimes(1); // EWB cancel only, no IRN
+
+      const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: f.invoiceId } });
+      expect(Number(inv.totalAmount)).toBe(0);
+      expect(inv.status).toBe('cancelled');
+      expect(inv.ewbStatus).toBe('cancelled');
+    } finally {
+      await teardown(f.orderId);
+    }
+  });
+});
