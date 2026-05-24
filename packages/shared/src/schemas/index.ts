@@ -145,11 +145,18 @@ export const updateOrderSchema = z.object({
 });
 
 export const deliveryConfirmationSchema = z.object({
+  // WI-109: individual items may be 0 (legitimate partial delivery — some
+  // cylinder types delivered, others refused), but at least one item must have
+  // a delivered quantity > 0. An all-zero delivery is not a delivery; the order
+  // must be cancelled by an admin instead (voids invoice + EWB).
   items: z.array(z.object({
     cylinderTypeId: uuid,
     deliveredQuantity: z.number().int().min(0),
     emptiesCollected: z.number().int().min(0),
-  })).min(1),
+  })).min(1).refine(
+    (items) => items.some((i) => i.deliveredQuantity > 0),
+    { message: 'At least one item must have a delivered quantity greater than zero' },
+  ),
   deliveryLatitude: z.number().optional(),
   deliveryLongitude: z.number().optional(),
   notes: z.string().max(500).optional(),

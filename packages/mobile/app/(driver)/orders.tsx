@@ -161,6 +161,21 @@ export default function DriverOrdersScreen() {
       });
     }
 
+    // WI-109: block an all-zero delivery. A delivery where nothing was handed
+    // over is not a "modified delivery" — it's an order that didn't happen, and
+    // must be cancelled by an admin (which voids the invoice + EWB) rather than
+    // confirmed. Per-item 0 is still allowed as long as the total is > 0
+    // (legitimate partial delivery: some types delivered, others refused).
+    const totalDelivered = items.reduce((sum, i) => sum + i.deliveredQuantity, 0);
+    if (totalDelivered === 0) {
+      Alert.alert(
+        'Nothing delivered',
+        'Delivered quantity must be at least 1. If this delivery could not happen, ask your admin to cancel this order.',
+        [{ text: 'OK' }],
+      );
+      return;
+    }
+
     const orderId = selectedOrder.orderId;
     if (hasQtyMismatch) {
       Alert.alert(
