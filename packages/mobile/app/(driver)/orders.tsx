@@ -67,6 +67,10 @@ export default function DriverOrdersScreen() {
     ['driver-orders'],
     '/orders',
     { status: 'pending_delivery' },
+    // WI-115: poll every 30s so newly dispatched orders appear without a manual
+    // pull-to-refresh (matches the Trip tab's 30s poll). Pull-to-refresh and
+    // post-submit invalidation still work as before.
+    { refetchInterval: 30_000 },
   );
   const orders: Order[] = ordersResponse?.orders ?? [];
 
