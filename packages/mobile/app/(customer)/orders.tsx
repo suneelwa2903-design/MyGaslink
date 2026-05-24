@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
-import { useTheme, formatINR } from '../../src/theme';
+import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 
 interface CylinderType {
@@ -236,7 +236,7 @@ export default function CustomerOrdersScreen() {
                     {order.orderNumber}
                   </Text>
                   <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 4 }}>
-                    Delivery: {order.deliveryDate}
+                    Delivery: {formatDate(order.deliveryDate)}
                   </Text>
                 </View>
                 <Badge
@@ -247,11 +247,24 @@ export default function CustomerOrdersScreen() {
 
               {(order.items?.length ?? 0) > 0 && (
                 <View style={{ marginTop: 10, gap: 4 }}>
-                  {order.items.map((item, i) => (
-                    <Text key={i} style={{ fontSize: 13, color: colors.textSecondary }}>
-                      {item.cylinderTypeName} x {item.quantity} @ {formatINR(item.unitPrice)}
-                    </Text>
-                  ))}
+                  {order.items.map((item, i) => {
+                    // For delivered/modified orders show the DELIVERED quantity
+                    // (what the customer actually received), not the ordered qty.
+                    const delivered = ['delivered', 'modified_delivered'].includes(order.status || '');
+                    const qty = delivered ? (item.deliveredQuantity ?? item.quantity) : item.quantity;
+                    return (
+                      <View key={i}>
+                        <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                          {item.cylinderTypeName} x {qty} @ {formatINR(item.unitPrice)}
+                        </Text>
+                        {delivered && (item.emptiesCollected ?? 0) > 0 && (
+                          <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                            Empties collected: {item.emptiesCollected}
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  })}
                 </View>
               )}
 
@@ -294,7 +307,7 @@ export default function CustomerOrdersScreen() {
       </ScrollView>
 
       {/* New Order Modal */}
-      <Modal visible={showForm} animationType="slide" transparent>
+      <Modal visible={showForm} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -347,7 +360,7 @@ export default function CustomerOrdersScreen() {
       </Modal>
 
       {/* Modify Order Modal */}
-      <Modal visible={!!modifyOrder} animationType="slide" transparent>
+      <Modal visible={!!modifyOrder} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}

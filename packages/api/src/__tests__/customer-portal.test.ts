@@ -72,6 +72,58 @@ describe('Customer Portal - Dashboard', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.data).toBeDefined();
   });
+
+  // WI-118 wire-shape guard (anti-pattern #9): the mobile dashboard reads
+  // these exact field names/types. A mismatch silently renders zeros — the
+  // bug this WI fixed. Assert the contract so it can't regress.
+  it('dashboard response has the exact field names + types the mobile screen reads', async () => {
+    const res = await request(app)
+      .get('/api/customer-portal/dashboard')
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(200);
+    const d = res.body.data;
+    expect(typeof d.outstandingAmount).toBe('number');
+    expect(typeof d.overdueAmount).toBe('number');
+    expect(typeof d.totalOrders).toBe('number');
+    expect(typeof d.pendingOrders).toBe('number');
+    expect(typeof d.emptyCylinders).toBe('number');
+    expect(Array.isArray(d.recentOrders)).toBe(true);
+    expect(Array.isArray(d.cylinderTypes)).toBe(true);
+    // Legacy field names must be gone (these caused the silent-zero bug).
+    expect(d.amountOutstanding).toBeUndefined();
+    expect(d.ordersPending).toBeUndefined();
+    expect(d.emptiesByType).toBeUndefined();
+    // cylinderTypes feed the New Order modal — shape { id, typeName, capacity, latestPrice }.
+    if (d.cylinderTypes.length > 0) {
+      const ct = d.cylinderTypes[0];
+      expect(typeof ct.id).toBe('string');
+      expect(typeof ct.typeName).toBe('string');
+      expect(typeof ct.capacity).toBe('number');
+      expect(typeof ct.latestPrice).toBe('number');
+    }
+    // recentOrders shape { orderId, orderNumber, status, deliveryDate, totalAmount }.
+    if (d.recentOrders.length > 0) {
+      const o = d.recentOrders[0];
+      expect(typeof o.orderId).toBe('string');
+      expect(typeof o.orderNumber).toBe('string');
+      expect(typeof o.status).toBe('string');
+      expect(typeof o.totalAmount).toBe('number');
+    }
+  });
+
+  it('orders endpoint accepts a comma-separated status list (delivered,modified_delivered)', async () => {
+    const res = await request(app)
+      .get('/api/customer-portal/orders')
+      .query({ status: 'delivered,modified_delivered' })
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data.orders)).toBe(true);
+    for (const o of res.body.data.orders) {
+      expect(['delivered', 'modified_delivered']).toContain(o.status);
+    }
+  });
 });
 
 describe('Customer Portal - Orders', () => {

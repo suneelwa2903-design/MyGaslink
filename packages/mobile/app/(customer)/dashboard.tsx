@@ -2,7 +2,7 @@ import { View, Text, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { MetricCard } from '../../src/components/ui';
-import { useTheme, formatINR, getBadgeColors } from '../../src/theme';
+import { useTheme, formatINR, getBadgeColors, formatDate } from '../../src/theme';
 
 interface CustomerDashboard {
   outstandingAmount: number;
@@ -120,7 +120,7 @@ export default function CustomerDashboardScreen() {
                       {order.orderNumber}
                     </Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                      {order.deliveryDate}
+                      {formatDate(order.deliveryDate)}
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>

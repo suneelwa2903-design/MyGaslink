@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
+import { getEffectivePrice } from './cylinderTypeService.js';
 
 /**
  * Get customer dashboard stats.
@@ -12,22 +13,45 @@ export async function getCustomerDashboard(distributorId: string, customerId: st
   });
   if (!customer) throw new PortalError('Customer not found', 404);
 
+  // Cylinder types with the current effective price. Built MANUALLY (not via
+  // a mapper) so the shape exactly matches what the mobile New Order modal
+  // reads — { id, typeName, capacity, latestPrice }. Returned even when supply
+  // is stopped (the order itself is still blocked server-side in createOrder).
+  // CylinderType has no soft-delete column; it uses `isActive`.
+  const types = await prisma.cylinderType.findMany({
+    where: { distributorId, isActive: true },
+    select: { id: true, typeName: true, capacity: true },
+    orderBy: { capacity: 'asc' },
+  });
+  const asOf = new Date();
+  const cylinderTypes = await Promise.all(types.map(async (t) => ({
+    id: t.id,
+    typeName: t.typeName,
+    capacity: t.capacity,
+    latestPrice: await getEffectivePrice(distributorId, t.id, asOf),
+  })));
+
   if (customer.stopSupply) {
     return {
-      ordersPending: 0,
-      invoicesOutstanding: 0,
-      amountOutstanding: 0,
+      outstandingAmount: 0,
+      overdueAmount: 0,
+      totalOrders: 0,
+      pendingOrders: 0,
+      emptyCylinders: 0,
+      recentOrders: [],
+      cylinderTypes,
       supplyStopped: true,
     };
   }
 
-  const [ordersPending, outstandingResult, overdueResult, emptiesByType, paymentTotal] = await Promise.all([
+  const [pendingOrders, totalOrders, outstandingResult, overdueResult, balances, recent] = await Promise.all([
     prisma.order.count({
       where: {
         customerId, distributorId, deletedAt: null,
         status: { in: ['pending_driver_assignment', 'pending_dispatch', 'pending_delivery'] },
       },
     }),
+    prisma.order.count({ where: { customerId, distributorId, deletedAt: null } }),
     prisma.invoice.aggregate({
       where: {
         customerId, distributorId, deletedAt: null,
@@ -35,36 +59,37 @@ export async function getCustomerDashboard(distributorId: string, customerId: st
         status: { in: ['issued', 'partially_paid', 'overdue'] },
       },
       _sum: { outstandingAmount: true },
-      _count: true,
     }),
     prisma.invoice.aggregate({
-      where: {
-        customerId, distributorId, deletedAt: null,
-        status: 'overdue',
-      },
+      where: { customerId, distributorId, deletedAt: null, status: 'overdue' },
       _sum: { outstandingAmount: true },
     }),
     prisma.customerInventoryBalance.findMany({
       where: { customerId, customer: { distributorId, deletedAt: null } },
-      include: { cylinderType: { select: { typeName: true, capacity: true } } },
+      select: { withCustomerQty: true },
     }),
-    prisma.paymentTransaction.aggregate({
+    prisma.order.findMany({
       where: { customerId, distributorId, deletedAt: null },
-      _sum: { amount: true },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { id: true, orderNumber: true, status: true, deliveryDate: true, totalAmount: true },
     }),
   ]);
 
   return {
-    ordersPending,
-    invoicesOutstanding: outstandingResult._count,
-    amountOutstanding: outstandingResult._sum.outstandingAmount || 0,
-    overdueAmount: overdueResult._sum.outstandingAmount || 0,
-    paymentTotal: paymentTotal._sum.amount || 0,
-    emptiesByType: emptiesByType.map(b => ({
-      cylinderTypeName: b.cylinderType.typeName,
-      capacity: b.cylinderType.capacity,
-      withCustomerQty: b.withCustomerQty,
+    outstandingAmount: toNum(outstandingResult._sum.outstandingAmount),
+    overdueAmount: toNum(overdueResult._sum.outstandingAmount),
+    totalOrders,
+    pendingOrders,
+    emptyCylinders: balances.reduce((sum, b) => sum + b.withCustomerQty, 0),
+    recentOrders: recent.map((o) => ({
+      orderId: o.id,
+      orderNumber: o.orderNumber,
+      status: o.status,
+      deliveryDate: o.deliveryDate,
+      totalAmount: toNum(o.totalAmount),
     })),
+    cylinderTypes,
     supplyStopped: false,
   };
 }
@@ -78,7 +103,13 @@ export async function getMyOrders(
   filters: { status?: string; page?: number; pageSize?: number }
 ) {
   const where: Prisma.OrderWhereInput = { customerId, distributorId, deletedAt: null };
-  if (filters.status) where.status = filters.status as any;
+  // `status` accepts a single value or a comma-separated list (e.g.
+  // "delivered,modified_delivered") so the account "Recent Deliveries" card
+  // can fetch both terminal delivery states in one call.
+  if (filters.status) {
+    const statuses = filters.status.split(',').map((s) => s.trim()).filter(Boolean);
+    where.status = statuses.length > 1 ? { in: statuses as any } : (statuses[0] as any);
+  }
 
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 25;

@@ -9,7 +9,7 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Button, Card, EmptyState } from '../../src/components/ui';
-import { useTheme, formatINR } from '../../src/theme';
+import { useTheme, formatINR, formatDate } from '../../src/theme';
 
 interface AccountData {
   customerName: string;
@@ -42,11 +42,16 @@ export default function CustomerAccountScreen() {
     '/customer-portal/account',
   );
 
-  const { data: deliveredOrders, isLoading: loadingDeliveries, refetch: refetchDeliveries } = useApiQuery<DeliveredOrder[]>(
+  // GET /customer-portal/orders returns the envelope { orders, meta } — NOT a
+  // bare array. Reading the array directly crashed with ".map is not a
+  // function" (anti-pattern #9). Fetch both terminal delivery states so
+  // modified deliveries also appear under Recent Deliveries.
+  const { data: deliveredResponse, isLoading: loadingDeliveries, refetch: refetchDeliveries } = useApiQuery<{ orders: DeliveredOrder[] }>(
     ['recent-deliveries'],
     '/customer-portal/orders',
-    { status: 'delivered' },
+    { status: 'delivered,modified_delivered' },
   );
+  const deliveredOrders = deliveredResponse?.orders ?? [];
 
   // Edit profile state
   const [showEdit, setShowEdit] = useState(false);
@@ -243,7 +248,7 @@ export default function CustomerAccountScreen() {
                       {order.orderNumber}
                     </Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                      {order.deliveryDate} {'\u00B7'} {formatINR(order.totalAmount)}
+                      {formatDate(order.deliveryDate)} {'\u00B7'} {formatINR(order.totalAmount)}
                     </Text>
                   </View>
                 </View>
@@ -287,7 +292,7 @@ export default function CustomerAccountScreen() {
       </ScrollView>
 
       {/* Edit Profile Modal */}
-      <Modal visible={showEdit} animationType="slide" transparent>
+      <Modal visible={showEdit} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -351,7 +356,7 @@ export default function CustomerAccountScreen() {
       </Modal>
 
       {/* Dispute Modal */}
-      <Modal visible={showDispute} animationType="slide" transparent>
+      <Modal visible={showDispute} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}

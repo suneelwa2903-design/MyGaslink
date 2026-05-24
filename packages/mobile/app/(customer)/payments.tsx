@@ -8,7 +8,7 @@ import { useApiQuery } from '../../src/hooks/useApi';
 import { Button, EmptyState, MetricCard } from '../../src/components/ui';
 import { useAuthStore } from '../../src/stores/authStore';
 import { api, getErrorMessage } from '../../src/lib/api';
-import { useTheme, formatINR } from '../../src/theme';
+import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Payment } from '@gaslink/shared';
 
 const PAYMENT_METHOD_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -73,7 +73,7 @@ export default function CustomerPaymentsScreen() {
       }
       await Sharing.shareAsync(file.uri, {
         mimeType: 'application/pdf',
-        dialogTitle: 'Account Statement',
+        dialogTitle: 'Customer Ledger Statement',
         UTI: 'com.adobe.pdf',
       });
     } catch (err) {
@@ -107,7 +107,7 @@ export default function CustomerPaymentsScreen() {
             {formatINR(payment.amount)}
           </Text>
           <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4 }}>
-            {payment.transactionDate}
+            {formatDate(payment.transactionDate)}
           </Text>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
@@ -167,7 +167,7 @@ export default function CustomerPaymentsScreen() {
         ListFooterComponent={
           <View style={{ marginTop: 20, gap: 10, paddingBottom: 16 }}>
             <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
-              Account Statement
+              Customer Ledger Statement
             </Text>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <View style={{ flex: 1 }}>

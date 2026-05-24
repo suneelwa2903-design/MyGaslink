@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Badge, EmptyState } from '../../src/components/ui';
-import { useTheme, formatINR } from '../../src/theme';
+import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Invoice } from '@gaslink/shared';
 
 interface InvoiceDetail {
@@ -83,7 +83,7 @@ export default function CustomerInvoicesScreen() {
         <View style={{ flex: 1 }}>
           <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }}>{inv.invoiceNumber}</Text>
           <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4 }}>
-            Issued: {inv.issueDate} | Due: {inv.dueDate}
+            Issued: {formatDate(inv.issueDate)} | Due: {formatDate(inv.dueDate)}
           </Text>
         </View>
         <Badge label={(inv.status || '').replace(/_/g, ' ')} variant={statusVariant(inv.status || '')} />
@@ -166,11 +166,11 @@ export default function CustomerInvoicesScreen() {
                   <View style={{ gap: 6 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                       <Text style={{ fontSize: 13, color: colors.textSecondary }}>Issue Date</Text>
-                      <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }}>{invoiceDetail.issueDate}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }}>{formatDate(invoiceDetail.issueDate)}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                       <Text style={{ fontSize: 13, color: colors.textSecondary }}>Due Date</Text>
-                      <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }}>{invoiceDetail.dueDate}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }}>{formatDate(invoiceDetail.dueDate)}</Text>
                     </View>
                   </View>
                 </View>
@@ -309,7 +309,7 @@ export default function CustomerInvoicesScreen() {
                             {formatINR(p.amount)}
                           </Text>
                           <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
-                            {p.transactionDate}
+                            {formatDate(p.transactionDate)}
                           </Text>
                         </View>
                         <View style={{ alignItems: 'flex-end' }}>
