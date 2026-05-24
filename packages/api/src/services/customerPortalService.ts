@@ -128,15 +128,19 @@ export async function getMyOrders(
     prisma.order.count({ where }),
   ]);
 
-  // Flatten driver fields onto the order — see getMyOrderById for the
-  // driver-phone disclosure rule (only shown while the order is in flight).
+  // WI-119: driver identity (name + phone) is disclosed to the customer ONLY
+  // while the order is in flight (pending_dispatch / pending_delivery). Once
+  // the order reaches a terminal state (delivered / modified_delivered /
+  // cancelled) the driver is removed entirely — name, phone, and the nested
+  // relation are all nulled so nothing leaks through mapOrder's re-derivation.
   const flattened = orders.map((o) => {
-    const showDriverContact = !!o.driver
+    const showDriver = !!o.driver
       && ['pending_dispatch', 'pending_delivery'].includes(o.status);
     return {
       ...o,
-      driverName: o.driver?.driverName ?? null,
-      driverPhone: showDriverContact ? o.driver?.phone ?? null : null,
+      driver: showDriver ? o.driver : null,
+      driverName: showDriver ? o.driver?.driverName ?? null : null,
+      driverPhone: showDriver ? o.driver?.phone ?? null : null,
     };
   });
 
@@ -167,13 +171,15 @@ export async function getMyOrderById(distributorId: string, customerId: string, 
   });
   if (!order) return null;
 
-  const showDriverContact = !!order.driver
+  // WI-119: same disclosure rule as the list — driver only while in flight.
+  const showDriver = !!order.driver
     && ['pending_dispatch', 'pending_delivery'].includes(order.status);
 
   return {
     ...order,
-    driverName: order.driver?.driverName ?? null,
-    driverPhone: showDriverContact ? order.driver?.phone ?? null : null,
+    driver: showDriver ? order.driver : null,
+    driverName: showDriver ? order.driver?.driverName ?? null : null,
+    driverPhone: showDriver ? order.driver?.phone ?? null : null,
   };
 }
 

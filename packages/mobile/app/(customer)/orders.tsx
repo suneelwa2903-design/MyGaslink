@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity, Alert, Modal,
-  TextInput, KeyboardAvoidingView, Platform,
+  TextInput, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -265,6 +265,27 @@ export default function CustomerOrdersScreen() {
                       </View>
                     );
                   })}
+                </View>
+              )}
+
+              {/* WI-119: driver name + tap-to-call phone, shown only while the
+                  order is in flight (API returns driver=null otherwise). */}
+              {order.driverName && (
+                <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="person-circle-outline" size={16} color={colors.textSecondary} />
+                  <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                    Driver: {order.driverName}
+                  </Text>
+                  {order.driverPhone && (
+                    <>
+                      <Text style={{ fontSize: 13, color: colors.textSecondary }}>{'·'}</Text>
+                      <TouchableOpacity onPress={() => Linking.openURL(`tel:${order.driverPhone}`)}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: accent.blue }}>
+                          {order.driverPhone}
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </View>
               )}
 

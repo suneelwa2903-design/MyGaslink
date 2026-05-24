@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
 import { generateToken, loginAsDistAdmin } from './helpers.js';
@@ -160,6 +160,77 @@ describe('Customer Portal - Orders', () => {
       .set(auth(adminToken));
 
     expect(res.status).toBe(403);
+  });
+});
+
+describe('Customer Portal - Driver disclosure on order card (WI-119)', () => {
+  let pendingOrderId: string;
+  let deliveredOrderId: string;
+  let driverName: string;
+  let driverPhone: string | null;
+
+  beforeAll(async () => {
+    const driver = await prisma.driver.findFirst({
+      where: { distributorId, deletedAt: null },
+      select: { id: true, driverName: true, phone: true },
+    });
+    if (!driver) throw new Error('No driver found for distributor');
+    driverName = driver.driverName;
+    driverPhone = driver.phone;
+
+    // Far-future deliveryDate so date-scoped services never sweep these
+    // fixtures (anti-pattern #7).
+    const farFuture = new Date('2099-12-31');
+    const pending = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-WI119-PEND-${Date.now()}`,
+        distributorId, customerId, driverId: driver.id,
+        orderDate: farFuture, deliveryDate: farFuture,
+        status: 'pending_delivery', totalAmount: 0,
+      },
+    });
+    const delivered = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-WI119-DELV-${Date.now()}`,
+        distributorId, customerId, driverId: driver.id,
+        orderDate: farFuture, deliveryDate: farFuture,
+        status: 'delivered', totalAmount: 0, deliveredAt: new Date(),
+      },
+    });
+    pendingOrderId = pending.id;
+    deliveredOrderId = delivered.id;
+  });
+
+  afterAll(async () => {
+    await prisma.order.deleteMany({ where: { id: { in: [pendingOrderId, deliveredOrderId] } } });
+  });
+
+  it('includes driver name + phone on a pending_delivery order, with no sensitive fields', async () => {
+    const res = await request(app)
+      .get(`/api/customer-portal/orders/${pendingOrderId}`)
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(200);
+    const o = res.body.data;
+    expect(o.driverName).toBe(driverName);
+    expect(o.driverPhone).toBe(driverPhone);
+    // No sensitive driver fields leak through the nested relation.
+    if (o.driver) {
+      expect(o.driver.email).toBeUndefined();
+      expect(o.driver.passwordHash).toBeUndefined();
+    }
+  });
+
+  it('returns driver = null on a delivered order', async () => {
+    const res = await request(app)
+      .get(`/api/customer-portal/orders/${deliveredOrderId}`)
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(200);
+    const o = res.body.data;
+    expect(o.driver).toBeNull();
+    expect(o.driverName).toBeNull();
+    expect(o.driverPhone == null).toBe(true);
   });
 });
 
