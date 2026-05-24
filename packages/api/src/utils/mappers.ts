@@ -113,6 +113,9 @@ export function mapInvoice(inv: any): any {
     mapped.customerType = inv.customer.customerType ?? null;
   }
   if (mapped.customer) mapped.customer = mapCustomer(mapped.customer);
+  // WI-126: flat orderStatus for the customer app's PDF-download gate. Captured
+  // from the raw relation before mapOrder rewrites the nested object.
+  mapped.orderStatus = inv.order?.status ?? null;
   if (mapped.order) mapped.order = mapOrder(mapped.order);
   if (mapped.paymentAllocations) {
     mapped.paymentAllocations = mapped.paymentAllocations.map((a: any) => renameId(a, 'allocationId'));

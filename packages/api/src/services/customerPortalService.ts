@@ -408,7 +408,7 @@ export async function getMyInvoices(
       where,
       include: {
         items: { include: { cylinderType: { select: { typeName: true } } } },
-        order: { select: { orderNumber: true } },
+        order: { select: { orderNumber: true, status: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * pageSize,
@@ -431,7 +431,7 @@ export async function getMyInvoiceById(distributorId: string, customerId: string
     where: { id: invoiceId, customerId, distributorId, deletedAt: null },
     include: {
       items: { include: { cylinderType: { select: { typeName: true } } } },
-      order: { select: { orderNumber: true } },
+      order: { select: { orderNumber: true, status: true } },
       paymentAllocations: {
         include: { payment: { select: { paymentMethod: true, referenceNumber: true, transactionDate: true } } },
       },

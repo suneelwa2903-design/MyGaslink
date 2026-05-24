@@ -296,6 +296,9 @@ export interface Invoice {
   // has been deleted.
   customerType: 'B2B' | 'B2C' | null;
   orderId: string | null;
+  // WI-126: linked order status, surfaced so the customer app can gate the
+  // invoice PDF download (delivered/modified_delivered only).
+  orderStatus?: string | null;
   issueDate: string;
   dueDate: string;
   totalAmount: number;

@@ -250,6 +250,45 @@ router.get('/invoices/:id',
   }
 });
 
+// GET /api/customer-portal/invoices/:id/pdf — WI-126
+// Customer-scoped invoice PDF. The shared /api/invoices/:id/pdf is admin-only
+// and scopes by distributor (an IDOR for customers), so the portal needs its
+// own customer-scoped route. PDF is offered only for issued/partially_paid/paid
+// invoices whose linked order is delivered/modified_delivered.
+router.get('/invoices/:id/pdf',
+  requireRole('customer'),
+  async (req, res) => {
+  try {
+    if (!req.user!.customerId) {
+      return sendError(res, 'No customer linked to this account', 400);
+    }
+    const invoice = await portalService.getMyInvoiceById(
+      req.user!.distributorId!, req.user!.customerId, param(req.params.id)
+    );
+    if (!invoice) return sendNotFound(res, 'Invoice');
+
+    const allowedStatuses = ['issued', 'partially_paid', 'paid'];
+    const allowedOrderStatuses = ['delivered', 'modified_delivered'];
+    if (
+      !allowedStatuses.includes(invoice.status) ||
+      !invoice.order || !allowedOrderStatuses.includes(invoice.order.status)
+    ) {
+      return sendError(res, 'A PDF is not available for this invoice', 403);
+    }
+
+    const { generateInvoicePdf } = await import('../services/pdf/invoicePdfService.js');
+    const pdfBuffer = await generateInvoicePdf(invoice.id, req.user!.distributorId!);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="invoice-${invoice.invoiceNumber}.pdf"`,
+      'Content-Length': String(pdfBuffer.length),
+    });
+    return res.send(pdfBuffer);
+  } catch (err: any) {
+    return sendError(res, err.message, err.statusCode || 500);
+  }
+});
+
 // ─── Payments ─────────────────────────────────────────────────────────────
 
 // GET /api/customer-portal/payments

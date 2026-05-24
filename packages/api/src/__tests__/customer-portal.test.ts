@@ -251,6 +251,91 @@ describe('Customer Portal - Date filters (WI-124)', () => {
   });
 });
 
+describe('Customer Portal - Invoice PDF download (WI-126)', () => {
+  let ctId: string;
+  let deliveredOrderId: string;
+  let deliveredInvoiceId: string;
+  let cancelledInvoiceId: string;
+  let pendingOrderInvoiceId: string;
+  const orderIds: string[] = [];
+  const invoiceIds: string[] = [];
+
+  async function makeOrder(status: string) {
+    const far = new Date('2099-12-31');
+    const o = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-WI126-${status}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        distributorId, customerId, orderDate: far, deliveryDate: far,
+        status: status as any, totalAmount: 1180,
+      },
+    });
+    orderIds.push(o.id);
+    return o;
+  }
+  async function makeInvoice(orderId: string, status: string) {
+    const far = new Date('2099-12-31');
+    const inv = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `TEST-INV-WI126-${status}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        distributorId, customerId, orderId, issueDate: far, dueDate: far,
+        status: status as any, totalAmount: 1180, outstandingAmount: status === 'cancelled' ? 0 : 1180,
+        items: { create: [{ cylinderTypeId: ctId, description: 'Test cyl', quantity: 1, unitPrice: 1000, totalPrice: 1180 }] },
+      },
+    });
+    invoiceIds.push(inv.id);
+    return inv;
+  }
+
+  beforeAll(async () => {
+    const ct = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId, isActive: true } });
+    ctId = ct.id;
+    const delivered = await makeOrder('delivered');
+    deliveredOrderId = delivered.id;
+    deliveredInvoiceId = (await makeInvoice(delivered.id, 'issued')).id;
+    const cancelledOrder = await makeOrder('delivered');
+    cancelledInvoiceId = (await makeInvoice(cancelledOrder.id, 'cancelled')).id;
+    const pendingOrder = await makeOrder('pending_dispatch');
+    pendingOrderInvoiceId = (await makeInvoice(pendingOrder.id, 'issued')).id;
+  });
+
+  afterAll(async () => {
+    await prisma.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+    await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+  });
+
+  it('invoice list response includes orderStatus', async () => {
+    const res = await request(app)
+      .get('/api/customer-portal/invoices').query({ from: '2099-01-01', to: '2099-12-31' })
+      .set(auth(customerToken));
+    expect(res.status).toBe(200);
+    const row = res.body.data.invoices.find((i: any) => i.invoiceId === deliveredInvoiceId);
+    expect(row).toBeDefined();
+    expect(row.orderStatus).toBe('delivered');
+  });
+
+  it('serves a PDF for an issued invoice on a delivered order', async () => {
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${deliveredInvoiceId}/pdf`)
+      .set(auth(customerToken));
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+  });
+
+  it('refuses the PDF for a cancelled invoice (403)', async () => {
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${cancelledInvoiceId}/pdf`)
+      .set(auth(customerToken));
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses the PDF when the linked order is not delivered (403)', async () => {
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${pendingOrderInvoiceId}/pdf`)
+      .set(auth(customerToken));
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('Customer Portal - Cancelled invoice outstanding (WI-123)', () => {
   let orderId: string;
   let invoiceId: string;

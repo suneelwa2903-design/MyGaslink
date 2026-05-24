@@ -1,15 +1,24 @@
 import { useState } from 'react';
 import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity, Modal,
-  FlatList,
+  FlatList, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
+import { api, getErrorMessage } from '../../src/lib/api';
 import { Badge, EmptyState } from '../../src/components/ui';
 import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Invoice } from '@gaslink/shared';
+
+// WI-126: PDF is offered only for billed invoices whose order was delivered.
+function canDownloadPdf(status?: string | null, orderStatus?: string | null): boolean {
+  return ['issued', 'partially_paid', 'paid'].includes(status ?? '')
+    && ['delivered', 'modified_delivered'].includes(orderStatus ?? '');
+}
 
 interface InvoiceDetail {
   invoiceId: string;
@@ -17,6 +26,7 @@ interface InvoiceDetail {
   issueDate: string;
   dueDate: string;
   status: string;
+  orderStatus: string | null;
   customerName: string;
   customerGstin: string | null;
   billingAddress: string | null;
@@ -65,6 +75,35 @@ export default function CustomerInvoicesScreen() {
     undefined,
     { enabled: !!selectedId },
   );
+
+  // WI-126: per-invoice PDF download (customer-scoped endpoint). Mirrors the
+  // payments ledger-download pattern: arraybuffer → cache file → OS share sheet.
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const handleDownloadPdf = async (invoiceId: string, invoiceNumber: string) => {
+    setDownloadingId(invoiceId);
+    try {
+      const res = await api.get(`/customer-portal/invoices/${invoiceId}/pdf`, {
+        responseType: 'arraybuffer',
+      });
+      const bytes = new Uint8Array(res.data);
+      const file = new File(Paths.cache, `invoice-${invoiceNumber}.pdf`);
+      try { file.create(); } catch { /* already exists, fine */ }
+      file.write(bytes);
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: `Invoice ${invoiceNumber}`,
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (err) {
+      Alert.alert('Could not download invoice', getErrorMessage(err));
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const statusVariant = (status: string) => {
     switch (status) {
@@ -118,6 +157,27 @@ export default function CustomerInvoicesScreen() {
           <Text style={{ fontSize: 11, color: accent.green, fontWeight: '600' }}>GST e-Invoice</Text>
         </View>
       )}
+
+      {canDownloadPdf(inv.status, inv.orderStatus) && (
+        <TouchableOpacity
+          onPress={() => handleDownloadPdf(inv.invoiceId, inv.invoiceNumber)}
+          disabled={downloadingId === inv.invoiceId}
+          style={{
+            marginTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+            paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: colors.inputBorder,
+            backgroundColor: colors.inputBg,
+          }}
+        >
+          {downloadingId === inv.invoiceId ? (
+            <ActivityIndicator size="small" color={accent.blue} />
+          ) : (
+            <Ionicons name="download-outline" size={16} color={accent.blue} />
+          )}
+          <Text style={{ fontSize: 13, fontWeight: '600', color: accent.blue }}>
+            {downloadingId === inv.invoiceId ? 'Preparing…' : 'Download PDF'}
+          </Text>
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 
@@ -150,7 +210,21 @@ export default function CustomerInvoicesScreen() {
             <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
               {invoiceDetail?.invoiceNumber ?? 'Invoice'}
             </Text>
-            <View style={{ width: 24 }} />
+            {invoiceDetail && canDownloadPdf(invoiceDetail.status, invoiceDetail.orderStatus) ? (
+              <TouchableOpacity
+                onPress={() => handleDownloadPdf(invoiceDetail.invoiceId, invoiceDetail.invoiceNumber)}
+                disabled={downloadingId === invoiceDetail.invoiceId}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                {downloadingId === invoiceDetail.invoiceId ? (
+                  <ActivityIndicator size="small" color={accent.blue} />
+                ) : (
+                  <Ionicons name="download-outline" size={24} color={accent.blue} />
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={{ width: 24 }} />
+            )}
           </View>
 
           <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
