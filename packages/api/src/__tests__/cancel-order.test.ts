@@ -289,11 +289,64 @@ describe('cancelOrder — pending_delivery with active EWB', () => {
     expect(Number(reversal.amountDelta)).toBeLessThan(0);
   });
 
-  it('DVA reset to dispatch_ready (was the only active order)', async () => {
+  it('DVA stays loaded_and_dispatched — cancelled stock is still on the vehicle (WI-130)', async () => {
+    // WI-130: cancelling the last pending_delivery order created an on_vehicle
+    // CSE, so the trip is NOT complete. The DVA must stay loaded_and_dispatched
+    // (was previously rolled to dispatch_ready, which stranded the CSE because
+    // mark-vehicle-returned then 409'd on an "already complete" trip).
     const dva = await prisma.driverVehicleAssignment.findFirst({
       where: { driverId, distributorId, assignmentDate: new Date(TEST_DATE) },
     });
-    expect(dva?.status).toBe('dispatch_ready');
+    expect(dva?.status).toBe('loaded_and_dispatched');
+    const onVehicle = await prisma.cancelledStockEvent.count({
+      where: { vehicleId, distributorId, status: 'on_vehicle' },
+    });
+    expect(onVehicle).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('WI-130 — last-order cancel with NO cancelled stock still rolls DVA', () => {
+  it('flag ON: cancelling the last pending_dispatch order (Case B, no CSE) rolls DVA to dispatch_ready', async () => {
+    process.env.INVENTORY_DISPATCH_DEBIT = 'true';
+    // Use a distinct driver+vehicle so cancelOrder STEP 6's driver-scoped DVA
+    // lookup can't collide with the other tests' same-date DVAs.
+    const driver2 = seedData.drivers[1] ?? seedData.drivers[0];
+    const vehicle2 = seedData.vehicles[1] ?? seedData.vehicles[0];
+    const customer = seedData.customers[0];
+    const cyl = seedData.cylinderTypes[0];
+    try {
+      await prisma.driverVehicleAssignment.upsert({
+        where: { driverId_assignmentDate_tripNumber: { driverId: driver2.id, assignmentDate: new Date(TEST_DATE), tripNumber: 1 } },
+        create: { driverId: driver2.id, vehicleId: vehicle2.id, distributorId, assignmentDate: new Date(TEST_DATE), tripNumber: 1, status: 'loaded_and_dispatched' },
+        update: { status: 'loaded_and_dispatched', vehicleId: vehicle2.id },
+      });
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `TEST-WI130-NOCSE-${Date.now()}`,
+          distributorId, customerId: customer.id, driverId: driver2.id, vehicleId: vehicle2.id,
+          orderDate: new Date(), deliveryDate: new Date(TEST_DATE), tripNumber: 1,
+          status: 'pending_dispatch', totalAmount: 500,
+          items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 500, discountPerUnit: 0, totalPrice: 500 }] },
+        },
+      });
+      const res = await request(app)
+        .post(`/api/orders/${order.id}/cancel`)
+        .set(auth(adminToken))
+        .send({ reason: 'WI-130 no-CSE' });
+      expect(res.status).toBe(200);
+      // Case B (pending_dispatch under flag ON): nothing physically on the truck.
+      const cse = await prisma.cancelledStockEvent.count({ where: { orderId: order.id } });
+      expect(cse).toBe(0);
+      // No on-vehicle stock + no live orders → DVA rolls to dispatch_ready.
+      const dva = await prisma.driverVehicleAssignment.findFirst({
+        where: { driverId: driver2.id, distributorId, assignmentDate: new Date(TEST_DATE), tripNumber: 1 },
+      });
+      expect(dva?.status).toBe('dispatch_ready');
+    } finally {
+      delete process.env.INVENTORY_DISPATCH_DEBIT;
+    }
   });
 });
 

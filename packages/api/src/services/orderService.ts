@@ -1343,12 +1343,28 @@ export async function cancelOrder(
             deletedAt: null,
           },
         });
+        // WI-130: don't roll the DVA closed while cancelled cylinders are still
+        // physically on the vehicle. Cancelling the LAST live order used to flip
+        // the DVA to dispatch_ready even though this cancel may have just put a
+        // cylinder on the truck (CSE status on_vehicle, created above in this
+        // same tx) — stranding it because mark-vehicle-returned then 409s on an
+        // already-"completed" trip. Keep the DVA loaded_and_dispatched so the
+        // normal return → reconcile flow processes the CSE. `order.vehicleId` is
+        // the pre-cancel value (the in-memory order is untouched by the cancel
+        // update above). Counts within the tx so it sees the just-created CSE.
+        const capturedVehicleId = order.vehicleId;
+        const onVehicleCse = capturedVehicleId
+          ? await tx.cancelledStockEvent.count({
+              where: { vehicleId: capturedVehicleId, distributorId, status: 'on_vehicle' },
+            })
+          : 0;
         const dvaUpdates: Record<string, unknown> = {};
         // WI-102: do NOT decrement tripNumber here. Under WI-096b's per-order
         // tripNumber scoping, decrementing makes the DVA point at trip N-1,
         // hiding other live orders still on trip N. Only flip status to
-        // dispatch_ready once no live orders remain (trip genuinely complete).
-        if (activeOrders === 0 && ['loaded_and_dispatched', 'dispatch_ready'].includes(dva.status as string)) {
+        // dispatch_ready once no live orders remain (trip genuinely complete)
+        // AND no cancelled stock is still on the vehicle (WI-130).
+        if (activeOrders === 0 && onVehicleCse === 0 && ['loaded_and_dispatched', 'dispatch_ready'].includes(dva.status as string)) {
           dvaUpdates.status = 'dispatch_ready';
         }
         if (Object.keys(dvaUpdates).length > 0) {
