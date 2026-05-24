@@ -1259,6 +1259,13 @@ describe('Audit + side-effects', () => {
         });
         expect(dispatchEvents).toHaveLength(1);
         expect(dispatchEvents[0].fullsChange).toBe(-5);
+        // WI-129: dispatch now triggers an immediate summary recompute, so the
+        // Dispatched column reflects the dispatch WITHOUT waiting for a delivery.
+        const summary = await prisma.inventorySummary.findFirst({
+          where: { distributorId: 'dist-002', cylinderTypeId: ctx.cyl.id },
+          orderBy: { summaryDate: 'desc' },
+        });
+        expect(summary?.dispatchedQty ?? 0).toBeGreaterThanOrEqual(5);
       } finally {
         delete process.env.INVENTORY_DISPATCH_DEBIT;
         await prisma.inventoryEvent.deleteMany({ where: { referenceId: orders[0].id } });

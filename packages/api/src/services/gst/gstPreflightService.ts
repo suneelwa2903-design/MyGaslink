@@ -29,7 +29,7 @@ import {
   createPendingAction,
 } from './gstService.js';
 import { createInvoiceFromOrder } from '../invoiceService.js';
-import { createInventoryEvent } from '../inventoryService.js';
+import { createInventoryEvent, recalculateSummariesFromDate } from '../inventoryService.js';
 import { isDispatchDebitEnabled } from '../../utils/inventoryFlags.js';
 
 const orderInclude = {
@@ -278,6 +278,25 @@ export async function preflightDispatch(params: {
 
   const succeeded = results.filter((r) => r.success).length;
   const failed = results.length - succeeded;
+
+  // WI-129: with dispatch-debit ON, preflightOne writes a `dispatch` inventory
+  // event per item but nothing recomputed the daily summary, so the "Dispatched"
+  // column lagged until the next delivery triggered a recompute. Recompute now
+  // for every cylinder type that was just dispatched (all orders in this batch
+  // share targetDate). No-op when the flag is OFF (no dispatch events written).
+  if (isDispatchDebitEnabled(distributorId)) {
+    const succeededOrderIds = new Set(
+      results.filter((r) => r.success).map((r) => r.orderId),
+    );
+    const cylinderTypeIds = new Set<string>();
+    for (const order of orders) {
+      if (!succeededOrderIds.has(order.id)) continue;
+      for (const item of order.items) cylinderTypeIds.add(item.cylinderTypeId);
+    }
+    for (const ctId of cylinderTypeIds) {
+      await recalculateSummariesFromDate(distributorId, ctId, targetDate);
+    }
+  }
 
   // WI-098: stamp dispatchedAt whenever ANY order in the batch dispatched —
   // the vehicle physically left the depot, so the timeline should reflect when
