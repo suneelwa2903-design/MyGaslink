@@ -46,6 +46,14 @@ function defaultDeliveryISO() {
   return new Date().getHours() >= 14 ? tomorrowISO() : todayISO();
 }
 
+// WI-127: derive the dispute state-machine position from the order's fields.
+function disputeState(o: Order): 'none' | 'raised' | 'reopened' | 'resolved' {
+  if (!o.customerDisputeReason) return 'none';
+  if (o.disputeResolvedAt) return 'resolved';
+  if (o.disputeReopenedAt) return 'reopened';
+  return 'raised';
+}
+
 export default function CustomerOrdersScreen() {
   const { dark, colors, accent } = useTheme();
 
@@ -54,6 +62,12 @@ export default function CustomerOrdersScreen() {
   // WI-125: selected delivery date for the New Order + Modify flows.
   const [orderDate, setOrderDate] = useState(defaultDeliveryISO);
   const [modifyDate, setModifyDate] = useState(todayISO);
+
+  // WI-127: dispute raise/reopen state.
+  const [disputeOrder, setDisputeOrder] = useState<Order | null>(null);
+  const [disputeReason, setDisputeReason] = useState('');
+  const [disputeIsReopen, setDisputeIsReopen] = useState(false);
+  const [expandedResolution, setExpandedResolution] = useState<string | null>(null);
 
   // Modify order state
   const [modifyOrder, setModifyOrder] = useState<Order | null>(null);
@@ -142,6 +156,28 @@ export default function CustomerOrdersScreen() {
       successMessage: 'Order cancelled.',
     },
   );
+
+  // WI-127: raise or reopen a dispute.
+  const raiseDispute = useApiMutation<{ disputeRaisedAt: string }, { orderId: string; reason: string }>(
+    'post',
+    (vars) => `/customer-portal/orders/${vars.orderId}/dispute`,
+    {
+      invalidateKeys: [['customer-orders']],
+      successMessage: 'Issue submitted to your distributor.',
+      onSuccess: () => { setDisputeOrder(null); setDisputeReason(''); setDisputeIsReopen(false); },
+    },
+  );
+
+  const openDispute = (order: Order, isReopen: boolean) => {
+    setDisputeOrder(order);
+    setDisputeIsReopen(isReopen);
+    setDisputeReason('');
+  };
+  const submitDispute = () => {
+    if (!disputeOrder) return;
+    if (!disputeReason.trim()) { Alert.alert('Required', 'Please describe the issue.'); return; }
+    raiseDispute.mutate({ orderId: disputeOrder.orderId, reason: disputeReason.trim() });
+  };
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -267,6 +303,71 @@ export default function CustomerOrdersScreen() {
     </View>
   );
 
+  // WI-127: dispute status + actions on delivered/modified_delivered cards.
+  const renderDispute = (order: Order) => {
+    if (!['delivered', 'modified_delivered'].includes(order.status || '')) return null;
+    const ds = disputeState(order);
+    const canReopen = ds === 'resolved' && !order.disputeReopenedAt;
+    const creditIssued = (order.disputeResolutionNote || '').includes('Credit note');
+    return (
+      <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 10 }}>
+        {ds === 'none' && (
+          <TouchableOpacity onPress={() => openDispute(order, false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: accent.blue }}>Raise Issue</Text>
+          </TouchableOpacity>
+        )}
+        {ds === 'raised' && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Ionicons name="warning-outline" size={16} color={accent.orange} />
+            <Text style={{ fontSize: 13, fontWeight: '600', color: accent.orange }}>Dispute raised</Text>
+          </View>
+        )}
+        {ds === 'reopened' && (
+          <View style={{ gap: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="warning-outline" size={16} color={accent.orange} />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: accent.orange }}>Dispute reopened</Text>
+            </View>
+            <Text style={{ fontSize: 12, color: colors.textMuted }}>
+              Contact your distributor directly to resolve this further.
+            </Text>
+          </View>
+        )}
+        {ds === 'resolved' && (
+          <View style={{ gap: 6 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="checkmark-circle-outline" size={16} color={accent.green} />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: accent.green }}>Dispute resolved</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setExpandedResolution(expandedResolution === order.orderId ? null : order.orderId)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '600', color: accent.blue }}>
+                {expandedResolution === order.orderId ? 'Hide response' : 'View response'}
+              </Text>
+            </TouchableOpacity>
+            {expandedResolution === order.orderId && (
+              <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                Response: {order.disputeResolutionNote}
+              </Text>
+            )}
+            {creditIssued && (
+              <Text style={{ fontSize: 12, fontWeight: '600', color: accent.green }}>
+                Credit note issued — see your invoice.
+              </Text>
+            )}
+            {canReopen && (
+              <TouchableOpacity onPress={() => openDispute(order, true)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: accent.blue }}>Reopen</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const renderQuantityPicker = (
     items: Record<string, number>,
     setter: React.Dispatch<React.SetStateAction<Record<string, number>>>,
@@ -378,7 +479,7 @@ export default function CustomerOrdersScreen() {
                         </Text>
                         {delivered && (item.emptiesCollected ?? 0) > 0 && (
                           <Text style={{ fontSize: 12, color: colors.textMuted }}>
-                            Empties collected: {item.emptiesCollected}
+                            {item.cylinderTypeName} empties: {item.emptiesCollected}
                           </Text>
                         )}
                       </View>
@@ -441,6 +542,8 @@ export default function CustomerOrdersScreen() {
                   </Text>
                 </View>
               </View>
+
+              {renderDispute(order)}
             </View>
           ))
         )}
@@ -647,6 +750,72 @@ export default function CustomerOrdersScreen() {
                   />
                 </>
               )}
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* WI-127: raise / reopen dispute modal. */}
+      <Modal
+        visible={!!disputeOrder}
+        animationType="slide"
+        transparent
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+      >
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <View style={{
+              backgroundColor: dark ? colors.cardBg : colors.bg,
+              borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24,
+            }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
+                {disputeIsReopen ? 'Reopen dispute' : 'Raise an issue'}
+              </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 16 }}>
+                {disputeOrder?.orderNumber}
+              </Text>
+
+              {disputeIsReopen && disputeOrder?.customerDisputeReason && (
+                <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
+                  Original issue: {disputeOrder.customerDisputeReason}
+                </Text>
+              )}
+
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
+                {disputeIsReopen ? 'Why are you reopening?' : 'Describe the issue'}
+              </Text>
+              <TextInput
+                value={disputeReason}
+                onChangeText={setDisputeReason}
+                multiline
+                numberOfLines={4}
+                placeholder={disputeIsReopen ? 'Reason for reopening…' : 'What went wrong with this delivery?'}
+                placeholderTextColor={colors.textMuted}
+                style={{
+                  backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder,
+                  borderRadius: 10, padding: 12, fontSize: 15, color: colors.text,
+                  textAlignVertical: 'top', minHeight: 100,
+                }}
+              />
+
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+                <View style={{ flex: 1 }}>
+                  <Button
+                    title="Cancel"
+                    variant="secondary"
+                    onPress={() => { setDisputeOrder(null); setDisputeReason(''); setDisputeIsReopen(false); }}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Button
+                    title="Submit"
+                    loading={raiseDispute.isPending}
+                    disabled={!disputeReason.trim()}
+                    onPress={submitDispute}
+                  />
+                </View>
+              </View>
             </View>
           </View>
         </KeyboardAvoidingView>

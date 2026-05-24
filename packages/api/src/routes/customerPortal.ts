@@ -164,6 +164,26 @@ router.patch('/orders/:id',
   }
 );
 
+// POST /api/customer-portal/orders/:id/dispute — WI-127
+router.post('/orders/:id/dispute',
+  requireRole('customer'),
+  validate(z.object({ reason: z.string().min(1).max(500) })),
+  auditLog('dispute', 'customer_order'),
+  async (req, res) => {
+    try {
+      if (!req.user!.customerId) {
+        return sendError(res, 'No customer linked to this account', 400);
+      }
+      const result = await portalService.raiseDispute(
+        req.user!.distributorId!, req.user!.customerId, param(req.params.id), req.body.reason,
+      );
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
 // ─── Invoices ─────────────────────────────────────────────────────────────
 
 // GET /api/customer-portal/invoices

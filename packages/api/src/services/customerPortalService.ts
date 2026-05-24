@@ -381,6 +381,66 @@ export async function modifyMyOrder(
 }
 
 /**
+ * WI-127: customer raises (or reopens) a dispute on a delivered order.
+ *
+ * Rules: order must be delivered/modified_delivered; only one open dispute at
+ * a time (409 if already open); a resolved dispute may be reopened exactly
+ * once (409 on the second reopen attempt). Creates a CUSTOMER_DISPUTE pending
+ * action due end-of-today. Tenant + customer scoped (404 otherwise).
+ */
+export async function raiseDispute(
+  distributorId: string,
+  customerId: string,
+  orderId: string,
+  reason: string,
+) {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, customerId, distributorId, deletedAt: null },
+    include: { customer: { select: { customerName: true } } },
+  });
+  if (!order) throw new PortalError('Order not found', 404);
+  if (!['delivered', 'modified_delivered'].includes(order.status)) {
+    throw new PortalError('A dispute can only be raised on a delivered order', 400);
+  }
+  const hasOpenDispute = !!order.customerDisputeReason && order.disputeResolvedAt == null;
+  if (hasOpenDispute) {
+    throw new PortalError('A dispute is already open for this order', 409);
+  }
+  const isReopen = !!order.customerDisputeReason && order.disputeResolvedAt != null;
+  if (isReopen && order.disputeReopenedAt != null) {
+    throw new PortalError('This dispute has already been reopened once — please contact your distributor directly', 409);
+  }
+
+  const now = new Date();
+  const updated = await prisma.order.update({
+    where: { id: orderId },
+    data: {
+      customerDisputeReason: reason,
+      disputeRaisedAt: now,
+      disputeResolvedAt: null,
+      disputeResolutionNote: null,
+      ...(isReopen ? { disputeReopenedAt: now, disputeReopenReason: reason } : {}),
+    },
+  });
+
+  const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
+  const deliveredStr = (order.deliveredAt ?? order.deliveryDate)?.toISOString().split('T')[0] ?? '';
+  const { createPendingAction } = await import('./pendingActionsService.js');
+  await createPendingAction(distributorId, {
+    module: 'order',
+    entityType: 'order',
+    entityId: orderId,
+    actionType: 'CUSTOMER_DISPUTE',
+    severity: 'medium',
+    requiresApproval: false,
+    description: `${order.customer?.customerName ?? 'Customer'} raised a dispute on ${order.orderNumber} (delivered ${deliveredStr}): ${reason}`,
+    slaDeadline: endOfToday,
+  });
+
+  return { disputeRaisedAt: updated.disputeRaisedAt };
+}
+
+/**
  * Get customer's invoices.
  */
 export async function getMyInvoices(

@@ -25,11 +25,14 @@ export async function createPendingAction(
     actionType: string; description: string;
     severity?: string; requiresApproval?: boolean;
     errorCode?: string; errorMessage?: string; errorContext?: any;
+    // WI-127: optional explicit SLA deadline (e.g. CUSTOMER_DISPUTE = end of
+    // today). When omitted, derived from severity via DEFAULT_SLA_HOURS.
+    slaDeadline?: Date;
   }
 ) {
   const severity = (data.severity || 'medium') as keyof typeof DEFAULT_SLA_HOURS;
   const slaHours = DEFAULT_SLA_HOURS[severity] || DEFAULT_SLA_HOURS.medium;
-  const slaDeadline = new Date(Date.now() + slaHours * 3600000);
+  const slaDeadline = data.slaDeadline ?? new Date(Date.now() + slaHours * 3600000);
 
   return prisma.pendingAction.create({
     data: {

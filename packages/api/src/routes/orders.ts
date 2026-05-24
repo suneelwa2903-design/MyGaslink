@@ -404,6 +404,28 @@ router.post('/:id/confirm-delivery',
   }
 );
 
+// POST /api/orders/:id/resolve-dispute — WI-127
+router.post('/:id/resolve-dispute',
+  requireRole('distributor_admin', 'finance', 'inventory'),
+  validate(z.object({
+    resolutionNote: z.string().min(1).max(1000),
+    issueCreditNote: z.boolean().optional(),
+    creditNoteAmount: z.number().positive().optional(),
+    creditNoteReason: z.string().min(1).max(500).optional(),
+  })),
+  auditLog('resolve_dispute', 'order'),
+  async (req, res) => {
+    try {
+      const result = await orderService.resolveDispute(
+        param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body,
+      );
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, err.message, err.statusCode || 500);
+    }
+  }
+);
+
 // POST /api/orders/:id/cancel
 router.post('/:id/cancel',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),

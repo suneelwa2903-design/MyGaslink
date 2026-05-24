@@ -676,6 +676,14 @@ model Order {
   customerConfirmed     Boolean?    @map("customer_confirmed")
   customerConfirmedAt   DateTime?   @map("customer_confirmed_at")
   customerDisputeReason String?     @map("customer_dispute_reason")
+  // WI-127: customer dispute lifecycle. customerDisputeReason holds the current
+  // (or last) reason; the timestamps drive the customer-app state machine and
+  // enforce a one-reopen-only rule.
+  disputeRaisedAt       DateTime?   @map("dispute_raised_at")
+  disputeResolvedAt     DateTime?   @map("dispute_resolved_at")
+  disputeResolutionNote String?     @map("dispute_resolution_note")
+  disputeReopenedAt     DateTime?   @map("dispute_reopened_at")
+  disputeReopenReason   String?     @map("dispute_reopen_reason")
   // WI-065: per-order trip number. Stamped by preflightOne when the
   // order transitions to pending_delivery, mirrors DVA.tripNumber at
   // dispatch time. Replaces the fragile `updatedAt >= dva.updatedAt`

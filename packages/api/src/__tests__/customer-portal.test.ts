@@ -336,6 +336,137 @@ describe('Customer Portal - Invoice PDF download (WI-126)', () => {
   });
 });
 
+describe('Customer Portal - Dispute lifecycle (WI-127)', () => {
+  const far = new Date('2099-12-31');
+  let lifecycleOrderId: string;
+  let pendingOrderId: string;
+  let creditOrderId: string;
+  let creditInvoiceId: string;
+  const orderIds: string[] = [];
+  const invoiceIds: string[] = [];
+
+  beforeAll(async () => {
+    const mk = async (status: string) => {
+      const o = await prisma.order.create({
+        data: {
+          orderNumber: `TEST-WI127-${status}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          distributorId, customerId, orderDate: far, deliveryDate: far, deliveredAt: far,
+          status: status as any, totalAmount: 1180,
+        },
+      });
+      orderIds.push(o.id);
+      return o.id;
+    };
+    lifecycleOrderId = await mk('delivered');
+    pendingOrderId = await mk('pending_dispatch');
+    creditOrderId = await mk('delivered');
+    const inv = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `TEST-INV-WI127-${Date.now()}`,
+        distributorId, customerId, orderId: creditOrderId, issueDate: far, dueDate: far,
+        status: 'issued', totalAmount: 1180, outstandingAmount: 1180,
+      },
+    });
+    creditInvoiceId = inv.id;
+    invoiceIds.push(inv.id);
+  });
+
+  afterAll(async () => {
+    await prisma.creditNote.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+    await prisma.pendingAction.deleteMany({ where: { entityType: 'order', entityId: { in: orderIds } } });
+    await prisma.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+    await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+  });
+
+  it('raises a dispute on a delivered order + creates a CUSTOMER_DISPUTE action', async () => {
+    const res = await request(app)
+      .post(`/api/customer-portal/orders/${lifecycleOrderId}/dispute`)
+      .set(auth(customerToken)).send({ reason: 'Short by 2 cylinders' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.disputeRaisedAt).toBeTruthy();
+
+    const action = await prisma.pendingAction.findFirst({
+      where: { entityType: 'order', entityId: lifecycleOrderId, actionType: 'CUSTOMER_DISPUTE', status: 'open' },
+    });
+    expect(action).not.toBeNull();
+  });
+
+  it('409 when a dispute is already open', async () => {
+    const res = await request(app)
+      .post(`/api/customer-portal/orders/${lifecycleOrderId}/dispute`)
+      .set(auth(customerToken)).send({ reason: 'again' });
+    expect(res.status).toBe(409);
+  });
+
+  it('400 on a non-delivered order', async () => {
+    const res = await request(app)
+      .post(`/api/customer-portal/orders/${pendingOrderId}/dispute`)
+      .set(auth(customerToken)).send({ reason: 'too early' });
+    expect(res.status).toBe(400);
+  });
+
+  it('404 on an order that is not this customer’s', async () => {
+    const res = await request(app)
+      .post(`/api/customer-portal/orders/00000000-0000-0000-0000-000000000000/dispute`)
+      .set(auth(customerToken)).send({ reason: 'nope' });
+    expect(res.status).toBe(404);
+  });
+
+  it('admin resolves with a note → disputeResolvedAt + action resolved', async () => {
+    const res = await request(app)
+      .post(`/api/orders/${lifecycleOrderId}/resolve-dispute`)
+      .set(auth(adminToken)).send({ resolutionNote: 'Verified delivery, no shortage.' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.resolvedAt).toBeTruthy();
+
+    const order = await prisma.order.findUnique({ where: { id: lifecycleOrderId } });
+    expect(order?.disputeResolvedAt).not.toBeNull();
+    expect(order?.disputeResolutionNote).toContain('Verified');
+    const action = await prisma.pendingAction.findFirst({
+      where: { entityType: 'order', entityId: lifecycleOrderId, actionType: 'CUSTOMER_DISPUTE' },
+    });
+    expect(action?.status).toBe('resolved');
+  });
+
+  it('customer can reopen once after resolution', async () => {
+    const res = await request(app)
+      .post(`/api/customer-portal/orders/${lifecycleOrderId}/dispute`)
+      .set(auth(customerToken)).send({ reason: 'Still disagree' });
+    expect(res.status).toBe(200);
+    const order = await prisma.order.findUnique({ where: { id: lifecycleOrderId } });
+    expect(order?.disputeReopenedAt).not.toBeNull();
+    expect(order?.disputeResolvedAt).toBeNull();
+  });
+
+  it('blocks a second reopen (409)', async () => {
+    // resolve the reopened dispute first
+    await request(app)
+      .post(`/api/orders/${lifecycleOrderId}/resolve-dispute`)
+      .set(auth(adminToken)).send({ resolutionNote: 'Final: closed.' });
+    const res = await request(app)
+      .post(`/api/customer-portal/orders/${lifecycleOrderId}/dispute`)
+      .set(auth(customerToken)).send({ reason: 'third time' });
+    expect(res.status).toBe(409);
+  });
+
+  it('admin resolves with a credit note → CN created/approved + outstanding reduced', async () => {
+    await request(app)
+      .post(`/api/customer-portal/orders/${creditOrderId}/dispute`)
+      .set(auth(customerToken)).send({ reason: 'Overcharged' });
+    const res = await request(app)
+      .post(`/api/orders/${creditOrderId}/resolve-dispute`)
+      .set(auth(adminToken))
+      .send({ resolutionNote: 'Agreed — partial credit.', issueCreditNote: true, creditNoteAmount: 500, creditNoteReason: 'Dispute settlement' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.creditNoteId).toBeTruthy();
+
+    const inv = await prisma.invoice.findUnique({ where: { id: creditInvoiceId } });
+    expect(Number(inv?.outstandingAmount)).toBe(680);
+    const order = await prisma.order.findUnique({ where: { id: creditOrderId } });
+    expect(order?.disputeResolutionNote).toContain('Credit note of ₹500 issued');
+  });
+});
+
 describe('Customer Portal - Cancelled invoice outstanding (WI-123)', () => {
   let orderId: string;
   let invoiceId: string;

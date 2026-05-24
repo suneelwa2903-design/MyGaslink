@@ -1364,6 +1364,67 @@ export async function cancelOrder(
   });
 }
 
+/**
+ * WI-127: admin resolves a customer dispute on an order, optionally issuing a
+ * credit note. Stamps disputeResolvedAt + disputeResolutionNote and resolves
+ * the linked CUSTOMER_DISPUTE pending action.
+ */
+export async function resolveDispute(
+  orderId: string,
+  distributorId: string,
+  userId: string,
+  data: {
+    resolutionNote: string;
+    issueCreditNote?: boolean;
+    creditNoteAmount?: number;
+    creditNoteReason?: string;
+  },
+) {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, distributorId, deletedAt: null },
+    include: { invoice: { select: { id: true } } },
+  });
+  if (!order) throw new OrderError('Order not found', 404);
+  if (!order.customerDisputeReason || order.disputeResolvedAt != null) {
+    throw new OrderError('No open dispute on this order', 400);
+  }
+
+  let creditNoteId: string | undefined;
+  let note = data.resolutionNote;
+
+  if (data.issueCreditNote) {
+    if (!order.invoice) throw new OrderError('No invoice exists for this order to credit', 400);
+    if (!data.creditNoteAmount || data.creditNoteAmount <= 0) {
+      throw new OrderError('A positive credit note amount is required', 400);
+    }
+    if (!data.creditNoteReason) throw new OrderError('A credit note reason is required', 400);
+    const { createCreditNote, approveCreditNote } = await import('./invoiceService.js');
+    const cn = await createCreditNote(distributorId, userId, {
+      invoiceId: order.invoice.id,
+      reason: data.creditNoteReason,
+      amount: data.creditNoteAmount,
+    });
+    await approveCreditNote(cn.id, distributorId, userId);
+    creditNoteId = cn.id;
+    note = `${note}\nCredit note of ₹${data.creditNoteAmount} issued.`;
+  }
+
+  const now = new Date();
+  await prisma.order.update({
+    where: { id: orderId },
+    data: { disputeResolvedAt: now, disputeResolutionNote: note },
+  });
+  await prisma.pendingAction.updateMany({
+    where: {
+      distributorId, entityType: 'order', entityId: orderId,
+      actionType: 'CUSTOMER_DISPUTE', status: { in: ['open', 'in_progress'] },
+    },
+    data: { status: 'resolved', resolvedBy: userId, resolvedAt: now, resolutionNotes: note },
+  });
+
+  return { resolvedAt: now, creditNoteId };
+}
+
 export class OrderError extends Error {
   constructor(message: string, public statusCode: number) {
     super(message);

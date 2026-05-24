@@ -257,6 +257,13 @@ export interface Order {
   totalAmount: number;
   specialInstructions: string | null;
   items: OrderItem[];
+  // WI-127: customer dispute lifecycle (drives the order-card dispute UI).
+  customerDisputeReason?: string | null;
+  disputeRaisedAt?: string | null;
+  disputeResolvedAt?: string | null;
+  disputeResolutionNote?: string | null;
+  disputeReopenedAt?: string | null;
+  disputeReopenReason?: string | null;
   createdAt: string;
   updatedAt: string;
 }
