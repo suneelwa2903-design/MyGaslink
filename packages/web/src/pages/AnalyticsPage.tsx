@@ -26,6 +26,7 @@ import { apiGet, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Badge, Loader, EmptyState, Modal } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import ReportsPanel from '@/pages/ReportsPage';
+import PendingActionsPanel from '@/pages/PendingActionsPage';
 
 interface Insight { icon: string; text: string; severity: 'critical' | 'warning' | 'info'; link?: string; }
 
@@ -63,7 +64,7 @@ export default function AnalyticsPage() {
   const isDriver = role === UserRole.DRIVER;
   const isAdminLike = role === UserRole.DISTRIBUTOR_ADMIN || (isSuperAdmin && !!selectedDistributorId);
 
-  const [tab, setTab] = useState<'dashboard' | 'overview' | 'reports'>('dashboard');
+  const [tab, setTab] = useState<'dashboard' | 'overview' | 'reports' | 'pending-actions'>('dashboard');
   const [resolveAction, setResolveAction] = useState<PendingAction | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [dateFrom, setDateFrom] = useState(() => {
@@ -224,6 +225,7 @@ export default function AnalyticsPage() {
     { key: 'dashboard' as const, label: 'Dashboard' },
     { key: 'overview' as const, label: 'Overview' },
     { key: 'reports' as const, label: 'Reports' },
+    { key: 'pending-actions' as const, label: 'Pending Actions' },
   ];
 
   if (isSuperAdmin && !selectedDistributorId) {
@@ -518,7 +520,7 @@ export default function AnalyticsPage() {
             <div className="card p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-semibold text-surface-900 dark:text-white">Pending Actions</h3>
-                <button onClick={() => navigate('/app/pending-actions')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View all →</button>
+                <button onClick={() => setTab('pending-actions')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View all →</button>
               </div>
               {pendingActionsLoading ? (
                 <div className="flex justify-center py-8"><Loader /></div>
@@ -690,6 +692,9 @@ export default function AnalyticsPage() {
 
       {/* Reports Tab — the 6 filterable reports (TASK 1), embedded in Analytics */}
       {tab === 'reports' && <ReportsPanel />}
+
+      {/* Pending Actions Tab — the full filterable list, embedded in Analytics */}
+      {tab === 'pending-actions' && <PendingActionsPanel embedded />}
     </div>
   );
 }

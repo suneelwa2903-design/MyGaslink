@@ -30,7 +30,7 @@ const STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'info' | 'danger' 
   [PendingActionStatus.SKIPPED]: 'neutral',
 };
 
-export default function PendingActionsPage() {
+export default function PendingActionsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
   const [moduleFilter, setModuleFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('open');
@@ -113,12 +113,14 @@ export default function PendingActionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Pending Actions</h1>
-          <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Review and resolve pending items</p>
+      {!embedded && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Pending Actions</h1>
+            <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Review and resolve pending items</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Filters */}
       <div className="card p-4">
