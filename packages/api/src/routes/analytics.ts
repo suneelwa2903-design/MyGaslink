@@ -149,6 +149,18 @@ router.get('/overdue-call-list',
     }
   });
 
+// GET /api/analytics/insights — actionable insights for the overview (TASK 2)
+router.get('/insights',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const insights = await analyticsService.getInsights(req.user!.distributorId!);
+      return sendSuccess(res, insights);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  });
+
 // GET /api/analytics/advanced-metrics
 router.get('/advanced-metrics',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),

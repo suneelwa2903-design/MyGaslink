@@ -23,7 +23,6 @@ const FleetPage = lazy(() => import('@/pages/FleetPage'));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'));
 const CollectionsPage = lazy(() => import('@/pages/CollectionsPage'));
 const PendingActionsPage = lazy(() => import('@/pages/PendingActionsPage'));
-const ReportsPage = lazy(() => import('@/pages/ReportsPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const DistributorsPage = lazy(() => import('@/pages/DistributorsPage'));
 const DistributorDetailPage = lazy(() => import('@/pages/DistributorDetailPage'));
@@ -235,23 +234,8 @@ export function AppRoutes() {
           >
             <Route index element={<PendingActionsPage />} />
           </Route>
-
-          <Route
-            path="reports"
-            element={
-              <ProtectedRoute
-                allowedRoles={[
-                  UserRole.SUPER_ADMIN,
-                  UserRole.DISTRIBUTOR_ADMIN,
-                  UserRole.FINANCE,
-                  UserRole.INVENTORY,
-                ]}
-                requireDistributor
-              />
-            }
-          >
-            <Route index element={<ReportsPage />} />
-          </Route>
+          {/* Reports live inside the Analytics page (Reports tab), not a standalone route. */}
+          <Route path="reports" element={<Navigate to="/app/analytics" replace />} />
 
           <Route
             path="settings"

@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import { toNum } from '../utils/decimal.js';
 import { computeCustomerOverdue } from './paymentService.js';
+import { checkThresholds } from './inventoryService.js';
 
 /**
  * Dashboard statistics for the distributor.
@@ -564,4 +565,75 @@ export async function getAdvancedMetrics(distributorId: string) {
     inventoryShrinkage,
     deliveryEfficiency,
   };
+}
+
+/**
+ * Actionable insights for the Analytics overview (TASK 2 Part B).
+ * Computed from live data — never hardcoded. Returns at most 5, most urgent
+ * first (critical > warning > info). Each is one line + an emoji icon.
+ */
+export interface Insight { icon: string; text: string; severity: 'critical' | 'warning' | 'info'; link?: string; }
+
+export async function getInsights(distributorId: string): Promise<Insight[]> {
+  const insights: Insight[] = [];
+  const rank = { critical: 0, warning: 1, info: 2 };
+
+  // 1. Customers overdue > 30 days
+  try {
+    const callList = await getOverdueCallList(distributorId);
+    const over30 = callList.filter((c) => c.daysOverdue > 30);
+    if (over30.length > 0) {
+      insights.push({
+        icon: '⚠️',
+        text: `${over30.length} customer${over30.length === 1 ? ' has' : 's have'} invoices overdue by more than 30 days`,
+        severity: 'critical',
+        link: '/app/collections',
+      });
+    }
+  } catch { /* non-fatal */ }
+
+  // 2. Low / critical stock
+  try {
+    const alerts = await checkThresholds(distributorId);
+    for (const a of alerts) {
+      insights.push({
+        icon: '⚡',
+        text: `${a.cylinderTypeName} stock is ${a.level === 'critical' ? 'critically low' : 'low'} (${a.currentStock} units, threshold ${a.threshold}) — consider restocking`,
+        severity: a.level === 'critical' ? 'critical' : 'warning',
+        link: '/app/inventory',
+      });
+    }
+  } catch { /* non-fatal */ }
+
+  // 3. Top empty-cylinder holder (cylinders out with a customer)
+  try {
+    const empties = await getEmptyCylindersReport(distributorId);
+    const top = empties[0];
+    if (top && top.withCustomerQty >= 5) {
+      insights.push({
+        icon: '📦',
+        text: `${top.customer?.customerName ?? 'A customer'} is holding ${top.withCustomerQty} empty ${top.cylinderType?.typeName ?? ''} cylinder(s) — follow up on return`,
+        severity: 'warning',
+        link: '/app/customers',
+      });
+    }
+  } catch { /* non-fatal */ }
+
+  // 4. Best driver this month (delivery rate, min 5 orders)
+  try {
+    const perf = await getDriverDeliveryPerformance(distributorId);
+    const best = perf
+      .filter((d: any) => d.totalOrders >= 5)
+      .sort((a: any, b: any) => b.deliveryRate - a.deliveryRate)[0];
+    if (best && best.deliveryRate >= 90) {
+      insights.push({
+        icon: '🚚',
+        text: `Driver ${best.driverName}: ${best.deliveryRate}% delivery rate (above the 90% benchmark)`,
+        severity: 'info',
+        link: '/app/fleet',
+      });
+    }
+  } catch { /* non-fatal */ }
+
+  return insights.sort((a, b) => rank[a.severity] - rank[b.severity]).slice(0, 5);
 }
