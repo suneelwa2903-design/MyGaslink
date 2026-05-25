@@ -11,6 +11,7 @@ import {
   HiOutlineCurrencyRupee,
   HiOutlineTruck,
   HiOutlineChartBar,
+  HiOutlineDocumentChartBar,
   HiOutlineBellAlert,
   HiOutlineCog6Tooth,
   HiOutlineBuildingOffice,
@@ -114,6 +115,17 @@ const adminMenuItems: MenuItem[] = [
     labelKey: 'nav.fleet',
     path: '/app/fleet',
     icon: HiOutlineTruck,
+    roles: [
+      UserRole.SUPER_ADMIN,
+      UserRole.DISTRIBUTOR_ADMIN,
+      UserRole.FINANCE,
+      UserRole.INVENTORY,
+    ],
+  },
+  {
+    label: 'Reports',
+    path: '/app/reports',
+    icon: HiOutlineDocumentChartBar,
     roles: [
       UserRole.SUPER_ADMIN,
       UserRole.DISTRIBUTOR_ADMIN,

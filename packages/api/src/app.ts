@@ -25,6 +25,7 @@ import invoiceRoutes from './routes/invoices.js';
 import paymentRoutes from './routes/payments.js';
 import { driverRouter, vehicleRouter } from './routes/driversVehicles.js';
 import analyticsRoutes from './routes/analytics.js';
+import reportsRoutes from './routes/reports.js';
 import settingsRoutes from './routes/settings.js';
 import pendingActionsRoutes from './routes/pendingActions.js';
 import billingRoutes from './routes/billing.js';
@@ -92,6 +93,7 @@ export function createApp() {
   app.use('/api/drivers', authenticate, resolveDistributor, requireDistributor, driverRouter);
   app.use('/api/vehicles', authenticate, resolveDistributor, requireDistributor, vehicleRouter);
   app.use('/api/analytics', authenticate, resolveDistributor, requireDistributor, analyticsRoutes);
+  app.use('/api/reports', authenticate, resolveDistributor, requireDistributor, reportsRoutes);
   // settings + pending-actions GET / handlers gracefully return an empty
   // response when super_admin has no distributor selected; other handlers in
   // these routers guard distributorId inline. See WI-002 pattern.
