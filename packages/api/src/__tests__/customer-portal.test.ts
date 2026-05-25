@@ -513,6 +513,19 @@ describe('Customer Portal - Cancelled invoice outstanding (WI-123)', () => {
   });
 });
 
+describe('Customer Portal dashboard - empties unfiltered (FIX 3)', () => {
+  it('emptiesByType returns ALL balances and emptyCylinders = their full sum (incl. negatives)', async () => {
+    const res = await request(app).get('/api/customer-portal/dashboard').set(auth(customerToken));
+    expect(res.status).toBe(200);
+    const allBalances = await prisma.customerInventoryBalance.findMany({ where: { customerId } });
+    // emptiesByType must not be positive-filtered: one entry per balance row.
+    expect(res.body.data.emptiesByType.length).toBe(allBalances.length);
+    // headline total must equal the sum of ALL balances, including any negatives.
+    const sum = allBalances.reduce((s, b) => s + b.withCustomerQty, 0);
+    expect(res.body.data.emptyCylinders).toBe(sum);
+  });
+});
+
 describe('Customer Portal - cancel gate tightened to pre-driver-assignment', () => {
   const far = new Date('2099-12-31');
   let preAssignId: string;

@@ -41,7 +41,11 @@ export default function CustomerDashboardScreen() {
     { from: fromDate, to: toDate },
   );
 
-  const emptiesWithYou = (data?.emptiesByType ?? []).filter((t) => t.withCustomerQty > 0);
+  // FIX 3: show ALL non-zero balances (including negatives, where the customer
+  // has returned more empties than cylinders received), and derive the headline
+  // total from exactly these rows so the number always equals the breakdown sum.
+  const emptiesWithYou = (data?.emptiesByType ?? []).filter((t) => t.withCustomerQty !== 0);
+  const emptiesTotal = emptiesWithYou.reduce((sum, t) => sum + t.withCustomerQty, 0);
 
   const dateInputStyle = {
     borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10,
@@ -83,15 +87,16 @@ export default function CustomerDashboardScreen() {
               {emptiesWithYou.length > 0 ? (
                 <>
                   <Text style={{ fontSize: 24, fontWeight: '700', color: accent.green, marginTop: 4 }}>
-                    {data?.emptyCylinders ?? 0}
+                    {emptiesTotal}
                   </Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 }}>
                     {emptiesWithYou.map((t) => (
                       <Text
                         key={t.cylinderTypeName}
-                        style={{ fontSize: 12, color: colors.textSecondary, width: '50%', marginTop: 2 }}
+                        style={{ fontSize: 12, color: t.withCustomerQty < 0 ? accent.orange : colors.textSecondary, width: '50%', marginTop: 2 }}
                       >
                         {t.cylinderTypeName}: {t.withCustomerQty}
+                        {t.withCustomerQty < 0 ? ' (excess returned)' : ''}
                       </Text>
                     ))}
                   </View>
