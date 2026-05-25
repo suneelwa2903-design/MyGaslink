@@ -178,7 +178,7 @@ export function DashboardLayout() {
                   {pendingCount > 0 && (
                     <div className="px-4 py-2 border-t border-surface-200 dark:border-surface-700">
                       <button
-                        onClick={() => { setNotifOpen(false); navigate('/app/analytics'); }}
+                        onClick={() => { setNotifOpen(false); navigate('/app/pending-actions'); }}
                         className="text-xs text-brand-600 dark:text-brand-400 font-medium hover:underline"
                       >
                         View all pending actions

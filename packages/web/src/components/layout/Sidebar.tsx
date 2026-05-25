@@ -11,6 +11,7 @@ import {
   HiOutlineCurrencyRupee,
   HiOutlineTruck,
   HiOutlineChartBar,
+  HiOutlineBellAlert,
   HiOutlineCog6Tooth,
   HiOutlineBuildingOffice,
   HiOutlineHeart,
@@ -113,6 +114,20 @@ const adminMenuItems: MenuItem[] = [
     labelKey: 'nav.fleet',
     path: '/app/fleet',
     icon: HiOutlineTruck,
+    roles: [
+      UserRole.SUPER_ADMIN,
+      UserRole.DISTRIBUTOR_ADMIN,
+      UserRole.FINANCE,
+      UserRole.INVENTORY,
+    ],
+  },
+  {
+    // Pending Actions: GST/compliance exceptions, disputes, stock mismatches
+    // that need a human. Previously folded into Analytics (open-only, top 10)
+    // and otherwise unreachable; restored as a first-class, filterable page.
+    label: 'Pending Actions',
+    path: '/app/pending-actions',
+    icon: HiOutlineBellAlert,
     roles: [
       UserRole.SUPER_ADMIN,
       UserRole.DISTRIBUTOR_ADMIN,
