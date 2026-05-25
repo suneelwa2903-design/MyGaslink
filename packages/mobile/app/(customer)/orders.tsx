@@ -188,11 +188,13 @@ export default function CustomerOrdersScreen() {
     }
   };
 
-  // WI-125: Modify/Cancel are allowed only before a driver is assigned —
-  // i.e. while the order is pending_driver_assignment or pending_dispatch.
-  // Matches the server gate in modifyMyOrder / the portal cancel route.
+  // Modify/Cancel are allowed only BEFORE a driver is assigned — i.e. while
+  // the order is still pending_driver_assignment. Once a driver is tagged the
+  // order moves to pending_dispatch, after which the customer can no longer
+  // self-modify or cancel (matches the server gate in modifyMyOrder / the
+  // portal cancel route).
   const isPending = (status: string) =>
-    ['pending_driver_assignment', 'pending_dispatch'].includes(status);
+    ['pending_driver_assignment'].includes(status);
 
   const updateQuantity = (
     setter: React.Dispatch<React.SetStateAction<Record<string, number>>>,

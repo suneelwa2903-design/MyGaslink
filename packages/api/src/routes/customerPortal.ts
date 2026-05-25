@@ -120,7 +120,10 @@ router.patch('/orders/:id/cancel',
         req.user!.distributorId!, req.user!.customerId, param(req.params.id)
       );
       if (!order) return sendNotFound(res, 'Order');
-      const cancellableStatuses = ['pending_driver_assignment', 'pending_dispatch'];
+      // Customer self-cancel is allowed only before a driver is assigned.
+      // Once a driver is tagged (pending_dispatch) the customer must contact
+      // the distributor to cancel.
+      const cancellableStatuses = ['pending_driver_assignment'];
       if (!cancellableStatuses.includes(order.status)) {
         return sendError(res, 'Order cannot be cancelled at this stage', 400);
       }

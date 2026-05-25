@@ -96,7 +96,7 @@ afterAll(async () => {
 
 describe('WI-093 — modifyMyOrder', () => {
   it('updates quantity + recomputes totals on a pending order', async () => {
-    const order = await makeOrder(customerA.id, 'pending_dispatch', 2, 1000);
+    const order = await makeOrder(customerA.id, 'pending_driver_assignment', 2, 1000);
 
     const updated = await modifyMyOrder(DIST, customerA.id, order.id, [
       { cylinderTypeId: cylId, quantity: 5 },
@@ -113,7 +113,7 @@ describe('WI-093 — modifyMyOrder', () => {
   });
 
   it('rejects 404 when the order belongs to a different customer', async () => {
-    const order = await makeOrder(customerA.id, 'pending_dispatch', 2, 1000);
+    const order = await makeOrder(customerA.id, 'pending_driver_assignment', 2, 1000);
     await expect(
       modifyMyOrder(DIST, customerB.id, order.id, [{ cylinderTypeId: cylId, quantity: 3 }]),
     ).rejects.toMatchObject({ statusCode: 404 });
@@ -121,6 +121,13 @@ describe('WI-093 — modifyMyOrder', () => {
 
   it('rejects 400 when the order is no longer in a modifiable status', async () => {
     const order = await makeOrder(customerA.id, 'delivered', 2, 1000);
+    await expect(
+      modifyMyOrder(DIST, customerA.id, order.id, [{ cylinderTypeId: cylId, quantity: 3 }]),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('rejects 400 once a driver is assigned (pending_dispatch)', async () => {
+    const order = await makeOrder(customerA.id, 'pending_dispatch', 2, 1000);
     await expect(
       modifyMyOrder(DIST, customerA.id, order.id, [{ cylinderTypeId: cylId, quantity: 3 }]),
     ).rejects.toMatchObject({ statusCode: 400 });
@@ -154,7 +161,7 @@ describe('WI-125 — order date selection + edit', () => {
   });
 
   it('reschedules a pending order to a new in-window date', async () => {
-    const order = await makeOrder(customerA.id, 'pending_dispatch', 2, 1000);
+    const order = await makeOrder(customerA.id, 'pending_driver_assignment', 2, 1000);
     const updated = await modifyMyOrder(
       DIST, customerA.id, order.id, [{ cylinderTypeId: cylId, quantity: 2 }], isoDay(1),
     );
@@ -162,7 +169,7 @@ describe('WI-125 — order date selection + edit', () => {
   });
 
   it('rejects an edit that pushes the delivery date beyond tomorrow (400)', async () => {
-    const order = await makeOrder(customerA.id, 'pending_dispatch', 2, 1000);
+    const order = await makeOrder(customerA.id, 'pending_driver_assignment', 2, 1000);
     await expect(
       modifyMyOrder(DIST, customerA.id, order.id, [{ cylinderTypeId: cylId, quantity: 2 }], isoDay(5)),
     ).rejects.toMatchObject({ statusCode: 400 });

@@ -478,7 +478,7 @@ describe('Customer Portal - Cancelled invoice outstanding (WI-123)', () => {
         orderNumber: `TEST-WI123-${Date.now()}`,
         distributorId, customerId,
         orderDate: far, deliveryDate: far,
-        status: 'pending_dispatch', totalAmount: 5000,
+        status: 'pending_driver_assignment', totalAmount: 5000,
       },
     });
     orderId = order.id;
@@ -510,6 +510,35 @@ describe('Customer Portal - Cancelled invoice outstanding (WI-123)', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe('cancelled');
     expect(res.body.data.outstandingAmount).toBe(0);
+  });
+});
+
+describe('Customer Portal - cancel gate tightened to pre-driver-assignment', () => {
+  const far = new Date('2099-12-31');
+  let preAssignId: string;
+  let dispatchedId: string;
+
+  beforeAll(async () => {
+    const a = await prisma.order.create({ data: { orderNumber: `TEST-CG-A-${Date.now()}`, distributorId, customerId, orderDate: far, deliveryDate: far, status: 'pending_driver_assignment', totalAmount: 1000 } });
+    const b = await prisma.order.create({ data: { orderNumber: `TEST-CG-B-${Date.now()}`, distributorId, customerId, orderDate: far, deliveryDate: far, status: 'pending_dispatch', totalAmount: 1000 } });
+    preAssignId = a.id; dispatchedId = b.id;
+  });
+  afterAll(async () => {
+    await prisma.orderStatusLog.deleteMany({ where: { orderId: { in: [preAssignId, dispatchedId] } } });
+    await prisma.order.deleteMany({ where: { id: { in: [preAssignId, dispatchedId] } } });
+  });
+
+  it('allows cancel while pending_driver_assignment (200)', async () => {
+    const res = await request(app).patch(`/api/customer-portal/orders/${preAssignId}/cancel`).set(auth(customerToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('cancelled');
+  });
+
+  it('rejects cancel once a driver is assigned / pending_dispatch (400)', async () => {
+    const res = await request(app).patch(`/api/customer-portal/orders/${dispatchedId}/cancel`).set(auth(customerToken));
+    expect(res.status).toBe(400);
+    const after = await prisma.order.findUniqueOrThrow({ where: { id: dispatchedId } });
+    expect(after.status).toBe('pending_dispatch'); // unchanged
   });
 });
 

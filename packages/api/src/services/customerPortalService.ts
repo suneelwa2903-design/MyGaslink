@@ -323,7 +323,10 @@ export async function modifyMyOrder(
     include: { items: true, invoice: { select: { id: true } } },
   });
   if (!order) throw new PortalError('Order not found', 404);
-  if (!['pending_driver_assignment', 'pending_dispatch'].includes(order.status)) {
+  // Customer self-modify is allowed only before a driver is assigned. Once a
+  // driver is tagged the order is in pending_dispatch and can no longer be
+  // changed by the customer.
+  if (!['pending_driver_assignment'].includes(order.status)) {
     throw new PortalError('This order can no longer be modified', 400);
   }
   if (deliveryDate) assertCustomerDeliveryWindow(deliveryDate);
