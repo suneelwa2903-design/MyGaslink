@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { getErrorMessage, parseStructuredError } from '../../src/lib/api';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
@@ -102,6 +103,17 @@ export default function CustomerOrdersScreen() {
     ['customer-distributor'],
     '/customer-portal/distributor',
   );
+
+  // FIX 2: credit period for the pay-before-credit reminder. Outstanding comes
+  // from the dashboard query; credit period from the account endpoint. Both are
+  // existing endpoints — this panel is UI-only and never blocks placing an order.
+  const { data: account } = useApiQuery<{ creditPeriodDays?: number }>(
+    ['customer-account'],
+    '/customer-portal/account',
+  );
+  const router = useRouter();
+  const outstandingAmount = Number(dashboard?.outstandingAmount ?? 0);
+  const [reminderDismissed, setReminderDismissed] = useState(false);
 
   const cylinderTypes: CylinderType[] = dashboard?.cylinderTypes || [];
 
@@ -432,7 +444,7 @@ export default function CustomerOrdersScreen() {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 }}>
         <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>My Orders</Text>
-        <Button title="+ New Order" size="sm" onPress={() => setShowForm(true)} />
+        <Button title="+ New Order" size="sm" onPress={() => { setReminderDismissed(false); setShowForm(true); }} />
       </View>
 
       <DateRangeFilter from={dateFrom} to={dateTo} setFrom={setDateFrom} setTo={setDateTo} />
@@ -573,6 +585,37 @@ export default function CustomerOrdersScreen() {
                 Delivery date
               </Text>
               {renderDateSelector(orderDate, setOrderDate)}
+
+              {/* FIX 2 — pay-before-credit reminder (informational only; never blocks). */}
+              {outstandingAmount > 0 && !reminderDismissed && (
+                <View style={{
+                  marginTop: 12, marginBottom: 4, padding: 12, borderRadius: 10,
+                  backgroundColor: dark ? 'rgba(245,158,11,0.15)' : '#fffbeb',
+                  borderWidth: 1, borderColor: dark ? 'rgba(245,158,11,0.35)' : '#fde68a',
+                }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: accent.orange, marginBottom: 2 }}>
+                    💳 Outstanding Balance
+                  </Text>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>
+                    {formatINR(outstandingAmount)} outstanding
+                  </Text>
+                  {account?.creditPeriodDays ? (
+                    <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                      Credit period: {account.creditPeriodDays} days
+                    </Text>
+                  ) : null}
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <Button title="Pay Now" size="sm" onPress={() => {
+                        setShowForm(false); setOrderItems({}); router.push('/(customer)/payments');
+                      }} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Button title="Continue anyway" size="sm" variant="secondary" onPress={() => setReminderDismissed(true)} />
+                    </View>
+                  </View>
+                </View>
+              )}
 
               {renderQuantityPicker(orderItems, setOrderItems)}
 
