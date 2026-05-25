@@ -449,8 +449,9 @@ Priority: `critical` · `high` · `medium` · `low`.
 **#41 — Pending Actions: custom resolution UI per action type**
 - Status: **PARKED** (post-launch) · Priority: medium
 - All action types currently use the same generic resolve/reject flow, with
-  actionTypes shown as raw strings, surfaced inside the Analytics page (the
-  `/app/pending-actions` route redirects there). Each type needs a tailored modal:
+  actionTypes shown as raw strings. The dedicated `/app/pending-actions` page is
+  now reachable (sidebar + bell "View all", restored 2026-05-25) with module/status
+  filters; what remains is a tailored modal per action type:
   - CUSTOMER_DISPUTE: free text + optional credit note (WI-127 added the API
     support — `POST /api/orders/:id/resolve-dispute`).
   - IRN_CANCEL_FAILED: retry button + manual override option.
@@ -459,6 +460,46 @@ Priority: `critical` · `high` · `medium` · `low`.
   - CREDIT_NOTE / DEBIT_NOTE: view linked invoice, approve/reject.
 - Investigate before designing: read the full Pending Actions web UI + all
   actionTypes in use.
+
+**#42 — Report: Driver Performance (detailed per-trip metrics)**
+- Status: **PARKED** (post-launch) · Priority: medium
+- Per-trip metrics beyond the aggregate Delivery Performance report (TASK 1,
+  Report 4): time-to-first-delivery, avg gap between deliveries, distance/route
+  efficiency, cylinders carried vs delivered (truck buffer usage), modified-more
+  vs modified-less split per trip, on-time rate vs promised window.
+
+**#43 — Report: Empty Cylinder Tracking (cylinders at customers, days pending return)**
+- Status: **PARKED** (post-launch) · Priority: high (working capital)
+- Per customer per cylinder type: empties held, days outstanding (aging buckets),
+  value at risk. Source: `CustomerInventoryBalance` + collection events. Flags
+  customers holding empties > N days (deposit-leakage / cylinder-loss risk).
+
+**#44 — Report: Payment Commitment Fulfillment (promise-to-pay kept/broken rate)**
+- Status: **PARKED** (post-launch) · Priority: medium
+- Built on the WI-122 `PaymentCommitment` model: per customer, promises made vs
+  kept vs broken, avg days late, rolling fulfillment %. Feeds the credit/gate
+  escalation policy. Needs a commitment-vs-actual-payment reconciliation pass.
+
+**#45 — Report: Demand Forecast (historical order patterns by cylinder type and customer)**
+- Status: **PARKED** (post-launch) · Priority: medium
+- Historical order volumes by cylinder type and customer with simple
+  seasonality/trend, to drive restock suggestions. The "AI Demand Forecast"
+  surfaces already exist (Analytics button, Inventory tab) but lack a dedicated
+  reports-grade view with export and confidence ranges.
+
+**#46 — Inventory: modified-more delivery under-debits depot stock (INV2, 2026-05-25)**
+- Status: **OPEN — needs design decision** · Priority: medium-high
+- Dispatch-debit model debits the depot at dispatch by the *order* quantities.
+  When a driver delivers MORE than dispatched (modified-more), the extra cylinders
+  reach customers from truck buffer stock that was never debited from the depot.
+  Live example (2026-05-25, 19 KG): dispatched 5, delivered 6 → `closing_fulls=7`
+  (= opening 12 − dispatched 5) is internally consistent but 1 higher than physical
+  reality; the truck balance goes to −1 and nothing flags it. Two fix options:
+  (1) post an extra depot debit for `delivered − dispatched` when positive, or
+  (2) reconcile truck stock at vehicle return (`loaded − delivered − returned`) and
+  raise a `STOCK_MISMATCH` pending action when negative. No data corruption today
+  (`closing_fulls` matches the documented formula); this is an accounting-completeness
+  gap, not a crash. Decide model before launch if modified-more is common.
 
 **#25 — EWB cancellation timing (cancel at order-cancel vs reconciliation)**
 - Status: **PARKED** · Priority: medium
