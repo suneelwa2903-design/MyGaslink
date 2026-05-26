@@ -12,7 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4.4.0
+      # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
+      # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
+      - run: corepack enable
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -49,7 +51,9 @@ jobs:
       NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4.4.0
+      # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
+      # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
+      - run: corepack enable
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -67,7 +71,9 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4.4.0
+      # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
+      # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
+      - run: corepack enable
       - uses: actions/setup-node@v4
         with:
           node-version: 22
