@@ -87,7 +87,6 @@ async function seedReissueFixture(opts: {
 }> {
   const orderedQty = opts.orderedQty ?? 10;
   const deliveredQty = opts.deliveredQty ?? 8;
-  const dist = await prisma.distributor.findUniqueOrThrow({ where: { id: 'dist-002' } });
   const cyl = await prisma.cylinderType.findFirstOrThrow({
     where: { distributorId: 'dist-002', typeName: '19 KG' },
   });

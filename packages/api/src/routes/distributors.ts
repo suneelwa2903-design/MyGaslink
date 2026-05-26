@@ -4,7 +4,7 @@ import { requireRole } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
-import { createDistributorSchema, updateDistributorSchema, GSTIN_REGEX } from '@gaslink/shared';
+import { createDistributorSchema, updateDistributorSchema } from '@gaslink/shared';
 import * as distributorService from '../services/distributorService.js';
 import { mapDistributor, mapDistributors } from '../utils/mappers.js';
 import { lookupGstin, geocodeAddress } from '../services/gst/gstinLookup.js';

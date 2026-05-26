@@ -681,7 +681,6 @@ export async function generateRetroactiveGstInvoices(
       for (const item of invoice.items) {
         if (item.gstRate === 0) {
           const effectivePrice = Math.max(toNum(item.unitPrice) - toNum(item.discountPerUnit), 0);
-          const lineTotal = effectivePrice * item.quantity;
           const basePrice = effectivePrice / 1.18;
           totalBaseAmount += basePrice * item.quantity;
 

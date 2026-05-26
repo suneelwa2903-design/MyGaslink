@@ -188,7 +188,7 @@ function VehicleMappingTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-surface-500 dark:text-surface-400">
-        The driver↔vehicle pairing admins maintain. Click a vehicle to change it. Used when assigning a driver to an order — the day's mapping is used to auto-resolve the vehicle.
+        The driver↔vehicle pairing admins maintain. Click a vehicle to change it. Used when assigning a driver to an order — the day&apos;s mapping is used to auto-resolve the vehicle.
       </p>
 
       <div className="flex items-center gap-3">

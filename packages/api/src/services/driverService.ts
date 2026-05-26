@@ -163,15 +163,6 @@ export async function updateAssignmentStatus(
 
   // Auto-increment trip number on RETURNED_INVENTORY
   if (newStatus === 'returned_inventory') {
-    const maxTrip = await prisma.driverVehicleAssignment.findFirst({
-      where: {
-        driverId: assignment.driverId,
-        assignmentDate: assignment.assignmentDate,
-        distributorId,
-      },
-      orderBy: { tripNumber: 'desc' },
-    });
-
     // If reconciled, mark it and optionally create next trip
     updateData.isReconciled = false;
     updateData.isSubmitted = true;

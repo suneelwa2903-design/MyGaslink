@@ -24,7 +24,7 @@ const PAYMENT_METHOD_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
 };
 
 export default function CustomerPaymentsScreen() {
-  const { dark, colors, accent } = useTheme();
+  const { colors, accent } = useTheme();
 
   // GET /customer-portal/payments returns the standard envelope
   // { payments, meta } — NOT a bare array. Read .payments to match the

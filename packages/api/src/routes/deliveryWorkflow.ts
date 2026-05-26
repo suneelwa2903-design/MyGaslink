@@ -6,7 +6,7 @@ import { sendSuccess, sendError } from '../utils/apiResponse.js';
 import { param } from '../utils/params.js';
 import { z } from 'zod';
 import * as deliveryWorkflow from '../services/deliveryWorkflowService.js';
-import { mapOrder, mapOrders } from '../utils/mappers.js';
+import { mapOrders } from '../utils/mappers.js';
 
 const router = Router();
 

@@ -3,7 +3,7 @@ import { View, Text, ScrollView, RefreshControl, TouchableOpacity, ActivityIndic
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { MetricCard, Card, Badge, EmptyState } from '../../src/components/ui';
+import { MetricCard, Card, EmptyState } from '../../src/components/ui';
 import { useTheme, formatINR } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
 import type { DashboardStats, AnalyticsMetrics, Distributor, CollectionsDashboard } from '@gaslink/shared';

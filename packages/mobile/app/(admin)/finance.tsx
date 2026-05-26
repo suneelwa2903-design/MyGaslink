@@ -20,7 +20,7 @@ import * as Sharing from 'expo-sharing';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
-import { api, apiGet, apiPost, apiPut, getErrorMessage } from '../../src/lib/api';
+import { api, apiPut, getErrorMessage } from '../../src/lib/api';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -414,7 +414,9 @@ function InvoicesTab({
       const res = await api.get(`/invoices/${invoiceId}/pdf`, { responseType: 'arraybuffer' });
       const bytes = new Uint8Array(res.data);
       const file = new File(Paths.cache, `invoice-${invoiceId}.pdf`);
-      try { file.create(); } catch {}
+      // create() throws if the cache file already exists — safe to ignore;
+      // a genuine write failure surfaces from file.write() below and is caught by the outer try.
+      try { file.create(); } catch { /* file already exists */ }
       file.write(bytes);
       if (!(await Sharing.isAvailableAsync())) {
         Alert.alert('Sharing unavailable', 'This device does not support sharing.');
@@ -866,7 +868,9 @@ function InvoiceNotesSection({ C, dark, invoiceId, enabled }: InvoiceNotesSectio
       const bytes = new Uint8Array(res.data);
       const filename = `${kind === 'cn' ? 'credit-note' : 'debit-note'}-${number ?? id.slice(0, 8)}.pdf`;
       const file = new File(Paths.cache, filename);
-      try { file.create(); } catch {}
+      // create() throws if the cache file already exists — safe to ignore;
+      // a genuine write failure surfaces from file.write() below and is caught by the outer try.
+      try { file.create(); } catch { /* file already exists */ }
       file.write(bytes);
       if (!(await Sharing.isAvailableAsync())) {
         Alert.alert('Sharing unavailable', 'This device does not support sharing.');

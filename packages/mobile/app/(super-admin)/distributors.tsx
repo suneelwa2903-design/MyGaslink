@@ -170,7 +170,7 @@ export default function DistributorsScreen() {
   );
 }
 
-function InfoRow({ label, value, muted, valueColor, dark, colors }: {
+function InfoRow({ label, value, muted, valueColor, colors }: {
   label: string;
   value: string;
   muted?: boolean;
@@ -253,7 +253,7 @@ function CreateDistributorModal({ visible, onClose, dark, colors }: {
   );
 }
 
-function FormField({ label, value, onChange, dark, colors, ...props }: {
+function FormField({ label, value, onChange, colors, ...props }: {
   label: string;
   value: string;
   onChange: (v: string) => void;

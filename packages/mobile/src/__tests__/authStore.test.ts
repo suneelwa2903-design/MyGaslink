@@ -1,4 +1,5 @@
 import { useAuthStore } from '../stores/authStore';
+import { tokenStorage as tokenStorageMock, apiGet as apiGetMock } from '../lib/api';
 
 // Mock expo-secure-store
 jest.mock('expo-secure-store', () => ({
@@ -17,6 +18,9 @@ jest.mock('../lib/api', () => ({
   },
   apiGet: jest.fn(),
 }));
+
+const tokenStorage = jest.mocked(tokenStorageMock);
+const apiGet = jest.mocked(apiGetMock);
 
 describe('authStore', () => {
   beforeEach(() => {
@@ -68,7 +72,6 @@ describe('authStore', () => {
   });
 
   it('logout clears all state', async () => {
-    const { tokenStorage } = require('../lib/api');
 
     // Set up authenticated state
     useAuthStore.setState({
@@ -95,7 +98,6 @@ describe('authStore', () => {
   });
 
   it('hydrate with no token sets loading false', async () => {
-    const { tokenStorage } = require('../lib/api');
     tokenStorage.getAccessToken.mockResolvedValue(null);
 
     await useAuthStore.getState().hydrate();
@@ -105,7 +107,6 @@ describe('authStore', () => {
   });
 
   it('hydrate with valid token restores user', async () => {
-    const { tokenStorage, apiGet } = require('../lib/api');
     const mockUser = {
       userId: '1',
       email: 'test@test.com',
@@ -127,7 +128,6 @@ describe('authStore', () => {
   });
 
   it('hydrate with expired token clears state', async () => {
-    const { tokenStorage, apiGet } = require('../lib/api');
 
     tokenStorage.getAccessToken.mockResolvedValue('expired-token');
     apiGet.mockRejectedValue(new Error('Unauthorized'));

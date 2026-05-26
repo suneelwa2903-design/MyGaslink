@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Animated, type ViewStyle } from 'react-native';
 import { useTheme } from '../../theme';
 
@@ -13,7 +13,8 @@ export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style 
   // Dark-mode fix: shimmer was hardcoded #e2e8f0 (light) — used theme divider
   // so the placeholder reads as a subtle block on dark surfaces, not a white flash.
   const { colors } = useTheme();
-  const opacity = useRef(new Animated.Value(0.3)).current;
+  // Lazy useState init: create the Animated.Value once; safe to read in render.
+  const [opacity] = useState(() => new Animated.Value(0.3));
 
   useEffect(() => {
     const animation = Animated.loop(

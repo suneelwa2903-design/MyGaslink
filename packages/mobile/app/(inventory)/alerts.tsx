@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, Badge, MetricCard, EmptyState } from '../../src/components/ui';
 import { useTheme } from '../../src/theme';
-import type { InventoryForecast, CylinderThreshold } from '@gaslink/shared';
+import type { InventoryForecast } from '@gaslink/shared';
 
 export default function AlertsForecastScreen() {
   const { dark, colors, accent } = useTheme();

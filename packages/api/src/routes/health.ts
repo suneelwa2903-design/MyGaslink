@@ -22,7 +22,7 @@ router.get('/', async (_req, res) => {
         latencyMs: dbLatency,
       },
     });
-  } catch (err) {
+  } catch {
     return sendError(res, 'Service unhealthy', 503);
   }
 });

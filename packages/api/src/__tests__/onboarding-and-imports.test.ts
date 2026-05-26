@@ -227,7 +227,6 @@ describe('POST /api/customers/import-opening-balances', () => {
 // ─── /api/analytics/overdue-call-list ────────────────────────────────────────
 
 describe('GET /api/analytics/overdue-call-list', () => {
-  let testCustomerId: string;
   const issued = new Date();
   const past = new Date(Date.now() - 15 * 86400_000);
   const future = new Date(Date.now() + 5 * 86400_000);
@@ -237,7 +236,6 @@ describe('GET /api/analytics/overdue-call-list', () => {
     const c1 = await prisma.customer.create({
       data: { distributorId: dist1Id, customerName: 'Overdue Caller', phone: '9000000100' },
     });
-    testCustomerId = c1.id;
     await prisma.invoice.create({
       data: {
         invoiceNumber: `OBT-${Date.now()}-1`,

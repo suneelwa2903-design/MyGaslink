@@ -251,7 +251,7 @@ function CreateUserModal({ visible, onClose, dark, colors, accent }: {
   );
 }
 
-function FormField({ label, value, onChange, dark, colors, ...props }: {
+function FormField({ label, value, onChange, colors, ...props }: {
   label: string;
   value: string;
   onChange: (v: string) => void;

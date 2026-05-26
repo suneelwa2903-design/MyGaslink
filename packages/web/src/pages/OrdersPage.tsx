@@ -1689,7 +1689,7 @@ function AssignmentsTab() {
               Ready to Dispatch
             </h3>
             <p className="text-sm text-surface-500 dark:text-surface-400">
-              Click Dispatch to generate IRN + EWB for each driver's orders before the vehicle leaves the depot.
+              Click Dispatch to generate IRN + EWB for each driver&apos;s orders before the vehicle leaves the depot.
             </p>
           </div>
           <div className="grid grid-cols-1 gap-3">

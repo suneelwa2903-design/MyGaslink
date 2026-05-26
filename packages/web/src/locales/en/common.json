@@ -69,7 +69,7 @@
     "loginError": "Invalid email or password",
     "logoutSuccess": "Signed out successfully",
     "newToApp": "New to MyGasLink?",
-    "claim3MonthsFree": "Claim 3 months free →",
+    "claim3MonthsFree": "Claim 3 weeks free →",
     "copyright": "© {{year}} MyGasLink"
   },
   "errors": {

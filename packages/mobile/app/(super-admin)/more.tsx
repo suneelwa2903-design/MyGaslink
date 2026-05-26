@@ -110,7 +110,7 @@ export default function MoreScreen() {
           Management
         </Text>
 
-        {MENU_ITEMS.map((item, index) => (
+        {MENU_ITEMS.map((item) => (
           <View key={item.label}>
             {item.separator && (
               <View style={{ height: 1, backgroundColor: colors.divider, marginVertical: 4 }} />

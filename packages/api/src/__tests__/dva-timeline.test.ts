@@ -96,7 +96,6 @@ async function seedB2cOrder(driverId: string, vehicleId: string, date: string) {
 }
 
 let pfDriverId = '';
-let preflightVehicleId = '';
 
 beforeAll(async () => {
   app = createApp();
@@ -124,7 +123,6 @@ const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 describe('WI-094 — DVA timeline timestamps', () => {
   it('✅ 1. dispatchedAt set after successful preflight-dispatch', async () => {
     const v = await makeVehicle(DIST, 'TEST-TL-PF-OK');
-    preflightVehicleId = v.id;
     const dva = await makeDva({ driverId: pfDriverId, vehicleId: v.id, date: new Date(PF_DATE), status: 'dispatch_ready' });
     await seedB2cOrder(pfDriverId, v.id, PF_DATE);
     apiCallMock.mockResolvedValue(ewbGenOk('TL-EWB-1')); // single B2C order → standalone EWB, no gencewb

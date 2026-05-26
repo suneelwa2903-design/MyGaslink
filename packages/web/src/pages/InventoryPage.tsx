@@ -927,6 +927,24 @@ function OutgoingEmptiesModal({
 
 type SortKey = 'customer' | 'type' | 'qty' | 'cost' | 'days';
 
+function SortTh({ k, label, center, sortKey, sortDir, onSort }: {
+  k: SortKey;
+  label: string;
+  center?: boolean;
+  sortKey: SortKey;
+  sortDir: 'asc' | 'desc';
+  onSort: (key: SortKey) => void;
+}) {
+  return (
+    <th
+      className={cn('cursor-pointer select-none hover:text-brand-600', center && 'text-center')}
+      onClick={() => onSort(k)}
+    >
+      {label}{sortKey === k ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+    </th>
+  );
+}
+
 function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[] }) {
   // Distinct cylinder types present (for the filter dropdown).
   const types = useMemo(() => {
@@ -941,8 +959,11 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
   const [sortKey, setSortKey] = useState<SortKey>('customer');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
+  // Capture "now" once via a lazy initializer so render stays pure (no impure
+  // Date.now() call during render). Day-granularity display tolerates this.
+  const [now] = useState(() => Date.now());
   const daysSince = (d?: string | null): number | null =>
-    d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : null;
+    d ? Math.floor((now - new Date(d).getTime()) / 86400000) : null;
   const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
   const rows = useMemo(() => {
@@ -982,15 +1003,6 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortKey(key); setSortDir('asc'); }
   };
-  const SortTh = ({ k, label, center }: { k: SortKey; label: string; center?: boolean }) => (
-    <th
-      className={cn('cursor-pointer select-none hover:text-brand-600', center && 'text-center')}
-      onClick={() => toggleSort(k)}
-    >
-      {label}{sortKey === k ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-    </th>
-  );
-
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -1016,11 +1028,11 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
           <table className="table">
             <thead>
               <tr>
-                <SortTh k="customer" label="Customer" />
-                <SortTh k="type" label="Cylinder Type" />
-                <SortTh k="qty" label="With Customer" center />
-                <SortTh k="cost" label="Empty Cyl Cost" center />
-                <SortTh k="days" label="Days Since Last Delivery" center />
+                <SortTh k="customer" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh k="type" label="Cylinder Type" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh k="qty" label="With Customer" center sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh k="cost" label="Empty Cyl Cost" center sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh k="days" label="Days Since Last Delivery" center sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               </tr>
             </thead>
             <tbody>

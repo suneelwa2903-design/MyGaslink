@@ -753,13 +753,14 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
     (a, b) => new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime()
   );
 
+  const rows: Array<LedgerEntry & { debit: number | null; credit: number | null; balance: number }> = [];
   let runningBalance = 0;
-  const rows = sorted.map((entry) => {
+  for (const entry of sorted) {
     runningBalance += entry.amountDelta;
     const debit = entry.amountDelta > 0 ? entry.amountDelta : null;
     const credit = entry.amountDelta < 0 ? Math.abs(entry.amountDelta) : null;
-    return { ...entry, debit, credit, balance: runningBalance };
-  });
+    rows.push({ ...entry, debit, credit, balance: runningBalance });
+  }
 
   const totalDebits = rows.reduce((sum, r) => sum + (r.debit ?? 0), 0);
   const totalCredits = rows.reduce((sum, r) => sum + (r.credit ?? 0), 0);

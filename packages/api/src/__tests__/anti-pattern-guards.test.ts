@@ -83,15 +83,6 @@ async function getDist1Invoice(): Promise<{ id: string; invoiceNumber: string } 
   return inv;
 }
 
-async function getDist2Invoice(): Promise<{ id: string; invoiceNumber: string } | null> {
-  const inv = await prisma.invoice.findFirst({
-    where: { distributorId: 'dist-002', deletedAt: null },
-    select: { id: true, invoiceNumber: true },
-    orderBy: { createdAt: 'asc' },
-  });
-  return inv;
-}
-
 // ─── Guard 1 — Tenant isolation (anti-pattern #1) ───────────────────────────
 describe('Guard 1 — Tenant isolation on new WI-039/042 endpoints', () => {
   it('GET /api/invoices/:id/credit-notes refuses an invoice from another distributor (404)', async () => {

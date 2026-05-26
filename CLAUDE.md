@@ -196,6 +196,28 @@ Things in the codebase today that should NOT be copied. Fix these in future work
 
 ---
 
+## Tech Debt
+
+### ESLint `no-explicit-any` (759 violations) — dedicated typing session post-launch
+
+ESLint runs clean and **blocking** in CI (`pnpm run lint`, 0 errors). The flat
+config lives at the repo root ([eslint.config.js](eslint.config.js)); ESLint 9 +
+typescript-eslint (recommended, non-type-checked) + React/React-hooks plugins.
+
+`@typescript-eslint/no-explicit-any` is intentionally set to **`warn`** (759
+instances as of 2026-05-26), not `error`. This is **temporary**. Every other
+rule that catches a real bug or runtime issue is an error and blocks CI; style
+violations are warnings.
+
+**The plan:** a dedicated typing session after launch will replace each `any`
+with the correct specific type and promote the rule to `error`. Do NOT promote
+it before then — and do NOT add new `any`s in the meantime (the warning will
+flag them in review). Each instance requires a real, specific type — no blanket
+`unknown` swaps, no `eslint-disable`. Reference: the rule override is in the
+"rule severity tuning" block of [eslint.config.js](eslint.config.js).
+
+---
+
 ## MOBILE â€” ADDITIONAL RULES
 *Appended to CLAUDE.md for mobile (React Native) and fullstack projects*
 

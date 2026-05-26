@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
-import { BILLING_GRACE_PERIOD_DAYS, BILLING_OVERDUE_SUSPEND_DAYS, GST_RATES } from '@gaslink/shared';
+import { BILLING_GRACE_PERIOD_DAYS } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
 import * as pendingActionsService from './pendingActionsService.js';
 

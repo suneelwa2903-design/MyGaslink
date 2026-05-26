@@ -253,7 +253,6 @@ describe('Customer Portal - Date filters (WI-124)', () => {
 
 describe('Customer Portal - Invoice PDF download (WI-126)', () => {
   let ctId: string;
-  let deliveredOrderId: string;
   let deliveredInvoiceId: string;
   let cancelledInvoiceId: string;
   let pendingOrderInvoiceId: string;
@@ -290,7 +289,6 @@ describe('Customer Portal - Invoice PDF download (WI-126)', () => {
     const ct = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId, isActive: true } });
     ctId = ct.id;
     const delivered = await makeOrder('delivered');
-    deliveredOrderId = delivered.id;
     deliveredInvoiceId = (await makeInvoice(delivered.id, 'issued')).id;
     const cancelledOrder = await makeOrder('delivered');
     cancelledInvoiceId = (await makeInvoice(cancelledOrder.id, 'cancelled')).id;

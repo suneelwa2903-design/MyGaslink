@@ -15,7 +15,7 @@ export default function CustomerAccountPage() {
     queryFn: () => apiGet<Customer>('/customer-portal/account'),
   });
 
-  const { register, handleSubmit, formState: { } } = useForm({
+  const { register, handleSubmit } = useForm({
     values: customer ? {
       email: customer.email || '',
       phone: customer.phone,

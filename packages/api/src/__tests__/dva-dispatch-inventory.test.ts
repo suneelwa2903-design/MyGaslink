@@ -28,7 +28,7 @@ vi.mock('../services/inventoryService.js', async (orig) => {
 import { prisma } from '../lib/prisma.js';
 import { getSeedData, loginAsDistAdmin } from './helpers.js';
 import { preflightDispatch } from '../services/gst/gstPreflightService.js';
-import { cancelOrder, confirmDelivery } from '../services/orderService.js';
+import { cancelOrder } from '../services/orderService.js';
 import { computeSummaryForDate, recalculateSummariesFromDate } from '../services/inventoryService.js';
 
 const DIST = 'dist-001';

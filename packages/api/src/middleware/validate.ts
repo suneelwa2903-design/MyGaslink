@@ -4,6 +4,7 @@ import { sendValidationError } from '../utils/apiResponse.js';
 
 // Extend Request to hold validated data
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- Express type augmentation requires namespace syntax
   namespace Express {
     interface Request {
       validated?: Record<string, unknown>;

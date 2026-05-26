@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,6 @@ import {
   RefreshControl,
   KeyboardAvoidingView,
   Platform,
-  StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -405,7 +404,7 @@ function EmptyList({ message, theme }: { message: string; theme: Theme }) {
 
 // ─── Reusable: Loading ──────────────────────────────────────────────────────
 
-function Loading({ theme }: { theme: Theme }) {
+function Loading({ theme: _theme }: { theme: Theme }) {
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
       <ActivityIndicator size="large" color={ACCENT} />
@@ -1478,7 +1477,7 @@ function ReportsModal({ visible, onClose }: { visible: boolean; onClose: () => v
 function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  const { data: gstSettings, isLoading, refetch } = useApiQuery<GstSettings>(
+  const { data: gstSettings, isLoading } = useApiQuery<GstSettings>(
     ['gst-settings'],
     '/settings',
     undefined,
@@ -1491,21 +1490,20 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
   const [username, setUsername] = useState('');
   const [initialized, setInitialized] = useState(false);
 
-  // Sync form with fetched data once
-  React.useEffect(() => {
-    if (gstSettings && !initialized) {
-      setGstin(gstSettings.gstCredentials?.gstin || '');
-      setClientId(gstSettings.gstCredentials?.clientId || '');
-      setClientSecret(gstSettings.gstCredentials?.clientSecret || '');
-      setUsername(gstSettings.gstCredentials?.username || '');
-      setInitialized(true);
-    }
-  }, [gstSettings, initialized]);
-
-  // Reset initialized when modal closes
-  React.useEffect(() => {
-    if (!visible) setInitialized(false);
-  }, [visible]);
+  // Sync form fields with fetched GST settings once per modal open, and reset
+  // the guard when the modal closes. Done during render (React's "adjust state
+  // when a value changes" pattern) instead of in an effect, which would trigger
+  // an extra render pass / cascading update.
+  if (visible && gstSettings && !initialized) {
+    setInitialized(true);
+    setGstin(gstSettings.gstCredentials?.gstin || '');
+    setClientId(gstSettings.gstCredentials?.clientId || '');
+    setClientSecret(gstSettings.gstCredentials?.clientSecret || '');
+    setUsername(gstSettings.gstCredentials?.username || '');
+  }
+  if (!visible && initialized) {
+    setInitialized(false);
+  }
 
   const modeMutation = useApiMutation<any, { mode: string }>('put', '/settings/gst/mode', {
     invalidateKeys: [['gst-settings']],

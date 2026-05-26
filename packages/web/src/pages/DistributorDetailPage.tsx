@@ -236,7 +236,7 @@ export default function DistributorDetailPage() {
           <HiOutlineCurrencyRupee className="h-5 w-5 text-green-500" /> Billing History
         </h2>
         {!billingCycles?.length ? (
-          <p className="text-sm text-surface-500">No billing cycles yet. Click "Generate Invoice" to create the first billing cycle.</p>
+          <p className="text-sm text-surface-500">No billing cycles yet. Click &quot;Generate Invoice&quot; to create the first billing cycle.</p>
         ) : (
           <div className="table-container">
             <table className="table">

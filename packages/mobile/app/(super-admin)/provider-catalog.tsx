@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, Badge, EmptyState } from '../../src/components/ui';
-import { useTheme, ACCENT } from '../../src/theme';
+import { useTheme } from '../../src/theme';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

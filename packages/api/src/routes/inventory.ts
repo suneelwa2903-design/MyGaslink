@@ -9,7 +9,7 @@ import {
   cancelledStockReturnSchema,
 } from '@gaslink/shared';
 import * as inventoryService from '../services/inventoryService.js';
-import { mapInventorySummary, mapInventorySummaries, mapInventoryEvent, mapInventoryEvents } from '../utils/mappers.js';
+import { mapInventorySummaries, mapInventoryEvent, mapInventoryEvents } from '../utils/mappers.js';
 import { z } from 'zod';
 
 const router = Router();

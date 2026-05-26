@@ -3,7 +3,7 @@ import { View, Text, ScrollView, RefreshControl, TouchableOpacity, Modal, FlatLi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { useTheme, formatINR, getBadgeColors } from '../../src/theme';
+import { useTheme, formatINR } from '../../src/theme';
 import { Card, Badge, MetricCard, EmptyState } from '../../src/components/ui';
 import type { Invoice } from '@gaslink/shared';
 
@@ -42,9 +42,13 @@ export default function FinanceInvoicesScreen() {
   const totalOutstanding = (invoices ?? []).reduce((s, inv) => s + (inv.outstandingAmount ?? 0), 0);
   const overdueCount = (invoices ?? []).filter((inv) => (inv.status || '') === 'overdue').length;
 
+  // Capture "now" once via a lazy initializer so render stays pure (no impure
+  // Date.now() call during render). Good enough for a day-granularity display.
+  const [now] = useState(() => Date.now());
+
   const renderInvoice = ({ item: inv }: { item: Invoice }) => {
     const daysOverdue = inv.status === 'overdue'
-      ? Math.floor((Date.now() - new Date(inv.dueDate).getTime()) / 86400000)
+      ? Math.floor((now - new Date(inv.dueDate).getTime()) / 86400000)
       : 0;
 
     return (

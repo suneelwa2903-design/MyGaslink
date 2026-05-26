@@ -10,7 +10,7 @@
     "web": "expo start --web",
     "clean": "rm -rf .expo node_modules",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/",
+    "lint": "eslint src/ app/",
     "test": "jest"
   },
   "dependencies": {

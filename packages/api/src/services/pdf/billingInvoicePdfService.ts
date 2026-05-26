@@ -11,7 +11,7 @@ import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
 import {
   formatMoney, formatDate, numberToWords, round2,
-  drawBox, drawTableHeader, drawTextBlock, drawPageNumber,
+  drawBox, drawTableHeader, drawTextBlock,
 } from './pdfLayoutUtils.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -209,7 +209,7 @@ function drawItemsTable(
   doc: PDFKit.PDFDocument,
   items: BillingCycleForPdf['items'],
   startY: number,
-  isIntraState: boolean,
+  _isIntraState: boolean,
 ): number {
   const T = LAYOUT.THEME;
   const F = LAYOUT.TYPO;

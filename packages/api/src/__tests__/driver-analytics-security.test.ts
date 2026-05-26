@@ -32,7 +32,7 @@ const CUST_EMAIL = 'da-cust@test-driver-analytics.local';
 const ORDER_PREFIX = 'TEST-DA-';
 
 let app: Express;
-let aToken = '', bToken = '', adminToken = '', customerToken = '';
+let aToken = '', adminToken = '', customerToken = '';
 let driverAId = '', driverBId = '', driverEId = '';
 
 async function cleanup() {
@@ -76,7 +76,7 @@ beforeAll(async () => {
   const b = await seedDriverWithDelivered({ distributorId: 'dist-001', phone: B_PHONE, email: B_EMAIL, name: 'DriverB', count: 1 });
   const e = await seedDriverWithDelivered({ distributorId: 'dist-002', phone: E_PHONE, email: E_EMAIL, name: 'DriverE', count: 1 });
   aToken = a.token; driverAId = a.driverId;
-  bToken = b.token; driverBId = b.driverId;
+  driverBId = b.driverId;
   driverEId = e.driverId;
   const admin = await loginAsDistAdmin();
   adminToken = admin.token;

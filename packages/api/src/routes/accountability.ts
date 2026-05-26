@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { param } from '../utils/params.js';
 import { requireRole } from '../middleware/auth.js';
-import { validate, validateQuery } from '../middleware/validate.js';
+import { validate } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
-import { createAccountabilitySchema, resolveAccountabilitySchema, paginationSchema } from '@gaslink/shared';
+import { createAccountabilitySchema, resolveAccountabilitySchema } from '@gaslink/shared';
 import * as accountabilityService from '../services/accountabilityService.js';
 import { mapAccountabilityLog, mapAccountabilityLogs } from '../utils/mappers.js';
 

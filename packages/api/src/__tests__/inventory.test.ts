@@ -113,12 +113,6 @@ describe('Inventory - Delivery Impact', () => {
     const driver = seedData.drivers[0];
     const vehicle = seedData.vehicles[0];
 
-    // Get inventory before
-    const beforeRes = await request(app)
-      .get(`/api/inventory/summary/${today()}`)
-      .set(auth(inventoryToken));
-    const beforeSummary = beforeRes.body.data;
-
     // Create, assign, dispatch, deliver
     const createRes = await request(app)
       .post('/api/orders')

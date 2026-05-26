@@ -752,7 +752,7 @@ function DebitNoteModal({ open, onClose, invoice }: { open: boolean; onClose: ()
 
 function PayInvoiceModal({ open, onClose, invoice }: { open: boolean; onClose: () => void; invoice: Invoice }) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit, formState: { } } = useForm({
+  const { register, handleSubmit } = useForm({
     defaultValues: {
       customerId: invoice.customerId || '',
       amount: invoice.outstandingAmount,

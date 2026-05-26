@@ -18,27 +18,6 @@ import type { DashboardStats, PendingAction } from '@gaslink/shared';
 
 // ─── Theme colors ────────────────────────────────────────────────────────────
 
-const COLORS = {
-  light: {
-    bg: '#ffffff',
-    cardBg: '#f8fafc',
-    cardBorder: '#e2e8f0',
-    text: '#0f172a',
-    textSecondary: '#64748b',
-    textMuted: '#94a3b8',
-    divider: '#e2e8f0',
-  },
-  dark: {
-    bg: '#0f172a',
-    cardBg: '#1e293b',
-    cardBorder: '#334155',
-    text: '#f8fafc',
-    textSecondary: '#cbd5e1',
-    textMuted: '#94a3b8',
-    divider: '#334155',
-  },
-} as const;
-
 const ACCENT = {
   red: '#dc2626',
   navy: '#1e3a5f',

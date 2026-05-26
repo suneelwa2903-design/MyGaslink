@@ -852,7 +852,6 @@ function SummaryTab({
                 {cylinderOptions.map((opt) => {
                   const selected = movementForm.cylinderTypeId === opt.id;
                   const chipColor = activeModal === 'incoming' ? t.green : t.orange;
-                  const chipBg = activeModal === 'incoming' ? t.greenBg : t.orangeBg;
                   return (
                     <TouchableOpacity
                       key={opt.id}
@@ -1135,7 +1134,6 @@ function SummaryTab({
                 {(['add', 'subtract'] as const).map((type) => {
                   const isSelected = adjustForm.adjustmentType === type;
                   const color = type === 'add' ? t.green : t.red;
-                  const bgColor = type === 'add' ? t.greenBg : t.redBg;
                   return (
                     <TouchableOpacity
                       key={type}

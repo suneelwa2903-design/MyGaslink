@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
 
@@ -735,7 +735,7 @@ export async function setSummaryLockForDate(
 export async function unlockSummariesForDate(
   distributorId: string,
   date: string,
-  userId: string
+  _userId: string
 ) {
   const summaryDate = new Date(date);
 

@@ -13,18 +13,10 @@
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
-import { getCredentials, GstError, clearTokenCache } from './whitebooksClient.js';
+import { getCredentials, GstError } from './whitebooksClient.js';
 import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 // Distance: minimum 1km (0 causes EWB error 721)
-
-interface TransportDetails {
-  vehicleNumber: string;
-  transportMode?: string;
-  distance?: number;
-  transporterName?: string;
-  transporterId?: string;
-}
 
 function extractStateCode(gstin: string): string {
   return gstin.substring(0, 2);
@@ -40,7 +32,7 @@ export function parseWhitebooksDate(s: string | null | undefined): Date | null {
   if (!s) return null;
   // DD/MM/YYYY hh:mm:ss AM/PM  OR  DD/MM/YYYY HH:mm:ss  OR  DD/MM/YYYY
   const m = String(s).trim().match(
-    /^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/,
+    /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/,
   );
   if (m) {
     const [, dd, mm, yyyy, hh, mi, ss, ampm] = m;

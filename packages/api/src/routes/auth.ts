@@ -127,7 +127,7 @@ router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordSc
 
     // Always return success to prevent user enumeration
     return sendSuccess(res, { message: 'If an account exists with that email or phone, an OTP has been sent to the registered email.' });
-  } catch (err) {
+  } catch {
     // Still return success to prevent enumeration
     return sendSuccess(res, { message: 'If an account exists with that email or phone, an OTP has been sent to the registered email.' });
   }

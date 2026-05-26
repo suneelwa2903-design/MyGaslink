@@ -10,7 +10,6 @@
 // import * as Sentry from '@sentry/react-native';
 
 const IS_DEV = __DEV__;
-const SENTRY_DSN = 'https://b78dc94670acb7b35cfb7dc79969eaf2@o4511100730605568.ingest.us.sentry.io/4511100732506112';
 
 export function initCrashReporting(): void {
   if (IS_DEV) return;
@@ -43,7 +42,7 @@ export function captureMessage(message: string, level: 'info' | 'warning' | 'err
   // Sentry.captureMessage(message, level);
 }
 
-export function setUser(user: { id: string; email: string; role: string } | null): void {
+export function setUser(_user: { id: string; email: string; role: string } | null): void {
   if (IS_DEV) return;
 
   // if (user) {
@@ -54,9 +53,9 @@ export function setUser(user: { id: string; email: string; role: string } | null
 }
 
 export function addBreadcrumb(
-  category: string,
-  message: string,
-  data?: Record<string, unknown>,
+  _category: string,
+  _message: string,
+  _data?: Record<string, unknown>,
 ): void {
   if (IS_DEV) return;
 

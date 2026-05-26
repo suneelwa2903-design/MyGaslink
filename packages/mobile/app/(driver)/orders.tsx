@@ -46,20 +46,24 @@ export default function DriverOrdersScreen() {
   // to 0 (the driver explicitly fills this in based on what the customer
   // handed back). When the modal closes (selectedOrder → null) the state
   // is wiped so a stale entry from order A can't leak into order B.
-  useEffect(() => {
+  // Done during render (React's "adjust state when a value changes" pattern)
+  // instead of an effect, to avoid the extra render pass.
+  const [seededFor, setSeededFor] = useState<Order | null>(null);
+  if (selectedOrder !== seededFor) {
+    setSeededFor(selectedOrder);
     if (!selectedOrder) {
       setDeliveryItems({});
-      return;
+    } else {
+      const seed: Record<string, DeliveryItemEntry> = {};
+      for (const item of selectedOrder.items ?? []) {
+        seed[item.cylinderTypeId] = {
+          delivered: String(item.quantity ?? 0),
+          empties: '0',
+        };
+      }
+      setDeliveryItems(seed);
     }
-    const seed: Record<string, DeliveryItemEntry> = {};
-    for (const item of selectedOrder.items ?? []) {
-      seed[item.cylinderTypeId] = {
-        delivered: String(item.quantity ?? 0),
-        empties: '0',
-      };
-    }
-    setDeliveryItems(seed);
-  }, [selectedOrder]);
+  }
 
   const pendingOrderIds = new Set(pendingQueue.map((p) => p.orderId));
 

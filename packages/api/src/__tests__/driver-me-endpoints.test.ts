@@ -63,9 +63,6 @@ let cylinderTypeYId: string;
 
 let dvaAId: string;
 let dvaBId: string;
-let dvaCId: string;
-let orderCId: string;
-let invoiceCId: string;
 
 async function cleanupFixtures() {
   const orderNums = [ORDER_A1_NUM, ORDER_A2_NUM, ORDER_B1_NUM, ORDER_C1_NUM];
@@ -306,7 +303,7 @@ beforeAll(async () => {
     });
     driverCId = driverC.id;
 
-    const dvaC = await prisma.driverVehicleAssignment.create({
+    await prisma.driverVehicleAssignment.create({
       data: {
         driverId: driverCId,
         vehicleId: dist2Vehicle.id,
@@ -316,7 +313,6 @@ beforeAll(async () => {
         tripNumber: 1,
       },
     });
-    dvaCId = dvaC.id;
 
     const orderC = await prisma.order.create({
       data: {
@@ -335,7 +331,6 @@ beforeAll(async () => {
         },
       },
     });
-    orderCId = orderC.id;
 
     const invoiceC = await prisma.invoice.create({
       data: {
@@ -352,7 +347,6 @@ beforeAll(async () => {
         ewbStatus: 'active',
       },
     });
-    invoiceCId = invoiceC.id;
 
     // Seed the gst_documents row with a fake-but-well-formed EWB. We mark
     // it isLatest so the trip-sheet PDF service picks it up too.

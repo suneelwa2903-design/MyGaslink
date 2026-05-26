@@ -11,6 +11,8 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Button, Card } from '../../src/components/ui';
 import { useTheme, formatINR } from '../../src/theme';
 
+type ThemeColors = ReturnType<typeof useTheme>['colors'];
+
 interface AddressParts {
   billingAddressLine1?: string | null;
   billingAddressLine2?: string | null;
@@ -50,6 +52,24 @@ interface AccountData extends AddressParts {
 function flattenAddress(parts: Array<string | null | undefined>): string | undefined {
   const joined = parts.map((p) => (p ?? '').trim()).filter(Boolean).join(', ');
   return joined || undefined;
+}
+
+function InfoRow({ label, value, colors }: {
+  label: string;
+  value: string | null | undefined;
+  colors: ThemeColors;
+}) {
+  return (
+    <View style={{
+      flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10,
+      borderBottomWidth: 1, borderBottomColor: colors.divider,
+    }}>
+      <Text style={{ fontSize: 14, color: colors.textSecondary, flex: 1 }}>{label}</Text>
+      <Text style={{ fontSize: 14, fontWeight: '500', color: colors.text, flex: 1.5, textAlign: 'right' }}>
+        {value || '—'}
+      </Text>
+    </View>
+  );
 }
 
 export default function CustomerAccountScreen() {
@@ -107,18 +127,6 @@ export default function CustomerAccountScreen() {
     });
   };
 
-  const InfoRow = ({ label, value }: { label: string; value: string | null | undefined }) => (
-    <View style={{
-      flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10,
-      borderBottomWidth: 1, borderBottomColor: colors.divider,
-    }}>
-      <Text style={{ fontSize: 14, color: colors.textSecondary, flex: 1 }}>{label}</Text>
-      <Text style={{ fontSize: 14, fontWeight: '500', color: colors.text, flex: 1.5, textAlign: 'right' }}>
-        {value || '—'}
-      </Text>
-    </View>
-  );
-
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       <ScrollView
@@ -152,13 +160,14 @@ export default function CustomerAccountScreen() {
               <Ionicons name="create-outline" size={20} color={accent.blue} />
             </TouchableOpacity>
           </View>
-          <InfoRow label="Name" value={data?.customerName} />
-          <InfoRow label="Business" value={data?.businessName} />
-          <InfoRow label="GSTIN" value={data?.gstin} />
-          <InfoRow label="Phone" value={data?.phone} />
-          <InfoRow label="Email" value={data?.email} />
+          <InfoRow label="Name" value={data?.customerName} colors={colors} />
+          <InfoRow label="Business" value={data?.businessName} colors={colors} />
+          <InfoRow label="GSTIN" value={data?.gstin} colors={colors} />
+          <InfoRow label="Phone" value={data?.phone} colors={colors} />
+          <InfoRow label="Email" value={data?.email} colors={colors} />
           <InfoRow
             label="Billing Address"
+            colors={colors}
             value={flattenAddress([
               data?.billingAddressLine1, data?.billingAddressLine2,
               data?.billingCity, data?.billingState, data?.billingPincode,
@@ -166,13 +175,14 @@ export default function CustomerAccountScreen() {
           />
           <InfoRow
             label="Shipping Address"
+            colors={colors}
             value={flattenAddress([
               data?.shippingAddressLine1, data?.shippingAddressLine2,
               data?.shippingCity, data?.shippingState, data?.shippingPincode,
             ])}
           />
-          <InfoRow label="Credit Period" value={data?.creditPeriodDays ? `${data.creditPeriodDays} days` : undefined} />
-          <InfoRow label="Status" value={data?.status?.toUpperCase()} />
+          <InfoRow label="Credit Period" value={data?.creditPeriodDays ? `${data.creditPeriodDays} days` : undefined} colors={colors} />
+          <InfoRow label="Status" value={data?.status?.toUpperCase()} colors={colors} />
         </Card>
 
         {/* My Discounts — always shown so the customer sees their terms (or
@@ -183,7 +193,7 @@ export default function CustomerAccountScreen() {
           </Text>
           {data?.cylinderDiscounts && data.cylinderDiscounts.length > 0 ? (
             data.cylinderDiscounts.map((d, i) => (
-              <InfoRow key={i} label={d.cylinderTypeName} value={`${formatINR(d.discountPerUnit)}/unit`} />
+              <InfoRow key={i} label={d.cylinderTypeName} value={`${formatINR(d.discountPerUnit)}/unit`} colors={colors} />
             ))
           ) : (
             <Text style={{ fontSize: 13, color: colors.textMuted }}>No discounts applied</Text>

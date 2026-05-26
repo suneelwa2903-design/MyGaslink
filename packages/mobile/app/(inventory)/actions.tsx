@@ -16,7 +16,7 @@ const ACTION_TABS: { label: string; value: ActionType; icon: string; color: stri
 ];
 
 export default function InventoryActionsScreen() {
-  const { dark, colors, accent } = useTheme();
+  const { dark, colors } = useTheme();
   const [activeAction, setActiveAction] = useState<ActionType | null>(null);
 
   const { data: cylinderTypesResponse } = useApiQuery<{ cylinderTypes: CylinderType[] }>(

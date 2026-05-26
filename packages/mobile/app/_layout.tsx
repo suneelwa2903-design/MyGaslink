@@ -41,27 +41,27 @@ export default function RootLayout() {
     setCrashUser({ id: user.userId, email: user.email, role: user.role });
 
     // Lazy-load to prevent expo-notifications from crashing at import time in Expo Go
-    try {
-      const { registerForPushNotifications } = require('../src/services/notifications');
-      registerForPushNotifications();
-    } catch {
-      // Push notifications not available in Expo Go
-    }
+    import('../src/services/notifications')
+      .then(({ registerForPushNotifications }) => registerForPushNotifications())
+      .catch(() => {
+        // Push notifications not available in Expo Go
+      });
   }, [isAuthenticated, user]);
 
   // Handle notification taps → deep link (lazy-loaded)
   useEffect(() => {
-    try {
-      const { addNotificationResponseListener } = require('../src/services/notifications');
-      notificationResponseListener.current = addNotificationResponseListener((response: { notification: { request: { content: { data: Record<string, unknown> } } } }) => {
-        const data = response.notification.request.content.data;
-        if (data?.screen) {
-          router.push(data.screen as string);
-        }
+    import('../src/services/notifications')
+      .then(({ addNotificationResponseListener }) => {
+        notificationResponseListener.current = addNotificationResponseListener((response: unknown) => {
+          const data = (response as { notification: { request: { content: { data: Record<string, unknown> } } } }).notification.request.content.data;
+          if (data?.screen) {
+            router.push(data.screen as string);
+          }
+        });
+      })
+      .catch(() => {
+        // Notifications not available in Expo Go
       });
-    } catch {
-      // Notifications not available in Expo Go
-    }
 
     return () => {
       notificationResponseListener.current?.remove();

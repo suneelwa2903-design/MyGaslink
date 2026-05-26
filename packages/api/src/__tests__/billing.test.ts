@@ -7,20 +7,15 @@ import type { Express } from 'express';
 
 let app: Express;
 let saToken: string; // super admin
-let saDist1Token: () => Promise<string>; // super admin scoped to dist-001 via header
 let adminToken: string; // dist-001 distributor admin
-let seedData: Awaited<ReturnType<typeof getSeedData>>;
 
-let createdCycleIds: string[] = [];
+const createdCycleIds: string[] = [];
 
 beforeAll(async () => {
   app = createApp();
   saToken = (await loginAsSuperAdmin()).token;
   adminToken = (await loginAsDistAdmin()).token;
-  seedData = await getSeedData();
-
-  // Helper for super-admin calls scoped to a tenant via X-Distributor-Id header
-  saDist1Token = async () => saToken;
+  await getSeedData();
 
   // Make sure dist-001 has GasLink billing enabled (needed for /generate).
   await prisma.distributor.update({

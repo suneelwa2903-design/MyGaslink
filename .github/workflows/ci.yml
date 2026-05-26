@@ -17,6 +17,10 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      # @gaslink/shared exposes its types from dist/*.d.ts; build it first or
+      # every package importing @gaslink/shared fails typecheck (TS2307 +
+      # cascading implicit-any).
+      - run: pnpm --filter @gaslink/shared build
       - run: pnpm run typecheck
       - run: pnpm run lint
 
@@ -50,6 +54,8 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      # Build shared types before api tests resolve @gaslink/shared imports.
+      - run: pnpm --filter @gaslink/shared build
       - run: pnpm --filter @gaslink/api run db:generate
       - run: pnpm --filter @gaslink/api run db:migrate
       - run: pnpm --filter @gaslink/api run db:seed

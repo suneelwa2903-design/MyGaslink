@@ -179,11 +179,6 @@ describe('Manual Invoice Creation', () => {
 
 describe('GST Calculations', () => {
   it('should include GST breakup when GST is enabled', async () => {
-    // Check current distributor settings
-    const settingsRes = await request(app)
-      .get('/api/settings/gst/credentials')
-      .set(auth(adminToken));
-
     // Get an invoice and check GST fields
     const listRes = await request(app)
       .get('/api/invoices')

@@ -84,7 +84,7 @@ export default function TermsOfServicePage() {
             <section>
               <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-3">7. LIMITATION OF LIABILITY</h2>
               <p>
-                To the maximum extent permitted by law, GasLink's total liability for any claim is limited to the
+                To the maximum extent permitted by law, GasLink&apos;s total liability for any claim is limited to the
                 subscription fees paid by you in the 3 weeks immediately preceding the claim. We are not liable for any
                 indirect, consequential, or loss-of-profit damages.
               </p>

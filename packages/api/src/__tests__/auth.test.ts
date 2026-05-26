@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
-import { loginAsDistAdmin, loginAsFinance, loginAsInventory, loginAsSuperAdmin, generateToken } from './helpers.js';
+import { loginAsDistAdmin, loginAsFinance, loginAsInventory, generateToken } from './helpers.js';
 import { prisma } from '../lib/prisma.js';
 import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
@@ -85,9 +85,7 @@ describe('Role-Based Access Control', () => {
   });
 
   it('should deny driver access to analytics', async () => {
-    // Create a fake driver token
-    const driver = await prisma.driver.findFirst({ where: { distributorId: 'dist-001' } });
-    // We need a driver user — use generateToken with driver role
+    // Create a fake driver token using generateToken with driver role
     const token = generateToken({
       userId: 'fake-driver-user-id',
       email: 'driver@test.com',

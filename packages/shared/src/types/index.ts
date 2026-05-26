@@ -1,12 +1,12 @@
 import type {
   UserRole, UserStatus, ProvisioningStatus, DistributorStatus, GstMode, SubscriptionPlan,
   CustomerStatus, OrderStatus, OrderType, InvoiceStatus, IrnStatus, EwbStatus,
-  DriverStatus, VehicleStatus, AssignmentStatus, AdjustmentStatus,
+  DriverStatus, VehicleStatus, AssignmentStatus,
   CancelledStockStatus, PaymentMethod, PaymentAllocationStatus,
-  CreditNoteStatus, DebitNoteStatus, BillingPeriodType, BillingStatus,
+  BillingPeriodType, BillingStatus,
   BillingTier, BillingItemType, PendingActionModule, PendingActionStatus,
   PendingActionSeverity, AccountabilityType, AccountabilityStatus,
-  LedgerEntryType, InventoryEventType, LicenseType, GstDocType,
+  LedgerEntryType, InventoryEventType, LicenseType,
 } from '../enums/index.js';
 
 // ─── API Response ────────────────────────────────────────────────────────────

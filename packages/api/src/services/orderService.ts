@@ -940,8 +940,8 @@ export async function confirmDelivery(
     try {
       // using static import
       await createInvoiceFromOrder(tx, orderId, distributorId, userId);
-    } catch (invoiceErr) {
-      // Non-blocking - log but don't fail delivery
+    } catch {
+      // Non-blocking - invoice creation failure must not fail delivery
     }
 
     // WI-096b: the DVA trip roll (tripNumber++ + clear timestamps/trip-sheet,

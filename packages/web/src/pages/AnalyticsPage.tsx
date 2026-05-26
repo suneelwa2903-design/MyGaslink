@@ -346,7 +346,7 @@ export default function AnalyticsPage() {
             {isAdminLike && dashboardStats && (
               <div className="card p-5">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-surface-900 dark:text-white">Today's dispatch</h3>
+                  <h3 className="font-semibold text-surface-900 dark:text-white">Today&apos;s dispatch</h3>
                   <button onClick={() => navigate('/app/orders?status=pending_driver_assignment')} className="text-xs font-medium text-brand-600 dark:text-brand-400">Assign drivers →</button>
                 </div>
                 <div className="grid grid-cols-3 gap-3">

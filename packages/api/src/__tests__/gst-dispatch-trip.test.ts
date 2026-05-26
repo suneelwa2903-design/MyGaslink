@@ -50,7 +50,7 @@ import {
   preflightAddToTrip,
   PreflightError,
 } from '../services/gst/gstPreflightService.js';
-import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
+import { generateTripSheetPdf } from '../services/pdf/tripSheetPdfService.js';
 import { createApp } from '../app.js';
 import { loginAsDistAdmin, getOrCreateTestVehicle } from './helpers.js';
 
@@ -62,17 +62,6 @@ const TEST_DATE = '2099-12-31';
 const TEST_VEHICLE_D2 = 'TEST-DISPATCH-TRIP-D2';
 const apiCallMock = whitebooksClient.apiCall as unknown as ReturnType<typeof vi.fn>;
 
-function irnSuccess() {
-  return {
-    status_cd: '1',
-    data: {
-      Irn: 'irn_' + Math.random().toString(36).slice(2, 10),
-      AckNo: '112610000099999',
-      AckDt: '15/05/2026 12:00:00 PM',
-      SignedQRCode: 'eyJhbGciOi',
-    },
-  };
-}
 function ewbGenOk(no = '181012000777') {
   return {
     status_cd: '1',

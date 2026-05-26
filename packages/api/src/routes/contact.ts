@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { validate } from '../middleware/validate.js';
-import { sendSuccess, sendError, sendCreated } from '../utils/apiResponse.js';
+import { sendError, sendCreated } from '../utils/apiResponse.js';
 import { contactFormSchema } from '@gaslink/shared';
 import { prisma } from '../lib/prisma.js';
 import { config } from '../config/index.js';

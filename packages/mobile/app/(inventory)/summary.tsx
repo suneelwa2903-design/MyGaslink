@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Card, MetricCard, Badge, Button, EmptyState } from '../../src/components/ui';
-import { useTheme, getBadgeColors } from '../../src/theme';
+import { useTheme } from '../../src/theme';
 import type { InventorySummary } from '@gaslink/shared';
 
 export default function InventorySummaryScreen() {

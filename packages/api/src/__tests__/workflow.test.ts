@@ -42,7 +42,6 @@ function auth(token: string) {
 describe('Core Workflow: Order → Assign → Deliver → Invoice → Payment', () => {
   let orderId: string;
   let invoiceId: string;
-  let paymentId: string;
 
   it('Step 1: Create an order', async () => {
     const b2bCustomer = seedData.customers.find(c => c.customerType === 'B2B')!;
@@ -184,7 +183,6 @@ describe('Core Workflow: Order → Assign → Deliver → Invoice → Payment', 
 
     expect(res.status).toBe(201);
     expect(res.body.data.paymentId).toBeDefined();
-    paymentId = res.body.data.paymentId;
   });
 
   it('Step 10: View payment ledger', async () => {
@@ -403,7 +401,6 @@ describe('Credit Note', () => {
   it('should create and approve a credit note', async () => {
     // First create a manual invoice
     const customer = seedData.customers[0];
-    const cyl19 = seedData.cylinderTypes.find(ct => ct.typeName === '19 KG')!;
 
     const invRes = await request(app)
       .post('/api/invoices/manual')
@@ -415,13 +412,6 @@ describe('Credit Note', () => {
         items: [{ description: '19 KG LPG', quantity: 5, unitPrice: 1800, hsnCode: '27111900' }],
       });
     const invoiceId = invRes.body.data.invoiceId;
-
-    // Get invoice to find cylinder type
-    const invDetail = await request(app)
-      .get(`/api/invoices/${invoiceId}`)
-      .set(auth(financeToken));
-    const firstItem = invDetail.body.data?.items?.[0];
-    const cylTypeId = firstItem?.cylinderTypeId || seedData.cylinderTypes.find(ct => ct.typeName === '19 KG')!.id;
 
     // Create credit note — WI-055 amount-based shape.
     const cnRes = await request(app)

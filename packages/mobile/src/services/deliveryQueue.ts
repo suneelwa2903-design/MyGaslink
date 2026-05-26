@@ -83,7 +83,7 @@ export function isNetworkError(err: unknown): boolean {
  * confirmation (same quantities) returns 200, not 500.
  */
 export async function syncPendingDeliveries(): Promise<{ synced: number; remaining: number }> {
-  let q = await readQueue();
+  const q = await readQueue();
   if (q.length === 0) return { synced: 0, remaining: 0 };
 
   let synced = 0;

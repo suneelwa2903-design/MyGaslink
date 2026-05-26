@@ -11,7 +11,7 @@ import QRCode from 'qrcode';
 import { prisma } from '../../lib/prisma.js';
 import {
   formatMoney, formatDate, formatIrnForDisplay, numberToWords,
-  round2, drawBox, drawTableHeader, drawTextBlock, drawPageNumber,
+  round2, drawBox, drawTableHeader, drawTextBlock,
 } from './pdfLayoutUtils.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -213,7 +213,7 @@ function drawHeader(
   const F = LAYOUT.TYPO;
   const leftX = LAYOUT.MARGIN.left;
   const rightMargin = A4_WIDTH - LAYOUT.MARGIN.right;
-  let cursorY = startY;
+  const cursorY = startY;
 
   // Company name
   doc.fontSize(Math.round(F.H2 * 1.5)).fillColor(T.PRIMARY).font('Helvetica-Bold');
@@ -411,7 +411,7 @@ function drawTotals(
   cgst: number, sgst: number, igst: number,
   grandTotal: number,
   startY: number,
-  isIntraState: boolean,
+  _isIntraState: boolean,
 ): number {
   const T = LAYOUT.THEME;
   const F = LAYOUT.TYPO;
@@ -501,7 +501,7 @@ async function drawComplianceSection(
   // Calculate card widths
   let irnCardWidth = fullWidth;
   let ewbCardWidth = fullWidth;
-  let irnCardX = leftX;
+  const irnCardX = leftX;
   let ewbCardX = leftX;
   if (hasIrn && hasEwb) {
     const avail = fullWidth - cardGap;

@@ -1,12 +1,12 @@
 import { View, Text, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { useTheme, formatINR, getBadgeColors, ACCENT } from '../../src/theme';
+import { useTheme, formatINR } from '../../src/theme';
 import { Card, Badge, MetricCard, EmptyState } from '../../src/components/ui';
 import type { CollectionsDashboard } from '@gaslink/shared';
 
 export default function FinanceCollectionsScreen() {
-  const { dark, colors, accent } = useTheme();
+  const { colors, accent } = useTheme();
 
   const { data: collections, isLoading, refetch } = useApiQuery<CollectionsDashboard[]>(
     ['fin-collections'],

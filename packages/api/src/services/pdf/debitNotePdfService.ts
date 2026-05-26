@@ -51,7 +51,7 @@ function drawHeader(
   const F = LAYOUT.TYPO;
   const leftX = LAYOUT.MARGIN.left;
   const rightMargin = A4_WIDTH - LAYOUT.MARGIN.right;
-  let cursorY = startY;
+  const cursorY = startY;
 
   doc.fontSize(Math.round(F.H2 * 1.5)).fillColor(T.PRIMARY).font('Helvetica-Bold');
   doc.text(sellerName, leftX, cursorY, { width: 300 });

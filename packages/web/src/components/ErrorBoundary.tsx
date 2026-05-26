@@ -31,7 +31,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Always log to console — visible in dev and in production logs.
-    // eslint-disable-next-line no-console
+     
     console.error('[ErrorBoundary] Uncaught render error:', error, info.componentStack);
 
     // Sentry.init() is a no-op when VITE_SENTRY_DSN is unset, and the dev

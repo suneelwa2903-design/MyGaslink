@@ -360,7 +360,7 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
     // findFirst override would break every later test that reads gst_documents.
     const originalFindFirst = prisma.gstDocument.findFirst;
     let crnLookupCalls = 0;
-    (prisma.gstDocument as any).findFirst = async (...args: any[]) => {
+    (prisma.gstDocument as any).findFirst = async (..._args: any[]) => {
       crnLookupCalls++;
       // 1st lookup misses (IRN hasn't landed yet); 2nd (post-retry) finds it.
       return crnLookupCalls === 1 ? null : fakeCrnDoc;

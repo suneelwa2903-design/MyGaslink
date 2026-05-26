@@ -30,8 +30,8 @@ const D_EMAIL = 'cs-d@test-cancelled-stock.local';
 const ORD = { A: 'TEST-CS-A1', B: 'TEST-CS-B1', D: 'TEST-CS-D1' };
 
 let app: Express;
-let aToken: string, bToken: string, dToken: string, inventoryToken: string;
-let aCustomerName = '', dCustomerName = '';
+let aToken: string, dToken: string, inventoryToken: string;
+let aCustomerName = '';
 
 async function cleanup() {
   const orderNums = Object.values(ORD);
@@ -86,11 +86,10 @@ beforeAll(async () => {
   app = createApp();
   await cleanup();
   const a = await seedDriverWithCancelledStock({ distributorId: 'dist-001', phone: A_PHONE, email: A_EMAIL, name: 'DriverA', vehicleNumber: 'TEST-CS-VEH-A', orderNumber: ORD.A });
-  const b = await seedDriverWithCancelledStock({ distributorId: 'dist-001', phone: B_PHONE, email: B_EMAIL, name: 'DriverB', vehicleNumber: 'TEST-CS-VEH-B', orderNumber: ORD.B });
+  await seedDriverWithCancelledStock({ distributorId: 'dist-001', phone: B_PHONE, email: B_EMAIL, name: 'DriverB', vehicleNumber: 'TEST-CS-VEH-B', orderNumber: ORD.B });
   const d = await seedDriverWithCancelledStock({ distributorId: 'dist-002', phone: D_PHONE, email: D_EMAIL, name: 'DriverD', vehicleNumber: 'TEST-CS-VEH-D', orderNumber: ORD.D });
   aToken = a.token; aCustomerName = a.customerName;
-  bToken = b.token;
-  dToken = d.token; dCustomerName = d.customerName;
+  dToken = d.token;
   const inv = await loginAsInventory();
   inventoryToken = inv.token;
 });

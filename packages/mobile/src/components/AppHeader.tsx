@@ -1,5 +1,6 @@
 import { View, Text, Image } from 'react-native';
 import { useTheme, ACCENT } from '../theme';
+import logo from '../../assets/logo.png';
 
 /**
  * Centered "MyGasLink" wordmark + small logo. Used as `headerTitle` in
@@ -19,7 +20,7 @@ export function AppHeader() {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
       <Image
-        source={require('../../assets/logo.png')}
+        source={logo}
         style={{ width: 28, height: 28, borderRadius: 6 }}
         resizeMode="contain"
       />

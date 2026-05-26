@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { loginAsDistAdmin, loginAsFinance, loginAsInventory, loginAsSuperAdmin, getSeedData } from './helpers.js';
+import { loginAsDistAdmin, loginAsFinance, loginAsInventory, loginAsSuperAdmin } from './helpers.js';
 import type { Express } from 'express';
 
 let app: Express;

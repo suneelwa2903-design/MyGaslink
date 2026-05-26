@@ -9,6 +9,7 @@ import { useThemeStore } from '../../src/stores/themeStore';
 import { useTheme, ACCENT } from '../../src/theme';
 import StarryBackground from '../../src/components/StarryBackground';
 import type { LoginResponse } from '@gaslink/shared';
+import logo from '../../assets/logo.png';
 
 const FEATURE_HIGHLIGHTS = [
   { key: 'tracking', icon: 'location-outline' as const, label: 'Real-time Tracking' },
@@ -83,7 +84,7 @@ export default function LoginScreen() {
               and the wordmark, then a slim subtitle. */}
           <View style={{ alignItems: 'center', marginTop: 60, marginBottom: 32 }}>
             <Image
-              source={require('../../assets/logo.png')}
+              source={logo}
               style={{
                 width: 88, height: 88, borderRadius: 20, marginBottom: 16,
               }}

@@ -55,7 +55,7 @@ interface InvoiceDetail {
 }
 
 export default function CustomerInvoicesScreen() {
-  const { dark, colors, accent } = useTheme();
+  const { colors, accent } = useTheme();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // WI-124: collapsible date-range filter (issueDate), default last 30 days.

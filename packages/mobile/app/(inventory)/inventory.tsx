@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Card, MetricCard, Badge, Button, EmptyState } from '../../src/components/ui';
-import { useTheme, getBadgeColors } from '../../src/theme';
+import { useTheme } from '../../src/theme';
 import type { InventorySummary, CylinderType, InventoryEvent, InventoryForecast, CancelledStock } from '@gaslink/shared';
 
 // ─── Sub-tab types ──────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ function SummaryContent() {
 // ─── ACTIONS ────────────────────────────────────────────────────────────────
 
 function ActionsContent() {
-  const { dark, colors, accent } = useTheme();
+  const { dark, colors } = useTheme();
   const [activeAction, setActiveAction] = useState<ActionType | null>(null);
 
   const { data: cylinderTypes } = useApiQuery<CylinderType[]>(

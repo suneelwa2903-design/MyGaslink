@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { View, Animated, Dimensions, StyleSheet } from 'react-native';
 
 interface Star {
@@ -35,9 +35,11 @@ function generateStars(count: number): Star[] {
 }
 
 function AnimatedStar({ star, dark }: { star: Star; dark: boolean }) {
-  const opacity = useRef(new Animated.Value(star.baseOpacity)).current;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
+  // Lazy useState init creates each Animated.Value exactly once and is safe to
+  // read during render (unlike accessing a ref's .current during render).
+  const [opacity] = useState(() => new Animated.Value(star.baseOpacity));
+  const [translateX] = useState(() => new Animated.Value(0));
+  const [translateY] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     // Twinkle animation - loop with random-ish timing

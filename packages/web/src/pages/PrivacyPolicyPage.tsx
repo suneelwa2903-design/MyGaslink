@@ -33,7 +33,7 @@ export default function PrivacyPolicyPage() {
 
           <div className="space-y-8 text-slate-600 dark:text-slate-300 leading-relaxed">
             <p>
-              GasLink Consulting Solutions ("GasLink", "we", "us") operates the MyGasLink platform available at
+              GasLink Consulting Solutions (&quot;GasLink&quot;, &quot;we&quot;, &quot;us&quot;) operates the MyGasLink platform available at
               mygaslink.com and through our mobile applications.
             </p>
 
@@ -103,7 +103,7 @@ export default function PrivacyPolicyPage() {
             <section>
               <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-3">7. ACCOUNT DELETION</h2>
               <p>
-                Email info@mygaslink.com with the subject line "Account Deletion Request" from your registered email
+                Email info@mygaslink.com with the subject line &quot;Account Deletion Request&quot; from your registered email
                 address. We will process your request within 30 days. Financial and GST records will be retained for
                 the statutory period as required by law.
               </p>
