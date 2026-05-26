@@ -26,6 +26,10 @@ jobs:
       # every package importing @gaslink/shared fails typecheck (TS2307 +
       # cascading implicit-any).
       - run: pnpm --filter @gaslink/shared build
+      # Generate the Prisma client so api test files typecheck against real
+      # model types (otherwise query results are `any` → TS7006 implicit-any).
+      # No DB needed for `prisma generate`.
+      - run: pnpm --filter @gaslink/api run db:generate
       - run: pnpm run typecheck
       - run: pnpm run lint
 
