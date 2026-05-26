@@ -362,7 +362,9 @@ async function main() {
   // ─── 14. GST-Enabled Distributor (for GST workflow testing) ───────────────
   const gstDist = await prisma.distributor.upsert({
     where: { id: 'dist-002' },
-    update: {},
+    // docCode enables WI-108 structured invoice numbering (e.g. RSHD2627000021
+    // on reissue). Set in update too so existing DBs pick it up on re-seed.
+    update: { docCode: 'SHD' },
     create: {
       id: 'dist-002',
       businessName: 'Sharma Gas Distributors',
@@ -376,6 +378,7 @@ async function main() {
       email: 'sharma@gasdist.com',
       status: 'active',
       gstMode: 'sandbox',
+      docCode: 'SHD',
       providerCodes: ['HPCL'],
       subscriptionPlan: 'business',
       billingTier: 'tier_2',
