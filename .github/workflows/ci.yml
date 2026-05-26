@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, develop]
+    branches: [main, develop]
   pull_request:
-    branches: [master, develop]
+    branches: [main, develop]
 
 jobs:
   lint-and-typecheck:
@@ -126,7 +126,7 @@ jobs:
             pm2 restart gaslink-api || pm2 start packages/api/dist/server.js --name gaslink-api
 
   deploy-production:
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: build
     environment: production
@@ -164,7 +164,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /opt/gaslink
-            git pull origin master
+            git pull origin main
             pnpm install --frozen-lockfile
             pnpm --filter @gaslink/api run db:generate
             pnpm --filter @gaslink/api run db:migrate:prod
@@ -172,7 +172,7 @@ jobs:
             pm2 restart gaslink-api || pm2 start packages/api/dist/server.js --name gaslink-api
 
   backup:
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: deploy-production
     steps:
