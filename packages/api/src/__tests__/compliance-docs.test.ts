@@ -25,7 +25,9 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { generateToken } from './helpers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
+import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
+import type { $Enums } from '@prisma/client';
 
 const D2 = 'dist-002', D1 = 'dist-001';
 const today = startOfUtcDay();
@@ -53,7 +55,7 @@ async function mkDriver(distributorId: string, phone: string, name: string, trip
   const driver = await prisma.driver.create({ data: { distributorId, driverName: `CD ${name}`, phone, status: 'active' } });
   const vehicle = await prisma.vehicle.create({ data: { distributorId, vehicleNumber: `TEST-CD-VEH-${name}`, vehicleType: 'Truck', status: 'dispatched' } });
   await prisma.driverVehicleAssignment.create({ data: { distributorId, driverId: driver.id, vehicleId: vehicle.id, assignmentDate: today, status: 'loaded_and_dispatched', tripNumber: 1, ...(tripSheetNo ? { tripSheetNo } : {}) } });
-  const token = generateToken({ userId: user.id, email, role: 'driver' as any, distributorId });
+  const token = generateToken({ userId: user.id, email, role: UserRole.DRIVER, distributorId });
   return { driverId: driver.id, vehicleId: vehicle.id, token };
 }
 
@@ -67,7 +69,7 @@ async function mkOrderWithEwb(distributorId: string, driverId: string, vehicleId
   const order = await prisma.order.create({
     data: {
       orderNumber: opts.orderNumber, distributorId, customerId: customer.id, driverId, vehicleId,
-      orderDate: today, deliveryDate: today, status: opts.status as any, orderType: 'delivery', totalAmount: 1800, tripNumber: 1,
+      orderDate: today, deliveryDate: today, status: opts.status as $Enums.OrderStatus, orderType: 'delivery', totalAmount: 1800, tripNumber: 1,
       items: { create: [{ cylinderTypeId: cyl.id, quantity: orderedQty, deliveredQuantity: opts.deliveredQty ?? null, unitPrice: 900, totalPrice: orderedQty * 900 }] },
     },
   });
@@ -75,13 +77,13 @@ async function mkOrderWithEwb(distributorId: string, driverId: string, vehicleId
     data: {
       invoiceNumber: `INV-${opts.orderNumber}`, distributorId, customerId: customer.id, orderId: order.id,
       issueDate: today, dueDate: today, totalAmount: 1800, outstandingAmount: 1800, status: 'issued',
-      irnStatus: 'success', ewbStatus: opts.ewbStatus as any,
+      irnStatus: 'success', ewbStatus: opts.ewbStatus as $Enums.EwbStatus,
     },
   });
   await prisma.gstDocument.create({
     data: {
       invoiceId: invoice.id, orderId: order.id, distributorId, docType: 'INV', irnStatus: 'success',
-      ewbStatus: opts.ewbStatus as any, ewbNo: opts.ewbNo, ewbDate: today, ewbValidTill: validTill, isLatest: true,
+      ewbStatus: opts.ewbStatus as $Enums.EwbStatus, ewbNo: opts.ewbNo, ewbDate: today, ewbValidTill: validTill, isLatest: true,
     },
   });
 }
@@ -124,8 +126,14 @@ beforeAll(async () => {
 
 afterAll(cleanup);
 
+interface TripEwbItem {
+  ewbNo: string | null;
+  cylinderType?: unknown;
+  quantity?: number;
+}
+
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
-const ewbNos = (items: any[]) => items.map((i) => i.ewbNo);
+const ewbNos = (items: TripEwbItem[]) => items.map((i) => i.ewbNo);
 
 describe('WI-094c — GET /drivers/me/trip-ewbs (Compliance Docs)', () => {
   it('✅ 1. active-trip EWBs returned with cylinder type + quantity', async () => {
@@ -174,7 +182,7 @@ describe('WI-094c — GET /drivers/me/trip-ewbs (Compliance Docs)', () => {
   it('✅ 7. WI-111 — modified_delivered EWB shows DELIVERED qty (3), not ordered (2)', async () => {
     const res = await request(app).get('/api/drivers/me/trip-ewbs').set(auth(gToken));
     expect(res.status).toBe(200);
-    const g1 = res.body.data.items.find((i: any) => i.ewbNo === 'EWB-CD-G1');
+    const g1 = res.body.data.items.find((i: { ewbNo: string; quantity: number }) => i.ewbNo === 'EWB-CD-G1');
     expect(g1).toBeTruthy();
     expect(g1.quantity).toBe(3);
   });
@@ -183,7 +191,7 @@ describe('WI-094c — GET /drivers/me/trip-ewbs (Compliance Docs)', () => {
     // driver A's orders are pending_delivery with deliveredQuantity null →
     // must fall back to the ordered quantity (2), proving the fallback path.
     const res = await request(app).get('/api/drivers/me/trip-ewbs').set(auth(aToken));
-    const a1 = res.body.data.items.find((i: any) => i.ewbNo === 'EWB-CD-A1');
+    const a1 = res.body.data.items.find((i: { ewbNo: string; quantity: number }) => i.ewbNo === 'EWB-CD-A1');
     expect(a1.quantity).toBe(2);
   });
 });

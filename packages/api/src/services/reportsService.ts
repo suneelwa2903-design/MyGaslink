@@ -12,16 +12,22 @@ import { prisma } from '../lib/prisma.js';
  */
 
 export interface ReportColumn { key: string; label: string; money?: boolean; }
+export type ReportLineChartPoint = { x: string; y: number };
+export interface ReportBarChartData {
+  labels: string[];
+  series: { name: string; values: number[] }[];
+}
+export type ReportChartData = ReportLineChartPoint[] | ReportBarChartData;
 export interface ReportChart {
   type: 'line' | 'bar';
   title: string;
   // line: [{ x, y }]; bar(stacked): { labels:[], series:[{ name, values:[] }] }
-  data: any;
+  data: ReportChartData;
 }
 export interface ReportResult {
   columns: ReportColumn[];
-  rows: Record<string, any>[];
-  totals?: Record<string, any>;
+  rows: Record<string, unknown>[];
+  totals?: Record<string, unknown>;
   chart?: ReportChart;
 }
 
@@ -33,7 +39,7 @@ export interface ReportFilters {
   driverId?: string;
 }
 
-const num = (d: any): number => (d == null ? 0 : Number(d));
+const num = (d: unknown): number => (d == null ? 0 : Number(d));
 function range(filters: ReportFilters) {
   const from = filters.dateFrom ? new Date(`${filters.dateFrom}T00:00:00.000Z`) : new Date('2000-01-01T00:00:00.000Z');
   const to = filters.dateTo ? new Date(`${filters.dateTo}T23:59:59.999Z`) : new Date('2999-12-31T23:59:59.999Z');
@@ -297,7 +303,7 @@ export const REPORTS: Record<string, (d: string, f: ReportFilters) => Promise<Re
 
 /** Convert a ReportResult to CSV text (header + rows + totals row). */
 export function reportToCsv(result: ReportResult): string {
-  const esc = (v: any) => {
+  const esc = (v: unknown) => {
     const s = v == null ? '' : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };

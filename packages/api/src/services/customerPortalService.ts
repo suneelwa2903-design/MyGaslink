@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 import { getEffectivePrice } from './cylinderTypeService.js';
 import { computeCustomerOverdue } from './paymentService.js';
@@ -65,7 +65,7 @@ export async function getCustomerDashboard(
     };
   }
 
-  const deliveredStatuses = ['delivered', 'modified_delivered'];
+  const deliveredStatuses: $Enums.OrderStatus[] = ['delivered', 'modified_delivered'];
   const [pendingOrders, totalOrders, deliveredAgg, paymentsAgg, outstandingResult, overdueAmount, balances, recent] = await Promise.all([
     // ── Always-current (state) ──
     prisma.order.count({
@@ -81,7 +81,7 @@ export async function getCustomerDashboard(
     prisma.order.aggregate({
       where: {
         customerId, distributorId, deletedAt: null,
-        status: { in: deliveredStatuses as any },
+        status: { in: deliveredStatuses },
         deliveryDate: { gte: from, lte: toEnd },
       },
       _count: true,
@@ -158,8 +158,8 @@ export async function getMyOrders(
   // "delivered,modified_delivered") so the account "Recent Deliveries" card
   // can fetch both terminal delivery states in one call.
   if (filters.status) {
-    const statuses = filters.status.split(',').map((s) => s.trim()).filter(Boolean);
-    where.status = statuses.length > 1 ? { in: statuses as any } : (statuses[0] as any);
+    const statuses = filters.status.split(',').map((s) => s.trim()).filter(Boolean) as $Enums.OrderStatus[];
+    where.status = statuses.length > 1 ? { in: statuses } : statuses[0];
   }
   // WI-124: optional deliveryDate range filter.
   if (filters.from || filters.to) {
@@ -452,7 +452,7 @@ export async function getMyInvoices(
   filters: { status?: string; page?: number; pageSize?: number; from?: string; to?: string }
 ) {
   const where: Prisma.InvoiceWhereInput = { customerId, distributorId, deletedAt: null, isGaslinkBilling: false };
-  if (filters.status) where.status = filters.status as any;
+  if (filters.status) where.status = filters.status as $Enums.InvoiceStatus;
   // WI-124: optional issueDate range filter.
   if (filters.from || filters.to) {
     where.issueDate = {};
@@ -697,12 +697,13 @@ export async function getCustomerInvoices(
   customerId: string,
   filters?: { dateFrom?: string; dateTo?: string; status?: string }
 ) {
-  const where: any = { distributorId, customerId, deletedAt: null, isGaslinkBilling: false };
-  if (filters?.status) where.status = filters.status;
+  const where: Prisma.InvoiceWhereInput = { distributorId, customerId, deletedAt: null, isGaslinkBilling: false };
+  if (filters?.status) where.status = filters.status as $Enums.InvoiceStatus;
   if (filters?.dateFrom || filters?.dateTo) {
-    where.issueDate = {};
-    if (filters?.dateFrom) where.issueDate.gte = new Date(filters.dateFrom);
-    if (filters?.dateTo) where.issueDate.lte = new Date(filters.dateTo);
+    const issueDate: Prisma.DateTimeFilter = {};
+    if (filters?.dateFrom) issueDate.gte = new Date(filters.dateFrom);
+    if (filters?.dateTo) issueDate.lte = new Date(filters.dateTo);
+    where.issueDate = issueDate;
   }
 
   return prisma.invoice.findMany({

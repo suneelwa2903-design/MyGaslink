@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -37,6 +37,18 @@ import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/compo
 import { cn } from '@/lib/cn';
 import { OnboardingTab } from '@/components/OnboardingTab';
 
+type SettingsTabKey =
+  | 'onboarding'
+  | 'general'
+  | 'subscription'
+  | 'gst'
+  | 'cylinders'
+  | 'prices'
+  | 'thresholds'
+  | 'approvals'
+  | 'users'
+  | 'licenses';
+
 export default function SettingsPage() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DISTRIBUTOR_ADMIN;
@@ -62,9 +74,10 @@ export default function SettingsPage() {
   ];
 
   const allowedTabs = tabs.map((t) => t.key);
-  const initialTab = (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab')) as any;
+  const rawTab = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null;
+  const initialTab = rawTab as SettingsTabKey | null;
   const defaultTab = isOps ? 'cylinders' : 'general';
-  const [tab, setTab] = useState<'onboarding' | 'general' | 'subscription' | 'gst' | 'cylinders' | 'prices' | 'thresholds' | 'approvals' | 'users' | 'licenses'>(
+  const [tab, setTab] = useState<SettingsTabKey>(
     initialTab && allowedTabs.includes(initialTab) ? initialTab : defaultTab,
   );
 
@@ -1058,7 +1071,7 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
   const isEdit = !!user;
 
   const { register, handleSubmit, formState: { errors } } = useForm<CreateUserInput>({
-    resolver: zodResolver(isEdit ? createUserSchema.partial().omit({ password: true }) : createUserSchema) as any,
+    resolver: zodResolver(isEdit ? createUserSchema.partial().omit({ password: true }) : createUserSchema) as unknown as Resolver<CreateUserInput>,
     defaultValues: user
       ? { email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || '', role: user.role }
       : { email: '', password: '', firstName: '', lastName: '', phone: '', role: UserRole.INVENTORY },
@@ -1225,8 +1238,9 @@ function CylinderConfigTab() {
   });
 
   const importMutation = useMutation({
-    mutationFn: (catalogItemIds: string[]) => apiPost('/provider-catalog/import', { catalogItemIds }),
-    onSuccess: (data: any) => {
+    mutationFn: (catalogItemIds: string[]) =>
+      apiPost<{ imported: number }>('/provider-catalog/import', { catalogItemIds }),
+    onSuccess: (data) => {
       toast.success(`Imported ${data.imported} cylinder type(s)`);
       setSelectedIds([]);
       queryClient.invalidateQueries({ queryKey: ['provider-catalog-for-distributor'] });

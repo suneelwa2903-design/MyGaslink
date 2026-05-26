@@ -179,13 +179,15 @@ describe('WI-071 investigation — B2C EWB toGstin should be URP, not seller GST
  * a raw byte regex won't match — the spy is the reliable way. Pattern
  * borrowed from gst-trip-sheet-dn-pdf.test.ts.
  */
+type PDFDoc = InstanceType<typeof PDFDocument>;
+
 function spyDrawnStrings() {
   const drawn: string[] = [];
-  const original = PDFDocument.prototype.text;
-  const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
-    function (this: any, str: any, ...rest: any[]) {
-      if (typeof str === 'string') drawn.push(str);
-      return original.call(this, str, ...rest);
+  const original = PDFDocument.prototype.text as (...args: unknown[]) => PDFDoc;
+  const spy = vi.spyOn(PDFDocument.prototype, 'text').mockImplementation(
+    function (this: PDFDoc, ...args: unknown[]) {
+      if (typeof args[0] === 'string') drawn.push(args[0]);
+      return original.apply(this, args);
     },
   );
   return { drawn, spy };

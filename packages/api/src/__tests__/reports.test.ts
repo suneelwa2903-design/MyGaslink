@@ -4,7 +4,8 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { generateToken } from './helpers.js';
 import type { Express } from 'express';
-import { reportToCsv, type ReportResult } from '../services/reportsService.js';
+import { reportToCsv, type ReportResult, type ReportColumn } from '../services/reportsService.js';
+import type { UserRole } from '@gaslink/shared';
 
 let app: Express;
 let token: string;
@@ -12,7 +13,7 @@ let token: string;
 beforeAll(async () => {
   app = createApp();
   const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'sharma@gasdist.com' } });
-  token = generateToken({ userId: admin.id, email: admin.email, role: admin.role as any, distributorId: admin.distributorId });
+  token = generateToken({ userId: admin.id, email: admin.email, role: admin.role as UserRole, distributorId: admin.distributorId });
 });
 
 const auth = () => ({ Authorization: `Bearer ${token}`, 'X-Distributor-Id': 'dist-002' });
@@ -54,7 +55,7 @@ describe('GET /api/reports/:reportType', () => {
       .query({ customerId: cust.id, dateFrom: '2026-01-01', dateTo: '2026-12-31' })
       .set(auth());
     expect(res.status).toBe(200);
-    expect(res.body.data.columns.map((c: any) => c.key)).toContain('balance');
+    expect(res.body.data.columns.map((c: ReportColumn) => c.key)).toContain('balance');
   });
 
   it('format=csv returns text/csv attachment with a header row', async () => {
@@ -80,14 +81,14 @@ describe('GET /api/reports/:reportType', () => {
   it('cross-tenant isolation: dist-001 admin cannot read dist-002 via body spoof', async () => {
     const other = await prisma.user.findFirst({ where: { email: 'bhargava@gasagency.com' } });
     if (!other) return;
-    const otherTok = generateToken({ userId: other.id, email: other.email, role: other.role as any, distributorId: other.distributorId });
+    const otherTok = generateToken({ userId: other.id, email: other.email, role: other.role as UserRole, distributorId: other.distributorId });
     const res = await request(app)
       .get('/api/reports/gst-summary')
       .query({ dateFrom: '2026-05-01', dateTo: '2026-05-31' })
       .set({ Authorization: `Bearer ${otherTok}` });
     // resolves to dist-001 from JWT — must not include dist-002 invoice numbers (ISHD/RSHD are dist-002 series)
     expect(res.status).toBe(200);
-    const nums = res.body.data.rows.map((r: any) => r.invoiceNumber as string);
+    const nums = res.body.data.rows.map((r: Record<string, unknown>) => r.invoiceNumber as string);
     expect(nums.some((n: string) => /SHD/.test(n))).toBe(false);
   });
 });

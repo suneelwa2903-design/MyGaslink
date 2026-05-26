@@ -8,6 +8,8 @@ import { createUserSchema, updateUserSchema } from '@gaslink/shared';
 import * as userService from '../services/userService.js';
 import { mapUser, mapUsers } from '../utils/mappers.js';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 // GET /api/users/profile - get current user profile (must be before :id)
@@ -67,11 +69,12 @@ router.post('/',
       }
       const user = await userService.createUser(data);
       return sendCreated(res, mapUser(user));
-    } catch (err: any) {
-      if (err.code === 'P2002') {
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.code === 'P2002') {
         return sendError(res, 'A user with this email already exists', 409, 'CONFLICT');
       }
-      return sendError(res, err.message);
+      return sendError(res, e.message);
     }
   }
 );
@@ -90,11 +93,12 @@ router.put('/:id',
       }
       const user = await userService.updateUser(param(req.params.id), req.body);
       return sendSuccess(res, mapUser(user));
-    } catch (err: any) {
-      if (err.code === 'P2002') {
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.code === 'P2002') {
         return sendError(res, 'A user with this email already exists', 409, 'CONFLICT');
       }
-      return sendError(res, err.message);
+      return sendError(res, e.message);
     }
   }
 );

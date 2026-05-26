@@ -1,3 +1,4 @@
+import type { UserProfile } from '@gaslink/shared';
 import { useAuthStore } from '../stores/authStore';
 import { tokenStorage as tokenStorageMock, apiGet as apiGetMock } from '../lib/api';
 
@@ -75,7 +76,7 @@ describe('authStore', () => {
 
     // Set up authenticated state
     useAuthStore.setState({
-      user: { userId: '1' } as any,
+      user: { userId: '1' } as Partial<UserProfile> as UserProfile,
       isAuthenticated: true,
       selectedDistributorId: 'dist-1',
     });

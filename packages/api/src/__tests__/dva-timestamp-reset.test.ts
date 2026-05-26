@@ -25,6 +25,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma.js';
 import { confirmDelivery } from '../services/orderService.js';
 import { preflightDispatch } from '../services/gst/gstPreflightService.js';
+import type { $Enums } from '@prisma/client';
 
 const D1 = 'dist-001', D2 = 'dist-002';
 const TEST_DATE = '2099-12-31';
@@ -48,11 +49,11 @@ async function mkDriver(distributorId: string, phone: string, name: string) {
   return { userId: user.id, driverId: driver.id, vehicleId: vehicle.id };
 }
 
-async function mkDva(distributorId: string, driverId: string, vehicleId: string, opts: { status: string; tripNumber: number; stamped: boolean }) {
+async function mkDva(distributorId: string, driverId: string, vehicleId: string, opts: { status: $Enums.AssignmentStatus; tripNumber: number; stamped: boolean }) {
   const dva = await prisma.driverVehicleAssignment.create({
     data: {
       distributorId, driverId, vehicleId, assignmentDate: date,
-      status: opts.status as any, tripNumber: opts.tripNumber,
+      status: opts.status, tripNumber: opts.tripNumber,
       ...(opts.stamped ? { dispatchedAt: STAMP, returnedAt: STAMP, reconciledAt: STAMP, isReconciled: true } : {}),
     },
   });
@@ -60,14 +61,14 @@ async function mkDva(distributorId: string, driverId: string, vehicleId: string,
   return dva;
 }
 
-async function mkOrder(distributorId: string, driverId: string, vehicleId: string, opts: { status: string; tripNumber: number | null }) {
+async function mkOrder(distributorId: string, driverId: string, vehicleId: string, opts: { status: $Enums.OrderStatus; tripNumber: number | null }) {
   const customer = await prisma.customer.findFirstOrThrow({ where: { distributorId, deletedAt: null } });
   const cyl = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId } });
   const order = await prisma.order.create({
     data: {
       distributorId, customerId: customer.id, driverId, vehicleId,
       orderNumber: `TEST-TSR-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
-      orderDate: date, deliveryDate: date, status: opts.status as any, orderType: 'delivery', totalAmount: 2000,
+      orderDate: date, deliveryDate: date, status: opts.status, orderType: 'delivery', totalAmount: 2000,
       tripNumber: opts.tripNumber,
       items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 2000, totalPrice: 2000 }] },
     },
@@ -121,7 +122,7 @@ describe('WI-096b — DVA roll deferred to dispatch (not delivery)', () => {
     // New batch ready for the next trip.
     await mkOrder(D1, d.driverId, d.vehicleId, { status: 'pending_dispatch', tripNumber: null });
 
-    const result = await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: TEST_DATE, userId: 'tsr-user' } as any);
+    const result = await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: TEST_DATE, userId: 'tsr-user' });
     expect(result.summary.succeeded).toBeGreaterThan(0);
 
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });

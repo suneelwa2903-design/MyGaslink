@@ -43,7 +43,7 @@ beforeEach(() => {
   originalFetch = globalThis.fetch;
   fetchCalls = [];
   // Single shared mock so the call counter is global per-test.
-  globalThis.fetch = vi.fn(async (url: any) => {
+  globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
     fetchCalls.push(String(url));
     return {
       ok: true,
@@ -55,7 +55,7 @@ beforeEach(() => {
           TokenExpiry: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         },
       }),
-    } as any;
+    } as Response;
   });
   // Always start from a cold cache so each test exercises the dedup path.
   clearTokenCache('dist-002');
@@ -110,7 +110,7 @@ describe('WI-059 — getAuthToken concurrent fetch dedup', () => {
   it('a rejected fetch releases the in-flight slot so the next call can retry', async () => {
     // First call fails at network level.
     let callIdx = 0;
-    globalThis.fetch = vi.fn(async (url: any) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
       fetchCalls.push(String(url));
       callIdx++;
       if (callIdx === 1) throw new Error('simulated fetch failed');
@@ -124,7 +124,7 @@ describe('WI-059 — getAuthToken concurrent fetch dedup', () => {
             TokenExpiry: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
           },
         }),
-      } as any;
+      } as Response;
     });
 
     await expect(getAuthToken('dist-002', 'einvoice')).rejects.toThrow(/fetch failed/);

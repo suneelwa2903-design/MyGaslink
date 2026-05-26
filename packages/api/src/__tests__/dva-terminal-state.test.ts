@@ -21,6 +21,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import bcrypt from 'bcryptjs';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { preflightDispatch } from '../services/gst/gstPreflightService.js';
 import { markVehicleReturned, confirmVehicleReconciliation } from '../services/deliveryWorkflowService.js';
@@ -39,14 +40,14 @@ async function mkDriver(phone: string, name: string, vehStatus: string) {
   const passwordHash = await bcrypt.hash('TestDriver@123', 10);
   const user = await prisma.user.create({ data: { email, passwordHash, firstName: 'DTS', lastName: name, phone, role: 'driver', status: 'active', distributorId: D1 } });
   const driver = await prisma.driver.create({ data: { distributorId: D1, driverName: `DTS ${name}`, phone, status: 'active' } });
-  const vehicle = await prisma.vehicle.create({ data: { distributorId: D1, vehicleNumber: `TEST-DTS-${name}`, vehicleType: 'Truck', status: vehStatus as any } });
+  const vehicle = await prisma.vehicle.create({ data: { distributorId: D1, vehicleNumber: `TEST-DTS-${name}`, vehicleType: 'Truck', status: vehStatus as Prisma.VehicleCreateInput['status'] } });
   drIds.push(driver.id); emails.push(email); vIds.push(vehicle.id);
   return { userId: user.id, driverId: driver.id, vehicleId: vehicle.id };
 }
 
 async function mkDva(driverId: string, vehicleId: string, opts: { status: string; tripNumber: number; isReconciled?: boolean; date: Date }) {
   const dva = await prisma.driverVehicleAssignment.create({
-    data: { distributorId: D1, driverId, vehicleId, assignmentDate: opts.date, status: opts.status as any, tripNumber: opts.tripNumber, isReconciled: opts.isReconciled ?? false },
+    data: { distributorId: D1, driverId, vehicleId, assignmentDate: opts.date, status: opts.status as Prisma.DriverVehicleAssignmentCreateInput['status'], tripNumber: opts.tripNumber, isReconciled: opts.isReconciled ?? false },
   });
   dvaIds.push(dva.id);
   return dva;
@@ -59,7 +60,7 @@ async function mkOrder(driverId: string, vehicleId: string, opts: { status: stri
     data: {
       distributorId: D1, customerId: customer.id, driverId, vehicleId,
       orderNumber: `TEST-DTS-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
-      orderDate: opts.date, deliveryDate: opts.date, status: opts.status as any, orderType: 'delivery', totalAmount: 2000,
+      orderDate: opts.date, deliveryDate: opts.date, status: opts.status as Prisma.OrderCreateInput['status'], orderType: 'delivery', totalAmount: 2000,
       tripNumber: opts.tripNumber,
       items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 2000, totalPrice: 2000 }] },
     },
@@ -90,7 +91,7 @@ describe('WI-100 — DVA terminal state + return-loop guard', () => {
     const d = await mkDriver(PHONES[0], 'Reconcile', 'returned');
     const dva = await mkDva(d.driverId, d.vehicleId, { status: 'loaded_and_dispatched', tripNumber: 1, date: today });
 
-    await confirmVehicleReconciliation(d.vehicleId, D1, 'dts-user', { physicalStockConfirmed: true } as any);
+    await confirmVehicleReconciliation(d.vehicleId, D1, 'dts-user', { physicalStockConfirmed: true });
 
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
     expect(after.status).toBe('dispatch_ready');
@@ -113,7 +114,7 @@ describe('WI-100 — DVA terminal state + return-loop guard', () => {
     await mkOrder(d.driverId, d.vehicleId, { status: 'delivered', tripNumber: 3, date: ffDate }); // 0 in-flight
     const fresh = await mkOrder(d.driverId, d.vehicleId, { status: 'pending_dispatch', tripNumber: null, date: ffDate });
 
-    const res = await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: FF, userId: 'dts-user' } as any);
+    const res = await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: FF, userId: 'dts-user' });
     expect(res.summary.succeeded).toBeGreaterThan(0);
 
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
@@ -130,7 +131,7 @@ describe('WI-100 — DVA terminal state + return-loop guard', () => {
     await mkOrder(d.driverId, d.vehicleId, { status: 'delivered', tripNumber: 5, date: ffDate }); // 0 in-flight
     await mkOrder(d.driverId, d.vehicleId, { status: 'pending_dispatch', tripNumber: null, date: ffDate });
 
-    await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: FF, userId: 'dts-user' } as any);
+    await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: FF, userId: 'dts-user' });
 
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
     expect(after.tripNumber).toBe(6); // rolled
@@ -141,7 +142,7 @@ describe('WI-100 — DVA terminal state + return-loop guard', () => {
     const dva = await mkDva(d.driverId, d.vehicleId, { status: 'dispatch_ready', tripNumber: 1, isReconciled: false, date: ffDate });
     const fresh = await mkOrder(d.driverId, d.vehicleId, { status: 'pending_dispatch', tripNumber: null, date: ffDate });
 
-    await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: FF, userId: 'dts-user' } as any);
+    await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: FF, userId: 'dts-user' });
 
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
     expect(after.tripNumber).toBe(1);  // NOT rolled — first trip

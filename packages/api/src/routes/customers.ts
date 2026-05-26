@@ -13,6 +13,8 @@ import * as customerService from '../services/customerService.js';
 import { mapCustomer, mapCustomers, mapUser } from '../utils/mappers.js';
 import { z } from 'zod';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 // GET /api/customers
@@ -21,7 +23,7 @@ router.get('/',
   validateQuery(customerFilterSchema),
   async (req, res) => {
     try {
-      const result = await customerService.listCustomers(req.user!.distributorId!, (req.validated?.query || req.query) as any);
+      const result = await customerService.listCustomers(req.user!.distributorId!, (req.validated?.query || req.query) as Parameters<typeof customerService.listCustomers>[1]);
       return sendSuccess(res, { customers: mapCustomers(result.data) }, 200, result.meta);
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -47,8 +49,9 @@ router.post('/import-csv',
     try {
       const result = await customerService.importCustomers(req.user!.distributorId!, req.body.rows);
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -73,8 +76,9 @@ router.post('/import-opening-balances',
         req.user!.distributorId!, req.user!.userId, req.body.rows,
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -86,8 +90,9 @@ router.get('/onboarding/progress',
     try {
       const data = await customerService.getOnboardingProgress(req.user!.distributorId!);
       return sendSuccess(res, data);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -100,8 +105,9 @@ router.post('/onboarding/dismiss',
     try {
       await customerService.dismissOnboarding(req.user!.distributorId!);
       return sendSuccess(res, { ok: true });
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -139,9 +145,10 @@ router.get('/:id/ledger/pdf',
         'Content-Length': String(pdfBuffer.length),
       });
       return res.send(pdfBuffer);
-    } catch (err: any) {
-      if (err.message === 'Customer not found') return sendNotFound(res, 'Customer');
-      return sendError(res, err.message, 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.message === 'Customer not found') return sendNotFound(res, 'Customer');
+      return sendError(res, e.message, 500);
     }
   }
 );
@@ -155,9 +162,10 @@ router.post('/',
     try {
       const customer = await customerService.createCustomer(req.user!.distributorId!, req.body);
       return sendCreated(res, mapCustomer(customer));
-    } catch (err: any) {
-      const status = err.statusCode || 500;
-      return sendError(res, err.message, status);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      const status = e.statusCode || 500;
+      return sendError(res, e.message, status);
     }
   }
 );
@@ -173,9 +181,10 @@ router.put('/:id',
         param(req.params.id), req.user!.distributorId!, req.body, req.user!.userId
       );
       return sendSuccess(res, mapCustomer(customer));
-    } catch (err: any) {
-      const status = err.statusCode || 500;
-      return sendError(res, err.message, status);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      const status = e.statusCode || 500;
+      return sendError(res, e.message, status);
     }
   }
 );
@@ -188,9 +197,10 @@ router.delete('/:id',
     try {
       await customerService.softDeleteCustomer(param(req.params.id), req.user!.distributorId!);
       return sendSuccess(res, { message: 'Customer deleted successfully' });
-    } catch (err: any) {
-      const status = err.statusCode || 500;
-      return sendError(res, err.message, status);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      const status = e.statusCode || 500;
+      return sendError(res, e.message, status);
     }
   }
 );
@@ -210,8 +220,9 @@ router.post('/:id/modification-requests',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, request);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -224,8 +235,9 @@ router.put('/modification-requests/:requestId/approve',
     try {
       const result = await customerService.approveModificationRequest(param(req.params.requestId), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -241,8 +253,9 @@ router.put('/modification-requests/:requestId/reject',
         param(req.params.requestId), req.user!.distributorId!, req.user!.userId, req.body.reason
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -319,11 +332,12 @@ router.post('/:id/portal-access',
         param(req.params.id), req.user!.distributorId!, req.body
       );
       return sendCreated(res, mapUser(user));
-    } catch (err: any) {
-      if (err.code === 'P2002') {
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.code === 'P2002') {
         return sendError(res, 'A user with this email already exists', 409, 'CONFLICT');
       }
-      return sendError(res, err.message, err.statusCode || 500);
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );

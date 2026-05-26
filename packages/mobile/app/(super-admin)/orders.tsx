@@ -6,7 +6,20 @@ import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, Badge, EmptyState } from '../../src/components/ui';
 import { useTheme, formatINR } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
-import type { Order, PaginationMeta } from '@gaslink/shared';
+import type { Order, OrderItem, PaginationMeta } from '@gaslink/shared';
+
+// The orders list endpoint can carry a couple of legacy/aliased numeric fields
+// the card renders defensively (e.g. `deliverQuantity`/`lineTotal`). Model them
+// as optional extensions so the access sites stay typed without `any`.
+type OrderItemRow = OrderItem & {
+  deliverQuantity?: number;
+  sellingPrice?: number;
+  lineTotal?: number;
+};
+
+type OrderRow = Order & {
+  totalAmountInclGst?: number;
+};
 
 // ── Status config ────────────────────────────────────────────────────────────
 
@@ -87,15 +100,15 @@ export default function OrdersScreen() {
   if (selectedDistributorId) params.distributorId = selectedDistributorId;
 
   const { data, isLoading, refetch } = useApiQuery<
-    { orders: Order[]; pagination?: PaginationMeta } | Order[]
+    { orders: OrderRow[]; pagination?: PaginationMeta } | OrderRow[]
   >(
     ['sa-orders', statusFilter, String(page), selectedDistributorId ?? 'all'],
     '/orders',
     params,
   );
 
-  const orders: Order[] = Array.isArray(data) ? data : (data as any)?.orders ?? [];
-  const pagination: PaginationMeta | undefined = Array.isArray(data) ? undefined : (data as any)?.pagination;
+  const orders: OrderRow[] = Array.isArray(data) ? data : data?.orders ?? [];
+  const pagination: PaginationMeta | undefined = Array.isArray(data) ? undefined : data?.pagination;
 
   const handleRefresh = useCallback(() => {
     setPage(1);
@@ -146,7 +159,7 @@ export default function OrdersScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                   <View style={{ flex: 1, marginRight: 8 }}>
                     <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }} numberOfLines={1}>
-                      {(order as any).customerName ?? `Order #${order.orderId.slice(-6)}`}
+                      {order.customerName ?? `Order #${order.orderId.slice(-6)}`}
                     </Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
                       {new Date(order.orderDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -167,7 +180,7 @@ export default function OrdersScreen() {
                     gap: 4,
                     marginBottom: 8,
                   }}>
-                    {order.items.map((item: any, idx: number) => (
+                    {order.items.map((item: OrderItemRow, idx: number) => (
                       <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                         <Text style={{ fontSize: 13, color: colors.textSecondary }} numberOfLines={1}>
                           {item.cylinderTypeName ?? item.cylinderTypeId ?? 'Cylinder'} x{item.deliverQuantity ?? item.quantity ?? 0}
@@ -182,16 +195,16 @@ export default function OrdersScreen() {
 
                 {/* Footer */}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  {(order as any).driverName ? (
+                  {order.driverName ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                       <Ionicons name="person-outline" size={14} color={colors.textSecondary} />
-                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>{(order as any).driverName}</Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>{order.driverName}</Text>
                     </View>
                   ) : (
                     <View />
                   )}
                   <Text style={{ fontWeight: '800', fontSize: 16, color: colors.text }}>
-                    {formatINR((order as any).totalAmount ?? (order as any).totalAmountInclGst ?? 0)}
+                    {formatINR(order.totalAmount ?? order.totalAmountInclGst ?? 0)}
                   </Text>
                 </View>
               </Card>

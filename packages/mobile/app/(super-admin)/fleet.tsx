@@ -7,6 +7,45 @@ import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, Badge, EmptyState } from '../../src/components/ui';
 import { useTheme } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
+import type { Driver, Vehicle } from '@gaslink/shared';
+
+// The fleet endpoints can return a couple of legacy/aliased fields the screen
+// reads defensively (e.g. `firstName`/`phoneNumber` vs `driverName`/`phone`).
+// Model them as optional so the access sites stay typed without `any`.
+type DriverRow = Partial<Driver> & {
+  id?: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  phoneNumber?: string;
+  assignedVehicle?: string;
+  availability?: boolean | string;
+};
+
+type VehicleRow = Partial<Vehicle> & {
+  id?: string;
+  registrationNumber?: string;
+  type?: string;
+  capacityUnit?: string;
+  driverName?: string;
+};
+
+interface AssignmentMapping {
+  assignmentId?: string;
+  id?: string;
+  driverName?: string;
+  vehicleNumber?: string;
+  registrationNumber?: string;
+  status?: string;
+  source?: string;
+}
+
+interface VehicleMappingsResponse {
+  recommendations: AssignmentMapping[];
+  confirmedCount?: number;
+  recommendedCount?: number;
+  unassignedCount?: number;
+}
 
 // ── Sub-tabs ─────────────────────────────────────────────────────────────────
 
@@ -87,43 +126,43 @@ export default function FleetScreen() {
 
   // Drivers
   const { data: driversData, isLoading: driversLoading, refetch: refetchDrivers } = useApiQuery<
-    { drivers: any[] } | any[]
+    { drivers: DriverRow[] } | DriverRow[]
   >(
     ['sa-fleet-drivers', selectedDistributorId ?? 'all'],
     '/drivers',
     distParams,
     { enabled: tab === 'drivers' },
   );
-  const drivers: any[] = Array.isArray(driversData)
+  const drivers: DriverRow[] = Array.isArray(driversData)
     ? driversData
-    : (driversData as any)?.drivers ?? [];
+    : driversData?.drivers ?? [];
 
   // Vehicles
   const { data: vehiclesData, isLoading: vehiclesLoading, refetch: refetchVehicles } = useApiQuery<
-    { vehicles: any[] } | any[]
+    { vehicles: VehicleRow[] } | VehicleRow[]
   >(
     ['sa-fleet-vehicles', selectedDistributorId ?? 'all'],
     '/vehicles',
     distParams,
     { enabled: tab === 'vehicles' },
   );
-  const vehicles: any[] = Array.isArray(vehiclesData)
+  const vehicles: VehicleRow[] = Array.isArray(vehiclesData)
     ? vehiclesData
-    : (vehiclesData as any)?.vehicles ?? [];
+    : vehiclesData?.vehicles ?? [];
 
   // Assignments
   const { data: assignmentsData, isLoading: assignmentsLoading, refetch: refetchAssignments } = useApiQuery<
-    { recommendations: any[]; confirmedCount?: number; recommendedCount?: number; unassignedCount?: number }
+    VehicleMappingsResponse
   >(
     ['sa-fleet-assignments', selectedDistributorId ?? 'all', today],
     '/assignments/vehicle-mappings',
     { ...distParams, date: today },
     { enabled: tab === 'assignments' },
   );
-  const assignments: any[] = (assignmentsData as any)?.recommendations ?? [];
-  const confirmedCount = (assignmentsData as any)?.confirmedCount ?? 0;
-  const recommendedCount = (assignmentsData as any)?.recommendedCount ?? 0;
-  const unassignedCount = (assignmentsData as any)?.unassignedCount ?? 0;
+  const assignments: AssignmentMapping[] = assignmentsData?.recommendations ?? [];
+  const confirmedCount = assignmentsData?.confirmedCount ?? 0;
+  const recommendedCount = assignmentsData?.recommendedCount ?? 0;
+  const unassignedCount = assignmentsData?.unassignedCount ?? 0;
 
   const isLoading = tab === 'drivers' ? driversLoading : tab === 'vehicles' ? vehiclesLoading : assignmentsLoading;
 
@@ -181,7 +220,7 @@ export default function FleetScreen() {
                 <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 4 }}>
                   {drivers.length} driver{drivers.length !== 1 ? 's' : ''}
                 </Text>
-                {drivers.map((driver: any, i: number) => (
+                {drivers.map((driver: DriverRow, i: number) => (
                   <Card key={driver.driverId ?? driver.id ?? i} style={dark ? { backgroundColor: colors.cardBg, borderColor: colors.cardBorder } : undefined}>
                     {/* Header */}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
@@ -240,7 +279,7 @@ export default function FleetScreen() {
                 <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 4 }}>
                   {vehicles.length} vehicle{vehicles.length !== 1 ? 's' : ''}
                 </Text>
-                {vehicles.map((vehicle: any, i: number) => (
+                {vehicles.map((vehicle: VehicleRow, i: number) => (
                   <Card key={vehicle.vehicleId ?? vehicle.id ?? i} style={dark ? { backgroundColor: colors.cardBg, borderColor: colors.cardBorder } : undefined}>
                     {/* Header */}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
@@ -309,7 +348,7 @@ export default function FleetScreen() {
             ) : assignments.length === 0 ? (
               <EmptyState title="No assignments" description="No driver-vehicle mappings for today" />
             ) : (
-              assignments.map((mapping: any, i: number) => (
+              assignments.map((mapping: AssignmentMapping, i: number) => (
                 <Card key={mapping.assignmentId ?? mapping.id ?? i} style={dark ? { backgroundColor: colors.cardBg, borderColor: colors.cardBorder } : undefined}>
                   {/* Header */}
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>

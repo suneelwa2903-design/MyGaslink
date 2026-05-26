@@ -76,6 +76,61 @@ interface InvoiceData {
   // first validating against the live sandbox. CLAUDE.md anti-pattern #10.
 }
 
+/** A single line item in the NIC IRN payload (`ItemList[]`). */
+export interface IrnPayloadItem {
+  SlNo: string;
+  IsServc: string;
+  PrdDesc: string;
+  HsnCd: string;
+  Qty: number;
+  Unit: string;
+  UnitPrice: number;
+  TotAmt: number;
+  Discount: number;
+  AssAmt: number;
+  GstRt: number;
+  IgstAmt: number;
+  CgstAmt: number;
+  SgstAmt: number;
+  CesRt: number;
+  CesAmt: number;
+  CesNonAdvlAmt: number;
+  StateCesRt: number;
+  StateCesAmt: number;
+  StateCesNonAdvlAmt: number;
+  OthChrg: number;
+  TotItemVal: number;
+}
+
+/** The NIC IRN GENERATE request payload (v1.1) produced by buildIrnPayload. */
+export interface IrnPayload {
+  Version: string;
+  TranDtls: { TaxSch: string; SupTyp: string; RegRev: string; IgstOnIntra: string };
+  DocDtls: { Typ: string; No: string; Dt: string };
+  SellerDtls: {
+    Gstin: string; LglNm: string; TrdNm: string; Addr1: string; Addr2: string;
+    Loc: string; Pin: number; Stcd: string; Ph: string; Em: string;
+  };
+  BuyerDtls: {
+    Gstin: string; LglNm: string; TrdNm: string; Pos: string; Addr1: string;
+    Addr2: string; Loc: string; Pin: number; Stcd: string; Ph: string; Em: string;
+  };
+  ItemList: IrnPayloadItem[];
+  ValDtls: {
+    AssVal: number; CgstVal: number; SgstVal: number; IgstVal: number;
+    CesVal: number; StCesVal: number; Discount: number; OthChrg: number;
+    RndOffAmt: number; TotInvVal: number; TotInvValFc: number;
+  };
+  RefDtls?: {
+    InvRm: string;
+    PrecDocDtls: Array<{ InvNo: string; InvDt: string; OthRefNo: string }>;
+  };
+  // Inline EwbDtls is intentionally never emitted (anti-pattern #10 — the
+  // two-step IRN→EWB pattern is used instead). Declared optional only so the
+  // payload-shape guard test can assert it is absent.
+  EwbDtls?: never;
+}
+
 function extractStateCode(gstin: string): string {
   return gstin.substring(0, 2);
 }
@@ -128,7 +183,7 @@ function truncateDocNumber(docNo: string): string {
 /**
  * Build IRN payload for e-Invoice generation
  */
-export function buildIrnPayload(data: InvoiceData): any {
+export function buildIrnPayload(data: InvoiceData): IrnPayload {
   const isB2C = !data.buyer.gstin || data.buyer.gstin === 'URP';
   const sellerStateCode = extractStateCode(data.seller.gstin);
 
@@ -208,7 +263,7 @@ export function buildIrnPayload(data: InvoiceData): any {
   let rndOffAmt = Math.round((actualTotal - totInvVal) * 100) / 100;
   rndOffAmt = Math.max(-99.99, Math.min(99.99, rndOffAmt));
 
-  const payload: any = {
+  const payload: IrnPayload = {
     Version: '1.1',
     TranDtls: {
       TaxSch: 'GST',
@@ -284,12 +339,76 @@ export function buildIrnPayload(data: InvoiceData): any {
   return payload;
 }
 
+/** A single line item in the NIC EWB payload (`itemList[]`). */
+export interface EwbPayloadItem {
+  hsnCode: string;
+  taxableAmount: number;
+  productName: string;
+  productDesc: string;
+  quantity: number;
+  qtyUnit: string;
+  cgstRate: number;
+  sgstRate: number;
+  igstRate: number;
+  cessRate: number;
+}
+
+/** The NIC genewaybill request payload produced by buildEwbPayload. */
+export interface EwbPayload {
+  supplyType: string;
+  subSupplyType: string;
+  docType: string;
+  docNo: string;
+  docDate: string;
+  fromGstin: string;
+  fromPincode: number;
+  fromStateCode: number;
+  fromTrdName: string;
+  fromAddr1: string;
+  fromAddr2: string;
+  fromPlace: string;
+  toGstin: string;
+  toPincode: number;
+  toStateCode: number;
+  toTrdName: string;
+  toAddr1: string;
+  toAddr2: string;
+  toPlace: string;
+  transMode: string;
+  transDistance: string;
+  transporterName?: string;
+  transporterId?: string;
+  transDocNo: string;
+  transDocDate: string;
+  vehicleNo: string;
+  vehicleType: string;
+  itemList: EwbPayloadItem[];
+  actFromStateCode: number;
+  actToStateCode: number;
+  transactionType: number;
+  subSupplyDesc: string;
+  totalValue: number;
+  totInvValue: number;
+  cgstValue: number;
+  sgstValue: number;
+  igstValue: number;
+  cessValue: number;
+  cessNonAdvolValue: number;
+  // Ship-To / Dispatch-From are valid only on transactionType 2/3/4 and are
+  // intentionally never emitted under type 1 (anti-pattern #14). Declared
+  // optional so guard tests can assert their absence on B2B/B2C output.
+  shipToGSTIN?: string;
+  shipToTradeName?: string;
+  dispatchFromGSTIN?: string;
+  dispatchFromTradeName?: string;
+}
+
 /**
  * Build EWB payload for e-Way Bill generation
  * Can be built from an existing IRN payload or standalone
  */
 export function buildEwbPayload(
-  irnPayload: any,
+  irnPayload: IrnPayload,
   transportDetails: {
     vehicleNumber: string;
     transportMode?: string; // 1=Road, 2=Rail, 3=Air, 4=Ship
@@ -301,7 +420,7 @@ export function buildEwbPayload(
     transporterName?: string;
     transporterId?: string;
   }
-): any {
+): EwbPayload {
   const isB2C = irnPayload.TranDtls.SupTyp === 'B2C';
   const seller = irnPayload.SellerDtls;
   const buyer = irnPayload.BuyerDtls;
@@ -380,7 +499,7 @@ export function buildEwbPayload(
     vehicleNo: vehicleNo,
     vehicleType: 'R', // Regular
 
-    itemList: irnPayload.ItemList.map((item: any) => ({
+    itemList: irnPayload.ItemList.map((item) => ({
       hsnCode: item.HsnCd,
       taxableAmount: item.AssAmt,
       productName: item.PrdDesc,

@@ -12,6 +12,8 @@ import * as inventoryService from '../services/inventoryService.js';
 import { mapInventorySummaries, mapInventoryEvent, mapInventoryEvents } from '../utils/mappers.js';
 import { z } from 'zod';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 // GET /api/inventory/summary (defaults to today)
@@ -91,8 +93,9 @@ router.post('/initial-balance',
         req.user!.distributorId!, req.user!.userId, req.body,
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );

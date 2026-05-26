@@ -6,10 +6,24 @@ import { Card, Badge, MetricCard, EmptyState } from '../../src/components/ui';
 import { useTheme } from '../../src/theme';
 import type { InventoryForecast } from '@gaslink/shared';
 
+// Shape returned by GET /inventory/threshold-alerts (inventoryService.checkThresholds).
+// Several fields are read defensively with fallbacks, so the alternates are optional.
+interface ThresholdAlert {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  currentStock?: number;
+  closingFulls?: number;
+  level?: string;
+  severity?: string;
+  threshold?: number;
+  thresholdLevel?: number;
+  message?: string;
+}
+
 export default function AlertsForecastScreen() {
   const { dark, colors, accent } = useTheme();
 
-  const { data: alerts, isLoading: alertsLoading, refetch: refetchAlerts } = useApiQuery<any[]>(
+  const { data: alerts, isLoading: alertsLoading, refetch: refetchAlerts } = useApiQuery<ThresholdAlert[]>(
     ['threshold-alerts'],
     '/inventory/threshold-alerts',
   );
@@ -67,7 +81,7 @@ export default function AlertsForecastScreen() {
             </View>
           </Card>
         ) : (
-          alerts.map((alert: any, i: number) => {
+          alerts.map((alert, i: number) => {
             const isCritical = alert.severity === 'critical';
             const alertBg = isCritical
               ? (dark ? 'rgba(220,38,38,0.12)' : '#fef2f2')

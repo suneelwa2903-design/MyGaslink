@@ -6,7 +6,7 @@ import request from 'supertest';
 // controllable without real network / token state. Spread the original so the
 // rest of the GST layer keeps working.
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     pingEinvoiceSession: vi.fn(async () => undefined),

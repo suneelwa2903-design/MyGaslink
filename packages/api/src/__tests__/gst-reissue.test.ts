@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 // vi.mock must hoist above the imports below so the reissue service
 // sees the mocked apiCall when it pulls in whitebooksClient.
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     apiCall: vi.fn(),
@@ -26,6 +26,7 @@ import * as whitebooksClient from '../services/gst/whitebooksClient.js';
 import { createApp } from '../app.js';
 import { generateToken } from './helpers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
+import type { UserRole } from '@gaslink/shared';
 
 // CLAUDE.md anti-pattern #7: tests that seed time-sensitive data use
 // a fixed future date so real dev-DB rows never get swept into service
@@ -35,7 +36,7 @@ const today = () => TEST_DATE;
 
 const apiCallMock = whitebooksClient.apiCall as unknown as ReturnType<typeof vi.fn>;
 
-function irnSuccess(over: Record<string, any> = {}) {
+function irnSuccess(over: Record<string, unknown> = {}) {
   return {
     status_cd: '1',
     data: {
@@ -64,7 +65,7 @@ function ewbGenOk(no = '181012000777') {
   };
 }
 function whitebooksError(code: string, message: string) {
-  const err: any = new Error(message);
+  const err = new Error(message) as Error & { code: string };
   err.code = code;
   return err;
 }
@@ -453,8 +454,8 @@ describe('gstReissueService — delivery mismatch flow', () => {
       });
       expect(result.ok).toBe(true);
       const rev = await prisma.invoiceRevision.findFirstOrThrow({ where: { invoiceId: f.invoiceId } });
-      const originalItems = rev.originalItems as any[];
-      const revisedItems = rev.revisedItems as any[];
+      const originalItems = rev.originalItems as Array<{ quantity: number }>;
+      const revisedItems = rev.revisedItems as Array<{ quantity: number }>;
       expect(originalItems[0].quantity).toBe(20);
       expect(revisedItems[0].quantity).toBe(15);
       expect(Number(rev.originalTotal)).toBe(20 * 2000);
@@ -691,7 +692,7 @@ describe('WI-107 — trip-ewbs Compliance Docs shows the new EWB after B2B reiss
         ewbDate: TODAY, ewbValidTill: new Date(TODAY.getTime() + 86_400_000), isLatest: true,
       },
     });
-    const token = generateToken({ userId: user.id, email: user.email, role: 'driver' as any, distributorId: 'dist-002' });
+    const token = generateToken({ userId: user.id, email: user.email, role: 'driver' as UserRole, distributorId: 'dist-002' });
 
     apiCallMock
       .mockResolvedValueOnce(ewbCancelOk())            // Step 1 cancelEwb
@@ -704,7 +705,7 @@ describe('WI-107 — trip-ewbs Compliance Docs shows the new EWB after B2B reiss
 
     const res = await request(app).get('/api/drivers/me/trip-ewbs').set({ Authorization: `Bearer ${token}` });
     expect(res.status).toBe(200);
-    const ewbNos = res.body.data.items.map((i: any) => i.ewbNo);
+    const ewbNos = res.body.data.items.map((i: { ewbNo: string }) => i.ewbNo);
     expect(ewbNos).toContain('EWB-W107-NEW');
     expect(ewbNos).not.toContain('EWB-W107-OLD');
   });

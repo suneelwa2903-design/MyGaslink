@@ -17,12 +17,17 @@
  * proceed to pending_delivery.
  */
 
+import { Prisma, type IrnStatus, type EwbStatus } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
-import { getCredentials, pingEinvoiceSession } from './whitebooksClient.js';
+import { getCredentials, pingEinvoiceSession, GstError } from './whitebooksClient.js';
 import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
+import type { EwbResponse, IrnResponse, ConsolidatedEwbResponse } from './nicTypes.js';
+
+/** The InvoiceData shape consumed by buildIrnPayload (kept un-exported there). */
+type InvoiceData = Parameters<typeof buildIrnPayload>[0];
 import {
   parseEwbResponse,
   parseWhitebooksDate,
@@ -38,6 +43,46 @@ const orderInclude = {
   vehicle: true,
   driver: { select: { id: true, driverName: true } },
 } as const;
+
+/** Order with the preflight includes (customer, items+cylinderType, vehicle, driver). */
+type PreflightOrder = Prisma.OrderGetPayload<{ include: typeof orderInclude }>;
+
+/** The distributor fields the preflight flow reads (subset of the Prisma model). */
+type DistributorGstFields = Pick<
+  Prisma.DistributorGetPayload<true>,
+  | 'id' | 'gstMode' | 'gstin' | 'legalName' | 'businessName'
+  | 'address' | 'city' | 'state' | 'pincode' | 'phone' | 'email'
+>;
+
+/** Narrow an unknown caught value to the GST error code/message shape. */
+function errInfo(err: unknown): { code: string; message: string } {
+  if (err instanceof GstError) return { code: err.code, message: err.message };
+  if (err instanceof Error) return { code: '', message: err.message };
+  return { code: '', message: String(err) };
+}
+
+/**
+ * The subset of gst_documents columns the preflight branches write through
+ * upsertLatestGstDocument. JSON columns take the raw payload/response objects;
+ * Prisma narrows them at the column boundary (see toJson).
+ */
+interface GstDocumentWriteData {
+  irnStatus?: IrnStatus;
+  irn?: string | null;
+  ackNo?: string | null;
+  ackDate?: Date | null;
+  signedQr?: string | null;
+  ewbStatus?: EwbStatus;
+  ewbNo?: string | null;
+  ewbDate?: Date | null;
+  ewbValidTill?: Date | null;
+  requestPayload?: Prisma.InputJsonValue;
+  responsePayload?: Prisma.InputJsonValue;
+}
+
+// JSON columns reject our precise payload interfaces (optional fields widen to
+// `| undefined`, not valid JSON input). Narrow at the column boundary.
+const toJson = (v: unknown): Prisma.InputJsonValue => v as Prisma.InputJsonValue;
 
 export type PreflightResult = {
   orderId: string;
@@ -88,9 +133,10 @@ export class PreflightError extends Error {
 async function probeNicEinvoiceSession(distributorId: string, gstin: string): Promise<void> {
   try {
     await pingEinvoiceSession(distributorId, gstin);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const { code, message } = errInfo(err);
     logger.warn('Pre-dispatch NIC health probe failed — aborting batch before any IRN/EWB call', {
-      distributorId, code: err?.code, msg: err?.message,
+      distributorId, code, msg: message,
     });
     throw new PreflightError(
       'NIC e-invoice session is temporarily unavailable (upstream). No orders were dispatched — please retry in a few minutes.',
@@ -345,14 +391,15 @@ export async function preflightDispatch(params: {
           data: { tripSheetNo, tripSheetGeneratedAt: new Date() },
         });
         logger.info('Consolidated EWB generated', { assignmentId: mapping.id, tripSheetNo, count: ewbNumbers.length });
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const message = errInfo(err).message;
         logger.warn('Consolidated EWB (gencewb) failed — dispatch already complete, raising LOW pending action', {
-          assignmentId: mapping.id, err: err.message,
+          assignmentId: mapping.id, err: message,
         });
         await createPendingAction(
           distributorId, mapping.id,
           'CONSOLIDATED_EWB_FAILED',
-          `gencewb failed for assignment ${mapping.id}: ${err.message ?? 'unknown'}`,
+          `gencewb failed for assignment ${mapping.id}: ${message || 'unknown'}`,
           'low',
         );
       }
@@ -551,14 +598,15 @@ export async function preflightAddToTrip(params: {
           data: { tripSheetNo2, tripSheetNo2GeneratedAt: new Date() },
         });
         logger.info('Add-to-Trip consolidated EWB generated', { assignmentId: mapping.id, tripSheetNo2, count: newEwbNumbers.length });
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const message = errInfo(err).message;
         logger.warn('Add-to-Trip consolidated EWB (gencewb) failed — orders already dispatched', {
-          assignmentId: mapping.id, err: err.message,
+          assignmentId: mapping.id, err: message,
         });
         await createPendingAction(
           distributorId, mapping.id,
           'CONSOLIDATED_EWB_FAILED',
-          `Add-to-Trip gencewb failed for assignment ${mapping.id}: ${err.message ?? 'unknown'}`,
+          `Add-to-Trip gencewb failed for assignment ${mapping.id}: ${message || 'unknown'}`,
           'low',
         );
       }
@@ -581,7 +629,7 @@ export async function preflightAddToTrip(params: {
  */
 async function generateConsolidatedEwb(args: {
   distributorId: string;
-  distributor: any;
+  distributor: DistributorGstFields;
   ewbNumbers: string[];
   vehicleNumber: string;
 }): Promise<string> {
@@ -603,7 +651,7 @@ async function generateConsolidatedEwb(args: {
     transDocDate: '',
   };
 
-  const resp: any = await callWithLog<any>(
+  const resp = await callWithLog<ConsolidatedEwbResponse>(
     distributorId, 'POST',
     `/ewaybillapi/v1.03/ewayapi/gencewb?email=${encodeURIComponent(credEmail)}`,
     payload, 'ewaybill',
@@ -627,8 +675,8 @@ async function generateConsolidatedEwb(args: {
  * a conditional UPDATE — only one process can claim a given order.
  */
 async function preflightOne(params: {
-  order: any;
-  distributor: any;
+  order: PreflightOrder;
+  distributor: DistributorGstFields;
   vehicleNumber: string | null;
   userId: string;
   tripNumber: number; // WI-065: stamped on the order at pending_delivery transition
@@ -702,11 +750,12 @@ async function preflightOne(params: {
     return await runB2cPreflight({
       order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber,
     });
-  } catch (err: any) {
-    logger.error('Preflight unexpected error', { orderId, error: err.message });
+  } catch (err: unknown) {
+    const { code, message } = errInfo(err);
+    logger.error('Preflight unexpected error', { orderId, error: message });
     await revertToPendingDispatch(orderId);
     const pa = await createPendingAction(
-      distributor.id, orderId, 'DISPATCH_PREFLIGHT', err.message ?? 'Unknown error',
+      distributor.id, orderId, 'DISPATCH_PREFLIGHT', message || 'Unknown error',
     );
     return {
       orderId,
@@ -714,9 +763,9 @@ async function preflightOne(params: {
       customerName,
       mode: 'B2B',
       success: false,
-      errorCode: err.code || 'UNKNOWN',
-      errorMessage: err.message,
-      pendingActionId: (pa as any)?.id,
+      errorCode: code || 'UNKNOWN',
+      errorMessage: message,
+      pendingActionId: pa?.id,
     };
   }
 }
@@ -732,14 +781,14 @@ async function preflightOne(params: {
  */
 // WI-106: assemble the dispatch-debit context from an order (with items).
 // Passed to transitionToPendingDelivery; only consumed when the flag is on.
-function buildDispatchCtx(order: any, vehicleNumber: string | null) {
+function buildDispatchCtx(order: PreflightOrder, vehicleNumber: string | null) {
   return {
-    distributorId: order.distributorId as string,
-    deliveryDate: order.deliveryDate as Date,
+    distributorId: order.distributorId,
+    deliveryDate: order.deliveryDate,
     vehicleNumber,
-    items: (order.items ?? []).map((i: any) => ({
-      cylinderTypeId: i.cylinderTypeId as string,
-      quantity: i.quantity as number,
+    items: (order.items ?? []).map((i) => ({
+      cylinderTypeId: i.cylinderTypeId,
+      quantity: i.quantity,
     })),
   };
 }
@@ -781,7 +830,7 @@ async function transitionToPendingDelivery(
     // and the transaction is byte-for-byte identical to pre-WI-106.
     if (dispatchCtx && isDispatchDebitEnabled(dispatchCtx.distributorId)) {
       for (const item of dispatchCtx.items) {
-        await createInventoryEvent(tx as any, {
+        await createInventoryEvent(tx, {
           distributorId: dispatchCtx.distributorId,
           cylinderTypeId: item.cylinderTypeId,
           eventType: 'dispatch',
@@ -845,7 +894,7 @@ async function ensureDraftInvoice(
         data: { deliveredQuantity: item.quantity },
       });
     }
-    await createInvoiceFromOrder(tx as any, orderId, distributorId, userId);
+    await createInvoiceFromOrder(tx, orderId, distributorId, userId);
     await tx.order.update({
       where: { id: orderId },
       data: { status: previousStatus },
@@ -868,7 +917,7 @@ async function ensureDraftInvoice(
 /** Build the InvoiceData payload feeding buildIrnPayload. */
 async function buildInvoiceData(
   invoiceId: string,
-  distributor: any,
+  distributor: DistributorGstFields,
   transport:
     | {
         vehicleNumber: string;
@@ -880,14 +929,14 @@ async function buildInvoiceData(
         transDocDt: string;
       }
     | undefined,
-): Promise<any> {
+): Promise<InvoiceData> {
   const inv = await prisma.invoice.findFirstOrThrow({
     where: { id: invoiceId },
     include: { items: { include: { cylinderType: true } }, customer: true, order: { include: { vehicle: true } } },
   });
   const sellerStateCode = (distributor.gstin || '').substring(0, 2);
   const buyerStateCode = inv.customer?.gstin ? inv.customer.gstin.substring(0, 2) : sellerStateCode;
-  return {
+  const data = {
     docType: 'INV' as const,
     docNumber: inv.invoiceNumber,
     docDate: inv.issueDate,
@@ -915,7 +964,7 @@ async function buildInvoiceData(
       phone: inv.customer?.phone || undefined,
       email: inv.customer?.email || undefined,
     },
-    items: inv.items.map((item: any, idx: number) => ({
+    items: inv.items.map((item, idx) => ({
       slNo: idx + 1,
       description: item.description || item.cylinderType?.typeName || 'LPG Cylinder',
       hsnCode: item.hsnCode || '27111900',
@@ -928,6 +977,7 @@ async function buildInvoiceData(
     isInterState: sellerStateCode !== buyerStateCode,
     transport,
   };
+  return data;
 }
 
 /**
@@ -935,9 +985,9 @@ async function buildInvoiceData(
  * recover via getIrnDetails (handles 604 / portal-pre-existing cases).
  */
 async function runB2bPreflight(params: {
-  order: any;
+  order: PreflightOrder;
   invoice: { id: string; invoiceNumber: string };
-  distributor: any;
+  distributor: DistributorGstFields;
   vehicleNumber: string;
   userId: string;
   customerName: string | null;
@@ -973,7 +1023,7 @@ async function runB2bPreflight(params: {
   let irnPersisted = false;
   try {
     const irnPayload = buildIrnPayload(invoiceData);
-    const irnResponse: any = await callWithLog<any>(
+    const irnResponse = await callWithLog<IrnResponse>(
       distributorId, 'POST',
       `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(credEmail)}`,
       irnPayload, 'einvoice',
@@ -1024,8 +1074,8 @@ async function runB2bPreflight(params: {
           ewbDate,
           ewbValidTill: ewbValidTillDate,
         } : {}),
-        requestPayload: irnPayload,
-        responsePayload: irnResponse,
+        requestPayload: toJson(irnPayload),
+        responsePayload: toJson(irnResponse),
       },
     });
 
@@ -1048,7 +1098,7 @@ async function runB2bPreflight(params: {
           transportMode: '1',
           distance: 1, // standalone EWB rejects distance:0 (error 721)
         });
-        const ewbResponse: any = await callWithLog<any>(
+        const ewbResponse = await callWithLog<EwbResponse>(
           distributorId, 'POST',
           `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(ewbCredEmail)}`,
           ewbPayload, 'ewaybill',
@@ -1090,18 +1140,19 @@ async function runB2bPreflight(params: {
             'high',
           );
         }
-      } catch (ewbErr: any) {
+      } catch (ewbErr: unknown) {
         // IRN already succeeded — don't fail the dispatch on a missed
         // EWB. Raise a HIGH pending action; admin can retry the EWB
         // via the existing /generate-gst flow on the invoice.
-        logger.error('EWB generation failed after IRN success', { orderId, invoiceId, error: ewbErr.message });
+        const ewbErrMessage = errInfo(ewbErr).message;
+        logger.error('EWB generation failed after IRN success', { orderId, invoiceId, error: ewbErrMessage });
         await prisma.invoice.update({
           where: { id: invoiceId },
           data: { ewbStatus: 'failed' },
         });
         await createPendingAction(
           distributorId, invoiceId, 'EWB_GENERATION',
-          `Order ${order.orderNumber}: IRN succeeded but EWB failed — ${ewbErr.message}`,
+          `Order ${order.orderNumber}: IRN succeeded but EWB failed — ${ewbErrMessage}`,
           'high',
         );
       }
@@ -1122,11 +1173,12 @@ async function runB2bPreflight(params: {
       irn, ackNo: ackNo?.toString() ?? null,
       ewbNo, ewbValidTill,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const { code: rawCode, message: errMessage } = errInfo(err);
     // Handle duplicate IRN (2150): IRN already on NIC portal — still try
     // to surface the existing one via GETIRNBYDOCDETAILS (out of scope
     // for v1; for now treat as recoverable failure and let admin retry).
-    const code = String(err.code || '').replace(/[^0-9]/g, '');
+    const code = String(rawCode || '').replace(/[^0-9]/g, '');
     if (code === '2150') {
       // Mark as success since portal already accepts this doc — but we
       // can't fill irn locally without the lookup call. Best-effort: mark
@@ -1147,7 +1199,7 @@ async function runB2bPreflight(params: {
         errorMessage: 'Duplicate IRN — already on portal',
       };
     }
-    logger.error('Preflight B2B failed', { orderId, invoiceId, error: err.message, irnPersisted });
+    logger.error('Preflight B2B failed', { orderId, invoiceId, error: errMessage, irnPersisted });
     if (!irnPersisted) {
       // IRN never made it to NIC (or never landed in our DB) — safe to
       // mark failed and bounce the order back to pending_dispatch.
@@ -1161,28 +1213,28 @@ async function runB2bPreflight(params: {
       // write, EWB, status transition). Do NOT corrupt irnStatus. Leave the
       // order at its current state — admin can retry EWB via /generate-gst.
       logger.error('Preflight error after IRN persisted — leaving irnStatus=success', {
-        orderId, invoiceId, error: err.message,
+        orderId, invoiceId, error: errMessage,
       });
     }
     const pa = await createPendingAction(
       distributorId, invoiceId, 'IRN_GENERATION',
-      `Order ${order.orderNumber}: ${err.message}`,
+      `Order ${order.orderNumber}: ${errMessage}`,
     );
     return {
       orderId, orderNumber: order.orderNumber, customerName,
       mode: 'B2B', success: false,
-      errorCode: err.code || code || 'UNKNOWN',
-      errorMessage: err.message,
-      pendingActionId: (pa as any)?.id,
+      errorCode: rawCode || code || 'UNKNOWN',
+      errorMessage: errMessage,
+      pendingActionId: pa?.id,
     };
   }
 }
 
 /** B2C / URP — standalone EWB endpoint (always, no invoice-value gate). */
 async function runB2cPreflight(params: {
-  order: any;
+  order: PreflightOrder;
   invoice: { id: string; invoiceNumber: string };
-  distributor: any;
+  distributor: DistributorGstFields;
   vehicleNumber: string;
   userId: string;
   customerName: string | null;
@@ -1219,7 +1271,7 @@ async function runB2cPreflight(params: {
       payload: JSON.stringify(ewbPayload, null, 2),
     });
 
-    const ewbResponse: any = await callWithLog<any>(
+    const ewbResponse = await callWithLog<EwbResponse>(
       distributorId, 'POST',
       `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
       ewbPayload, 'ewaybill',
@@ -1256,8 +1308,8 @@ async function runB2cPreflight(params: {
         ewbNo: parsed.ewbNo,
         ewbDate: parsed.validFromDate,
         ewbValidTill: parsed.validToDate,
-        requestPayload: ewbPayload,
-        responsePayload: ewbResponse,
+        requestPayload: toJson(ewbPayload),
+        responsePayload: toJson(ewbResponse),
       },
     });
 
@@ -1286,8 +1338,9 @@ async function runB2cPreflight(params: {
       mode: 'B2C', success: true,
       ewbNo: parsed.ewbNo, ewbValidTill: parsed.validToDate?.toISOString() ?? null,
     };
-  } catch (err: any) {
-    logger.error('Preflight B2C failed', { orderId, invoiceId, error: err.message });
+  } catch (err: unknown) {
+    const { code, message } = errInfo(err);
+    logger.error('Preflight B2C failed', { orderId, invoiceId, error: message });
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: { ewbStatus: 'failed' },
@@ -1295,14 +1348,14 @@ async function runB2cPreflight(params: {
     await revertToPendingDispatch(orderId);
     const pa = await createPendingAction(
       distributorId, invoiceId, 'EWB_GENERATION',
-      `Order ${order.orderNumber}: ${err.message}`,
+      `Order ${order.orderNumber}: ${message}`,
     );
     return {
       orderId, orderNumber: order.orderNumber, customerName,
       mode: 'B2C', success: false,
-      errorCode: err.code || 'UNKNOWN',
-      errorMessage: err.message,
-      pendingActionId: (pa as any)?.id,
+      errorCode: code || 'UNKNOWN',
+      errorMessage: message,
+      pendingActionId: pa?.id,
     };
   }
 }
@@ -1317,7 +1370,7 @@ async function upsertLatestGstDocument(args: {
   orderId: string;
   distributorId: string;
   gstDocNo: string;
-  data: Record<string, any>;
+  data: GstDocumentWriteData;
 }) {
   const existing = await prisma.gstDocument.findFirst({
     where: { invoiceId: args.invoiceId, isLatest: true, deletedAt: null },

@@ -25,7 +25,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vites
 import request from 'supertest';
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     apiCall: vi.fn(),
@@ -53,6 +53,15 @@ import {
 import { generateTripSheetPdf } from '../services/pdf/tripSheetPdfService.js';
 import { createApp } from '../app.js';
 import { loginAsDistAdmin, getOrCreateTestVehicle } from './helpers.js';
+import type { UserRole } from '@gaslink/shared';
+
+/** Row shape from GET /api/orders/in-transit (only fields the tests read). */
+interface InTransitDriverRow {
+  driverId: string;
+  tripNumber: number;
+  inTransitCount: number;
+  deliveredCount: number;
+}
 
 const TEST_DATE = '2099-12-31';
 // WI-090: dedicated test vehicle. preflightAddToTrip now sets
@@ -217,10 +226,11 @@ describe('WI-065 — dispatch state machine + Add to Trip', () => {
         distributorId, driverId, assignmentDate: TEST_DATE, userId: 'test-user',
       });
       throw new Error('Should have thrown NO_ORDERS');
-    } catch (err: any) {
+    } catch (err) {
       expect(err).toBeInstanceOf(PreflightError);
-      expect(err.code).toBe('NO_ORDERS');
-      expect(err.statusCode).toBe(400);
+      const pfErr = err as PreflightError;
+      expect(pfErr.code).toBe('NO_ORDERS');
+      expect(pfErr.statusCode).toBe(400);
     }
 
     // CRITICAL: DVA must be UNTOUCHED.
@@ -326,10 +336,11 @@ describe('WI-065 — dispatch state machine + Add to Trip', () => {
         distributorId, driverId, assignmentDate: TEST_DATE, userId: 'test-user',
       });
       throw new Error('Should have rejected with NO_ACTIVE_TRIP');
-    } catch (err: any) {
+    } catch (err) {
       expect(err).toBeInstanceOf(PreflightError);
-      expect(err.code).toBe('NO_ACTIVE_TRIP');
-      expect(err.message).toMatch(/No active trip/);
+      const pfErr = err as PreflightError;
+      expect(pfErr.code).toBe('NO_ACTIVE_TRIP');
+      expect(pfErr.message).toMatch(/No active trip/);
     } finally {
       await teardown(ids, [dva.id]);
     }
@@ -452,7 +463,7 @@ describe('WI-065 — dispatch state machine + Add to Trip', () => {
       const { generateToken } = await import('./helpers.js');
       const sharmaToken = generateToken({
         userId: sharma.id, email: sharma.email,
-        role: sharma.role as any, distributorId: sharma.distributorId,
+        role: sharma.role as UserRole, distributorId: sharma.distributorId,
       });
       void token; // silence unused
 
@@ -464,14 +475,14 @@ describe('WI-065 — dispatch state machine + Add to Trip', () => {
       const drivers = res.body.data.drivers;
       expect(Array.isArray(drivers)).toBe(true);
 
-      const driverA = drivers.find((d: any) => d.driverId === driverId);
+      const driverA = drivers.find((d: InTransitDriverRow) => d.driverId === driverId);
       expect(driverA).toBeDefined();
       expect(driverA.tripNumber).toBe(1);
       expect(driverA.inTransitCount).toBeGreaterThanOrEqual(1);
 
       // Driver B (fresh dispatch_ready) NOT in the response
       if (dvaB) {
-        const driverBRow = drivers.find((d: any) => d.driverId === secondDriverId);
+        const driverBRow = drivers.find((d: InTransitDriverRow) => d.driverId === secondDriverId);
         expect(driverBRow).toBeUndefined();
       }
     } finally {
@@ -649,11 +660,12 @@ describe('WI-068 — DVA auto-reset + Add-to-Trip in-flight gate', () => {
         distributorId, driverId, assignmentDate: TEST_DATE, userId: 'test-user',
       });
       throw new Error('Should have thrown NO_ACTIVE_TRIP');
-    } catch (err: any) {
+    } catch (err) {
       expect(err).toBeInstanceOf(PreflightError);
-      expect(err.code).toBe('NO_ACTIVE_TRIP');
-      expect(err.statusCode).toBe(409);
-      expect(err.message).toMatch(/in transit/i);
+      const pfErr = err as PreflightError;
+      expect(pfErr.code).toBe('NO_ACTIVE_TRIP');
+      expect(pfErr.statusCode).toBe(409);
+      expect(pfErr.message).toMatch(/in transit/i);
     } finally {
       await teardown(newIds, [dva.id]);
     }
@@ -681,7 +693,7 @@ describe('WI-069 — /in-transit excludes stale DVAs (0 in-flight orders)', () =
     const { generateToken } = await import('./helpers.js');
     sharmaToken = generateToken({
       userId: sharma.id, email: sharma.email,
-      role: sharma.role as any, distributorId: sharma.distributorId,
+      role: sharma.role as UserRole, distributorId: sharma.distributorId,
     });
   });
 
@@ -760,7 +772,7 @@ describe('WI-069 — /in-transit excludes stale DVAs (0 in-flight orders)', () =
 
       expect(res.status).toBe(200);
       const drivers = res.body.data.drivers;
-      const row = drivers.find((d: any) => d.driverId === driverId);
+      const row = drivers.find((d: InTransitDriverRow) => d.driverId === driverId);
       expect(row).toBeUndefined();
     } finally {
       await teardown([d1, d2], [dva.id]);
@@ -782,7 +794,7 @@ describe('WI-069 — /in-transit excludes stale DVAs (0 in-flight orders)', () =
 
       expect(res.status).toBe(200);
       const drivers = res.body.data.drivers;
-      const row = drivers.find((d: any) => d.driverId === driverId);
+      const row = drivers.find((d: InTransitDriverRow) => d.driverId === driverId);
       expect(row).toBeDefined();
       expect(row.inTransitCount).toBe(1);
       expect(row.deliveredCount).toBeGreaterThanOrEqual(1);

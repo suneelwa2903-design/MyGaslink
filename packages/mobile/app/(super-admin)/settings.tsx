@@ -112,7 +112,7 @@ export default function SettingsScreen() {
   );
   const settings: SettingItem[] = Array.isArray(settingsRaw)
     ? settingsRaw
-    : (settingsRaw as any)?.settings ?? [];
+    : settingsRaw?.settings ?? [];
 
   // ─ GST credentials
   const { data: gstRaw, isLoading: gstLoading, refetch: refetchGst } = useApiQuery<
@@ -123,7 +123,8 @@ export default function SettingsScreen() {
     {},
     { enabled: tab === 'gst' },
   );
-  const gst: GstCredentials = (gstRaw as any)?.credentials ?? gstRaw ?? {};
+  const gst: Partial<GstCredentials> =
+    (gstRaw && 'credentials' in gstRaw ? gstRaw.credentials : gstRaw) ?? {};
 
   // ─ Cylinder thresholds
   const { data: thresholdsRaw, isLoading: thresholdsLoading, refetch: refetchThresholds } = useApiQuery<
@@ -136,7 +137,7 @@ export default function SettingsScreen() {
   );
   const thresholds: CylinderThreshold[] = Array.isArray(thresholdsRaw)
     ? thresholdsRaw
-    : (thresholdsRaw as any)?.thresholds ?? [];
+    : thresholdsRaw?.thresholds ?? [];
 
   // ─ Licenses
   const { data: licensesRaw, isLoading: licensesLoading, refetch: refetchLicenses } = useApiQuery<
@@ -149,7 +150,7 @@ export default function SettingsScreen() {
   );
   const licenses: License[] = Array.isArray(licensesRaw)
     ? licensesRaw
-    : (licensesRaw as any)?.licenses ?? [];
+    : licensesRaw?.licenses ?? [];
 
   const handleRefresh = useCallback(() => {
     if (tab === 'general') refetchSettings();

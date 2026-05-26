@@ -21,6 +21,8 @@ const preflightDispatchSchema = z.object({
   assignmentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 // GET /api/orders
@@ -29,7 +31,9 @@ router.get('/',
   validateQuery(orderFilterSchema),
   async (req, res) => {
     try {
-      const filters = { ...((req.validated?.query || req.query) as any) };
+      const filters = {
+        ...(req.validated?.query ?? req.query),
+      } as Parameters<typeof orderService.listOrders>[1] & { driverId?: string };
 
       // Driver role auto-scoping. The Driver model has no user_id FK — the
       // convention (mirrored in driversVehicles.ts /me/* endpoints) is to
@@ -74,8 +78,9 @@ router.post('/returns-only',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -96,8 +101,9 @@ router.post('/from-cancelled-stock',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -189,8 +195,9 @@ router.get('/in-transit',
       ).filter((r): r is NonNullable<typeof r> => r !== null);
 
       return sendSuccess(res, { drivers: rows });
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -222,8 +229,9 @@ router.post('/',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -239,8 +247,9 @@ router.put('/:id',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendSuccess(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -260,8 +269,9 @@ router.put('/:id/status',
         req.body.status, req.body.notes
       );
       return sendSuccess(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -278,8 +288,9 @@ router.post('/:id/assign-driver',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendSuccess(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -295,8 +306,9 @@ router.post('/bulk-assign-driver',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendSuccess(res, results);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -324,11 +336,12 @@ router.post('/preflight-dispatch',
       // overloading 200. Pure success or pure failure still gets 200.
       const status = result.summary.failed > 0 && result.summary.succeeded > 0 ? 207 : 200;
       return res.status(status).json({ success: true, data: result, error: null });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof PreflightError) {
         return sendError(res, err.message, err.statusCode, err.code);
       }
-      return sendError(res, err.message, err.statusCode || 500);
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -352,11 +365,12 @@ router.post('/preflight-add-to-trip',
       });
       const status = result.summary.failed > 0 && result.summary.succeeded > 0 ? 207 : 200;
       return res.status(status).json({ success: true, data: result, error: null });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof PreflightError) {
         return sendError(res, err.message, err.statusCode, err.code);
       }
-      return sendError(res, err.message, err.statusCode || 500);
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -378,11 +392,12 @@ router.get('/trip-sheet/:assignmentId',
         `inline; filename="trip-sheet-${assignmentId.substring(0, 8)}.pdf"`,
       );
       return res.send(pdf);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof TripSheetError) {
         return sendError(res, err.message, err.statusCode);
       }
-      return sendError(res, err.message, err.statusCode || 500);
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -398,8 +413,9 @@ router.post('/:id/confirm-delivery',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendSuccess(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -420,8 +436,9 @@ router.post('/:id/resolve-dispute',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body,
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -437,8 +454,9 @@ router.post('/:id/cancel',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body.reason
       );
       return sendSuccess(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -454,8 +472,9 @@ router.post('/:id/confirm-returns',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendSuccess(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );

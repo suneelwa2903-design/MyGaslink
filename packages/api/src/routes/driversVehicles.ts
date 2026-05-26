@@ -77,6 +77,8 @@ async function resolveEffectiveTripNumber(
   return prev?.tripNumber ?? latestTripNumber;
 }
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 // We export two routers: one for drivers, one for vehicles
 const driverRouter = Router();
 const vehicleRouter = Router();
@@ -222,8 +224,9 @@ driverRouter.post('/assignments',
         req.user!.distributorId!, req.body
       );
       return sendCreated(res, mapAssignment(assignment));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -240,8 +243,9 @@ driverRouter.put('/assignments/:id/status',
         param(req.params.id), req.user!.distributorId!, req.body.status
       );
       return sendSuccess(res, mapAssignment(assignment));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -321,7 +325,7 @@ driverRouter.get('/me/assignment',
         orderBy: { createdAt: 'asc' },
       });
 
-      const mapped = mapAssignment(assignment);
+      const mapped = mapAssignment(assignment)!;
       // WI-096: surface the effective trip so the header matches the orders
       // shown (avoids "Trip #N" with the previous trip's deliveries).
       mapped.tripNumber = effectiveTrip;
@@ -615,7 +619,7 @@ driverRouter.get('/me/trip-sheet-pdf',
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="trip-sheet-${assignment.id.substring(0, 8)}.pdf"`);
         return res.send(pdf);
-      } catch (svcErr: any) {
+      } catch (svcErr: unknown) {
         // WI-063 follow-up — map inner TripSheetError to a clean 404 for
         // the driver-scoped wrapper. The service throws 400 with
         // "No EWB available for trip sheet — no orders on this route
@@ -628,8 +632,9 @@ driverRouter.get('/me/trip-sheet-pdf',
         }
         throw svcErr;
       }
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -730,9 +735,10 @@ vehicleRouter.post('/',
     try {
       const vehicle = await vehicleService.createVehicle(req.user!.distributorId!, req.body);
       return sendCreated(res, mapVehicle(vehicle));
-    } catch (err: any) {
-      if (err.code === 'P2002') return sendError(res, 'Vehicle number already exists', 409);
-      return sendError(res, err.message);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.code === 'P2002') return sendError(res, 'Vehicle number already exists', 409);
+      return sendError(res, e.message);
     }
   }
 );

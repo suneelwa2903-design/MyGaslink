@@ -16,6 +16,7 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { loginAsDistAdmin, generateToken } from './helpers.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
 
 let app: Express;
 let dist1Token: string;   // owns the fixture invoice (dist-001)
@@ -33,7 +34,7 @@ beforeAll(async () => {
 
   const sharma = await prisma.user.findUniqueOrThrow({ where: { email: 'sharma@gasdist.com' } });
   dist2Token = generateToken({
-    userId: sharma.id, email: sharma.email, role: sharma.role as any, distributorId: sharma.distributorId,
+    userId: sharma.id, email: sharma.email, role: sharma.role as UserRole, distributorId: sharma.distributorId,
   });
 
   const customer = await prisma.customer.findFirstOrThrow({
@@ -86,7 +87,7 @@ describe('#30 — GET /invoices/:id/gst-documents tenant isolation', () => {
       .set(auth(dist1Token));
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.data)).toBe(true);
-    expect(res.body.data.some((d: any) => d.ewbNo === '999999999999')).toBe(true);
+    expect(res.body.data.some((d: { ewbNo: string }) => d.ewbNo === '999999999999')).toBe(true);
   });
 
   it('❌ cross-tenant (dist-002) gets 404, not the other tenant\'s GST docs', async () => {

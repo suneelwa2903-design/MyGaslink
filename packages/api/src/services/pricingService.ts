@@ -1,3 +1,4 @@
+import type { $Enums } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 
 // Get all active pricing tiers
@@ -11,7 +12,7 @@ export async function listPricingTiers() {
 // Get pricing for a specific plan
 export async function getPricingByPlan(plan: string) {
   return prisma.pricingTier.findUnique({
-    where: { plan: plan as any },
+    where: { plan: plan as $Enums.SubscriptionPlan },
   });
 }
 

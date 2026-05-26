@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useAuthStore } from '../../src/stores/authStore';
+import type { UserProfile } from '@gaslink/shared';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
 
 const ACCENT = ACCENT_COLORS.red;
@@ -70,6 +71,8 @@ interface GstSettings {
     username?: string;
   } | null;
 }
+
+type AuthUserWithDistributor = UserProfile & { distributorName?: string };
 
 interface UserRecord {
   userId: string;
@@ -445,7 +448,15 @@ function CustomersModal({
   );
   const customers: Customer[] = customersResponse?.customers ?? [];
 
-  const createMutation = useApiMutation<Customer, any>(
+  const createMutation = useApiMutation<Customer, {
+    customerName: string;
+    businessName?: string;
+    phone: string;
+    email?: string;
+    gstin?: string;
+    customerType: 'B2B' | 'B2C';
+    creditPeriodDays?: number;
+  }>(
     'post',
     '/customers',
     {
@@ -458,7 +469,7 @@ function CustomersModal({
     },
   );
 
-  const stopSupplyMutation = useApiMutation<any, { id: string }>(
+  const stopSupplyMutation = useApiMutation<Customer, { id: string }>(
     'post',
     (vars) => `/customers/${vars.id}/stop-supply`,
     {
@@ -467,7 +478,7 @@ function CustomersModal({
     },
   );
 
-  const resumeSupplyMutation = useApiMutation<any, { id: string }>(
+  const resumeSupplyMutation = useApiMutation<Customer, { id: string }>(
     'post',
     (vars) => `/customers/${vars.id}/resume-supply`,
     {
@@ -844,7 +855,7 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
     { enabled: visible },
   );
 
-  const createDriverMutation = useApiMutation<Driver, any>('post', '/drivers', {
+  const createDriverMutation = useApiMutation<Driver, { driverName: string; phone: string; licenseNumber?: string }>('post', '/drivers', {
     invalidateKeys: [['drivers']],
     successMessage: 'Driver added',
     onSuccess: () => {
@@ -855,7 +866,7 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
     },
   });
 
-  const createVehicleMutation = useApiMutation<Vehicle, any>('post', '/vehicles', {
+  const createVehicleMutation = useApiMutation<Vehicle, { vehicleNumber: string; vehicleType: string; capacity?: number }>('post', '/vehicles', {
     invalidateKeys: [['vehicles']],
     successMessage: 'Vehicle added',
     onSuccess: () => {
@@ -1109,10 +1120,25 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
 // COLLECTIONS MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
+interface CollectionRecent {
+  id?: string;
+  customerName?: string;
+  date?: string;
+  amount?: number;
+}
+
+interface CollectionsData {
+  totalCollected?: number;
+  totalPending?: number;
+  collectionRate?: number;
+  overdue?: number;
+  recent?: CollectionRecent[];
+}
+
 function CollectionsModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  const { data: collections, isLoading, refetch } = useApiQuery<any>(
+  const { data: collections, isLoading, refetch } = useApiQuery<CollectionsData>(
     ['collections'],
     '/analytics/collections',
     undefined,
@@ -1172,7 +1198,7 @@ function CollectionsModal({ visible, onClose }: { visible: boolean; onClose: () 
                     borderWidth: 1, borderColor: theme.cardBorder, overflow: 'hidden',
                   }}
                 >
-                  {collections.recent.map((c: any, i: number) => (
+                  {collections.recent.map((c: CollectionRecent, i: number) => (
                     <View key={c.id || i}>
                       {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
                       <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 12, alignItems: 'center' }}>
@@ -1314,7 +1340,7 @@ function ReportsModal({ visible, onClose }: { visible: boolean; onClose: () => v
   const theme = useMoreTheme();
   const [activeTab, setActiveTab] = useState(0);
 
-  const { data: metrics, isLoading } = useApiQuery<any>(
+  const { data: metrics, isLoading } = useApiQuery<HeaderMetrics>(
     ['analytics-reports'],
     '/analytics/header-metrics',
     undefined,
@@ -1505,12 +1531,17 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
     setInitialized(false);
   }
 
-  const modeMutation = useApiMutation<any, { mode: string }>('put', '/settings/gst/mode', {
+  const modeMutation = useApiMutation<GstSettings, { mode: string }>('put', '/settings/gst/mode', {
     invalidateKeys: [['gst-settings']],
     successMessage: 'GST mode updated',
   });
 
-  const credentialsMutation = useApiMutation<any, any>('put', '/settings/gst/credentials', {
+  const credentialsMutation = useApiMutation<GstSettings, {
+    gstin: string;
+    clientId?: string;
+    clientSecret?: string;
+    username?: string;
+  }>('put', '/settings/gst/credentials', {
     invalidateKeys: [['gst-settings']],
     successMessage: 'GST credentials saved',
   });
@@ -1645,10 +1676,19 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
 // CYLINDER PRICES MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
+interface CylinderPriceRow {
+  id?: string;
+  cylinderType?: string;
+  name?: string;
+  weight?: number;
+  price?: number;
+  sellingPrice?: number;
+}
+
 function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  const { data: prices, isLoading, refetch } = useApiQuery<any[]>(
+  const { data: prices, isLoading, refetch } = useApiQuery<CylinderPriceRow[]>(
     ['cylinder-prices'],
     '/cylinder-types/prices/list',
     undefined,
@@ -1691,7 +1731,7 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
                   <Text style={{ fontSize: 13, color: theme.textMuted }}>No prices configured</Text>
                 </View>
               )}
-              {prices?.map((p: any, i: number) => (
+              {prices?.map((p: CylinderPriceRow, i: number) => (
                 <View key={p.id || i}>
                   {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
                   <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 14, alignItems: 'center' }}>
@@ -1721,10 +1761,20 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
 // INVENTORY THRESHOLDS MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
+interface ThresholdRow {
+  id?: string;
+  cylinderType?: string;
+  name?: string;
+  warningThreshold?: number;
+  warning?: number;
+  criticalThreshold?: number;
+  critical?: number;
+}
+
 function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  const { data: thresholds, isLoading, refetch } = useApiQuery<any[]>(
+  const { data: thresholds, isLoading, refetch } = useApiQuery<ThresholdRow[]>(
     ['inventory-thresholds'],
     '/settings/cylinder-thresholds/list',
     undefined,
@@ -1770,7 +1820,7 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
                   <Text style={{ fontSize: 13, color: theme.textMuted }}>No thresholds configured</Text>
                 </View>
               )}
-              {thresholds?.map((t: any, i: number) => (
+              {thresholds?.map((t: ThresholdRow, i: number) => (
                 <View key={t.id || i}>
                   {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
                   <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 14, alignItems: 'center' }}>
@@ -1828,7 +1878,13 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
   );
   const users: UserRecord[] = usersResponse?.users ?? [];
 
-  const createMutation = useApiMutation<any, any>('post', '/users', {
+  const createMutation = useApiMutation<UserRecord, {
+    firstName: string;
+    lastName: string;
+    email: string;
+    password: string;
+    role: string;
+  }>('post', '/users', {
     invalidateKeys: [['users']],
     successMessage: 'User created successfully',
     onSuccess: () => {
@@ -2002,7 +2058,10 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
 export default function AdminMoreScreen() {
   const router = useRouter();
   const theme = useMoreTheme();
-  const { user, logout } = useAuthStore();
+  const { user: authUser, logout } = useAuthStore();
+  // The auth profile may carry a `distributorName` the backend attaches but the
+  // shared UserProfile type doesn't declare; model it as an optional extension.
+  const user: AuthUserWithDistributor | null = authUser;
 
   // Modal visibility state
   const [showCustomers, setShowCustomers] = useState(false);
@@ -2089,8 +2148,8 @@ export default function AdminMoreScreen() {
                     label={user?.role?.replace(/_/g, ' ') || 'user'}
                     color="#3b82f6"
                   />
-                  {(user as any)?.distributorName && (
-                    <StatusBadge label={(user as any).distributorName} color="#8b5cf6" />
+                  {user?.distributorName && (
+                    <StatusBadge label={user.distributorName} color="#8b5cf6" />
                   )}
                 </View>
               </View>

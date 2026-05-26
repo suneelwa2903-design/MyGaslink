@@ -9,6 +9,12 @@
 
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
+import type {
+  AuthResponse,
+  EwbErrorBody,
+  NicError,
+  WhiteBooksEnvelope,
+} from './nicTypes.js';
 
 const SANDBOX_BASE = 'https://apisandbox.whitebooks.in';
 const PROD_BASE = 'https://api.whitebooks.in';
@@ -225,7 +231,7 @@ async function doAuthFetch(
   logger.info('WhiteBooks auth request', { distributorId, scope, url: `${creds.baseUrl}${endpoint}` });
 
   const res = await fetch(`${creds.baseUrl}${endpoint}`, { method: 'GET', headers });
-  const json = await res.json() as any;
+  const json = await res.json() as AuthResponse;
 
   // WhiteBooks returns "Sucess" (their typo) or "1" for success
   const isSuccess = json.status_cd === '1' || json.status_cd === 1 ||
@@ -341,11 +347,11 @@ export interface ApiCallContext {
  * non-cancel calls; cancel calls always retry the real NIC call (see the
  * comment on the guard).
  */
-export async function apiCall<T = any>(
+export async function apiCall<T = unknown>(
   distributorId: string | null,
   method: 'GET' | 'POST',
   path: string,
-  body?: any,
+  body?: unknown,
   scope: 'einvoice' | 'ewaybill' = 'einvoice',
   context?: ApiCallContext
 ): Promise<T> {
@@ -374,7 +380,7 @@ export async function apiCall<T = any>(
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const json = await res.json() as any;
+  const json = await res.json() as WhiteBooksEnvelope;
 
   const apiSuccess = json.status_cd === '1' || json.status_cd === 1 ||
     json.status_cd === 'Sucess' || json.status_cd === 'Success';
@@ -386,10 +392,10 @@ export async function apiCall<T = any>(
     // Try parsing IRN-style errors from status_desc
     if (typeof json.status_desc === 'string') {
       try {
-        const errors = JSON.parse(json.status_desc);
+        const errors = JSON.parse(json.status_desc) as NicError[];
         if (Array.isArray(errors) && errors.length > 0) {
           errorCode = errors[0].ErrorCode || '';
-          errorMessage = errors.map((e: any) => `[${e.ErrorCode}] ${e.ErrorMessage}`).join('; ');
+          errorMessage = errors.map((e) => `[${e.ErrorCode}] ${e.ErrorMessage}`).join('; ');
         }
       } catch {
         // Not JSON, use as-is
@@ -399,7 +405,7 @@ export async function apiCall<T = any>(
     // Try parsing EWB-style errors from error.message
     if (json.error?.message && typeof json.error.message === 'string') {
       try {
-        const errObj = JSON.parse(json.error.message);
+        const errObj = JSON.parse(json.error.message) as EwbErrorBody;
         if (errObj.errorCodes) errorCode = String(errObj.errorCodes).replace(/,+$/, '').trim();
         if (errObj.message) errorMessage = errObj.message;
       } catch {
@@ -463,7 +469,7 @@ export async function apiCall<T = any>(
 
       if (newToken !== 'no-token-needed') headers['auth-token'] = newToken;
       const retryRes = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
-      const retryJson = await retryRes.json() as any;
+      const retryJson = await retryRes.json() as WhiteBooksEnvelope;
       const retryOk = retryJson.status_cd === '1' || retryJson.status_cd === 1 || retryJson.status_cd === 'Sucess' || retryJson.status_cd === 'Success';
       if (retryOk) {
         return retryJson as T;
@@ -475,10 +481,10 @@ export async function apiCall<T = any>(
       let retryMsg = retryJson.status_desc || retryJson.error?.message || errorMessage;
       if (typeof retryJson.status_desc === 'string') {
         try {
-          const errs = JSON.parse(retryJson.status_desc);
+          const errs = JSON.parse(retryJson.status_desc) as NicError[];
           if (Array.isArray(errs) && errs.length > 0) {
             retryCode = errs[0].ErrorCode || '';
-            retryMsg = errs.map((e: any) => `[${e.ErrorCode}] ${e.ErrorMessage}`).join('; ');
+            retryMsg = errs.map((e) => `[${e.ErrorCode}] ${e.ErrorMessage}`).join('; ');
           }
         } catch { /* not JSON */ }
       }
@@ -530,22 +536,24 @@ export async function pingEinvoiceSession(distributorId: string | null, gstin: s
   // (re-establishes the NIC session). Any attempt succeeding ⇒ NIC is alive,
   // return normally. All 3 failing ⇒ a genuine outage (or a >~6s dead window)
   // ⇒ re-throw; probeNicEinvoiceSession maps that to PreflightError 503.
-  let lastErr: any;
+  let lastErr: unknown;
   for (let attempt = 1; attempt <= PROBE_MAX_ATTEMPTS; attempt++) {
     clearTokenCache(distributorId); // fresh auth on every attempt
     try {
-      await apiCall<any>(
+      await apiCall<WhiteBooksEnvelope>(
         distributorId, 'GET',
         `/einvoice/type/GSTNDETAILS/version/V1_03?param1=${gstin}&email=${email}`,
         undefined, 'einvoice',
         { apiType: 'NIC_HEALTH_PROBE' },
       );
       return; // alive — probe passed
-    } catch (err: any) {
+    } catch (err: unknown) {
       lastErr = err;
       if (attempt < PROBE_MAX_ATTEMPTS) {
+        const code = err instanceof GstError ? err.code : undefined;
+        const msg = err instanceof Error ? err.message : String(err);
         logger.warn(`NIC health probe attempt ${attempt}/${PROBE_MAX_ATTEMPTS} failed, retrying in 2s`, {
-          distributorId, code: err?.code, msg: err?.message,
+          distributorId, code, msg,
         });
         await new Promise((r) => setTimeout(r, PROBE_RETRY_DELAY_MS));
       }
@@ -605,7 +613,7 @@ export class GstError extends Error {
    * critical for the generic 5002 case where NIC gives no field hint —
    * we want the un-massaged response body in gst_api_logs.
    */
-  constructor(message: string, public code: string, public response?: any) {
+  constructor(message: string, public code: string, public response?: unknown) {
     super(message);
     this.name = 'GstError';
   }

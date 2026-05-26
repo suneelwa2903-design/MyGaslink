@@ -1,6 +1,6 @@
 import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useDistributorStore } from '../../src/stores/distributorStore';
@@ -50,7 +50,7 @@ export default function MoreScreen() {
       return;
     }
     if (item.route) {
-      router.push(item.route as any);
+      router.push(item.route as Href);
       return;
     }
     // Placeholder for screens not yet implemented

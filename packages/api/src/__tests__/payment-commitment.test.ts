@@ -204,7 +204,7 @@ describe('WI-122 — collections dashboard', () => {
       .set(auth(adminToken));
     expect(res.status).toBe(200);
 
-    const row = res.body.data.find((c: any) => c.customerId === customerId);
+    const row = res.body.data.find((c: { customerId: string }) => c.customerId === customerId);
     expect(row).toBeDefined();
     // Ledger overdue, not the status flag (no invoice is status='overdue').
     expect(row.overdueDue).toBe(OVERDUE_AMOUNT);

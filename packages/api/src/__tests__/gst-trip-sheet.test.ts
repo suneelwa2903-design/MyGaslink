@@ -4,7 +4,7 @@ import request from 'supertest';
 // Mock the WhiteBooks client BEFORE imports below so preflight + the
 // consolidated EWB call both go through the same mock.
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     apiCall: vi.fn(),
@@ -26,6 +26,7 @@ import { prisma } from '../lib/prisma.js';
 import { generateToken, getOrCreateTestVehicle } from './helpers.js';
 import * as whitebooksClient from '../services/gst/whitebooksClient.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
 
 // WI-090: dedicated test vehicle so teardown never resets the SEEDED
 // dist-002 fleet used by live/manual dispatch testing.
@@ -73,12 +74,12 @@ beforeAll(async () => {
   const sharmaAdmin = await prisma.user.findUniqueOrThrow({ where: { email: 'sharma@gasdist.com' } });
   sharmaAdminToken = generateToken({
     userId: sharmaAdmin.id, email: sharmaAdmin.email,
-    role: sharmaAdmin.role as any, distributorId: sharmaAdmin.distributorId,
+    role: sharmaAdmin.role as UserRole, distributorId: sharmaAdmin.distributorId,
   });
   const bhargavaAdmin = await prisma.user.findUniqueOrThrow({ where: { email: 'bhargava@gasagency.com' } });
   bhargavaAdminToken = generateToken({
     userId: bhargavaAdmin.id, email: bhargavaAdmin.email,
-    role: bhargavaAdmin.role as any, distributorId: bhargavaAdmin.distributorId,
+    role: bhargavaAdmin.role as UserRole, distributorId: bhargavaAdmin.distributorId,
   });
 });
 
@@ -211,7 +212,7 @@ describe('gstPreflightService — consolidated EWB (gencewb) on success', () => 
       // Last call was the gencewb
       const lastCall = apiCallMock.mock.calls[apiCallMock.mock.calls.length - 1];
       expect(String(lastCall[2])).toContain('/ewaybillapi/v1.03/ewayapi/gencewb');
-      const payload = lastCall[3] as any;
+      const payload = lastCall[3] as { tripSheetEwbBills: Array<{ ewbNo: number }> };
       expect(payload.tripSheetEwbBills).toHaveLength(3);
       expect(payload.tripSheetEwbBills[0].ewbNo).toBe(181000100001);
       // Assignment row picked up tripSheetNo
@@ -261,7 +262,7 @@ describe('gstPreflightService — consolidated EWB (gencewb) on success', () => 
       apiCallMock
         .mockResolvedValueOnce(irnSuccessWithEwb('181000300001'))
         .mockResolvedValueOnce(irnSuccessWithEwb('181000300002'))
-        .mockImplementationOnce(() => { const e: any = new Error('gencewb 4001'); e.code = '4001'; throw e; });
+        .mockImplementationOnce(() => { const e = new Error('gencewb 4001') as Error & { code: string }; e.code = '4001'; throw e; });
       const result = await preflightDispatch({
         distributorId: 'dist-002', driverId: ctx.driver.id,
         assignmentDate: today(), userId: 'test-user',

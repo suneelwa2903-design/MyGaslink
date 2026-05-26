@@ -94,7 +94,7 @@ export default function CustomerOrdersScreen() {
   );
   const orders: Order[] = ordersResponse?.orders ?? [];
 
-  const { data: dashboard } = useApiQuery<any>(
+  const { data: dashboard } = useApiQuery<{ outstandingAmount?: number; cylinderTypes?: CylinderType[] }>(
     ['customer-dashboard'],
     '/customer-portal/dashboard',
   );

@@ -6,7 +6,7 @@ import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useDistributorStore } from '../../src/stores/distributorStore';
 import { Card, Badge, Button, EmptyState } from '../../src/components/ui';
-import { useTheme, ACCENT } from '../../src/theme';
+import { useTheme, ACCENT, type ThemeColors } from '../../src/theme';
 import type { Distributor } from '@gaslink/shared';
 
 export default function DistributorsScreen() {
@@ -24,7 +24,7 @@ export default function DistributorsScreen() {
   // API may return { distributors: [...] } or [...] directly — handle both
   const distributors: Distributor[] = Array.isArray(distributorsData)
     ? distributorsData
-    : (distributorsData as any)?.distributors ?? [];
+    : distributorsData?.distributors ?? [];
 
   const filtered = distributors.filter((d) =>
     !search || d.businessName.toLowerCase().includes(search.toLowerCase()) || d.legalName?.toLowerCase().includes(search.toLowerCase()),
@@ -176,7 +176,7 @@ function InfoRow({ label, value, muted, valueColor, colors }: {
   muted?: boolean;
   valueColor?: string;
   dark: boolean;
-  colors: any;
+  colors: ThemeColors;
 }) {
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -190,7 +190,7 @@ function CreateDistributorModal({ visible, onClose, dark, colors }: {
   visible: boolean;
   onClose: () => void;
   dark: boolean;
-  colors: any;
+  colors: ThemeColors;
 }) {
   const [form, setForm] = useState({
     businessName: '', legalName: '', gstin: '', phone: '', email: '', address: '', state: '',
@@ -258,7 +258,7 @@ function FormField({ label, value, onChange, colors, ...props }: {
   value: string;
   onChange: (v: string) => void;
   dark: boolean;
-  colors: any;
+  colors: ThemeColors;
   keyboardType?: 'default' | 'phone-pad' | 'email-address';
   autoCapitalize?: 'none' | 'characters';
   multiline?: boolean;

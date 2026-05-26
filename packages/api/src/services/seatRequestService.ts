@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 
 export async function createSeatRequest(data: {
@@ -21,7 +21,7 @@ export async function createSeatRequest(data: {
 export async function listSeatRequests(distributorId?: string, status?: string) {
   const where: Prisma.SeatRequestWhereInput = {};
   if (distributorId) where.distributorId = distributorId;
-  if (status) where.status = status as any;
+  if (status) where.status = status as $Enums.SeatRequestStatus;
 
   return prisma.seatRequest.findMany({
     where,

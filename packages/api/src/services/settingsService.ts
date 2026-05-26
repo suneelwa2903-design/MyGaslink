@@ -1,3 +1,4 @@
+import type { Prisma, $Enums } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 
 export async function getSettings(distributorId: string) {
@@ -13,7 +14,7 @@ export async function getSetting(distributorId: string, key: string) {
   });
 }
 
-export async function upsertSetting(distributorId: string, key: string, value: any) {
+export async function upsertSetting(distributorId: string, key: string, value: Prisma.InputJsonValue) {
   return prisma.distributorSetting.upsert({
     where: { distributorId_settingKey: { distributorId, settingKey: key } },
     create: { distributorId, settingKey: key, settingValue: value },
@@ -89,7 +90,7 @@ export async function getDistributorGstin(distributorId: string): Promise<string
 export async function updateGstMode(distributorId: string, mode: string) {
   return prisma.distributor.update({
     where: { id: distributorId },
-    data: { gstMode: mode as any },
+    data: { gstMode: mode as $Enums.GstMode },
     select: { id: true, gstMode: true },
   });
 }
@@ -108,11 +109,11 @@ export async function getApprovalWorkflows(distributorId: string) {
   return setting?.settingValue || [];
 }
 
-export async function updateApprovalWorkflows(distributorId: string, workflows: any[]) {
+export async function updateApprovalWorkflows(distributorId: string, workflows: Prisma.InputJsonValue[]) {
   return prisma.distributorSetting.upsert({
     where: { distributorId_settingKey: { distributorId, settingKey: 'approval_workflows' } },
-    create: { distributorId, settingKey: 'approval_workflows', settingValue: workflows as any },
-    update: { settingValue: workflows as any },
+    create: { distributorId, settingKey: 'approval_workflows', settingValue: workflows },
+    update: { settingValue: workflows },
   });
 }
 
@@ -136,7 +137,7 @@ export async function createLicense(distributorId: string, data: {
   return prisma.license.create({
     data: {
       distributorId,
-      licenseType: data.licenseType as any,
+      licenseType: data.licenseType as $Enums.LicenseType,
       licenseName: data.licenseName,
       licenseNumber: data.licenseNumber || null,
       expiryDate: data.expiryDate ? new Date(data.expiryDate) : null,
@@ -145,7 +146,12 @@ export async function createLicense(distributorId: string, data: {
   });
 }
 
-export async function updateLicense(id: string, distributorId: string, data: Record<string, any>) {
+export async function updateLicense(id: string, distributorId: string, data: {
+  licenseName?: string;
+  licenseNumber?: string | null;
+  expiryDate?: string | null;
+  documentUrl?: string | null;
+}) {
   const existing = await prisma.license.findFirst({ where: { id, distributorId } });
   if (!existing) return null;
   return prisma.license.update({

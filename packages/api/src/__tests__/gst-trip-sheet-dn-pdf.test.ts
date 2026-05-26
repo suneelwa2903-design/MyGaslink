@@ -21,6 +21,8 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { generateToken } from './helpers.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
+import type PDFKitCtor from 'pdfkit';
 
 let app: Express;
 let sharmaAdminToken: string;
@@ -42,7 +44,7 @@ beforeAll(async () => {
   sharmaAdminToken = generateToken({
     userId: sharmaAdmin.id,
     email: sharmaAdmin.email,
-    role: sharmaAdmin.role as any,
+    role: sharmaAdmin.role as UserRole,
     distributorId: sharmaAdmin.distributorId,
   });
 
@@ -109,13 +111,15 @@ async function getDriverAndVehicle() {
   return { driver, vehicle };
 }
 
-function spyDrawnStrings(PDFDocument: any) {
+type PDFDoc = InstanceType<typeof PDFKitCtor>;
+
+function spyDrawnStrings(PDFDocument: typeof PDFKitCtor) {
   const drawn: string[] = [];
-  const original = PDFDocument.prototype.text;
-  const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
-    function (this: any, str: any, ...rest: any[]) {
-      if (typeof str === 'string') drawn.push(str);
-      return original.call(this, str, ...rest);
+  const original = PDFDocument.prototype.text as (...args: unknown[]) => PDFDoc;
+  const spy = vi.spyOn(PDFDocument.prototype, 'text').mockImplementation(
+    function (this: PDFDoc, ...args: unknown[]) {
+      if (typeof args[0] === 'string') drawn.push(args[0]);
+      return original.apply(this, args);
     },
   );
   return { drawn, spy };

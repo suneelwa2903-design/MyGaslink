@@ -20,9 +20,10 @@
  *   result for the caller. We log to Winston and swallow.
  */
 
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
-import { apiCall, type ApiCallContext } from './whitebooksClient.js';
+import { apiCall, GstError, type ApiCallContext } from './whitebooksClient.js';
 
 interface LoggedCallArgs<T> {
   distributorId: string | null;
@@ -32,7 +33,7 @@ interface LoggedCallArgs<T> {
   /** Endpoint path WITHOUT the query string — keeps the audit row searchable. */
   endpoint: string;
   /** Full outgoing payload (body). Captured even on failure. */
-  payload: any;
+  payload: unknown;
   /** The actual call (so we don't double-thread args through). */
   call: () => Promise<T>;
 }
@@ -52,17 +53,17 @@ export async function loggedApiCall<T>(args: LoggedCallArgs<T>): Promise<T> {
       latencyMs: Date.now() - started,
     });
     return resp;
-  } catch (err: any) {
+  } catch (err: unknown) {
     // GstError carries the raw NIC response body in `err.response`. Persist
     // it verbatim so the audit row has the un-massaged upstream payload —
     // not just our parsed message string.
     void writeApiLog({
       ...args,
       status: 'failed',
-      response: err?.response ?? null,
+      response: err instanceof GstError ? (err.response ?? null) : null,
       latencyMs: Date.now() - started,
-      errorCode: err?.code,
-      errorMessage: err?.message,
+      errorCode: err instanceof GstError ? err.code : undefined,
+      errorMessage: err instanceof Error ? err.message : String(err),
     });
     throw err;
   }
@@ -75,11 +76,11 @@ export async function loggedApiCall<T>(args: LoggedCallArgs<T>): Promise<T> {
  *   await callWithLog(distributorId, 'POST', path, body, 'einvoice',
  *     { apiType: 'IRN_GENERATE', invoiceId, orderId });
  */
-export async function callWithLog<T = any>(
+export async function callWithLog<T = unknown>(
   distributorId: string | null,
   method: 'GET' | 'POST',
   path: string,
-  body: any,
+  body: unknown,
   scope: 'einvoice' | 'ewaybill',
   context: Required<Pick<ApiCallContext, 'apiType'>> &
     Pick<ApiCallContext, 'invoiceId' | 'orderId'>,
@@ -94,9 +95,9 @@ export async function callWithLog<T = any>(
   });
 }
 
-async function writeApiLog(args: LoggedCallArgs<any> & {
+async function writeApiLog(args: LoggedCallArgs<unknown> & {
   status: 'success' | 'failed';
-  response: any;
+  response: unknown;
   latencyMs: number;
   errorCode?: string;
   errorMessage?: string;
@@ -116,8 +117,11 @@ async function writeApiLog(args: LoggedCallArgs<any> & {
         status: args.status,
         errorCode: args.errorCode ?? null,
         errorMessage: args.errorMessage ?? null,
-        requestPayload: (args.payload ?? {}) as any,
-        responsePayload: (args.response ?? null) as any,
+        requestPayload: (args.payload ?? {}) as Prisma.InputJsonValue,
+        responsePayload:
+          args.response == null
+            ? Prisma.DbNull
+            : (args.response as Prisma.InputJsonValue),
         latencyMs: args.latencyMs,
       },
     });

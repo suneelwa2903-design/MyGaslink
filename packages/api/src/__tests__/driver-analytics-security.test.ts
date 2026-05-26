@@ -23,6 +23,14 @@ import { prisma } from '../lib/prisma.js';
 import { generateToken, loginAsDistAdmin } from './helpers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
+
+/** Shape of a single row from GET /api/analytics/driver-performance. */
+interface DriverPerfRow {
+  driverId: string;
+  driverName: string;
+  totalOrders: number;
+}
 
 const A_PHONE = '9912400001', B_PHONE = '9912400002', E_PHONE = '9912400003';
 const A_EMAIL = 'da-a@test-driver-analytics.local';
@@ -65,7 +73,7 @@ async function seedDriverWithDelivered(opts: {
       },
     });
   }
-  const token = generateToken({ userId: user.id, email: opts.email, role: 'driver' as any, distributorId: opts.distributorId });
+  const token = generateToken({ userId: user.id, email: opts.email, role: 'driver' as UserRole, distributorId: opts.distributorId });
   return { token, driverId: driver.id };
 }
 
@@ -86,7 +94,7 @@ beforeAll(async () => {
   const custUser = await prisma.user.create({
     data: { email: CUST_EMAIL, passwordHash: custHash, firstName: 'DA', lastName: 'Customer', phone: '9912400099', role: 'customer', status: 'active', distributorId: 'dist-001' },
   });
-  customerToken = generateToken({ userId: custUser.id, email: CUST_EMAIL, role: 'customer' as any, distributorId: 'dist-001' });
+  customerToken = generateToken({ userId: custUser.id, email: CUST_EMAIL, role: 'customer' as UserRole, distributorId: 'dist-001' });
 });
 
 afterAll(cleanup);
@@ -108,24 +116,24 @@ describe('WI-094 — driver-performance security/scoping', () => {
   it('✅ date range filter scopes the period', async () => {
     const inRange = await request(app).get(`/api/analytics/driver-performance?dateFrom=${TODAY}&dateTo=${TODAY}`).set(auth(aToken));
     expect(inRange.status).toBe(200);
-    expect(inRange.body.data.find((r: any) => r.driverId === driverAId)?.totalOrders).toBe(2);
+    expect((inRange.body.data as DriverPerfRow[]).find((r) => r.driverId === driverAId)?.totalOrders).toBe(2);
     // A range that excludes today → driver A drops out (total 0 → filtered).
     const outRange = await request(app).get('/api/analytics/driver-performance?dateFrom=2024-01-01&dateTo=2024-01-02').set(auth(aToken));
     expect(outRange.status).toBe(200);
-    expect(outRange.body.data.some((r: any) => r.driverId === driverAId)).toBe(false);
+    expect((outRange.body.data as DriverPerfRow[]).some((r) => r.driverId === driverAId)).toBe(false);
   });
 
   it('❌ driver response contains ONLY their own driverId', async () => {
     const res = await request(app).get('/api/analytics/driver-performance').set(auth(aToken));
-    expect(res.body.data.every((r: any) => r.driverId === driverAId)).toBe(true);
-    expect(res.body.data.some((r: any) => r.driverId === driverBId)).toBe(false);
+    expect((res.body.data as DriverPerfRow[]).every((r) => r.driverId === driverAId)).toBe(true);
+    expect((res.body.data as DriverPerfRow[]).some((r) => r.driverId === driverBId)).toBe(false);
   });
 
   it('❌ cross-tenant — dist-001 driver/admin never see the dist-002 driver', async () => {
     const driverRes = await request(app).get('/api/analytics/driver-performance').set(auth(aToken));
-    expect(driverRes.body.data.some((r: any) => r.driverId === driverEId)).toBe(false);
+    expect((driverRes.body.data as DriverPerfRow[]).some((r) => r.driverId === driverEId)).toBe(false);
     const adminRes = await request(app).get('/api/analytics/driver-performance').set(auth(adminToken));
-    expect(adminRes.body.data.some((r: any) => r.driverId === driverEId)).toBe(false);
+    expect((adminRes.body.data as DriverPerfRow[]).some((r) => r.driverId === driverEId)).toBe(false);
   });
 
   it('❌ customer role is rejected 403', async () => {
@@ -136,7 +144,7 @@ describe('WI-094 — driver-performance security/scoping', () => {
   it('✅ admin gets all drivers unscoped (sees A and B)', async () => {
     const res = await request(app).get('/api/analytics/driver-performance').set(auth(adminToken));
     expect(res.status).toBe(200);
-    expect(res.body.data.some((r: any) => r.driverId === driverAId)).toBe(true);
-    expect(res.body.data.some((r: any) => r.driverId === driverBId)).toBe(true);
+    expect((res.body.data as DriverPerfRow[]).some((r) => r.driverId === driverAId)).toBe(true);
+    expect((res.body.data as DriverPerfRow[]).some((r) => r.driverId === driverBId)).toBe(true);
   });
 });

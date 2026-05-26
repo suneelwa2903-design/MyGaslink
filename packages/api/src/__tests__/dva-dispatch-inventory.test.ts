@@ -15,16 +15,17 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } 
 // global flag controls the throw. Everything else (computeSummaryForDate,
 // recalculateSummariesFromDate) delegates to the actual module.
 vi.mock('../services/inventoryService.js', async (orig) => {
-  const actual: any = await orig();
+  const actual = await orig<typeof import('../services/inventoryService.js')>();
   return {
     ...actual,
-    createInventoryEvent: vi.fn((...args: any[]) => {
-      if ((globalThis as any).__wi106_failEvent) throw new Error('simulated DB error');
+    createInventoryEvent: vi.fn((...args: Parameters<typeof actual.createInventoryEvent>) => {
+      if ((globalThis as typeof globalThis & { __wi106_failEvent?: boolean }).__wi106_failEvent) throw new Error('simulated DB error');
       return actual.createInventoryEvent(...args);
     }),
   };
 });
 
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { getSeedData, loginAsDistAdmin } from './helpers.js';
 import { preflightDispatch } from '../services/gst/gstPreflightService.js';
@@ -48,6 +49,11 @@ let cyl3: { id: string };
 
 function flagOn() { process.env.INVENTORY_DISPATCH_DEBIT = 'true'; }
 function flagOff() { delete process.env.INVENTORY_DISPATCH_DEBIT; }
+
+// N1 toggles a throw inside the mocked createInventoryEvent via a global flag.
+function failEventFlag(v: boolean) {
+  (globalThis as typeof globalThis & { __wi106_failEvent?: boolean }).__wi106_failEvent = v;
+}
 
 let orderSeq = 0;
 function nextOrderNumber(tag: string) { return `WI106-${tag}-${Date.now()}-${orderSeq++}`; }
@@ -78,7 +84,7 @@ async function seedOpening(cylId: string, fulls = OPENING_FULLS, empties = OPENI
 async function mkEvent(cylId: string, eventType: string, fulls: number, empties: number, date = TEST_DATE) {
   return prisma.inventoryEvent.create({
     data: {
-      distributorId: DIST, cylinderTypeId: cylId, eventType: eventType as any,
+      distributorId: DIST, cylinderTypeId: cylId, eventType: eventType as Prisma.InventoryEventCreateInput['eventType'],
       fullsChange: fulls, emptiesChange: empties, eventDate: date, createdBy: 'wi106-test',
     },
   });
@@ -119,8 +125,8 @@ beforeAll(async () => {
   await cleanup();
 });
 
-beforeEach(() => { flagOff(); (globalThis as any).__wi106_failEvent = false; });
-afterEach(async () => { flagOff(); (globalThis as any).__wi106_failEvent = false; await cleanup(); });
+beforeEach(() => { flagOff(); failEventFlag(false); });
+afterEach(async () => { flagOff(); failEventFlag(false); await cleanup(); });
 afterAll(async () => { await cleanup(); });
 
 // ─── REGRESSION (flag OFF) ─────────────────────────────────────────────────
@@ -317,9 +323,9 @@ describe('WI-106 negative — flag ON', () => {
 
   it('N1: dispatch event failure rolls back the whole transition (no status change, no event)', async () => {
     const order = await seedDispatchableOrder(cyl.id, 2, 'N1');
-    (globalThis as any).__wi106_failEvent = true;
+    failEventFlag(true);
     await preflightDispatch({ distributorId: DIST, driverId, assignmentDate: TEST_DATE_STR, userId: adminUserId });
-    (globalThis as any).__wi106_failEvent = false;
+    failEventFlag(false);
     const updated = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
     // transitionToPendingDelivery rolled back; preflight catch reverts to pending_dispatch.
     expect(updated.status).toBe('pending_dispatch');

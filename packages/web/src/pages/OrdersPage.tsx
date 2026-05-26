@@ -356,7 +356,7 @@ export default function OrdersPage() {
                           OrderStatus.PENDING_DISPATCH,
                           OrderStatus.PENDING_DELIVERY,
                           OrderStatus.PREFLIGHT_IN_PROGRESS,
-                        ].includes(order.status as any) && (
+                        ].includes(order.status) && (
                           <button
                             onClick={() => setCancelOrderTarget(order)}
                             className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-red-500"
@@ -1287,7 +1287,7 @@ function AssignmentsTab() {
     driverName: string;
     vehicleNumber: string | null;
     assignmentId: string | null;
-    orders: any[];
+    orders: Order[];
     // WI-065: when this dispatch represents an Add-to-Trip flow, the
     // progress modal hits /preflight-add-to-trip instead of
     // /preflight-dispatch. The two endpoints share the same response
@@ -1298,7 +1298,7 @@ function AssignmentsTab() {
   const { data: pendingOrders, isLoading } = useQuery({
     queryKey: ['pending-orders'],
     queryFn: () =>
-      apiGet<{ orders: any[] }>('/orders', {
+      apiGet<{ orders: Order[] }>('/orders', {
         status: OrderStatus.PENDING_DRIVER_ASSIGNMENT,
         pageSize: 100,
       }),
@@ -1308,7 +1308,7 @@ function AssignmentsTab() {
   const { data: pendingDispatch } = useQuery({
     queryKey: ['pending-dispatch-orders'],
     queryFn: () =>
-      apiGet<{ orders: any[] }>('/orders', {
+      apiGet<{ orders: Order[] }>('/orders', {
         status: OrderStatus.PENDING_DISPATCH,
         pageSize: 100,
       }),
@@ -1391,11 +1391,11 @@ function AssignmentsTab() {
     driverId: string;
     driverName: string;
     vehicleNumber: string | null;
-    orders: any[];
+    orders: Order[];
     totalValue: number;
   }> = [];
   {
-    const byDriver = new Map<string, any[]>();
+    const byDriver = new Map<string, Order[]>();
     for (const order of pendingDispatch?.orders ?? []) {
       if (!order.driverId) continue;
       // WI-065: drivers with an active trip surface in the new "In
@@ -1422,7 +1422,7 @@ function AssignmentsTab() {
     mutationFn: ({ orderId, driverId }: { orderId: string; driverId: string }) =>
       apiPost(`/orders/${orderId}/assign-driver`, { driverId }),
     onSuccess: (_data, vars) => {
-      const order = orders.find((o: any) => o.orderId === vars.orderId);
+      const order = orders.find((o: Order) => o.orderId === vars.orderId);
       const driverName = driverNameById.get(vars.driverId) ?? 'driver';
       toast.success(`${order?.orderNumber ?? 'Order'} assigned to ${driverName}`);
       setSelectedOrderIds((prev) => prev.filter((id) => id !== vars.orderId));
@@ -1456,7 +1456,7 @@ function AssignmentsTab() {
 
   const allSelected = orders.length > 0 && selectedOrderIds.length === orders.length;
   const toggleSelectAll = () => {
-    setSelectedOrderIds(allSelected ? [] : orders.map((o: any) => o.orderId));
+    setSelectedOrderIds(allSelected ? [] : orders.map((o: Order) => o.orderId));
   };
   const toggleSelectOne = (orderId: string) => {
     setSelectedOrderIds((prev) =>
@@ -1471,7 +1471,7 @@ function AssignmentsTab() {
 
   const handleAssignAll = () => {
     if (!bulkDriverId || orders.length === 0) return;
-    bulkAssign.mutate({ orderIds: orders.map((o: any) => o.orderId), driverId: bulkDriverId });
+    bulkAssign.mutate({ orderIds: orders.map((o: Order) => o.orderId), driverId: bulkDriverId });
   };
 
   return (
@@ -1549,7 +1549,7 @@ function AssignmentsTab() {
               </tr>
             </thead>
             <tbody>
-              {orders.map((order: any) => (
+              {orders.map((order: Order) => (
                 <tr key={order.orderId}>
                   <td>
                     <input
@@ -1666,7 +1666,7 @@ function AssignmentsTab() {
                           driverName: d.driverName ?? 'Driver',
                           vehicleNumber: d.vehicleNumber,
                           assignmentId: d.assignmentId,
-                          orders: (pendingDispatch?.orders ?? []).filter((o: any) => o.driverId === d.driverId),
+                          orders: (pendingDispatch?.orders ?? []).filter((o: Order) => o.driverId === d.driverId),
                           mode: 'add_to_trip',
                         })}
                       >
@@ -1764,7 +1764,7 @@ type DispatchDriverContext = {
   driverName: string;
   vehicleNumber: string | null;
   assignmentId: string | null;
-  orders: any[];
+  orders: Order[];
   // WI-065: 'add_to_trip' → POST /preflight-add-to-trip (keep trip
   // number, dispatch only new orders). Anything else / undefined →
   // POST /preflight-dispatch (start a new trip).

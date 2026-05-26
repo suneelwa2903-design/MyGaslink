@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 import { BILLING_GRACE_PERIOD_DAYS } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
 import * as pendingActionsService from './pendingActionsService.js';
@@ -23,8 +23,8 @@ export async function listBillingCycles(
       ? filters.status.split(',').map(s => s.trim())
       : [filters.status];
     where.billingStatus = statuses.length === 1
-      ? (statuses[0] as any)
-      : { in: statuses as any };
+      ? (statuses[0] as $Enums.BillingStatus)
+      : { in: statuses as $Enums.BillingStatus[] };
   }
 
   const page = filters.page || 1;
@@ -224,7 +224,7 @@ export async function generateBillingCycle(
 
   // Customer portal users billing
   const customerPortalCount = await prisma.user.count({
-    where: { distributorId, role: 'customer' as any, status: 'active', deletedAt: null },
+    where: { distributorId, role: 'customer', status: 'active', deletedAt: null },
   });
   if (customerPortalCount > 0) {
     const portalAmount = customerPortalPrice * customerPortalCount * multiplier;
@@ -293,7 +293,7 @@ export async function generateBillingCycle(
     const discountAmount = subtotalExclGst * periodDiscount / 100;
     const discountGst = discountAmount * gstRate / 100;
     items.push({
-      itemType: 'period_discount' as any,
+      itemType: 'period_discount',
       description: `${data.periodType} discount (${periodDiscount}% off)`,
       quantity: 1,
       unitPriceExclGst: -discountAmount,
@@ -314,7 +314,7 @@ export async function generateBillingCycle(
   return prisma.billingCycle.create({
     data: {
       distributorId,
-      periodType: data.periodType as any,
+      periodType: data.periodType as $Enums.BillingPeriodType,
       periodStartDate: new Date(data.periodStartDate),
       periodEndDate: new Date(data.periodEndDate),
       billingStatus: 'invoice_generated',
@@ -356,7 +356,7 @@ export async function addBillingItem(
     const item = await tx.billingItem.create({
       data: {
         billingCycleId: cycleId,
-        itemType: data.itemType as any,
+        itemType: data.itemType as $Enums.BillingItemType,
         description: data.description,
         quantity: data.quantity,
         unitPriceExclGst: data.unitPriceExclGst,
@@ -486,14 +486,14 @@ export async function checkBillingExpiryAndCreatePendingActions() {
       where: {
         distributorId: cycle.distributorId,
         actionType: 'billing_renewal',
-        status: 'open' as any,
+        status: 'open',
       },
     });
 
     if (!existingAction) {
       const endDate = cycle.periodEndDate.toISOString().split('T')[0];
       await pendingActionsService.createPendingAction(cycle.distributorId, {
-        module: 'billing' as any,
+        module: 'billing',
         entityType: 'billing_cycle',
         entityId: cycle.id,
         actionType: 'billing_renewal',

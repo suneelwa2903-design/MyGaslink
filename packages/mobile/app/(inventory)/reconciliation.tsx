@@ -6,11 +6,26 @@ import { Card, Badge, Button, MetricCard } from '../../src/components/ui';
 import { useTheme } from '../../src/theme';
 import type { CancelledStock } from '@gaslink/shared';
 
+interface PendingReconItem {
+  cylinderTypeName?: string;
+  fullCount?: number;
+  emptyCount?: number;
+}
+
+interface PendingReconVehicle {
+  vehicleId: string;
+  assignmentId?: string;
+  vehicleNumber?: string;
+  vehicleName?: string;
+  driverName?: string;
+  pendingItems?: PendingReconItem[];
+}
+
 export default function ReconciliationScreen() {
   const { dark, colors, accent } = useTheme();
 
   // Pending reconciliation vehicles
-  const { data: pendingVehicles, isLoading: pendingLoading, refetch: refetchPending } = useApiQuery<any[]>(
+  const { data: pendingVehicles, isLoading: pendingLoading, refetch: refetchPending } = useApiQuery<PendingReconVehicle[]>(
     ['pending-reconciliation'],
     '/delivery/reconciliation/pending',
   );
@@ -72,10 +87,10 @@ export default function ReconciliationScreen() {
             </View>
           </Card>
         ) : (
-          pendingVehicles?.map((vehicle: any) => {
+          pendingVehicles?.map((vehicle: PendingReconVehicle) => {
             // Compute totals for summary row
-            const totalFulls = vehicle.pendingItems?.reduce((s: number, item: any) => s + (item.fullCount ?? 0), 0) ?? 0;
-            const totalEmpties = vehicle.pendingItems?.reduce((s: number, item: any) => s + (item.emptyCount ?? 0), 0) ?? 0;
+            const totalFulls = vehicle.pendingItems?.reduce((s: number, item: PendingReconItem) => s + (item.fullCount ?? 0), 0) ?? 0;
+            const totalEmpties = vehicle.pendingItems?.reduce((s: number, item: PendingReconItem) => s + (item.emptyCount ?? 0), 0) ?? 0;
 
             return (
               <Card key={vehicle.vehicleId || vehicle.assignmentId}>
@@ -113,7 +128,7 @@ export default function ReconciliationScreen() {
                 {/* Stock Detail */}
                 {vehicle.pendingItems && (
                   <View style={{ backgroundColor: dark ? colors.inputBg : '#f8fafc', borderRadius: 10, padding: 12, gap: 4, marginBottom: 10 }}>
-                    {vehicle.pendingItems.map((item: any, i: number) => (
+                    {vehicle.pendingItems.map((item: PendingReconItem, i: number) => (
                       <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                         <Text style={{ fontSize: 13, color: colors.textSecondary }}>{item.cylinderTypeName}</Text>
                         <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>

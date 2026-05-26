@@ -5,9 +5,12 @@ import { HiOutlineArrowDownTray, HiOutlineDocumentArrowDown } from 'react-icons/
 import { api, apiGet, getErrorMessage } from '@/lib/api';
 import { Button, Select, Loader, EmptyState } from '@/components/ui';
 
+type ReportCellValue = string | number | null;
+type LineChartData = { x: string; y: number }[];
+type BarChartData = { labels: string[]; series: { name: string; values: number[] }[] };
 interface ReportColumn { key: string; label: string; money?: boolean }
-interface ReportChart { type: 'line' | 'bar'; title: string; data: any }
-interface ReportResult { columns: ReportColumn[]; rows: Record<string, any>[]; totals?: Record<string, any>; chart?: ReportChart }
+interface ReportChart { type: 'line' | 'bar'; title: string; data: LineChartData | BarChartData }
+interface ReportResult { columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue>; chart?: ReportChart }
 
 type FilterKey = 'cylinderType' | 'driver' | 'customer';
 interface ReportDef { key: string; label: string; filters: FilterKey[]; customerRequired?: boolean }
@@ -21,8 +24,8 @@ const REPORTS: ReportDef[] = [
   { key: 'customer-statement', label: 'Customer Statement', filters: ['customer'], customerRequired: true },
 ];
 
-const fmtMoney = (v: any) => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
-const isOverdueRow = (r: Record<string, any>) => Number(r.b31_60 || 0) > 0 || Number(r.b60plus || 0) > 0;
+const fmtMoney = (v: ReportCellValue | undefined) => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const isOverdueRow = (r: Record<string, ReportCellValue>) => Number(r.b31_60 || 0) > 0 || Number(r.b60plus || 0) > 0;
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function monthAgoStr() { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 10); }
@@ -206,13 +209,15 @@ function ReportChartView({ chart }: { chart: ReportChart }) {
   return (
     <div className="card p-4">
       <h3 className="font-semibold text-surface-900 dark:text-white mb-3">{chart.title}</h3>
-      {chart.type === 'line' ? <LineChart data={chart.data} /> : <StackedBarChart data={chart.data} />}
+      {chart.type === 'line'
+        ? <LineChart data={chart.data as LineChartData} />
+        : <StackedBarChart data={chart.data as BarChartData} />}
     </div>
   );
 }
 
 // Minimal dependency-free SVG line chart for { x, y }[]
-function LineChart({ data }: { data: { x: string; y: number }[] }) {
+function LineChart({ data }: { data: LineChartData }) {
   if (!data?.length) return <p className="text-sm text-surface-400">No data</p>;
   const W = 720, H = 200, pad = 32;
   const max = Math.max(...data.map((d) => d.y), 1);
@@ -237,7 +242,7 @@ function LineChart({ data }: { data: { x: string; y: number }[] }) {
 }
 
 // Minimal stacked bar chart for { labels:[], series:[{name, values:[]}] }
-function StackedBarChart({ data }: { data: { labels: string[]; series: { name: string; values: number[] }[] } }) {
+function StackedBarChart({ data }: { data: BarChartData }) {
   const colors = ['fill-brand-500', 'fill-amber-400', 'fill-danger-500'];
   if (!data?.labels?.length) return <p className="text-sm text-surface-400">No data</p>;
   const totals = data.labels.map((_, i) => data.series.reduce((s, ser) => s + (ser.values[i] || 0), 0));

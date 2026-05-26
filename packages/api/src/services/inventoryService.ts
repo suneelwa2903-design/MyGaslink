@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient, $Enums } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
 
@@ -32,7 +32,7 @@ export async function createInventoryEvent(
     data: {
       distributorId: data.distributorId,
       cylinderTypeId: data.cylinderTypeId,
-      eventType: data.eventType as any,
+      eventType: data.eventType as $Enums.InventoryEventType,
       fullsChange: data.fullsChange,
       emptiesChange: data.emptiesChange,
       eventDate: data.eventDate,
@@ -521,8 +521,8 @@ export async function getCancelledStock(
   distributorId: string,
   filters: { status?: string; vehicleId?: string; driverId?: string }
 ) {
-  const where: any = { distributorId };
-  if (filters.status) where.status = filters.status as any;
+  const where: Prisma.CancelledStockEventWhereInput = { distributorId };
+  if (filters.status) where.status = filters.status as $Enums.CancelledStockStatus;
   if (filters.vehicleId) where.vehicleId = filters.vehicleId;
   if (filters.driverId) where.driverId = filters.driverId;
 
@@ -588,7 +588,7 @@ export async function checkThresholds(distributorId: string) {
  * Get customer inventory balances.
  */
 export async function getCustomerBalances(distributorId: string, customerId?: string) {
-  const where: any = {};
+  const where: Prisma.CustomerInventoryBalanceWhereInput = {};
   if (customerId) where.customerId = customerId;
   // Filter by distributor through customer relation
   where.customer = { distributorId, deletedAt: null };
@@ -857,13 +857,13 @@ export async function getDepotHistory(
   const pageSize = Math.min(filters.pageSize ?? 20, 100);
   const skip = (page - 1) * pageSize;
 
-  const where: any = {
+  const where: Prisma.InventoryEventWhereInput = {
     distributorId,
-    eventType: { in: ['incoming_fulls', 'outgoing_empties'] as any },
+    eventType: { in: ['incoming_fulls', 'outgoing_empties'] },
   };
 
   if (filters.eventType) {
-    where.eventType = filters.eventType as any;
+    where.eventType = filters.eventType as $Enums.InventoryEventType;
   }
 
   if (filters.dateFrom || filters.dateTo) {

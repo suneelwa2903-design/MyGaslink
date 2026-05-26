@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 import { getEffectivePrice } from './cylinderTypeService.js';
 import { createInventoryEvent, recalculateSummariesFromDate } from './inventoryService.js';
 import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
@@ -29,7 +29,7 @@ export async function listOrders(
   }
 ) {
   const where: Prisma.OrderWhereInput = { distributorId, deletedAt: null };
-  if (filters.status) where.status = filters.status as any;
+  if (filters.status) where.status = filters.status as $Enums.OrderStatus;
   if (filters.customerId) where.customerId = filters.customerId;
   if (filters.driverId) where.driverId = filters.driverId;
   if (filters.dateFrom || filters.dateTo) {
@@ -234,7 +234,7 @@ export async function createOrder(
         vehicleId,
         orderDate: new Date(),
         deliveryDate,
-        status: status as any,
+        status: status as $Enums.OrderStatus,
         totalAmount,
         specialInstructions: data.specialInstructions || null,
         items: { create: itemsWithPrices },
@@ -354,7 +354,7 @@ export async function createReturnsOnlyOrder(
         vehicleId,
         orderDate: new Date(),
         deliveryDate: scheduledDate,
-        status: status as any,
+        status: status as $Enums.OrderStatus,
         orderType: 'returns_only',
         totalAmount: 0,
         specialInstructions: data.specialInstructions || null,
@@ -653,8 +653,8 @@ export async function bulkAssignDriver(
         vehicleId: data.vehicleId,
       });
       results.push({ orderId, success: true, order });
-    } catch (err: any) {
-      results.push({ orderId, success: false, error: err.message });
+    } catch (err: unknown) {
+      results.push({ orderId, success: false, error: err instanceof Error ? err.message : 'unknown error' });
     }
   }
   return results;
@@ -689,7 +689,7 @@ export async function updateOrderStatus(
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const updateData: Prisma.OrderUpdateInput = { status: newStatus as any };
+    const updateData: Prisma.OrderUpdateInput = { status: newStatus as $Enums.OrderStatus };
 
     if (newStatus === 'cancelled') {
       updateData.cancelledAt = new Date();
@@ -845,7 +845,7 @@ export async function confirmDelivery(
     const updated = await tx.order.update({
       where: { id: orderId },
       data: {
-        status: newStatus as any,
+        status: newStatus as $Enums.OrderStatus,
         totalAmount: newTotal,
         deliveredAt: new Date(),
         deliveryLatitude: data.deliveryLatitude || null,
@@ -1302,14 +1302,14 @@ export async function cancelOrder(
     // STEP 5: Reverse CustomerLedgerEntry
     if (invoiceId) {
       const ledgerEntry = await tx.customerLedgerEntry.findFirst({
-        where: { invoiceId, entryType: 'invoice_entry' as any },
+        where: { invoiceId, entryType: 'invoice_entry' as $Enums.LedgerEntryType },
       });
       if (ledgerEntry) {
         await tx.customerLedgerEntry.create({
           data: {
             customerId: ledgerEntry.customerId,
             distributorId: ledgerEntry.distributorId,
-            entryType: 'adjustment' as any,
+            entryType: 'adjustment' as $Enums.LedgerEntryType,
             referenceId: orderId,
             invoiceId: ledgerEntry.invoiceId,
             amountDelta: -(toNum(ledgerEntry.amountDelta)),
@@ -1329,7 +1329,7 @@ export async function cancelOrder(
           distributorId,
           assignmentDate: order.deliveryDate,
           isReconciled: false,
-          status: { notIn: ['cancelled'] as any[] },
+          status: { notIn: ['cancelled'] as $Enums.AssignmentStatus[] },
         },
       });
       if (dva) {
@@ -1338,7 +1338,7 @@ export async function cancelOrder(
             distributorId,
             driverId: order.driverId,
             deliveryDate: order.deliveryDate,
-            status: { in: ['pending_dispatch', 'pending_delivery', 'preflight_in_progress'] as any[] },
+            status: { in: ['pending_dispatch', 'pending_delivery', 'preflight_in_progress'] as $Enums.OrderStatus[] },
             id: { not: orderId },
             deletedAt: null,
           },

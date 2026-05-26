@@ -268,7 +268,14 @@ function RecordPaymentModal({ visible, dark, colors, accent, onClose, onSuccess 
   );
   const customers: Customer[] = customersResponse?.customers ?? [];
 
-  const mutation = useApiMutation<Payment, any>(
+  const mutation = useApiMutation<Payment, {
+    customerId: string;
+    amount: number;
+    paymentMethod: PaymentMethod;
+    referenceNumber?: string;
+    notes?: string;
+    transactionDate: string;
+  }>(
     'post', '/payments',
     {
       invalidateKeys: [['fin-payments'], ['fin-metrics'], ['fin-invoices']],
@@ -501,7 +508,12 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
   );
   const customers: Customer[] = customersResponse?.customers ?? [];
 
-  const mutation = useApiMutation<CreditNote, any>(
+  const mutation = useApiMutation<CreditNote, {
+    type: 'credit' | 'debit';
+    customerId: string;
+    amount: number;
+    reason: string;
+  }>(
     'post', '/credit-notes',
     {
       invalidateKeys: [['credit-notes'], ['fin-invoices'], ['fin-metrics']],

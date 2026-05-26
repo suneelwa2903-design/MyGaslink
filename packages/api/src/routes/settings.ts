@@ -182,14 +182,14 @@ router.put('/gst/credentials/:scope',
       const { getAuthToken } = await import('../services/gst/whitebooksClient.js');
       try {
         await getAuthToken(distributorId, scope);
-      } catch (authErr: any) {
+      } catch (authErr: unknown) {
         // authenticate() already set isValid=true on success; on failure
         // ensure the row reflects "broken" so callers don't think these
         // are usable.
         await settingsService.markGstCredentialsInvalid(distributorId, scope);
         return sendError(
           res,
-          authErr.message || 'WhiteBooks authentication failed',
+          (authErr instanceof Error ? authErr.message : '') || 'WhiteBooks authentication failed',
           400,
           'AUTH_FAILED',
         );
@@ -246,8 +246,8 @@ router.post('/gst/credentials/:scope/test',
       try {
         await getAuthToken(distributorId, scope);
         authenticated = true;
-      } catch (authErr: any) {
-        authError = authErr?.message || 'WhiteBooks authentication failed';
+      } catch (authErr: unknown) {
+        authError = (authErr instanceof Error ? authErr.message : '') || 'WhiteBooks authentication failed';
         await settingsService.markGstCredentialsInvalid(distributorId, scope);
       }
 
@@ -269,8 +269,8 @@ router.post('/gst/credentials/:scope/test',
             } else {
               const { validateGstin } = await import('../services/gst/gstService.js');
               const lookup = await validateGstin(distributorId, ownGstin);
-              if (lookup && (lookup as any).valid === false) {
-                const errText: string = (lookup as any).error || '';
+              if (lookup && lookup.valid === false) {
+                const errText: string = ('error' in lookup ? lookup.error : '') || '';
                 // NIC error 1005 ("Invalid Token") on the GSTNDETAILS endpoint
                 // means NIC DID respond — the sandbox GSTN lookup path has a
                 // different session-token requirement from the IRN generation
@@ -289,8 +289,8 @@ router.post('/gst/credentials/:scope/test',
                 nicReachable = true;
               }
             }
-          } catch (nicErr: any) {
-            nicError = nicErr?.message || 'NIC GSTNDETAILS call failed';
+          } catch (nicErr: unknown) {
+            nicError = (nicErr instanceof Error ? nicErr.message : '') || 'NIC GSTNDETAILS call failed';
           }
         }
       }

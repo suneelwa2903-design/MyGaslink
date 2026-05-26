@@ -23,7 +23,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     apiCall: vi.fn(),
@@ -45,7 +45,7 @@ import * as whitebooksClient from '../services/gst/whitebooksClient.js';
 const TEST_DATE = '2099-12-31';
 const apiCallMock = whitebooksClient.apiCall as unknown as ReturnType<typeof vi.fn>;
 
-function irnSuccess(over: Record<string, any> = {}) {
+function irnSuccess(over: Record<string, unknown> = {}) {
   return {
     status_cd: '1',
     data: {
@@ -61,9 +61,7 @@ function irnCancelOk() {
   return { status_cd: '1', data: { CancelDate: '15/05/2026 01:00:00 PM' } };
 }
 function whitebooksError(code: string, message: string) {
-  const err: any = new Error(message);
-  err.code = code;
-  return err;
+  return new whitebooksClient.GstError(message, code);
 }
 
 /**

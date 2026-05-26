@@ -6,6 +6,7 @@ import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
 import {
   invoiceFilterSchema, createCreditNoteSchema, createDebitNoteSchema,
+  type InvoiceFilterInput,
 } from '@gaslink/shared';
 import * as invoiceService from '../services/invoiceService.js';
 import { mapInvoice, mapInvoices, mapCreditNote, mapDebitNote } from '../utils/mappers.js';
@@ -16,6 +17,8 @@ import { generateDebitNotePdf } from '../services/pdf/debitNotePdfService.js';
 import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 // GET /api/invoices
@@ -24,7 +27,7 @@ router.get('/',
   validateQuery(invoiceFilterSchema),
   async (req, res) => {
     try {
-      const result = await invoiceService.listInvoices(req.user!.distributorId!, (req.validated?.query || req.query) as any);
+      const result = await invoiceService.listInvoices(req.user!.distributorId!, (req.validated?.query || req.query) as InvoiceFilterInput);
       return sendSuccess(res, { invoices: mapInvoices(result.data) }, 200, result.meta);
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -42,8 +45,9 @@ router.post('/validate-gstin',
         req.user!.distributorId!, req.body.gstin
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -75,8 +79,9 @@ router.post('/from-order/:orderId',
         req.user!.userId
       );
       return sendCreated(res, mapInvoice(invoice));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -105,8 +110,9 @@ router.post('/manual',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapInvoice(invoice));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -125,8 +131,9 @@ router.post('/retroactive-gst',
         req.user!.distributorId!, req.user!.userId, req.body.fromDate, req.body.toDate
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -142,8 +149,9 @@ router.put('/:id/status',
         param(req.params.id), req.user!.distributorId!, req.body.status
       );
       return sendSuccess(res, mapInvoice(invoice));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -174,9 +182,10 @@ router.get('/:id/pdf',
         'Content-Length': String(pdfBuffer.length),
       });
       return res.send(pdfBuffer);
-    } catch (err: any) {
-      if (err.message === 'Invoice not found') return sendNotFound(res, 'Invoice');
-      return sendError(res, err.message, 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.message === 'Invoice not found') return sendNotFound(res, 'Invoice');
+      return sendError(res, e.message, 500);
     }
   }
 );
@@ -193,8 +202,9 @@ router.post('/:id/generate-gst',
         param(req.params.id), req.user!.distributorId!
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -217,8 +227,9 @@ router.post('/:id/cancel-irn',
         param(req.params.id), req.user!.distributorId!, req.body.reason
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -238,8 +249,9 @@ router.post('/:id/cancel-ewb',
         param(req.params.id), req.user!.distributorId!, req.body.reason
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -258,8 +270,9 @@ router.post('/:id/regenerate',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, invoice.orderId
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -284,8 +297,9 @@ router.get('/:id/gst-documents',
         orderBy: { createdAt: 'desc' },
       });
       return sendSuccess(res, docs);
-    } catch (err: any) {
-      return sendError(res, err.message, 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, 500);
     }
   }
 );
@@ -310,8 +324,9 @@ router.get('/:id/credit-notes',
         orderBy: { createdAt: 'desc' },
       });
       return sendSuccess(res, { creditNotes: notes.map(mapCreditNote) });
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -326,8 +341,9 @@ router.post('/credit-notes',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapCreditNote(cn));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -339,8 +355,9 @@ router.put('/credit-notes/:id/approve',
     try {
       const cn = await invoiceService.approveCreditNote(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, mapCreditNote(cn));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -356,8 +373,9 @@ router.put('/credit-notes/:id/reject',
     try {
       const cn = await invoiceService.rejectCreditNote(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, mapCreditNote(cn));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -374,9 +392,10 @@ router.get('/credit-notes/:id/pdf',
         'Content-Length': String(pdfBuffer.length),
       });
       return res.send(pdfBuffer);
-    } catch (err: any) {
-      if (err.message === 'Credit note not found') return sendNotFound(res, 'Credit note');
-      return sendError(res, err.message, 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.message === 'Credit note not found') return sendNotFound(res, 'Credit note');
+      return sendError(res, e.message, 500);
     }
   }
 );
@@ -399,8 +418,9 @@ router.get('/:id/debit-notes',
         orderBy: { createdAt: 'desc' },
       });
       return sendSuccess(res, { debitNotes: notes.map(mapDebitNote) });
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -415,8 +435,9 @@ router.post('/debit-notes',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapDebitNote(dn));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -428,8 +449,9 @@ router.put('/debit-notes/:id/approve',
     try {
       const dn = await invoiceService.approveDebitNote(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, mapDebitNote(dn));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -442,8 +464,9 @@ router.put('/debit-notes/:id/reject',
     try {
       const dn = await invoiceService.rejectDebitNote(param(req.params.id), req.user!.distributorId!, req.user!.userId);
       return sendSuccess(res, mapDebitNote(dn));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -461,9 +484,10 @@ router.get('/debit-notes/:id/pdf',
         'Content-Length': String(pdfBuffer.length),
       });
       return res.send(pdfBuffer);
-    } catch (err: any) {
-      if (err.message === 'Debit note not found') return sendNotFound(res, 'Debit note');
-      return sendError(res, err.message, 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.message === 'Debit note not found') return sendNotFound(res, 'Debit note');
+      return sendError(res, e.message, 500);
     }
   }
 );

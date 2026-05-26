@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, type ComponentProps } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, ACCENT } from '../../src/theme';
+
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
+
+interface DepotHistoryMeta {
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  totalPages?: number;
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -1297,7 +1306,7 @@ function HistoryTab({
     data: historyData,
     isLoading,
     refetch,
-  } = useApiQuery<{ events: InventoryEvent[]; meta?: any }>(
+  } = useApiQuery<{ events: InventoryEvent[]; meta?: DepotHistoryMeta }>(
     ['depot-history', dateFrom, dateTo],
     '/inventory/depot-history',
     { dateFrom, dateTo },
@@ -1705,7 +1714,7 @@ function ForecastTab() {
                 {f.cylinderTypeName}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Ionicons name={trendIcon as any} size={16} color={trendColor} />
+                <Ionicons name={trendIcon as IoniconName} size={16} color={trendColor} />
                 <Text style={{ fontSize: 12, fontWeight: '600', color: trendColor, textTransform: 'capitalize' }}>
                   {f.trendDirection}
                 </Text>
@@ -1896,7 +1905,7 @@ function ReconcileTab() {
   );
 
   const confirmMutation = useApiMutation<
-    any,
+    void,
     { vehicleId: string; data: { physicalStockConfirmed: boolean; notes: string } }
   >('post', (vars) => `/delivery/reconciliation/confirm/${vars.vehicleId}`, {
     invalidateKeys: [['reconciliation-pending']],

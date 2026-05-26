@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 
 const accountabilityInclude = {
   driver: { select: { id: true, driverName: true } },
@@ -16,10 +16,10 @@ export async function listAccountabilityLogs(
   }
 ) {
   const where: Prisma.AccountabilityLogWhereInput = { distributorId };
-  if (filters.status) where.status = filters.status as any;
+  if (filters.status) where.status = filters.status as $Enums.AccountabilityStatus;
   if (filters.driverId) where.driverId = filters.driverId;
   if (filters.customerId) where.customerId = filters.customerId;
-  if (filters.incidentType) where.incidentType = filters.incidentType as any;
+  if (filters.incidentType) where.incidentType = filters.incidentType as $Enums.AccountabilityType;
 
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 25;
@@ -83,7 +83,7 @@ export async function createAccountabilityLog(
         driverId: data.driverId || null,
         customerId: data.customerId || null,
         cylinderTypeId: data.cylinderTypeId || null,
-        incidentType: data.incidentType as any,
+        incidentType: data.incidentType as $Enums.AccountabilityType,
         incidentDate: new Date(data.incidentDate),
         quantity: data.quantity,
         description: data.description,
@@ -125,7 +125,7 @@ export async function updateAccountabilityLog(
   if (!existing) throw new AccountabilityError('Accountability log not found', 404);
 
   const updateData: Prisma.AccountabilityLogUpdateInput = {};
-  if (data.status) updateData.status = data.status as any;
+  if (data.status) updateData.status = data.status as $Enums.AccountabilityStatus;
   if (data.description) updateData.description = data.description;
   if (data.quantity !== undefined) updateData.quantity = data.quantity;
 
@@ -158,7 +158,7 @@ export async function resolveAccountabilityLog(
     const resolved = await tx.accountabilityLog.update({
       where: { id },
       data: {
-        status: data.status as any,
+        status: data.status as $Enums.AccountabilityStatus,
         resolvedBy: userId,
         resolvedAt: new Date(),
         resolutionNotes: data.resolutionNotes,

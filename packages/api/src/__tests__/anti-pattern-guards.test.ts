@@ -32,7 +32,7 @@ import request from 'supertest';
 // vi.mock must hoist above the imports below so gstinLookup's call to
 // getAuthToken returns a fake token without ever hitting WhiteBooks.
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = (await orig()) as typeof import('../services/gst/whitebooksClient.js');
   return {
     ...original,
     getAuthToken: vi.fn(async () => 'fake-test-token'),
@@ -42,6 +42,7 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { loginAsDistAdmin, loginAsFinance, generateToken } from './helpers.js';
+import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
 
 let app: Express;
@@ -66,7 +67,7 @@ beforeAll(async () => {
   dist2AdminToken = generateToken({
     userId: sharmaAdmin.id,
     email: sharmaAdmin.email,
-    role: sharmaAdmin.role as any,
+    role: sharmaAdmin.role as UserRole,
     distributorId: sharmaAdmin.distributorId,
   });
 });
@@ -123,7 +124,7 @@ describe('Guard 1 — Tenant isolation on new WI-039/042 endpoints', () => {
     // The serialised credential payload is masked (no clientSecret /
     // password) but we can verify isolation against the raw DB rows:
     // every row returned must belong to dist-002 in storage.
-    const returnedIds = rows.map((r: any) => r.id).filter(Boolean);
+    const returnedIds = (rows as Array<{ id?: string }>).map((r) => r.id).filter(Boolean) as string[];
     if (returnedIds.length > 0) {
       const dbRows = await prisma.gstCredential.findMany({
         where: { id: { in: returnedIds } },
@@ -140,18 +141,18 @@ describe('Guard 1 — Tenant isolation on new WI-039/042 endpoints', () => {
 describe('Guard 2 — gstinLookup throws on missing required fields', () => {
   // Helper: build a mock Response with both .text() and .json() — the
   // gstinLookup service reads .text() first then JSON.parses it.
-  function mockNicResponse(body: any) {
+  function mockNicResponse(body: unknown): Response {
     const text = JSON.stringify(body);
     return {
       ok: true,
       headers: { get: (_h: string) => 'application/json' },
       text: async () => text,
       json: async () => body,
-    } as any;
+    } as unknown as Response;
   }
 
   it('throws when NIC returns success but no legalName / state-code', async () => {
-    const fetchSpy = vi.spyOn(globalThis as any, 'fetch').mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       mockNicResponse({
         status_cd: '1', // NIC "success"
         status_desc: 'Sucess',
@@ -171,7 +172,7 @@ describe('Guard 2 — gstinLookup throws on missing required fields', () => {
   });
 
   it('does NOT throw when NIC returns a complete payload', async () => {
-    const fetchSpy = vi.spyOn(globalThis as any, 'fetch').mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       mockNicResponse({
         status_cd: '1',
         data: {
@@ -213,7 +214,7 @@ describe('Guard 3 — CN raised on invoice A is not retrievable via invoice B', 
     if (invoices.length < 2) return; // need two invoices to compare
 
     const [invA, invB] = invoices;
-    const item = (invA as any).items?.[0];
+    const item = invA.items?.[0];
     if (!item) return;
 
     // Raise a CN on invoice A.
@@ -242,8 +243,8 @@ describe('Guard 3 — CN raised on invoice A is not retrievable via invoice B', 
         .get(`/api/invoices/${invB.id}/credit-notes`)
         .set(auth(dist1AdminToken));
 
-      const idsInA = (listA.body.data?.creditNotes ?? []).map((n: any) => n.creditNoteId);
-      const idsInB = (listB.body.data?.creditNotes ?? []).map((n: any) => n.creditNoteId);
+      const idsInA = (listA.body.data?.creditNotes ?? []).map((n: { creditNoteId: string }) => n.creditNoteId);
+      const idsInB = (listB.body.data?.creditNotes ?? []).map((n: { creditNoteId: string }) => n.creditNoteId);
 
       expect(idsInA).toContain(creditNoteId);
       expect(idsInB).not.toContain(creditNoteId);
@@ -392,7 +393,7 @@ describe('Guard 5 — API responses match the shape the web types', () => {
         .get(`/api/invoices/${dist1Inv.id}/credit-notes`)
         .set(auth(dist1AdminToken));
       const found = (listRes.body.data?.creditNotes ?? []).find(
-        (n: any) => n.creditNoteId === creditNoteId,
+        (n: { creditNoteId: string }) => n.creditNoteId === creditNoteId,
       );
       expect(found).toBeTruthy();
       expect(found.status).toBe('pending');
@@ -432,7 +433,7 @@ describe('Guard 6 — lookupGstin uses the caller\'s tenant credentials, not wha
     const originalFetch = globalThis.fetch;
     let capturedUrl = '';
     let capturedHeaders: Record<string, string> = {};
-    globalThis.fetch = vi.fn(async (url: any, init?: any) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       capturedUrl = String(url);
       capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
       // Minimal GSTNDETAILS-shaped success so lookupGstin can parse.
@@ -454,7 +455,7 @@ describe('Guard 6 — lookupGstin uses the caller\'s tenant credentials, not wha
           },
         }),
         json: async () => ({}),
-      } as any;
+      } as unknown as Response;
     });
 
     try {
@@ -500,7 +501,7 @@ describe('Guard 6 — lookupGstin uses the caller\'s tenant credentials, not wha
       // the invalid row was not used (its client_id never reaches fetch).
       const originalFetch = globalThis.fetch;
       let capturedHeaders: Record<string, string> = {};
-      globalThis.fetch = vi.fn(async (_url: any, init?: any) => {
+      globalThis.fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
         capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
         return {
           ok: true, status: 200,
@@ -514,7 +515,7 @@ describe('Guard 6 — lookupGstin uses the caller\'s tenant credentials, not wha
             },
           }),
           json: async () => ({}),
-        } as any;
+        } as unknown as Response;
       });
       try {
         await lookupGstin('29AAGCB1286Q1Z0', 'dist-001');

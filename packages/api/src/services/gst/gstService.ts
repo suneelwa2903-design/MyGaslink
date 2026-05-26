@@ -10,12 +10,28 @@
  * 4. On failure -> create pending_action for manual resolution
  */
 
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
 import { getCredentials, GstError } from './whitebooksClient.js';
 import { callWithLog } from './apiLogger.js';
-import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
+import { buildIrnPayload, buildEwbPayload, type IrnPayload } from './payloadBuilders.js';
+import type { EwbResponse, IrnResponse, WhiteBooksEnvelope } from './nicTypes.js';
+
+// Prisma JSON columns (requestPayload/responsePayload) reject our precise
+// payload/response interfaces because optional fields widen to `| undefined`,
+// which is not a valid JSON input. The values are genuinely JSON-serialisable,
+// so we narrow to Prisma.InputJsonValue at the column boundary.
+const toJson = (v: unknown): Prisma.InputJsonValue => v as Prisma.InputJsonValue;
+
+/** Narrow an unknown caught value to the error code/message shape the GST
+ *  flow relies on (GstError sets `.code`; all Errors set `.message`). */
+function errInfo(err: unknown): { code: string; message: string } {
+  if (err instanceof GstError) return { code: err.code, message: err.message };
+  if (err instanceof Error) return { code: '', message: err.message };
+  return { code: '', message: String(err) };
+}
 // Distance: minimum 1km (0 causes EWB error 721)
 
 function extractStateCode(gstin: string): string {
@@ -63,18 +79,19 @@ export function parseWhitebooksDate(s: string | null | undefined): Date | null {
  * Mirrors the legacy New_GasLink/.../whitebooksEinvoiceClient.js
  * fallback chain.
  */
-export function parseEwbResponse(resp: any): {
+export function parseEwbResponse(resp: EwbResponse | null | undefined): {
   ewbNo: string | null;
   validFromDate: Date | null;
   validToDate: Date | null;
 } {
   // data may be an object or a JSON-encoded string of the body
-  let data: any = resp?.data;
+  let data: EwbResponse['data'] = resp?.data;
   if (typeof data === 'string') {
-    try { data = JSON.parse(data); } catch { /* leave as string */ }
+    try { data = JSON.parse(data) as EwbResponse['data']; } catch { /* leave as string */ }
   }
+  const dataObj = data && typeof data === 'object' ? data : undefined;
   const ewbNoRaw =
-    data?.ewayBillNo ?? data?.ewbNo ?? data?.EwbNo ??
+    dataObj?.ewayBillNo ?? dataObj?.ewbNo ?? dataObj?.EwbNo ??
     resp?.ewayBillNo ?? resp?.ewbNo ?? resp?.EwbNo ??
     (typeof resp?.data === 'string' && resp.data.match(/^\d+$/) ? resp.data : null);
   const ewbNo = ewbNoRaw != null && ewbNoRaw !== 0 && ewbNoRaw !== '0'
@@ -82,13 +99,13 @@ export function parseEwbResponse(resp: any): {
     : null;
   // EWB issue date — current sandbox uses ewayBillDate; older docs use validFrom
   const fromRaw =
-    data?.ewayBillDate ?? data?.EwayBillDate ??
-    data?.validFrom ?? data?.ValidFrom ??
+    dataObj?.ewayBillDate ?? dataObj?.EwayBillDate ??
+    dataObj?.validFrom ?? dataObj?.ValidFrom ??
     resp?.ewayBillDate ?? resp?.validFrom ?? resp?.ValidFrom ?? null;
   // EWB expiry — current sandbox uses validUpto; older docs use validTo
   const toRaw =
-    data?.validUpto ?? data?.ValidUpto ??
-    data?.validTo ?? data?.ValidTo ??
+    dataObj?.validUpto ?? dataObj?.ValidUpto ??
+    dataObj?.validTo ?? dataObj?.ValidTo ??
     resp?.validUpto ?? resp?.validTo ?? resp?.ValidTo ?? null;
   return {
     ewbNo,
@@ -126,7 +143,7 @@ export async function generateEwbFromIrn(
   distributorId: string,
   invoiceId: string,
   irnData: {
-    irnPayload: any;
+    irnPayload: IrnPayload;
     vehicleNumber: string;
     email: string;
     irn: string;
@@ -142,7 +159,7 @@ export async function generateEwbFromIrn(
       distance: 1,
     });
 
-    const ewbResponse = await callWithLog<any>(
+    const ewbResponse = await callWithLog<EwbResponse>(
       distributorId, 'POST',
       `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(email)}`,
       ewbPayload, 'ewaybill',
@@ -174,15 +191,14 @@ export async function generateEwbFromIrn(
         // (reissue Step 1) so the row reflects the new live EWB.
         cancelledAt: null,
         // Keep raw EWB response so we can audit response-shape drift.
-        responsePayload: ewbResponse,
+        responsePayload: toJson(ewbResponse),
       },
     });
 
     logger.info('EWB generated from IRN', { invoiceId, ewbNo: parsed.ewbNo, apiType });
     return { ewbNo: parsed.ewbNo, status: 'active' };
-  } catch (ewbErr: any) {
-    const errCode = ewbErr.code || '';
-    const errMsg = ewbErr.message || '';
+  } catch (ewbErr: unknown) {
+    const { code: errCode, message: errMsg } = errInfo(ewbErr);
     // Per NIC: 604 = "EWB already exists for this document". The EWB exists
     // on the portal but the API doesn't return it — recover via IRN-details.
     const isAlreadyExists = errCode === '604' || errMsg.includes('604');
@@ -232,7 +248,21 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
   const buyerStateCode = invoice.customer?.gstin ? extractStateCode(invoice.customer.gstin) : sellerStateCode;
   const isInterState = sellerStateCode !== buyerStateCode;
 
-  const result: { irn?: any; ewb?: any; errors: string[] } = { errors: [] };
+  const result: {
+    irn?: {
+      irn?: string;
+      ackNo?: string | number;
+      status: string;
+      message?: string;
+      recoveredIrn?: string | null;
+    };
+    ewb?: {
+      ewbNo?: string | number | null;
+      status: string;
+      source?: string;
+    };
+    errors: string[];
+  } = { errors: [] };
 
   // Build common invoice data
   const invoiceData = {
@@ -295,7 +325,7 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
       const irnPayload = buildIrnPayload(invoiceData);
       const email = credEmail;
 
-      const irnResponse = await callWithLog<any>(
+      const irnResponse = await callWithLog<IrnResponse>(
         distributorId, 'POST',
         `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(email)}`,
         irnPayload, 'einvoice',
@@ -346,7 +376,7 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
             ewbDate: irnEwbDt ? new Date(irnEwbDt) : null,
             ewbValidTill: irnEwbValidTill ? new Date(irnEwbValidTill) : null,
           } : {}),
-          requestPayload: irnPayload, responsePayload: irnResponse,
+          requestPayload: toJson(irnPayload), responsePayload: toJson(irnResponse),
           isLatest: true,
         },
       });
@@ -394,7 +424,7 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
             irnPayload,
             vehicleNumber: invoice.order.vehicle.vehicleNumber,
             email,
-            irn,
+            irn: irn!, // committed above (irnStatus='success'); never undefined here
             orderId: invoice.orderId,
             apiType: 'EWB_GENERATE_BY_IRN',
           });
@@ -409,11 +439,12 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           }
         }
       }
-    } catch (irnErr: any) {
-      result.errors.push(`IRN failed: ${irnErr.message}`);
+    } catch (irnErr: unknown) {
+      const { code: irnErrCode, message: irnErrMessage } = errInfo(irnErr);
+      result.errors.push(`IRN failed: ${irnErrMessage}`);
 
       // Handle duplicate IRN (already exists on portal)
-      if (irnErr.code === '2150') {
+      if (irnErrCode === '2150') {
         // WI-057 gap G2 — recover the existing IRN from the portal
         // instead of leaving invoice.irn NULL. Without this every
         // downstream feature (PDF, EWB recovery, CN/DN linkage) that
@@ -482,9 +513,9 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               `2150 duplicate but GETIRNBYDOCDETAILS returned no IRN — manual lookup needed`,
             );
           }
-        } catch (recoverErr: any) {
+        } catch (recoverErr: unknown) {
           logger.error('2150 recovery: GETIRNBYDOCDETAILS itself threw', {
-            invoiceId, err: recoverErr.message,
+            invoiceId, err: errInfo(recoverErr).message,
           });
           await prisma.invoice.update({ where: { id: invoiceId }, data: { irnStatus: 'success' } });
         }
@@ -503,13 +534,15 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               transportMode: '1',
               distance: 1,
             });
-            const ewbResponse = await callWithLog<any>(distributorId, 'POST',
+            const ewbResponse = await callWithLog<EwbResponse>(distributorId, 'POST',
               `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
               ewbPayload, 'ewaybill',
               { apiType: 'EWB_GENERATE_BY_IRN_DUP', invoiceId, orderId: invoice.orderId });
-            const ewbNo = ewbResponse.data?.ewayBillNo;
-            const ewbDate = ewbResponse.data?.validFrom;
-            const ewbValidTill = ewbResponse.data?.validTo;
+            const ewbData = ewbResponse.data && typeof ewbResponse.data === 'object'
+              ? ewbResponse.data : undefined;
+            const ewbNo = ewbData?.ewayBillNo;
+            const ewbDate = ewbData?.validFrom;
+            const ewbValidTill = ewbData?.validTo;
             await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
             // Ensure there's a gstDocument row to hold the EWB details
             // (the dup-IRN branch entered the catch block before creating
@@ -537,14 +570,15 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
                   ewbNo: ewbNo?.toString(),
                   ewbDate: ewbDate ? new Date(ewbDate) : null,
                   ewbValidTill: ewbValidTill ? new Date(ewbValidTill) : null,
-                  responsePayload: ewbResponse,
+                  responsePayload: toJson(ewbResponse),
                   isLatest: true,
                 },
               });
             }
             result.ewb = { ewbNo, status: 'active' };
-          } catch (ewbErr: any) {
-            if (ewbErr.code === '620' || ewbErr.message?.includes('620')) {
+          } catch (ewbErr: unknown) {
+            const { code: dupEwbCode, message: dupEwbMessage } = errInfo(ewbErr);
+            if (dupEwbCode === '620' || dupEwbMessage.includes('620')) {
               await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
               await prisma.gstDocument.updateMany({
                 where: { invoiceId, isLatest: true },
@@ -553,7 +587,7 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               result.ewb = { status: 'already_exists' };
               logger.info('EWB already exists on portal (620, dup IRN path)', { invoiceId });
             } else {
-              result.errors.push(`EWB failed: ${ewbErr.message}`);
+              result.errors.push(`EWB failed: ${dupEwbMessage}`);
             }
           }
         }
@@ -573,26 +607,26 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
         if (alreadyCommitted?.irn) {
           logger.warn(
             'processInvoiceGst retry failed but real IRN already committed — preserving success state',
-            { invoiceId, irn: alreadyCommitted.irn.substring(0, 16) + '…', err: irnErr.message },
+            { invoiceId, irn: alreadyCommitted.irn.substring(0, 16) + '…', err: irnErrMessage },
           );
           return result;
         }
         await prisma.invoice.update({ where: { id: invoiceId }, data: { irnStatus: 'failed' } });
-        await createPendingAction(distributorId, invoiceId, 'IRN_GENERATION', irnErr.message);
+        await createPendingAction(distributorId, invoiceId, 'IRN_GENERATION', irnErrMessage);
       } else {
         // IRN was already persisted; the error came from the EWB sub-step.
         // Surface the EWB failure but DO NOT touch invoice.irnStatus.
         logger.error('IRN succeeded but EWB sub-step threw — leaving irnStatus=success', {
-          invoiceId, err: irnErr.message,
+          invoiceId, err: irnErrMessage,
         });
-        result.errors.push(`EWB failed after IRN success: ${irnErr.message}`);
+        result.errors.push(`EWB failed after IRN success: ${irnErrMessage}`);
         // Mark EWB as failed since we never finished generating it.
         try {
           await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'failed' } });
         } catch (uErr) {
           logger.error('Failed to mark ewbStatus=failed after IRN-success EWB throw', { invoiceId, err: (uErr as Error).message });
         }
-        await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', irnErr.message);
+        await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', irnErrMessage);
       }
     }
   } else {
@@ -628,7 +662,7 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           payload: JSON.stringify(ewbPayload, null, 2),
         });
 
-        const ewbResponse = await callWithLog<any>(
+        const ewbResponse = await callWithLog<EwbResponse>(
           distributorId, 'POST',
           `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
           ewbPayload, 'ewaybill',
@@ -643,7 +677,8 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           response: JSON.stringify(ewbResponse, null, 2),
         });
 
-        const ewbNo = ewbResponse.data?.ewayBillNo;
+        const ewbNo = ewbResponse.data && typeof ewbResponse.data === 'object'
+          ? ewbResponse.data.ewayBillNo : undefined;
         if (!ewbNo) {
           // WI-071 Defect B — WhiteBooks/NIC sandbox occasionally returns
           // `{status_cd:'1', status_desc:'Sucess'}` with NO data block /
@@ -667,7 +702,7 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
               invoiceId, orderId: invoice.orderId, distributorId,
               docType: 'INV', gstDocNo: invoice.invoiceNumber,
               ewbStatus: 'active', ewbNo: ewbNo.toString(),
-              requestPayload: ewbPayload, responsePayload: ewbResponse,
+              requestPayload: toJson(ewbPayload), responsePayload: toJson(ewbResponse),
               isLatest: true,
             },
           });
@@ -675,15 +710,16 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           result.ewb = { ewbNo, status: 'active' };
           logger.info('B2C EWB generated', { invoiceId, ewbNo });
         }
-      } catch (ewbErr: any) {
-        if (ewbErr.code === '620' || ewbErr.message?.includes('620')) {
+      } catch (ewbErr: unknown) {
+        const { code: b2cEwbCode, message: b2cEwbMessage } = errInfo(ewbErr);
+        if (b2cEwbCode === '620' || b2cEwbMessage.includes('620')) {
           await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'active' } });
           result.ewb = { status: 'already_exists' };
           logger.info('B2C EWB already exists on portal (620)', { invoiceId });
         } else {
-          result.errors.push(`B2C EWB failed: ${ewbErr.message}`);
+          result.errors.push(`B2C EWB failed: ${b2cEwbMessage}`);
           await prisma.invoice.update({ where: { id: invoiceId }, data: { ewbStatus: 'failed' } });
-          await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', ewbErr.message);
+          await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', b2cEwbMessage);
         }
       }
     }
@@ -761,14 +797,16 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
 
     const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
-    const ewbResponse = await callWithLog<any>(
+    const ewbResponse = await callWithLog<EwbResponse>(
       distributorId, 'POST',
       `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(email)}`,
       ewbPayload, 'ewaybill',
       { apiType: 'EWB_GENERATE_DISPATCH', orderId },
     );
 
-    const ewbNo = ewbResponse.data?.ewayBillNo;
+    const ewbData = ewbResponse.data && typeof ewbResponse.data === 'object'
+      ? ewbResponse.data : undefined;
+    const ewbNo = ewbData?.ewayBillNo;
 
     // Store EWB in GstDocument (no invoice yet at dispatch)
     await prisma.gstDocument.create({
@@ -779,19 +817,20 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
         gstDocNo: order.orderNumber,
         ewbStatus: 'active',
         ewbNo: ewbNo?.toString(),
-        ewbDate: ewbResponse.data?.validFrom ? new Date(ewbResponse.data.validFrom) : null,
-        ewbValidTill: ewbResponse.data?.validTo ? new Date(ewbResponse.data.validTo) : null,
-        requestPayload: ewbPayload,
-        responsePayload: ewbResponse,
+        ewbDate: ewbData?.validFrom ? new Date(ewbData.validFrom) : null,
+        ewbValidTill: ewbData?.validTo ? new Date(ewbData.validTo) : null,
+        requestPayload: toJson(ewbPayload),
+        responsePayload: toJson(ewbResponse),
         isLatest: true,
       },
     });
 
     logger.info('Dispatch EWB generated', { orderId, ewbNo });
     return { ewbNo, status: 'active' };
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const { code: dispatchEwbCode, message: dispatchEwbMessage } = errInfo(err);
     // Handle error 620: EWB already exists for this document (common in sandbox/re-runs)
-    if (err.code === '620' || err.message?.includes('620')) {
+    if (dispatchEwbCode === '620' || dispatchEwbMessage.includes('620')) {
       // Ensure a gstDocument record exists with active EWB status
       const existing = await prisma.gstDocument.findFirst({ where: { orderId, isLatest: true } });
       if (existing) {
@@ -813,7 +852,7 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
           actionType: 'DISPATCH_EWB_GENERATION',
           entityId: orderId,
           entityType: 'order',
-          description: `Dispatch EWB failed: ${err.message}`.substring(0, 500),
+          description: `Dispatch EWB failed: ${dispatchEwbMessage}`.substring(0, 500),
           severity: 'high',
           status: 'open',
         },
@@ -821,7 +860,7 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
     } catch (paErr) {
       logger.error('Failed to create pending action for dispatch EWB', { orderId, err: paErr });
     }
-    return { status: 'failed', error: err.message };
+    return { status: 'failed', error: dispatchEwbMessage };
   }
 }
 
@@ -875,7 +914,7 @@ export async function cancelIrn(invoiceId: string, distributorId: string, reason
   // which made NIC reject the second token with 1004 (SESSION_EXPIRED).
   // For standalone retries via POST /invoices/:id/cancel-irn, the route
   // handler calls clearTokenCache before delegating here.
-  const response = await callWithLog<any>(
+  const response = await callWithLog<IrnResponse>(
     distributorId, 'POST',
     `/einvoice/type/CANCEL/version/V1_03?email=${encodeURIComponent(email)}`,
     cancelPayload, 'einvoice',
@@ -919,7 +958,7 @@ export async function cancelEwb(invoiceId: string, distributorId: string, reason
   // WI-086 FIX: clearTokenCache removed from here — see note in cancelIrn.
   // The orchestrator (cancelOrder) evicts once before the whole sequence.
   // Standalone retry via POST /invoices/:id/cancel-ewb evicts in the route.
-  const response = await callWithLog<any>(
+  const response = await callWithLog<EwbResponse>(
     distributorId, 'POST',
     `/ewaybillapi/v1.03/ewayapi/canewb?email=${encodeURIComponent(email)}`,
     { ewbNo: parseInt(gstDoc.ewbNo), cancelRsnCode, cancelRmrk: reason.substring(0, 100) },
@@ -1019,7 +1058,7 @@ export async function processCreditNoteGst(creditNoteId: string, distributorId: 
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
   try {
-    const response = await callWithLog<any>(
+    const response = await callWithLog<IrnResponse>(
       distributorId, 'POST',
       `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(email)}`,
       payload, 'einvoice',
@@ -1032,15 +1071,16 @@ export async function processCreditNoteGst(creditNoteId: string, distributorId: 
         invoiceId: cn.invoiceId, distributorId,
         docType: 'CRN', gstDocNo: data.docNumber,
         irnStatus: 'success', irn, ackNo: (response.data?.AckNo || response.AckNo)?.toString(),
-        requestPayload: payload, responsePayload: response, isLatest: true,
+        requestPayload: toJson(payload), responsePayload: toJson(response), isLatest: true,
       },
     });
 
     logger.info('Credit note IRN generated', { creditNoteId, irn });
     return { irn, status: 'success' };
-  } catch (err: any) {
-    await createPendingAction(distributorId, cn.invoiceId, 'CRN_IRN_GENERATION', err.message);
-    return { status: 'failed', error: err.message };
+  } catch (err: unknown) {
+    const message = errInfo(err).message;
+    await createPendingAction(distributorId, cn.invoiceId, 'CRN_IRN_GENERATION', message);
+    return { status: 'failed', error: message };
   }
 }
 
@@ -1117,7 +1157,7 @@ export async function processDebitNoteGst(debitNoteId: string, distributorId: st
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
   try {
-    const response = await callWithLog<any>(
+    const response = await callWithLog<IrnResponse>(
       distributorId, 'POST',
       `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(email)}`,
       payload, 'einvoice',
@@ -1130,15 +1170,16 @@ export async function processDebitNoteGst(debitNoteId: string, distributorId: st
         invoiceId: dn.invoiceId, distributorId,
         docType: 'DBN', gstDocNo: data.docNumber,
         irnStatus: 'success', irn, ackNo: (response.data?.AckNo || response.AckNo)?.toString(),
-        requestPayload: payload, responsePayload: response, isLatest: true,
+        requestPayload: toJson(payload), responsePayload: toJson(response), isLatest: true,
       },
     });
 
     logger.info('Debit note IRN generated', { debitNoteId, irn });
     return { irn, status: 'success' };
-  } catch (err: any) {
-    await createPendingAction(distributorId, dn.invoiceId, 'DBN_IRN_GENERATION', err.message);
-    return { status: 'failed', error: err.message };
+  } catch (err: unknown) {
+    const message = errInfo(err).message;
+    await createPendingAction(distributorId, dn.invoiceId, 'DBN_IRN_GENERATION', message);
+    return { status: 'failed', error: message };
   }
 }
 
@@ -1157,7 +1198,7 @@ export async function validateGstin(distributorId: string, gstin: string) {
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
 
   try {
-    const response = await callWithLog<any>(
+    const response = await callWithLog<WhiteBooksEnvelope>(
       distributorId, 'GET',
       `/einvoice/type/GSTNDETAILS/version/V1_03?param1=${gstin}&email=${encodeURIComponent(email)}`,
       undefined, 'einvoice',
@@ -1169,8 +1210,8 @@ export async function validateGstin(distributorId: string, gstin: string) {
       source: 'whitebooks',
       data: response.data,
     };
-  } catch (err: any) {
-    return { valid: false, source: 'whitebooks', error: err.message };
+  } catch (err: unknown) {
+    return { valid: false, source: 'whitebooks', error: errInfo(err).message };
   }
 }
 
@@ -1210,7 +1251,7 @@ export async function getIrnByDocDetails(
   const param1 = `${docType}:${docNo}:${dd}/${mm}/${yyyy}`;
 
   try {
-    const response = await callWithLog<any>(
+    const response = await callWithLog<IrnResponse>(
       distributorId,
       'GET',
       `/einvoice/type/GETIRNBYDOCDETAILS/version/V1_03?param1=${encodeURIComponent(param1)}&email=${encodeURIComponent(email)}`,
@@ -1231,9 +1272,9 @@ export async function getIrnByDocDetails(
           : undefined,
       signedQr: d.SignedQRCode ?? d.signedQr,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.warn('GETIRNBYDOCDETAILS lookup failed', {
-      distributorId, docType, docNo, err: err?.message,
+      distributorId, docType, docNo, err: errInfo(err).message,
     });
     return null;
   }
@@ -1249,7 +1290,7 @@ export async function getIrnDetails(distributorId: string, irn: string) {
   });
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
 
-  return callWithLog<any>(
+  return callWithLog<IrnResponse>(
     distributorId, 'GET',
     `/einvoice/type/GETIRN/version/V1_03?param1=${irn}&email=${encodeURIComponent(email)}`,
     undefined, 'einvoice',
@@ -1267,7 +1308,7 @@ export async function getEwbStatus(distributorId: string, ewbNo: string) {
   });
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
 
-  return callWithLog<any>(
+  return callWithLog<EwbResponse>(
     distributorId, 'GET',
     `/ewaybillapi/v1.03/ewayapi/getewaybill?email=${encodeURIComponent(email)}&ewbNo=${ewbNo}`,
     undefined, 'ewaybill',
@@ -1316,8 +1357,8 @@ export async function recoverEwbFromIrn(invoiceId: string, distributorId: string
     });
     logger.info('Recovered EWB from IRN details after 620', { invoiceId, ewbNo });
     return { ewbNo: ewbNo.toString(), ewbDate, ewbValidTill: ewbValidTillDate?.toISOString() ?? null };
-  } catch (err: any) {
-    logger.warn('Failed to recover EWB from IRN after 620', { invoiceId, irn, error: err.message });
+  } catch (err: unknown) {
+    logger.warn('Failed to recover EWB from IRN after 620', { invoiceId, irn, error: errInfo(err).message });
     return null;
   }
 }
@@ -1340,8 +1381,8 @@ export async function cancelAndRegenerateInvoice(
   if (invoice?.irn && invoice.irnStatus === 'success') {
     try {
       await cancelIrn(invoiceId, distributorId, 'Order items changed - regenerating invoice');
-    } catch (err: any) {
-      logger.warn('Failed to cancel IRN during regeneration', { invoiceId, error: err.message });
+    } catch (err: unknown) {
+      logger.warn('Failed to cancel IRN during regeneration', { invoiceId, error: errInfo(err).message });
     }
   }
 

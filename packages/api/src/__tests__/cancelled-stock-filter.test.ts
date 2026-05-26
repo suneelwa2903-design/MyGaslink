@@ -22,7 +22,9 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { generateToken } from './helpers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
+import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
+import type { $Enums } from '@prisma/client';
 
 const PHONES = ['9914100001', '9914100002'];
 const today = startOfUtcDay();
@@ -50,7 +52,7 @@ async function mkDriver(distributorId: string, phone: string, name: string, vehN
   const driver = await prisma.driver.create({ data: { distributorId, driverName: `CSF ${name}`, phone, status: 'active' } });
   const vehicle = await prisma.vehicle.create({ data: { distributorId, vehicleNumber: vehNum, vehicleType: 'Truck', status: 'returned' } });
   await prisma.driverVehicleAssignment.create({ data: { distributorId, driverId: driver.id, vehicleId: vehicle.id, assignmentDate: today, status: 'loaded_and_dispatched', tripNumber: 1 } });
-  const token = generateToken({ userId: user.id, email, role: 'driver' as any, distributorId });
+  const token = generateToken({ userId: user.id, email, role: UserRole.DRIVER, distributorId });
   return { driverId: driver.id, vehicleId: vehicle.id, token };
 }
 
@@ -65,7 +67,7 @@ async function mkEvent(distributorId: string, driverId: string, vehicleId: strin
     },
   });
   await prisma.cancelledStockEvent.create({
-    data: { orderId: order.id, vehicleId, driverId, cylinderTypeId: cyl.id, distributorId, quantity: 1, cancellationDate: when, status: status as any },
+    data: { orderId: order.id, vehicleId, driverId, cylinderTypeId: cyl.id, distributorId, quantity: 1, cancellationDate: when, status: status as $Enums.CancelledStockStatus },
   });
   return customer.customerName;
 }
@@ -87,8 +89,13 @@ beforeAll(async () => {
 
 afterAll(cleanup);
 
+interface CancelledStockRow {
+  order?: { orderNumber?: string; customer?: { customerName?: string } | null } | null;
+  cylinderType?: { typeName?: string } | null;
+}
+
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
-const nums = (rows: any[]) => rows.map((r) => r.order?.orderNumber);
+const nums = (rows: CancelledStockRow[]) => rows.map((r) => r.order?.orderNumber);
 
 describe('WI-094c — GET /drivers/me/cancelled-stock filter', () => {
   it('✅ 1. today\'s active events shown with customer + cylinder type', async () => {
@@ -96,7 +103,7 @@ describe('WI-094c — GET /drivers/me/cancelled-stock filter', () => {
     expect(res.status).toBe(200);
     const rows = res.body.data;
     expect(nums(rows)).toEqual(expect.arrayContaining([ORD.A1, ORD.A2]));
-    const a1 = rows.find((r: any) => r.order?.orderNumber === ORD.A1);
+    const a1 = (rows as CancelledStockRow[]).find((r) => r.order?.orderNumber === ORD.A1)!;
     expect(a1.order?.customer?.customerName).toBe(aCustomerName);
     expect(a1.cylinderType?.typeName).toBeTruthy();
   });

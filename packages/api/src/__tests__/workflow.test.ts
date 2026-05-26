@@ -72,7 +72,7 @@ describe('Core Workflow: Order → Assign → Deliver → Invoice → Payment', 
       .set(auth(adminToken));
 
     expect(res.status).toBe(200);
-    const order = res.body.data.orders.find((o: any) => o.orderId === orderId);
+    const order = res.body.data.orders.find((o: { orderId: string; status: string }) => o.orderId === orderId);
     expect(order).toBeDefined();
     expect(order.status).toBe('pending_driver_assignment');
   });
@@ -137,7 +137,7 @@ describe('Core Workflow: Order → Assign → Deliver → Invoice → Payment', 
       .get('/api/invoices')
       .set(auth(financeToken));
 
-    const existing = listRes.body.data.invoices.find((inv: any) => inv.orderId === orderId);
+    const existing = listRes.body.data.invoices.find((inv: { orderId: string; invoiceId: string }) => inv.orderId === orderId);
     if (existing) {
       invoiceId = existing.invoiceId;
       expect(existing.orderId).toBe(orderId);

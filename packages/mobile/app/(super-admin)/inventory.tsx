@@ -3,9 +3,35 @@ import { View, Text, ScrollView, RefreshControl, TouchableOpacity, ActivityIndic
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, MetricCard, Badge, EmptyState } from '../../src/components/ui';
-import { useTheme } from '../../src/theme';
+import { useTheme, type ThemeColors } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
 import type { InventorySummary, InventoryForecast } from '@gaslink/shared';
+
+// The super-admin inventory endpoints return a few extra (un-typed-in-shared)
+// fields the screen renders defensively. Model them as optional extensions so
+// the access sites stay type-checked without an `any`.
+type InventorySummaryRow = InventorySummary & {
+  cylinderTypeId?: string;
+  name?: string;
+  weightKg?: number;
+  inTransit?: number;
+  withCustomers?: number;
+};
+
+type InventoryForecastRow = InventoryForecast & {
+  avgDailyUsage?: number;
+  daysUntilEmpty?: number;
+  reorderDate?: string;
+};
+
+interface ThresholdAlert {
+  alertId?: string;
+  cylinderTypeName?: string;
+  message?: string;
+  severity?: string;
+  currentLevel?: number;
+  threshold?: number;
+}
 
 // ── Sub-tabs ─────────────────────────────────────────────────────────────────
 
@@ -65,42 +91,42 @@ export default function InventoryScreen() {
 
   // Summary
   const { data: summaryData, isLoading: summaryLoading, refetch: refetchSummary } = useApiQuery<
-    InventorySummary[] | { summary: InventorySummary[] }
+    InventorySummaryRow[] | { summary: InventorySummaryRow[] }
   >(
     ['sa-inventory-summary', selectedDistributorId ?? 'all'],
     '/inventory/summary',
     distParams,
     { enabled: tab === 'summary' },
   );
-  const summary: InventorySummary[] = Array.isArray(summaryData)
+  const summary: InventorySummaryRow[] = Array.isArray(summaryData)
     ? summaryData
-    : (summaryData as any)?.summary ?? [];
+    : summaryData?.summary ?? [];
 
   // Forecast
   const { data: forecastData, isLoading: forecastLoading, refetch: refetchForecast } = useApiQuery<
-    InventoryForecast[] | { forecast: InventoryForecast[] }
+    InventoryForecastRow[] | { forecast: InventoryForecastRow[] }
   >(
     ['sa-inventory-forecast', selectedDistributorId ?? 'all'],
     '/inventory/forecast',
     distParams,
     { enabled: tab === 'forecast' },
   );
-  const forecast: InventoryForecast[] = Array.isArray(forecastData)
+  const forecast: InventoryForecastRow[] = Array.isArray(forecastData)
     ? forecastData
-    : (forecastData as any)?.forecast ?? [];
+    : forecastData?.forecast ?? [];
 
   // Threshold alerts
   const { data: alertsData, isLoading: alertsLoading, refetch: refetchAlerts } = useApiQuery<
-    any[] | { alerts: any[] }
+    ThresholdAlert[] | { alerts: ThresholdAlert[] }
   >(
     ['sa-inventory-alerts', selectedDistributorId ?? 'all'],
     '/inventory/threshold-alerts',
     distParams,
     { enabled: tab === 'alerts' },
   );
-  const alerts: any[] = Array.isArray(alertsData)
+  const alerts: ThresholdAlert[] = Array.isArray(alertsData)
     ? alertsData
-    : (alertsData as any)?.alerts ?? [];
+    : alertsData?.alerts ?? [];
 
   const isLoading = tab === 'summary' ? summaryLoading : tab === 'forecast' ? forecastLoading : alertsLoading;
 
@@ -113,7 +139,7 @@ export default function InventoryScreen() {
   // Aggregate totals for the summary
   const totalFull = summary.reduce((s, r) => s + (r.closingFulls ?? 0), 0);
   const totalEmpty = summary.reduce((s, r) => s + (r.closingEmpties ?? 0), 0);
-  const totalInTransit = summary.reduce((s, r) => s + ((r as any).inTransit ?? 0), 0);
+  const totalInTransit = summary.reduce((s, r) => s + (r.inTransit ?? 0), 0);
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -169,19 +195,19 @@ export default function InventoryScreen() {
               <>
                 <Text style={sectionLabel(colors)}>By Cylinder Type</Text>
                 {summary.map((item, i) => (
-                  <Card key={(item as any).cylinderTypeId ?? i} style={dark ? { backgroundColor: colors.cardBg, borderColor: colors.cardBorder } : undefined}>
+                  <Card key={item.cylinderTypeId ?? i} style={dark ? { backgroundColor: colors.cardBg, borderColor: colors.cardBorder } : undefined}>
                     <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text, marginBottom: 8 }}>
-                      {(item as any).cylinderTypeName ?? (item as any).name ?? `Type ${i + 1}`}
-                      {(item as any).weightKg ? ` (${(item as any).weightKg}kg)` : ''}
+                      {item.cylinderTypeName ?? item.name ?? `Type ${i + 1}`}
+                      {item.weightKg ? ` (${item.weightKg}kg)` : ''}
                     </Text>
                     <View style={{ backgroundColor: dark ? colors.inputBg : colors.cardBg, borderRadius: 10, padding: 10, gap: 6 }}>
                       <Row label="Full" value={String(item.closingFulls ?? 0)} color={accent.green} colors={colors} />
                       <Row label="Empty" value={String(item.closingEmpties ?? 0)} color={accent.orange} colors={colors} />
-                      {(item as any).inTransit != null && (
-                        <Row label="In Transit" value={String((item as any).inTransit)} color={accent.blue} colors={colors} />
+                      {item.inTransit != null && (
+                        <Row label="In Transit" value={String(item.inTransit)} color={accent.blue} colors={colors} />
                       )}
-                      {(item as any).withCustomers != null && (
-                        <Row label="With Customers" value={String((item as any).withCustomers)} color={accent.purple} colors={colors} />
+                      {item.withCustomers != null && (
+                        <Row label="With Customers" value={String(item.withCustomers)} color={accent.purple} colors={colors} />
                       )}
                     </View>
                   </Card>
@@ -199,7 +225,7 @@ export default function InventoryScreen() {
             ) : forecast.length === 0 ? (
               <EmptyState title="No forecast data" description="Inventory forecast not available" />
             ) : (
-              forecast.map((f: any, i: number) => (
+              forecast.map((f: InventoryForecastRow, i: number) => (
                 <Card key={f.cylinderTypeId ?? i} style={dark ? { backgroundColor: colors.cardBg, borderColor: colors.cardBorder } : undefined}>
                   <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text, marginBottom: 6 }}>
                     {f.cylinderTypeName ?? `Type ${i + 1}`}
@@ -231,7 +257,7 @@ export default function InventoryScreen() {
             ) : alerts.length === 0 ? (
               <EmptyState title="No alerts" description="All inventory levels are healthy" />
             ) : (
-              alerts.map((alert: any, i: number) => (
+              alerts.map((alert: ThresholdAlert, i: number) => (
                 <Card key={alert.alertId ?? i} style={dark ? { backgroundColor: colors.cardBg, borderColor: colors.cardBorder } : undefined}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
                     <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text, flex: 1 }} numberOfLines={1}>
@@ -269,7 +295,7 @@ export default function InventoryScreen() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function Row({ label, value, color, colors }: { label: string; value: string; color: string; colors: any }) {
+function Row({ label, value, color, colors }: { label: string; value: string; color: string; colors: ThemeColors }) {
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
       <Text style={{ fontSize: 13, color: colors.textSecondary }}>{label}</Text>
@@ -278,7 +304,7 @@ function Row({ label, value, color, colors }: { label: string; value: string; co
   );
 }
 
-function sectionLabel(colors: any) {
+function sectionLabel(colors: ThemeColors) {
   return {
     fontSize: 14,
     fontWeight: '600' as const,

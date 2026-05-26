@@ -1,11 +1,13 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { requireRole } from '../middleware/auth.js';
 import { sendSuccess, sendError, sendNotFound } from '../utils/apiResponse.js';
 import { REPORTS, reportToCsv, type ReportFilters } from '../services/reportsService.js';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
-function parseFilters(q: any): ReportFilters {
+function parseFilters(q: Request['query']): ReportFilters {
   return {
     dateFrom: typeof q.dateFrom === 'string' ? q.dateFrom : undefined,
     dateTo: typeof q.dateTo === 'string' ? q.dateTo : undefined,
@@ -34,8 +36,9 @@ router.get('/:reportType',
         return res.status(200).send(csv);
       }
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   });
 

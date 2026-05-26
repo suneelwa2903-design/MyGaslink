@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { runOverdueSweep } from '../jobs/overdueInvoicesJob.js';
 
@@ -14,7 +15,7 @@ describe('WI-132 — overdue invoices daily sweep', () => {
     }
   });
 
-  async function seedInvoice(over: Record<string, any>) {
+  async function seedInvoice(over: Partial<Prisma.InvoiceUncheckedCreateInput>) {
     const inv = await prisma.invoice.create({
       data: {
         invoiceNumber: `WI132-${Math.random().toString(36).slice(2, 10)}`,

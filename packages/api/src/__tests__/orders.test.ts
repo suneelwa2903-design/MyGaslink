@@ -218,7 +218,7 @@ describe('Orders — GET /api/orders driver auto-scoping', () => {
   it('driver A only sees their own order, not driver B\'s', async () => {
     const res = await request(app).get('/api/orders').set(auth(driverAToken));
     expect(res.status).toBe(200);
-    const ids: string[] = res.body.data.orders.map((o: any) => o.orderId);
+    const ids: string[] = res.body.data.orders.map((o: { orderId: string }) => o.orderId);
     expect(ids).toContain(orderAId);
     expect(ids).not.toContain(orderBId);
   });
@@ -226,7 +226,7 @@ describe('Orders — GET /api/orders driver auto-scoping', () => {
   it('driver B only sees their own order, not driver A\'s', async () => {
     const res = await request(app).get('/api/orders').set(auth(driverBToken));
     expect(res.status).toBe(200);
-    const ids: string[] = res.body.data.orders.map((o: any) => o.orderId);
+    const ids: string[] = res.body.data.orders.map((o: { orderId: string }) => o.orderId);
     expect(ids).toContain(orderBId);
     expect(ids).not.toContain(orderAId);
   });
@@ -236,7 +236,7 @@ describe('Orders — GET /api/orders driver auto-scoping', () => {
       .get('/api/orders?status=pending_delivery')
       .set(auth(driverAToken));
     expect(res.status).toBe(200);
-    const numbers: string[] = res.body.data.orders.map((o: any) => o.orderNumber);
+    const numbers: string[] = res.body.data.orders.map((o: { orderNumber: string }) => o.orderNumber);
     expect(numbers).toContain(ORDER_A_NUM);
     // The status filter must still narrow, and the driver scope must still
     // exclude driver B — so order B must not appear even though it is also
@@ -256,7 +256,7 @@ describe('Orders — GET /api/orders driver auto-scoping', () => {
   it('distributor_admin sees BOTH drivers\' orders (auto-scoping does not apply)', async () => {
     const res = await request(app).get('/api/orders').set(auth(adminToken));
     expect(res.status).toBe(200);
-    const ids: string[] = res.body.data.orders.map((o: any) => o.orderId);
+    const ids: string[] = res.body.data.orders.map((o: { orderId: string }) => o.orderId);
     expect(ids).toContain(orderAId);
     expect(ids).toContain(orderBId);
   });
@@ -266,7 +266,7 @@ describe('Orders — GET /api/orders driver auto-scoping', () => {
       .get(`/api/orders?driverId=${driverAId}`)
       .set(auth(adminToken));
     expect(res.status).toBe(200);
-    const ids: string[] = res.body.data.orders.map((o: any) => o.orderId);
+    const ids: string[] = res.body.data.orders.map((o: { orderId: string }) => o.orderId);
     expect(ids).toContain(orderAId);
     expect(ids).not.toContain(orderBId);
   });

@@ -4,7 +4,7 @@ import request from 'supertest';
 // CRITICAL: vi.mock must be hoisted before module imports so that
 // gstPreflightService sees the mocked apiCall when it's imported below.
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     apiCall: vi.fn(),
@@ -45,8 +45,10 @@ const TEST_DATE = '2099-12-31';
 const today = () => TEST_DATE;
 import * as whitebooksClient from '../services/gst/whitebooksClient.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
+import type { PreflightResult } from '../services/gst/gstPreflightService.js';
 
-const apiCallMock = whitebooksClient.apiCall as unknown as ReturnType<typeof vi.fn>;
+const apiCallMock = vi.mocked(whitebooksClient.apiCall);
 
 let app: Express;
 let sharmaAdminToken: string;
@@ -62,7 +64,7 @@ function auth(token: string, distributorId?: string) {
 
 // Successful IRN response with inline EWB — the happy path NIC returns
 // when transport details are sent inside the IRN request payload.
-function irnSuccessWithInlineEwb(over: Record<string, any> = {}) {
+function irnSuccessWithInlineEwb(over: Record<string, unknown> = {}) {
   return {
     status_cd: '1',
     data: {
@@ -104,10 +106,8 @@ function ewbStandaloneSuccess() {
   };
 }
 
-function whitebooksThrow(code: string, message: string) {
-  const err: any = new Error(message);
-  err.code = code;
-  throw err;
+function whitebooksThrow(code: string, message: string): never {
+  throw new whitebooksClient.GstError(message, code);
 }
 
 beforeAll(async () => {
@@ -118,12 +118,12 @@ beforeAll(async () => {
   const sharmaAdmin = await prisma.user.findUniqueOrThrow({ where: { email: 'sharma@gasdist.com' } });
   sharmaAdminToken = generateToken({
     userId: sharmaAdmin.id, email: sharmaAdmin.email,
-    role: sharmaAdmin.role as any, distributorId: sharmaAdmin.distributorId,
+    role: sharmaAdmin.role as UserRole, distributorId: sharmaAdmin.distributorId,
   });
   const bhargavaAdmin = await prisma.user.findUniqueOrThrow({ where: { email: 'bhargava@gasagency.com' } });
   bhargavaAdminToken = generateToken({
     userId: bhargavaAdmin.id, email: bhargavaAdmin.email,
-    role: bhargavaAdmin.role as any, distributorId: bhargavaAdmin.distributorId,
+    role: bhargavaAdmin.role as UserRole, distributorId: bhargavaAdmin.distributorId,
   });
   const fin = await loginAsFinance(); financeToken = fin.token;
   const inv = await loginAsInventory(); inventoryToken = inv.token;
@@ -307,7 +307,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       const [, , ewbPath] = apiCallMock.mock.calls[1];
       expect(String(irnPath)).toContain('/einvoice/type/GENERATE/version/V1_03');
       expect(String(ewbPath)).toContain('/ewaybillapi/v1.03/ewayapi/genewaybill');
-      expect((irnPayload as any).EwbDtls).toBeUndefined();
+      expect((irnPayload as { EwbDtls?: unknown }).EwbDtls).toBeUndefined();
     } finally {
       await clearPreflightArtifacts(orders.map((o) => o.id));
     }
@@ -511,7 +511,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     });
     try {
       // Simulate a dead NIC e-invoice window: the probe seam rejects.
-      (whitebooksClient.pingEinvoiceSession as any).mockRejectedValueOnce(
+      vi.mocked(whitebooksClient.pingEinvoiceSession).mockRejectedValueOnce(
         new whitebooksClient.GstError('NIC session expired', 'SESSION_EXPIRED'),
       );
       await expect(
@@ -958,8 +958,8 @@ describe('POST /api/orders/preflight-dispatch — integration', () => {
         .send({ driverId: ctx.driver.id, assignmentDate: today() });
       expect(res.status).toBe(207);
       expect(res.body.data.summary).toMatchObject({ total: 3, succeeded: 2, failed: 1 });
-      expect(res.body.data.results.filter((r: any) => r.success).length).toBe(2);
-      expect(res.body.data.results.find((r: any) => !r.success).errorCode).toBe('3028');
+      expect(res.body.data.results.filter((r: PreflightResult) => r.success).length).toBe(2);
+      expect(res.body.data.results.find((r: PreflightResult) => !r.success).errorCode).toBe('3028');
     } finally {
       await clearPreflightArtifacts(orders.map((o) => o.id));
     }

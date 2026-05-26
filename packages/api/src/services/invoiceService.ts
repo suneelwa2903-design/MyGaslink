@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient, $Enums } from '@prisma/client';
 import { GST_RATES } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
 import { allocateNumber } from './numberingService.js';
@@ -44,9 +44,9 @@ export async function listInvoices(
   }
 ) {
   const where: Prisma.InvoiceWhereInput = { distributorId, deletedAt: null };
-  if (filters.status) where.status = filters.status as any;
+  if (filters.status) where.status = filters.status as $Enums.InvoiceStatus;
   if (filters.customerId) where.customerId = filters.customerId;
-  if (filters.irnStatus) where.irnStatus = filters.irnStatus as any;
+  if (filters.irnStatus) where.irnStatus = filters.irnStatus as $Enums.IrnStatus;
   if (filters.dateFrom || filters.dateTo) {
     where.issueDate = {};
     if (filters.dateFrom) where.issueDate.gte = new Date(filters.dateFrom);
@@ -598,7 +598,7 @@ export async function updateInvoiceStatus(id: string, distributorId: string, sta
   if (!invoice) throw new InvoiceError('Invoice not found', 404);
   return prisma.invoice.update({
     where: { id },
-    data: { status: status as any },
+    data: { status: status as $Enums.InvoiceStatus },
   });
 }
 
@@ -648,15 +648,19 @@ export async function generateRetroactiveGstInvoices(
   }
 
   // Find all non-GST invoices (gstRate = 0 on items) that haven't been cancelled
-  const where: any = {
+  const where: Prisma.InvoiceWhereInput = {
     distributorId,
     deletedAt: null,
     status: { not: 'cancelled' },
     isGaslinkBilling: false,
     items: { some: { gstRate: 0 } },
   };
-  if (fromDate) where.issueDate = { ...where.issueDate, gte: new Date(fromDate) };
-  if (toDate) where.issueDate = { ...where.issueDate, lte: new Date(toDate) };
+  if (fromDate || toDate) {
+    const issueDate: Prisma.DateTimeFilter = {};
+    if (fromDate) issueDate.gte = new Date(fromDate);
+    if (toDate) issueDate.lte = new Date(toDate);
+    where.issueDate = issueDate;
+  }
 
   const invoices = await prisma.invoice.findMany({
     where,

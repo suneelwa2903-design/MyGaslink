@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { hashPassword } from './authService.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 
 const userSelect = {
   id: true,
@@ -79,7 +79,7 @@ export async function createUser(data: {
       firstName: data.firstName,
       lastName: data.lastName,
       phone: data.phone || null,
-      role: data.role as any,
+      role: data.role as $Enums.UserRole,
       distributorId: data.distributorId || null,
       customerId: data.customerId || null,
       requiresPasswordReset: true,
@@ -110,7 +110,7 @@ export async function updateUser(id: string, data: {
   if (data.firstName !== undefined) updateData.firstName = data.firstName;
   if (data.lastName !== undefined) updateData.lastName = data.lastName;
   if (data.phone !== undefined) updateData.phone = data.phone;
-  if (data.role !== undefined) updateData.role = data.role as any;
+  if (data.role !== undefined) updateData.role = data.role as $Enums.UserRole;
   if (data.distributorId !== undefined) {
     updateData.distributor = data.distributorId
       ? { connect: { id: data.distributorId } }
@@ -175,7 +175,7 @@ async function checkSeatAvailability(distributorId: string, role: string) {
   if (allowed === undefined) return { available: true, allowed: 999, used: 0 }; // Unknown role, no limit
 
   const used = await prisma.user.count({
-    where: { distributorId, role: role as any, status: 'active', deletedAt: null },
+    where: { distributorId, role: role as $Enums.UserRole, status: 'active', deletedAt: null },
   });
 
   return { available: used < allowed, allowed, used };

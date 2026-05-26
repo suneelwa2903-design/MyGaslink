@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm, useFieldArray, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -284,7 +284,7 @@ function CustomerFormModal({
   const isEdit = !!customer;
 
   const { register, handleSubmit, control, getValues, setValue, watch, formState: { errors } } = useForm<CreateCustomerInput>({
-    resolver: zodResolver(createCustomerSchema) as any,
+    resolver: zodResolver(createCustomerSchema) as Resolver<CreateCustomerInput>,
     defaultValues: customer
       ? {
           customerName: customer.customerName,

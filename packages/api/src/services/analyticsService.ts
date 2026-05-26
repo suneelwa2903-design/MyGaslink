@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 import { computeCustomerOverdue } from './paymentService.js';
 import { checkThresholds } from './inventoryService.js';
@@ -252,11 +253,12 @@ export async function resolveDriverIdForUser(distributorId: string, userId: stri
 // route passes it for the `driver` role so a driver only ever sees their own
 // performance; admins/finance/inventory call without it (unscoped, all drivers).
 export async function getDriverDeliveryPerformance(distributorId: string, dateFrom?: string, dateTo?: string, driverId?: string) {
-  const where: any = { distributorId, deletedAt: null };
+  const where: Prisma.OrderWhereInput = { distributorId, deletedAt: null };
   if (dateFrom || dateTo) {
-    where.deliveryDate = {};
-    if (dateFrom) where.deliveryDate.gte = new Date(dateFrom);
-    if (dateTo) where.deliveryDate.lte = new Date(dateTo);
+    const deliveryDate: Prisma.DateTimeFilter = {};
+    if (dateFrom) deliveryDate.gte = new Date(dateFrom);
+    if (dateTo) deliveryDate.lte = new Date(dateTo);
+    where.deliveryDate = deliveryDate;
   }
 
   const drivers = await prisma.driver.findMany({
@@ -623,8 +625,8 @@ export async function getInsights(distributorId: string): Promise<Insight[]> {
   try {
     const perf = await getDriverDeliveryPerformance(distributorId);
     const best = perf
-      .filter((d: any) => d.totalOrders >= 5)
-      .sort((a: any, b: any) => b.deliveryRate - a.deliveryRate)[0];
+      .filter((d) => d.totalOrders >= 5)
+      .sort((a, b) => b.deliveryRate - a.deliveryRate)[0];
     if (best && best.deliveryRate >= 90) {
       insights.push({
         icon: '🚚',

@@ -19,7 +19,7 @@ import request from 'supertest';
 import bcrypt from 'bcryptjs';
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     apiCall: vi.fn(),
@@ -41,10 +41,12 @@ import { createApp } from '../app.js';
 import { generateToken } from './helpers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
 import type { Express } from 'express';
+import type { Prisma } from '@prisma/client';
+import type { UserRole } from '@gaslink/shared';
 
 const DIST = 'dist-002';
 const PF_DATE = '2099-12-31';
-const apiCallMock = whitebooksClient.apiCall as unknown as ReturnType<typeof vi.fn>;
+const apiCallMock = vi.mocked(whitebooksClient.apiCall);
 
 let app: Express;
 const createdOrderIds: string[] = [];
@@ -62,19 +64,19 @@ async function makeDriver(distributorId: string, phone: string, email: string) {
   const user = await prisma.user.create({ data: { email, passwordHash, firstName: 'TL', lastName: 'Driver', phone, role: 'driver', status: 'active', distributorId } });
   const driver = await prisma.driver.create({ data: { distributorId, driverName: `TL ${phone}`, phone, status: 'active' } });
   createdDriverIds.push(driver.id); createdUserEmails.push(email);
-  const token = generateToken({ userId: user.id, email, role: 'driver' as any, distributorId });
+  const token = generateToken({ userId: user.id, email, role: 'driver' as UserRole, distributorId });
   return { driver, token };
 }
 
 async function makeVehicle(distributorId: string, vehicleNumber: string, status = 'idle') {
-  const v = await prisma.vehicle.create({ data: { distributorId, vehicleNumber, vehicleType: 'Truck', status: status as any } });
+  const v = await prisma.vehicle.create({ data: { distributorId, vehicleNumber, vehicleType: 'Truck', status: status as Prisma.VehicleCreateInput['status'] } });
   createdVehicleIds.push(v.id);
   return v;
 }
 
 async function makeDva(opts: { driverId: string; vehicleId: string; date: Date; status?: string; tripNumber?: number }) {
   const dva = await prisma.driverVehicleAssignment.create({
-    data: { driverId: opts.driverId, vehicleId: opts.vehicleId, distributorId: DIST, assignmentDate: opts.date, status: (opts.status ?? 'dispatch_ready') as any, tripNumber: opts.tripNumber ?? 1 },
+    data: { driverId: opts.driverId, vehicleId: opts.vehicleId, distributorId: DIST, assignmentDate: opts.date, status: (opts.status ?? 'dispatch_ready') as Prisma.DriverVehicleAssignmentCreateInput['status'], tripNumber: opts.tripNumber ?? 1 },
   });
   createdDvaIds.push(dva.id);
   return dva;
@@ -126,7 +128,7 @@ describe('WI-094 — DVA timeline timestamps', () => {
     const dva = await makeDva({ driverId: pfDriverId, vehicleId: v.id, date: new Date(PF_DATE), status: 'dispatch_ready' });
     await seedB2cOrder(pfDriverId, v.id, PF_DATE);
     apiCallMock.mockResolvedValue(ewbGenOk('TL-EWB-1')); // single B2C order → standalone EWB, no gencewb
-    const result = await preflightDispatch({ distributorId: DIST, driverId: pfDriverId, assignmentDate: PF_DATE, userId: 'tl-user' } as any);
+    const result = await preflightDispatch({ distributorId: DIST, driverId: pfDriverId, assignmentDate: PF_DATE, userId: 'tl-user' });
     expect(result.summary.succeeded).toBe(1);
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
     expect(after.dispatchedAt).not.toBeNull();
@@ -151,8 +153,8 @@ describe('WI-094 — DVA timeline timestamps', () => {
     // IRN GENERATE throws a coded NIC error → order fails (caught per-order).
     // Use ...Once (like gst-preflight's 3028/5002 tests) so any per-order
     // recovery call afterwards doesn't also throw and abort the batch.
-    apiCallMock.mockImplementationOnce(() => { const e: any = new Error('GSTIN is invalid'); e.code = '3028'; throw e; });
-    const result = await preflightDispatch({ distributorId: DIST, driverId: pfDriverId, assignmentDate: PF_DATE, userId: 'tl-user' } as any);
+    apiCallMock.mockImplementationOnce(() => { const e = new Error('GSTIN is invalid') as Error & { code: string }; e.code = '3028'; throw e; });
+    const result = await preflightDispatch({ distributorId: DIST, driverId: pfDriverId, assignmentDate: PF_DATE, userId: 'tl-user' });
     expect(result.summary.succeeded).toBe(0);
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
     expect(after.dispatchedAt).toBeNull();
@@ -197,7 +199,7 @@ describe('WI-094 — DVA timeline timestamps', () => {
   it('❌ 6. no write path — status route cannot set dispatchedAt', async () => {
     const v = await makeVehicle(DIST, 'TEST-TL-NOWRITE');
     const dva = await makeDva({ driverId: pfDriverId, vehicleId: v.id, date: startOfUtcDay(), status: 'dispatch_ready', tripNumber: 6 });
-    const adminTok = generateToken({ userId: 'x', email: 'x', role: 'distributor_admin' as any, distributorId: DIST });
+    const adminTok = generateToken({ userId: 'x', email: 'x', role: 'distributor_admin' as UserRole, distributorId: DIST });
     // Inject dispatchedAt in the body — the Zod schema only accepts `status`.
     const fake = new Date('2099-01-01T00:00:00.000Z').toISOString();
     await request(app)
@@ -240,12 +242,12 @@ describe('WI-094 — DVA timeline timestamps', () => {
     });
     createdOrderIds.push(b2bOrder.id);
     // Route by endpoint: IRN GENERATE → 3028 (B2B fails); genewaybill → success (B2C ok).
-    apiCallMock.mockImplementation(async (_d: any, _m: any, path: string) => {
-      if (typeof path === 'string' && path.includes('/einvoice/type/GENERATE')) { const e: any = new Error('GSTIN is invalid'); e.code = '3028'; throw e; }
-      if (typeof path === 'string' && path.includes('genewaybill')) return ewbGenOk('TL-PARTIAL-EWB') as any;
-      return { status_cd: '1' } as any;
+    apiCallMock.mockImplementation(async (_d, _m, path) => {
+      if (typeof path === 'string' && path.includes('/einvoice/type/GENERATE')) { const e = new Error('GSTIN is invalid') as Error & { code: string }; e.code = '3028'; throw e; }
+      if (typeof path === 'string' && path.includes('genewaybill')) return ewbGenOk('TL-PARTIAL-EWB');
+      return { status_cd: '1' };
     });
-    const result = await preflightDispatch({ distributorId: DIST, driverId: pfDriverId, assignmentDate: PF_DATE, userId: 'tl-user' } as any);
+    const result = await preflightDispatch({ distributorId: DIST, driverId: pfDriverId, assignmentDate: PF_DATE, userId: 'tl-user' });
     expect(result.summary.succeeded).toBeGreaterThanOrEqual(1);
     expect(result.summary.failed).toBeGreaterThanOrEqual(1);
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });

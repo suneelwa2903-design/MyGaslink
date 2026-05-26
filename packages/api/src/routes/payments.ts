@@ -9,6 +9,8 @@ import * as paymentService from '../services/paymentService.js';
 import { mapPayment, mapPayments, mapInvoice } from '../utils/mappers.js';
 import { z } from 'zod';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 const allocatePaymentSchema = z.object({
@@ -22,7 +24,7 @@ router.get('/',
   validateQuery(paymentFilterSchema),
   async (req, res) => {
     try {
-      const result = await paymentService.listPayments(req.user!.distributorId!, (req.validated?.query || req.query) as any);
+      const result = await paymentService.listPayments(req.user!.distributorId!, (req.validated?.query || req.query) as Parameters<typeof paymentService.listPayments>[1]);
       return sendSuccess(res, { payments: mapPayments(result.data) }, 200, result.meta);
     } catch (err) {
       return sendError(res, (err as Error).message);
@@ -41,8 +43,9 @@ router.post('/',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapPayment(payment));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -61,8 +64,9 @@ router.post('/:id/allocate',
         payment: mapPayment(result.payment),
         invoice: mapInvoice(result.invoice),
       });
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -76,8 +80,9 @@ router.get('/ledger/:customerId',
       req.user!.distributorId!, param(req.params.customerId)
     );
     return sendSuccess(res, ledger);
-  } catch (err: any) {
-    return sendError(res, err.message, err.statusCode || 500);
+  } catch (err: unknown) {
+    const e = err as ServiceError;
+    return sendError(res, e.message, e.statusCode || 500);
   }
 });
 

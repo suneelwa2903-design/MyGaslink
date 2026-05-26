@@ -24,7 +24,7 @@ export default function BillingScreen() {
   // API may return { cycles: [...] } or [...] directly — handle both
   const cycles: BillingCycle[] = Array.isArray(cyclesData)
     ? cyclesData
-    : (cyclesData as any)?.cycles ?? [];
+    : cyclesData?.cycles ?? [];
 
   const markPaid = useApiMutation<BillingCycle, { id: string }>(
     'put',

@@ -5,6 +5,7 @@ import { generateToken, loginAsDistAdmin } from './helpers.js';
 import { prisma } from '../lib/prisma.js';
 import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
+import type { $Enums } from '@prisma/client';
 
 let app: Express;
 let customerToken: string;
@@ -259,25 +260,25 @@ describe('Customer Portal - Invoice PDF download (WI-126)', () => {
   const orderIds: string[] = [];
   const invoiceIds: string[] = [];
 
-  async function makeOrder(status: string) {
+  async function makeOrder(status: $Enums.OrderStatus) {
     const far = new Date('2099-12-31');
     const o = await prisma.order.create({
       data: {
         orderNumber: `TEST-WI126-${status}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
         distributorId, customerId, orderDate: far, deliveryDate: far,
-        status: status as any, totalAmount: 1180,
+        status, totalAmount: 1180,
       },
     });
     orderIds.push(o.id);
     return o;
   }
-  async function makeInvoice(orderId: string, status: string) {
+  async function makeInvoice(orderId: string, status: $Enums.InvoiceStatus) {
     const far = new Date('2099-12-31');
     const inv = await prisma.invoice.create({
       data: {
         invoiceNumber: `TEST-INV-WI126-${status}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
         distributorId, customerId, orderId, issueDate: far, dueDate: far,
-        status: status as any, totalAmount: 1180, outstandingAmount: status === 'cancelled' ? 0 : 1180,
+        status, totalAmount: 1180, outstandingAmount: status === 'cancelled' ? 0 : 1180,
         items: { create: [{ cylinderTypeId: ctId, description: 'Test cyl', quantity: 1, unitPrice: 1000, totalPrice: 1180 }] },
       },
     });
@@ -306,7 +307,7 @@ describe('Customer Portal - Invoice PDF download (WI-126)', () => {
       .get('/api/customer-portal/invoices').query({ from: '2099-01-01', to: '2099-12-31' })
       .set(auth(customerToken));
     expect(res.status).toBe(200);
-    const row = res.body.data.invoices.find((i: any) => i.invoiceId === deliveredInvoiceId);
+    const row = res.body.data.invoices.find((i: { invoiceId: string }) => i.invoiceId === deliveredInvoiceId);
     expect(row).toBeDefined();
     expect(row.orderStatus).toBe('delivered');
   });
@@ -344,12 +345,12 @@ describe('Customer Portal - Dispute lifecycle (WI-127)', () => {
   const invoiceIds: string[] = [];
 
   beforeAll(async () => {
-    const mk = async (status: string) => {
+    const mk = async (status: $Enums.OrderStatus) => {
       const o = await prisma.order.create({
         data: {
           orderNumber: `TEST-WI127-${status}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
           distributorId, customerId, orderDate: far, deliveryDate: far, deliveredAt: far,
-          status: status as any, totalAmount: 1180,
+          status, totalAmount: 1180,
         },
       });
       orderIds.push(o.id);
@@ -724,14 +725,14 @@ describe('Customer Portal - Account', () => {
     // customerPrice must be basePrice net of the customer discount.
     const { getEffectivePrice } = await import('../services/cylinderTypeService.js');
     const expectedBase = await getEffectivePrice(distributorId, ct.id, new Date());
-    const row = res.body.data.currentPrices.find((p: any) => p.cylinderTypeId === ct.id);
+    const row = res.body.data.currentPrices.find((p: { cylinderTypeId: string }) => p.cylinderTypeId === ct.id);
     expect(row).toBeDefined();
     expect(row.basePrice).toBe(expectedBase);
     expect(row.discountPerUnit).toBe(150);
     expect(row.customerPrice).toBe(Math.max(expectedBase - 150, 0));
 
     // The discount also surfaces in the cylinderDiscounts list.
-    const disc = res.body.data.cylinderDiscounts.find((d: any) => d.cylinderTypeName === ct.typeName);
+    const disc = res.body.data.cylinderDiscounts.find((d: { cylinderTypeName: string; discountPerUnit: number }) => d.cylinderTypeName === ct.typeName);
     expect(disc?.discountPerUnit).toBe(150);
   });
 });

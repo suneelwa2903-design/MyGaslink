@@ -1,6 +1,29 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { $Enums } from '@prisma/client';
 import { GSTIN_REGEX } from '@gaslink/shared';
+
+/** Loosely-validated customer update payload (validation runs in the route's Zod schema). */
+interface CustomerUpdateData {
+  customerName?: string;
+  businessName?: string | null;
+  gstin?: string | null;
+  phone?: string;
+  email?: string | null;
+  billingAddressLine1?: string | null;
+  billingAddressLine2?: string | null;
+  billingCity?: string | null;
+  billingState?: string | null;
+  billingPincode?: string | null;
+  shippingAddressLine1?: string | null;
+  shippingAddressLine2?: string | null;
+  shippingCity?: string | null;
+  shippingState?: string | null;
+  shippingPincode?: string | null;
+  creditPeriodDays?: number;
+  contacts?: Array<{ name: string; phone: string; email?: string | null; isPrimary?: boolean }>;
+  cylinderDiscounts?: Array<{ cylinderTypeId: string; discountPerUnit: number }>;
+}
 
 const customerInclude = {
   contacts: true,
@@ -17,7 +40,7 @@ export async function listCustomers(
     distributorId,
     deletedAt: null,
   };
-  if (filters.status) where.status = filters.status as any;
+  if (filters.status) where.status = filters.status as $Enums.CustomerStatus;
   if (filters.search) {
     where.OR = [
       { customerName: { contains: filters.search, mode: 'insensitive' } },
@@ -131,7 +154,7 @@ export async function createCustomer(
 export async function updateCustomer(
   id: string,
   distributorId: string,
-  data: Record<string, any>,
+  data: CustomerUpdateData,
   performedBy: string
 ) {
   const existing = await prisma.customer.findFirst({
@@ -153,14 +176,15 @@ export async function updateCustomer(
 
   return prisma.$transaction(async (tx) => {
     // Log audit trail for changed fields
-    const trackFields = [
+    const trackFields: (keyof CustomerUpdateData)[] = [
       'customerName', 'businessName', 'gstin', 'phone', 'email',
       'billingAddressLine1', 'billingCity', 'billingState', 'billingPincode',
       'shippingAddressLine1', 'shippingCity', 'shippingState', 'shippingPincode',
       'creditPeriodDays',
     ];
+    const existingRecord = existing as Record<string, unknown>;
     for (const field of trackFields) {
-      if (data[field] !== undefined && data[field] !== (existing as any)[field]) {
+      if (data[field] !== undefined && data[field] !== existingRecord[field]) {
         await tx.customerAuditTrail.create({
           data: {
             customerId: id,
@@ -168,8 +192,8 @@ export async function updateCustomer(
             performedBy,
             actionType: 'field_update',
             fieldName: field,
-            oldValue: (existing as any)[field],
-            newValue: data[field],
+            oldValue: existingRecord[field] as Prisma.InputJsonValue,
+            newValue: data[field] as Prisma.InputJsonValue,
           },
         });
       }
@@ -180,7 +204,7 @@ export async function updateCustomer(
       await tx.customerContact.deleteMany({ where: { customerId: id } });
       if (data.contacts.length > 0) {
         await tx.customerContact.createMany({
-          data: data.contacts.map((c: any) => ({
+          data: data.contacts.map((c) => ({
             customerId: id,
             name: c.name,
             phone: c.phone,
@@ -196,7 +220,7 @@ export async function updateCustomer(
       await tx.customerCylinderDiscount.deleteMany({ where: { customerId: id } });
       if (data.cylinderDiscounts.length > 0) {
         await tx.customerCylinderDiscount.createMany({
-          data: data.cylinderDiscounts.map((d: any) => ({
+          data: data.cylinderDiscounts.map((d) => ({
             customerId: id,
             cylinderTypeId: d.cylinderTypeId,
             discountPerUnit: d.discountPerUnit,
@@ -251,16 +275,16 @@ export async function createModificationRequest(
   customerId: string,
   distributorId: string,
   requestedBy: string,
-  data: { modificationType: string; reason?: string; changes?: any }
+  data: { modificationType: string; reason?: string; changes?: Prisma.InputJsonValue }
 ) {
   return prisma.customerModificationRequest.create({
     data: {
       customerId,
       distributorId,
-      modificationType: data.modificationType as any,
+      modificationType: data.modificationType as $Enums.ModificationType,
       requestedBy,
       reason: data.reason || null,
-      changes: data.changes || null,
+      changes: data.changes ?? Prisma.JsonNull,
     },
   });
 }
@@ -291,7 +315,7 @@ export async function approveModificationRequest(requestId: string, distributorI
     } else if (request.modificationType === 'update_info' && request.changes) {
       await tx.customer.update({
         where: { id: request.customerId },
-        data: request.changes as any,
+        data: request.changes as Prisma.CustomerUpdateInput,
       });
     }
 
@@ -478,8 +502,9 @@ export async function importCustomers(
         },
       });
       imported += 1;
-    } catch (err: any) {
-      failures.push({ row: rowNum, name: r.name, phone: r.phone, reason: err?.message ?? 'unknown error' });
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : 'unknown error';
+      failures.push({ row: rowNum, name: r.name, phone: r.phone, reason });
     }
   }
 
@@ -589,8 +614,9 @@ export async function importOpeningBalances(
         });
       });
       imported += 1;
-    } catch (err: any) {
-      failures.push({ row: rowNum, name: r.customerName, reason: err?.message ?? 'unknown error' });
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : 'unknown error';
+      failures.push({ row: rowNum, name: r.customerName, reason });
     }
   }
 

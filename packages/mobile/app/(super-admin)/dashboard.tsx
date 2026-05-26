@@ -4,9 +4,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { MetricCard, Card, EmptyState } from '../../src/components/ui';
-import { useTheme, formatINR } from '../../src/theme';
+import { useTheme, formatINR, type ThemeColors } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
 import type { DashboardStats, AnalyticsMetrics, Distributor, CollectionsDashboard } from '@gaslink/shared';
+
+// The collections endpoint can carry either customer- or distributor-scoped
+// rows with a couple of aliased numeric fields the card renders defensively.
+type CollectionRow = Partial<CollectionsDashboard> & {
+  distributorName?: string;
+  collected?: number;
+  totalCollected?: number;
+  outstanding?: number;
+  totalOutstanding?: number;
+};
 
 // ── Sub-tab types ────────────────────────────────────────────────────────────
 
@@ -73,7 +83,7 @@ export default function AnalyticsScreen() {
   );
   const distributors: Distributor[] = Array.isArray(distributorsData)
     ? distributorsData
-    : (distributorsData as any)?.distributors ?? [];
+    : distributorsData?.distributors ?? [];
 
   // Build query params for distributor scoping
   const distParams = selectedDistributorId ? { distributorId: selectedDistributorId } : {};
@@ -105,7 +115,7 @@ export default function AnalyticsScreen() {
   );
   const collectionsList: CollectionsDashboard[] = Array.isArray(collections)
     ? collections
-    : (collections as any)?.collections ?? [];
+    : collections?.collections ?? [];
 
   // ─ Reports
   const { data: reports, isLoading: reportsLoading, refetch: refetchReports } = useApiQuery<{
@@ -365,7 +375,7 @@ export default function AnalyticsScreen() {
             ) : collectionsList.length === 0 ? (
               <EmptyState title="No collections" description="No collection data available" />
             ) : (
-              collectionsList.map((c: any, i: number) => (
+              collectionsList.map((c: CollectionRow, i: number) => (
                 <Card key={c.customerId ?? i} style={dark ? { backgroundColor: colors.cardBg, borderColor: colors.cardBorder } : undefined}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text, flex: 1 }} numberOfLines={1}>
@@ -471,7 +481,7 @@ export default function AnalyticsScreen() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function sectionLabel(colors: any) {
+function sectionLabel(colors: ThemeColors) {
   return {
     fontSize: 14,
     fontWeight: '600' as const,

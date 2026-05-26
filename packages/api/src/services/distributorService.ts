@@ -138,7 +138,7 @@ export async function updateDistributor(id: string, data: Partial<{
 }>) {
   return prisma.distributor.update({
     where: { id },
-    data: data as any,
+    data: data as Prisma.DistributorUpdateInput,
     select: distributorSelect,
   });
 }

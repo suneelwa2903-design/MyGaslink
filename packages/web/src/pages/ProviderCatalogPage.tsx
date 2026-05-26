@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -220,7 +220,7 @@ function CatalogFormModal({
     handleSubmit,
     formState: { errors },
   } = useForm<CatalogFormData>({
-    resolver: zodResolver(catalogSchema) as any,
+    resolver: zodResolver(catalogSchema) as Resolver<CatalogFormData>,
     defaultValues: item
       ? {
           providerCode: item.providerCode as CatalogFormData['providerCode'],

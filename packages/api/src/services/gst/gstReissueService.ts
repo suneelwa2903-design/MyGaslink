@@ -20,12 +20,14 @@
  *  - GST-disabled tenant / no prior IRN → reissue is a no-op.
  */
 
+import { Prisma, type IrnStatus, type EwbStatus } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { toNum } from '../../utils/decimal.js';
-import { getCredentials } from './whitebooksClient.js';
+import { getCredentials, GstError } from './whitebooksClient.js';
 import { callWithLog } from './apiLogger.js';
-import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
+import { buildIrnPayload, buildEwbPayload, type IrnPayload } from './payloadBuilders.js';
+import type { IrnResponse, EwbResponse } from './nicTypes.js';
 import { allocateNumber } from '../numberingService.js';
 import {
   cancelEwb,
@@ -35,6 +37,39 @@ import {
   parseEwbResponse,
   parseWhitebooksDate,
 } from './gstService.js';
+
+/** The InvoiceData shape consumed by buildIrnPayload (kept un-exported there). */
+type InvoiceData = Parameters<typeof buildIrnPayload>[0];
+
+/** The distributor fields the reissue flow reads (subset of the Prisma model). */
+type DistributorReissueFields = Pick<
+  Prisma.DistributorGetPayload<true>,
+  | 'id' | 'gstMode' | 'gstin' | 'legalName' | 'businessName'
+  | 'address' | 'city' | 'state' | 'pincode' | 'phone' | 'email' | 'docCode'
+>;
+
+/** Narrow an unknown caught value to the GST error code/message shape. */
+function errInfo(err: unknown): { code: string; message: string } {
+  if (err instanceof GstError) return { code: err.code, message: err.message };
+  if (err instanceof Error) return { code: '', message: err.message };
+  return { code: '', message: String(err) };
+}
+
+// JSON columns reject precise interfaces with optional fields; narrow at boundary.
+const toJson = (v: unknown): Prisma.InputJsonValue => v as Prisma.InputJsonValue;
+
+/** Subset of gst_documents columns the reissue regeneration paths write. */
+interface GstDocReissueWriteData {
+  irnStatus?: IrnStatus;
+  irn?: string | null;
+  ackNo?: string | null;
+  ackDate?: Date | null;
+  signedQr?: string | null;
+  ewbStatus?: EwbStatus;
+  ewbNo?: string | null;
+  ewbDate?: Date | null;
+  ewbValidTill?: Date | null;
+}
 
 export type ReissueResult =
   | { ok: true; skipped: true; reason: string }
@@ -50,7 +85,7 @@ export async function reissueForDeliveryMismatch(args: {
   invoiceId: string;
   distributorId: string;
   userId: string;
-  mismatchContext?: Record<string, any>;
+  mismatchContext?: Record<string, unknown>;
 }): Promise<ReissueResult> {
   const { invoiceId, distributorId, userId, mismatchContext } = args;
 
@@ -116,11 +151,12 @@ export async function reissueForDeliveryMismatch(args: {
       try {
         await cancelEwb(invoiceId, distributorId, 'Zero-quantity delivery — voiding invoice');
         logger.info('Zero-delivery void: EWB cancelled', { invoiceId });
-      } catch (err: any) {
-        logger.warn('Zero-delivery void: EWB cancel failed (non-blocking)', { invoiceId, err: err.message });
+      } catch (err: unknown) {
+        const message = errInfo(err).message;
+        logger.warn('Zero-delivery void: EWB cancel failed (non-blocking)', { invoiceId, err: message });
         await createPendingAction(
           distributorId, invoiceId,
-          'EWB_CANCEL_FAILED', err.message ?? 'EWB cancel failure during zero-delivery void',
+          'EWB_CANCEL_FAILED', message || 'EWB cancel failure during zero-delivery void',
           'medium',
         );
       }
@@ -129,13 +165,14 @@ export async function reissueForDeliveryMismatch(args: {
       try {
         await cancelIrn(invoiceId, distributorId, 'Zero-quantity delivery — voiding invoice');
         logger.info('Zero-delivery void: IRN cancelled', { invoiceId, irn: invoice.irn });
-      } catch (err: any) {
+      } catch (err: unknown) {
         // NIC may return 5002 — non-fatal. cancelIrn left irnStatus as 'success';
         // the pending action flags that NIC still holds a live IRN to clear.
-        logger.error('Zero-delivery void: IRN cancel failed (non-fatal)', { invoiceId, err: err.message });
+        const message = errInfo(err).message;
+        logger.error('Zero-delivery void: IRN cancel failed (non-fatal)', { invoiceId, err: message });
         await createPendingAction(
           distributorId, invoiceId,
-          'IRN_CANCEL_BLOCKED', err.message ?? 'IRN cancel failed during zero-delivery void',
+          'IRN_CANCEL_BLOCKED', message || 'IRN cancel failed during zero-delivery void',
           'high',
         );
       }
@@ -164,11 +201,12 @@ export async function reissueForDeliveryMismatch(args: {
     try {
       await cancelEwb(invoiceId, distributorId, 'Delivery quantity mismatch — reissuing invoice');
       logger.info('Reissue: EWB cancelled', { invoiceId });
-    } catch (err: any) {
-      logger.warn('Reissue: EWB cancel failed (non-blocking)', { invoiceId, err: err.message });
+    } catch (err: unknown) {
+      const message = errInfo(err).message;
+      logger.warn('Reissue: EWB cancel failed (non-blocking)', { invoiceId, err: message });
       await createPendingAction(
         distributorId, invoiceId,
-        'EWB_CANCEL_FAILED', err.message ?? 'EWB cancel failure during reissue',
+        'EWB_CANCEL_FAILED', message || 'EWB cancel failure during reissue',
         'medium',
       );
     }
@@ -188,19 +226,20 @@ export async function reissueForDeliveryMismatch(args: {
         where: { id: invoiceId },
         data: { status: previousInvoiceStatus },
       });
-    } catch (err: any) {
-      logger.error('Reissue: IRN cancel blocked — aborting', { invoiceId, err: err.message });
+    } catch (err: unknown) {
+      const message = errInfo(err).message;
+      logger.error('Reissue: IRN cancel blocked — aborting', { invoiceId, err: message });
       const pa = await createPendingAction(
         distributorId, invoiceId,
         'IRN_CANCEL_BLOCKED',
-        `Reissue aborted: ${err.message ?? 'IRN cancel failed'}`,
+        `Reissue aborted: ${message || 'IRN cancel failed'}`,
         'high',
       );
       return {
         ok: false,
         aborted: 'IRN_CANCEL_BLOCKED',
         pendingActionId: pa?.id ?? null,
-        reason: err.message ?? 'IRN cancel failed',
+        reason: message || 'IRN cancel failed',
       };
     }
   }
@@ -303,12 +342,13 @@ export async function reissueForDeliveryMismatch(args: {
     } else {
       newEwbNo = await regenerateB2cEwb(invoiceId, distributorId, distributor);
     }
-  } catch (err: any) {
-    logger.error('Reissue: doc regeneration failed', { invoiceId, err: err.message });
+  } catch (err: unknown) {
+    const message = errInfo(err).message;
+    logger.error('Reissue: doc regeneration failed', { invoiceId, err: message });
     await createPendingAction(
       distributorId, invoiceId,
       isB2B ? 'IRN_REGENERATION_FAILED' : 'EWB_REGENERATION_FAILED',
-      err.message ?? 'Doc regeneration failed during reissue',
+      message || 'Doc regeneration failed during reissue',
       'high',
     );
     // Continue to write the revision row anyway — the quantities have
@@ -327,12 +367,13 @@ export async function reissueForDeliveryMismatch(args: {
     try {
       newEwbNo = await regenerateB2bEwb(invoiceId, distributorId, distributor);
       logger.info('Reissue B2B: new EWB generated', { invoiceId, newEwbNo });
-    } catch (ewbErr: any) {
-      logger.error('Reissue B2B: new EWB generation failed (non-fatal)', { invoiceId, err: ewbErr.message });
+    } catch (ewbErr: unknown) {
+      const message = errInfo(ewbErr).message;
+      logger.error('Reissue B2B: new EWB generation failed (non-fatal)', { invoiceId, err: message });
       await createPendingAction(
         distributorId, invoiceId,
         'EWB_GENERATION',
-        ewbErr.message ?? 'New EWB generation failed during reissue',
+        message || 'New EWB generation failed during reissue',
         'medium',
       );
     }
@@ -347,8 +388,8 @@ export async function reissueForDeliveryMismatch(args: {
       reason: 'delivery_mismatch',
       originalTotal,
       revisedTotal: round2(revisedSubtotal),
-      originalItems: originalItems as any,
-      revisedItems: revisedItems as any,
+      originalItems: toJson(originalItems),
+      revisedItems: toJson(revisedItems),
       revisedBy: userId,
       ...(mismatchContext ? {} : {}),
     },
@@ -394,7 +435,7 @@ function round2(n: number): number {
 async function regenerateB2bIrn(
   invoiceId: string,
   distributorId: string,
-  distributor: any,
+  distributor: DistributorReissueFields,
 ): Promise<string | null> {
   // WI-064: burn the cancelled doc number up front. The cancel step
   // before this retired it on NIC's side, so any reuse attempt would
@@ -420,18 +461,18 @@ async function regenerateB2bIrn(
     distributor.email ||
     'info@mygaslink.com';
 
-  const callIrn = async (payload: any) => callWithLog<any>(
+  const callIrn = async (payload: IrnPayload) => callWithLog<IrnResponse>(
     distributorId, 'POST',
     `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(credEmail)}`,
     payload, 'einvoice',
     { apiType: 'IRN_GENERATE_REISSUE', invoiceId },
   );
 
-  let response: any;
+  let response: IrnResponse;
   try {
     response = await callIrn(buildIrnPayload(invoiceData));
-  } catch (err: any) {
-    const code = String(err.code ?? '').replace(/[^0-9]/g, '');
+  } catch (err: unknown) {
+    const code = String(errInfo(err).code ?? '').replace(/[^0-9]/g, '');
     // 2150 = doc number has an active IRN; 2278 = doc number had an IRN
     // that was cancelled. Both unblock by bumping the suffix once more.
     if (code !== '2150' && code !== '2278') throw err;
@@ -489,7 +530,7 @@ async function regenerateB2bIrn(
 async function regenerateB2bEwb(
   invoiceId: string,
   distributorId: string,
-  distributor: any,
+  distributor: DistributorReissueFields,
 ): Promise<string | null> {
   const invoice = await prisma.invoice.findFirstOrThrow({
     where: { id: invoiceId },
@@ -526,7 +567,7 @@ async function regenerateB2bEwb(
 async function regenerateB2cEwb(
   invoiceId: string,
   distributorId: string,
-  distributor: any,
+  distributor: DistributorReissueFields,
 ): Promise<string | null> {
   const invoice = await prisma.invoice.findFirstOrThrow({
     where: { id: invoiceId },
@@ -560,7 +601,7 @@ async function regenerateB2cEwb(
     distributor.email ||
     'info@mygaslink.com';
 
-  const resp = await callWithLog<any>(
+  const resp = await callWithLog<EwbResponse>(
     distributorId, 'POST',
     `/ewaybillapi/v1.03/ewayapi/genewaybill?email=${encodeURIComponent(credEmail)}`,
     ewbPayload, 'ewaybill',
@@ -588,7 +629,7 @@ async function regenerateB2cEwb(
 async function upsertLatestGstDoc(
   invoiceId: string,
   distributorId: string,
-  data: Record<string, any>,
+  data: GstDocReissueWriteData,
 ) {
   const existing = await prisma.gstDocument.findFirst({
     where: { invoiceId, isLatest: true, deletedAt: null },
@@ -620,7 +661,10 @@ async function upsertLatestGstDoc(
  * as gstService.processInvoiceGst but reads from the freshly-mutated
  * invoice items (which now reflect delivered quantities).
  */
-async function buildInvoiceDataForIrn(invoiceId: string, distributor: any): Promise<any> {
+async function buildInvoiceDataForIrn(
+  invoiceId: string,
+  distributor: DistributorReissueFields,
+): Promise<InvoiceData> {
   const inv = await prisma.invoice.findFirstOrThrow({
     where: { id: invoiceId },
     include: { items: { include: { cylinderType: true } }, customer: true },
@@ -655,7 +699,7 @@ async function buildInvoiceDataForIrn(invoiceId: string, distributor: any): Prom
       phone: inv.customer?.phone || undefined,
       email: inv.customer?.email || undefined,
     },
-    items: inv.items.map((item: any, idx: number) => ({
+    items: inv.items.map((item, idx) => ({
       slNo: idx + 1,
       description: item.description || item.cylinderType?.typeName || 'LPG Cylinder',
       hsnCode: item.hsnCode || '27111900',

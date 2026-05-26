@@ -17,7 +17,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 const { apiCallMock } = vi.hoisted(() => ({ apiCallMock: vi.fn() }));
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     apiCall: apiCallMock,

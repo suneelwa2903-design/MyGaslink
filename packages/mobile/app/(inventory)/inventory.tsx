@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ComponentProps } from 'react';
 import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity, Alert,
   Modal, TextInput, KeyboardAvoidingView, Platform,
@@ -9,6 +9,44 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Card, MetricCard, Badge, Button, EmptyState } from '../../src/components/ui';
 import { useTheme } from '../../src/theme';
 import type { InventorySummary, CylinderType, InventoryEvent, InventoryForecast, CancelledStock } from '@gaslink/shared';
+
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
+
+// Reconciliation "pending vehicle" rows aren't in the shared DTO set yet; model
+// the fields the screen reads.
+interface PendingReconItem {
+  cylinderTypeName?: string;
+  fullCount?: number;
+  emptyCount?: number;
+}
+
+interface PendingReconVehicle {
+  vehicleId: string;
+  assignmentId?: string;
+  vehicleNumber?: string;
+  vehicleName?: string;
+  driverName?: string;
+  pendingItems?: PendingReconItem[];
+}
+
+interface ThresholdAlert {
+  cylinderTypeId?: string;
+  cylinderTypeName?: string;
+  severity?: string;
+  currentStock?: number;
+  closingFulls?: number;
+  threshold?: number;
+  thresholdLevel?: number;
+  message?: string;
+}
+
+interface InventoryActionPayload {
+  cylinderTypeId: string;
+  quantity: number;
+  notes?: string;
+  vehicleNumber?: string;
+  documentNumber?: string;
+}
 
 // ─── Sub-tab types ──────────────────────────────────────────────────────────
 
@@ -25,7 +63,7 @@ const SUB_TABS: { label: string; value: SubTab }[] = [
 
 type ActionType = 'incoming_fulls' | 'outgoing_empties' | 'manual_adjustment';
 
-const ACTION_CARDS: { label: string; value: ActionType; icon: string; color: string; desc: string }[] = [
+const ACTION_CARDS: { label: string; value: ActionType; icon: IoniconName; color: string; desc: string }[] = [
   { label: 'Incoming Fulls', value: 'incoming_fulls', icon: 'arrow-down-circle', color: '#10b981', desc: 'Record stock received from supplier' },
   { label: 'Outgoing Empties', value: 'outgoing_empties', icon: 'arrow-up-circle', color: '#3b82f6', desc: 'Record empty cylinders sent out' },
   { label: 'Manual Adjustment', value: 'manual_adjustment', icon: 'build', color: '#8b5cf6', desc: 'Adjust stock for corrections' },
@@ -281,7 +319,7 @@ function ActionsContent() {
               width: 48, height: 48, borderRadius: 14,
               backgroundColor: action.color + '15', alignItems: 'center', justifyContent: 'center',
             }}>
-              <Ionicons name={action.icon as any} size={24} color={action.color} />
+              <Ionicons name={action.icon} size={24} color={action.color} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ fontWeight: '700', fontSize: 16, color: colors.text }}>{action.label}</Text>
@@ -350,7 +388,7 @@ function ActionsContent() {
 function ReconciliationContent() {
   const { dark, colors, accent } = useTheme();
 
-  const { data: pendingVehicles, isLoading: pendingLoading, refetch: refetchPending } = useApiQuery<any[]>(
+  const { data: pendingVehicles, isLoading: pendingLoading, refetch: refetchPending } = useApiQuery<PendingReconVehicle[]>(
     ['pending-reconciliation'],
     '/delivery/reconciliation/pending',
   );
@@ -408,9 +446,9 @@ function ReconciliationContent() {
           </View>
         </Card>
       ) : (
-        pendingVehicles?.map((vehicle: any) => {
-          const totalFulls = vehicle.pendingItems?.reduce((s: number, item: any) => s + (item.fullCount ?? 0), 0) ?? 0;
-          const totalEmpties = vehicle.pendingItems?.reduce((s: number, item: any) => s + (item.emptyCount ?? 0), 0) ?? 0;
+        pendingVehicles?.map((vehicle: PendingReconVehicle) => {
+          const totalFulls = vehicle.pendingItems?.reduce((s: number, item: PendingReconItem) => s + (item.fullCount ?? 0), 0) ?? 0;
+          const totalEmpties = vehicle.pendingItems?.reduce((s: number, item: PendingReconItem) => s + (item.emptyCount ?? 0), 0) ?? 0;
 
           return (
             <Card key={vehicle.vehicleId || vehicle.assignmentId}>
@@ -446,7 +484,7 @@ function ReconciliationContent() {
 
               {vehicle.pendingItems && (
                 <View style={{ backgroundColor: dark ? colors.inputBg : '#f8fafc', borderRadius: 10, padding: 12, gap: 4, marginBottom: 10 }}>
-                  {vehicle.pendingItems.map((item: any, i: number) => (
+                  {vehicle.pendingItems.map((item: PendingReconItem, i: number) => (
                     <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                       <Text style={{ fontSize: 13, color: colors.textSecondary }}>{item.cylinderTypeName}</Text>
                       <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>
@@ -530,7 +568,7 @@ function ReconciliationContent() {
 function AlertsContent() {
   const { dark, colors, accent } = useTheme();
 
-  const { data: alerts, isLoading: alertsLoading, refetch: refetchAlerts } = useApiQuery<any[]>(
+  const { data: alerts, isLoading: alertsLoading, refetch: refetchAlerts } = useApiQuery<ThresholdAlert[]>(
     ['threshold-alerts'],
     '/inventory/threshold-alerts',
   );
@@ -575,7 +613,7 @@ function AlertsContent() {
           </View>
         </Card>
       ) : (
-        alerts.map((alert: any, i: number) => {
+        alerts.map((alert: ThresholdAlert, i: number) => {
           const isCritical = alert.severity === 'critical';
           const alertBg = isCritical
             ? (dark ? 'rgba(220,38,38,0.12)' : '#fef2f2')
@@ -689,7 +727,7 @@ function ActionModal({ type, cylinderTypes, onClose, onSuccess, dark, colors }: 
     type === 'outgoing_empties' ? '/inventory/outgoing-empties' :
     '/inventory/manual-adjustment';
 
-  const mutation = useApiMutation<void, any>(
+  const mutation = useApiMutation<void, InventoryActionPayload>(
     'post', endpoint,
     {
       invalidateKeys: [['inv-summary'], ['depot-history-recent']],
@@ -704,7 +742,7 @@ function ActionModal({ type, cylinderTypes, onClose, onSuccess, dark, colors }: 
     if (!selectedType) { Alert.alert('Required', 'Select a cylinder type'); return; }
     if (!quantity || parseInt(quantity) === 0) { Alert.alert('Required', 'Enter a valid quantity'); return; }
 
-    const payload: Record<string, unknown> = {
+    const payload: InventoryActionPayload = {
       cylinderTypeId: selectedType,
       quantity: parseInt(quantity),
       notes: notes.trim() || undefined,
@@ -741,7 +779,7 @@ function ActionModal({ type, cylinderTypes, onClose, onSuccess, dark, colors }: 
             {/* Header */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Ionicons name={config.icon as any} size={24} color={config.color} />
+                <Ionicons name={config.icon} size={24} color={config.color} />
                 <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{config.label}</Text>
               </View>
               <TouchableOpacity onPress={onClose}>

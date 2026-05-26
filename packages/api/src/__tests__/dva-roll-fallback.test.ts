@@ -23,9 +23,16 @@ import request from 'supertest';
 import bcrypt from 'bcryptjs';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 import { generateToken } from './helpers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
+
+/** Minimal shapes the driver endpoints return (only fields the tests read). */
+interface AssignmentOrderRow { orderNumber: string }
+interface TripEwbItemRow { ewbNo: string | null }
+interface TripStockItemRow { emptyQuantity?: number | string | null; fullQuantity?: number | string | null }
 
 const D2 = 'dist-002', D1 = 'dist-001';
 const today = startOfUtcDay();
@@ -53,8 +60,8 @@ async function mkDriver(distributorId: string, phone: string, name: string, late
   const driver = await prisma.driver.create({ data: { distributorId, driverName: `ROLL ${name}`, phone, status: 'active' } });
   const vehicle = await prisma.vehicle.create({ data: { distributorId, vehicleNumber: `TEST-ROLL-VEH-${name}`, vehicleType: 'Truck', status: 'idle' } });
   // ONE DVA row (the realistic post-roll state): latest tripNumber.
-  await prisma.driverVehicleAssignment.create({ data: { distributorId, driverId: driver.id, vehicleId: vehicle.id, assignmentDate: today, status: latestStatus as any, tripNumber: latestTrip } });
-  const token = generateToken({ userId: user.id, email, role: 'driver' as any, distributorId });
+  await prisma.driverVehicleAssignment.create({ data: { distributorId, driverId: driver.id, vehicleId: vehicle.id, assignmentDate: today, status: latestStatus as Prisma.DriverVehicleAssignmentCreateInput['status'], tripNumber: latestTrip } });
+  const token = generateToken({ userId: user.id, email, role: 'driver' as UserRole, distributorId });
   return { driverId: driver.id, vehicleId: vehicle.id, token };
 }
 
@@ -66,7 +73,7 @@ async function mkOrder(distributorId: string, driverId: string, vehicleId: strin
   const order = await prisma.order.create({
     data: {
       orderNumber: opts.orderNumber, distributorId, customerId: customer.id, driverId, vehicleId,
-      orderDate: today, deliveryDate: today, status: opts.status as any, orderType: 'delivery', totalAmount: 1800, tripNumber: opts.tripNumber,
+      orderDate: today, deliveryDate: today, status: opts.status as Prisma.OrderCreateInput['status'], orderType: 'delivery', totalAmount: 1800, tripNumber: opts.tripNumber,
       items: { create: [{ cylinderTypeId: cyl.id, quantity: opts.qty, unitPrice: 900, totalPrice: 900 * opts.qty, deliveredQuantity: opts.delivered ?? null, emptiesCollected: opts.empties ?? null }] },
     },
   });
@@ -107,7 +114,7 @@ const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 const assignment = (t: string) => request(app).get('/api/drivers/me/assignment').set(auth(t));
 const stock = (t: string) => request(app).get('/api/drivers/me/trip-stock').set(auth(t));
 const ewbs = (t: string) => request(app).get('/api/drivers/me/trip-ewbs').set(auth(t));
-const sum = (rows: any[], k: string) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+const sum = (rows: TripStockItemRow[], k: keyof TripStockItemRow) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
 
 describe('WI-096 — DVA-roll fallback to last trip with orders', () => {
   it('✅ 1 assignment: rolled DVA falls back to previous trip orders + tripNumber', async () => {
@@ -115,7 +122,7 @@ describe('WI-096 — DVA-roll fallback to last trip with orders', () => {
     expect(res.status).toBe(200);
     expect(res.body.data).not.toBeNull();
     expect(res.body.data.tripNumber).toBe(1);
-    expect(res.body.data.orders.map((o: any) => o.orderNumber)).toContain('TEST-ROLL-R-T1');
+    expect(res.body.data.orders.map((o: AssignmentOrderRow) => o.orderNumber)).toContain('TEST-ROLL-R-T1');
   });
 
   it('✅ 2 trip-stock: rolled DVA reports previous trip empties (not 0)', async () => {
@@ -128,14 +135,14 @@ describe('WI-096 — DVA-roll fallback to last trip with orders', () => {
     const res = await ewbs(rollTok);
     expect(res.status).toBe(200);
     expect(res.body.data.tripNumber).toBe(1);
-    expect(res.body.data.items.map((i: any) => i.ewbNo)).toContain('EWB-ROLL-R1');
+    expect(res.body.data.items.map((i: TripEwbItemRow) => i.ewbNo)).toContain('EWB-ROLL-R1');
   });
 
   it('✅ 4 active trip (latest has orders) → no fallback', async () => {
     const res = await assignment(activeTok);
     expect(res.status).toBe(200);
     expect(res.body.data.tripNumber).toBe(1);
-    expect(res.body.data.orders.map((o: any) => o.orderNumber)).toContain('TEST-ROLL-A-T1');
+    expect(res.body.data.orders.map((o: AssignmentOrderRow) => o.orderNumber)).toContain('TEST-ROLL-A-T1');
   });
 
   it('✅ 5 brand-new driver, empty trip 1 → empty, tripNumber 1, no fallback/crash', async () => {
@@ -151,16 +158,16 @@ describe('WI-096 — DVA-roll fallback to last trip with orders', () => {
 
   it('❌ 6 cross-driver: Roll never sees Active driver\'s orders', async () => {
     const res = await assignment(rollTok);
-    expect(res.body.data.orders.map((o: any) => o.orderNumber)).not.toContain('TEST-ROLL-A-T1');
+    expect(res.body.data.orders.map((o: AssignmentOrderRow) => o.orderNumber)).not.toContain('TEST-ROLL-A-T1');
   });
 
   it('❌ 7 cross-tenant: dist-002 driver never sees dist-001 rolled trip', async () => {
     const res = await assignment(rollTok);
-    const nums = res.body.data.orders.map((o: any) => o.orderNumber);
+    const nums = res.body.data.orders.map((o: AssignmentOrderRow) => o.orderNumber);
     expect(nums).not.toContain('TEST-ROLL-D1-T1');
     // ...and the dist-001 driver's own fallback works within its tenant.
     const d1 = await assignment(d1Tok);
     expect(d1.body.data.tripNumber).toBe(1);
-    expect(d1.body.data.orders.map((o: any) => o.orderNumber)).toContain('TEST-ROLL-D1-T1');
+    expect(d1.body.data.orders.map((o: AssignmentOrderRow) => o.orderNumber)).toContain('TEST-ROLL-D1-T1');
   });
 });

@@ -21,7 +21,12 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { generateToken, loginAsInventory } from './helpers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
+import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
+
+interface CancelledStockRow {
+  order?: { orderNumber?: string; customer?: { customerName?: string } | null } | null;
+}
 
 const A_PHONE = '9912300001', B_PHONE = '9912300002', D_PHONE = '9912300003';
 const A_EMAIL = 'cs-a@test-cancelled-stock.local';
@@ -78,7 +83,7 @@ async function seedDriverWithCancelledStock(opts: {
       distributorId: opts.distributorId, quantity: 1, cancellationDate: today, status: 'on_vehicle',
     },
   });
-  const token = generateToken({ userId: user.id, email: opts.email, role: 'driver' as any, distributorId: opts.distributorId });
+  const token = generateToken({ userId: user.id, email: opts.email, role: UserRole.DRIVER, distributorId: opts.distributorId });
   return { token, customerName: customer.customerName };
 }
 
@@ -104,7 +109,7 @@ describe('WI-094 — GET /drivers/me/cancelled-stock', () => {
     expect(res.status).toBe(200);
     const rows = res.body.data;
     expect(Array.isArray(rows)).toBe(true);
-    const mine = rows.find((r: any) => r.order?.orderNumber === ORD.A);
+    const mine = (rows as CancelledStockRow[]).find((r) => r.order?.orderNumber === ORD.A)!;
     expect(mine).toBeTruthy();
     expect(mine.order?.customer?.customerName).toBe(aCustomerName);
   });
@@ -114,16 +119,16 @@ describe('WI-094 — GET /drivers/me/cancelled-stock', () => {
     expect(res.status).toBe(200);
     const rows = res.body.data;
     // Sees only its own dist-002 event...
-    expect(rows.some((r: any) => r.order?.orderNumber === ORD.D)).toBe(true);
+    expect((rows as CancelledStockRow[]).some((r) => r.order?.orderNumber === ORD.D)).toBe(true);
     // ...and NONE of dist-001's events.
-    expect(rows.some((r: any) => r.order?.orderNumber === ORD.A)).toBe(false);
-    expect(rows.some((r: any) => r.order?.orderNumber === ORD.B)).toBe(false);
+    expect((rows as CancelledStockRow[]).some((r) => r.order?.orderNumber === ORD.A)).toBe(false);
+    expect((rows as CancelledStockRow[]).some((r) => r.order?.orderNumber === ORD.B)).toBe(false);
   });
 
   it('❌ same-tenant — driver A never sees driver B cancelled stock', async () => {
     const res = await request(app).get('/api/drivers/me/cancelled-stock').set(auth(aToken));
     expect(res.status).toBe(200);
-    expect(res.body.data.some((r: any) => r.order?.orderNumber === ORD.B)).toBe(false);
+    expect((res.body.data as CancelledStockRow[]).some((r) => r.order?.orderNumber === ORD.B)).toBe(false);
   });
 
   it('❌ non-driver role (inventory) is rejected 403', async () => {

@@ -11,7 +11,11 @@ import { startLocationTracking, stopLocationTracking } from '../../src/services/
 import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme, ACCENT, formatDate } from '../../src/theme';
 import { api, getErrorMessage } from '../../src/lib/api';
-import type { DriverVehicleAssignment } from '@gaslink/shared';
+import type { DriverVehicleAssignment, Order, OrderItem } from '@gaslink/shared';
+
+// Trip orders carry a `deliveredAt` timestamp the driver screen sorts on; it's
+// not on the shared Order DTO yet, so model it as an optional extension.
+type TripOrder = Order & { deliveredAt?: string | null };
 
 /**
  * Distributor settings response — minimal slice we read here. The full
@@ -233,24 +237,24 @@ export default function DriverTripScreen() {
   // hides the button so the driver never taps it.
   const isReturnTransition =
     assignment?.status === 'loaded_and_dispatched' && nextStep?.status === 'returned_inventory'
-    && !(assignment as any).isReconciled;
+    && !assignment.isReconciled;
 
   // WI-094b Fix 2: only surface the "Dispatch pending" note when the DVA is
   // dispatch_ready AND there is actually an order waiting to be dispatched.
   // A fresh dispatch_ready DVA with no pending_dispatch orders (e.g. just
   // after reconciliation) showed a misleading "waiting to dispatch" card.
   const hasPendingDispatch = !!assignment?.orders?.some(
-    (o: any) => o.status === 'pending_dispatch',
+    (o) => o.status === 'pending_dispatch',
   );
 
   // WI-094c Change 5: sort the trip's orders by what the driver does next —
   // delivered most-recent-first, then pending oldest-first (the next stops),
   // then cancelled at the bottom. The final spread catches any other status
   // so no order is silently dropped.
-  const tripOrders = (assignment?.orders ?? []) as any[];
+  const tripOrders: TripOrder[] = assignment?.orders ?? [];
   const isDeliveredStatus = (s: string) => s === 'delivered' || s === 'modified_delivered';
   const isPendingStatus = (s: string) => s === 'pending_delivery' || s === 'pending_dispatch';
-  const ts = (v: any) => (v ? new Date(v).getTime() : 0);
+  const ts = (v: string | null | undefined) => (v ? new Date(v).getTime() : 0);
   const sortedOrders = [
     ...tripOrders.filter((o) => isDeliveredStatus(o.status)).sort((a, b) => ts(b.deliveredAt) - ts(a.deliveredAt)),
     ...tripOrders.filter((o) => isPendingStatus(o.status)).sort((a, b) => ts(a.createdAt) - ts(b.createdAt)),
@@ -440,7 +444,7 @@ export default function DriverTripScreen() {
                   />
                 </View>
                 <View style={{ marginTop: 8, gap: 2 }}>
-                  {order.items?.map((item: any, i: number) => {
+                  {order.items?.map((item: OrderItem, i: number) => {
                     // WI-103: for modified deliveries show the qty actually
                     // delivered, not the ordered qty.
                     const qty = order.status === 'modified_delivered' && item.deliveredQuantity && item.deliveredQuantity > 0

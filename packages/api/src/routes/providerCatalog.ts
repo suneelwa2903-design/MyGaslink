@@ -7,6 +7,8 @@ import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiR
 import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 const PROVIDER_CODES = ['IOCL', 'HPCL', 'BPCL', 'GOGAS', 'SUPERGAS', 'TOTALGAS', 'OTHERS'] as const;
@@ -74,11 +76,12 @@ router.post('/',
         data: req.body,
       });
       return sendCreated(res, item);
-    } catch (err: any) {
-      if (err.code === 'P2002') {
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.code === 'P2002') {
         return sendError(res, 'A cylinder type with this provider + short name (or provider + weight) already exists', 409);
       }
-      return sendError(res, err.message);
+      return sendError(res, e.message);
     }
   }
 );
@@ -101,11 +104,12 @@ router.put('/:id',
         data: req.body,
       });
       return sendSuccess(res, updated);
-    } catch (err: any) {
-      if (err.code === 'P2002') {
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.code === 'P2002') {
         return sendError(res, 'A cylinder type with this provider + short name (or provider + weight) already exists', 409);
       }
-      return sendError(res, err.message);
+      return sendError(res, e.message);
     }
   }
 );

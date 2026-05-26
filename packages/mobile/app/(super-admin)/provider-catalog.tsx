@@ -52,7 +52,7 @@ export default function ProviderCatalogScreen() {
     queryPath,
   );
 
-  const items: ProviderCatalogCylinderType[] = (catalogData as any)?.items ?? [];
+  const items: ProviderCatalogCylinderType[] = catalogData?.items ?? [];
 
   const filtered = useMemo(() => {
     if (!search) return items;

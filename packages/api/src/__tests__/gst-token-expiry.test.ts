@@ -38,6 +38,7 @@ import {
   pingEinvoiceSession,
   GstError,
 } from '../services/gst/whitebooksClient.js';
+import type { WhiteBooksEnvelope } from '../services/gst/nicTypes.js';
 
 let originalFetch: typeof globalThis.fetch;
 
@@ -115,7 +116,7 @@ describe('WI-060 — getAuthToken honours parsed expiry + fallback', () => {
           TokenExpiry: '2099-12-31 23:59:59',
         },
       }),
-    } as any));
+    } as unknown as Response));
 
     const token = await getAuthToken('dist-002', 'einvoice');
     expect(token).toBe('WI060-CACHED-TOKEN');
@@ -123,7 +124,7 @@ describe('WI-060 — getAuthToken honours parsed expiry + fallback', () => {
     // Second call must be a cache hit — same token, no new fetch.
     const second = await getAuthToken('dist-002', 'einvoice');
     expect(second).toBe('WI060-CACHED-TOKEN');
-    expect(globalThis.fetch as any).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
 
     // The cached expiry comes from parseNicDateTime, so even a host
     // running in UTC would see this exact UTC instant. Verify via DB.
@@ -154,19 +155,19 @@ describe('WI-060 — getAuthToken honours parsed expiry + fallback', () => {
       return {
         ok: true, status: 200,
         json: async () => ({ status_cd: 'Sucess', data: { AuthToken: authToken, TokenExpiry: tokenExpiry } }),
-      } as any;
+      } as unknown as Response;
     });
 
     const token = await getAuthToken('dist-002', 'einvoice');
     // Must return the RETRY token, not the stale one.
     expect(token).toBe('FRESH-RETRY-TOKEN');
     // fetch called twice: first (stale) + retry (valid).
-    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(2);
 
     // Second getAuthToken call must be a cache HIT — no third fetch.
     const token2 = await getAuthToken('dist-002', 'einvoice');
     expect(token2).toBe('FRESH-RETRY-TOKEN');
-    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(2);
 
     // DB must be persisted with the fresh (2099) expiry, not a fallback.
     const row = await prisma.gstCredential.findFirstOrThrow({
@@ -196,18 +197,18 @@ describe('WI-060 — getAuthToken honours parsed expiry + fallback', () => {
           TokenExpiry: '2020-01-01 00:00:00',   // always in the past
         },
       }),
-    } as any));
+    } as unknown as Response));
 
     // Must succeed and return the retry token (not throw).
     const token = await getAuthToken('dist-002', 'einvoice');
     expect(token).toBe('PERSISTENTLY-STALE-EXPIRY-TOKEN');
     // fetch called twice: initial (stale) + retry (also stale → fallback).
-    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(2);
 
     // Second call must be a cache hit — no third fetch.
     const token2 = await getAuthToken('dist-002', 'einvoice');
     expect(token2).toBe('PERSISTENTLY-STALE-EXPIRY-TOKEN');
-    expect(globalThis.fetch as any).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(2);
 
     // Token must be persisted to DB with a ~55-min fallback expiry.
     const row = await prisma.gstCredential.findFirstOrThrow({
@@ -243,30 +244,30 @@ describe('WI-090 — apiCall cancel-retry guard', () => {
   const AUTH = (token: string) => ({
     ok: true, status: 200,
     json: async () => ({ status_cd: 'Sucess', data: { AuthToken: token, TokenExpiry: '2099-12-31 23:59:59' } }),
-  } as any);
+  } as unknown as Response);
   const NIC_TOKEN_ERR = {
     ok: true, status: 200,
     json: async () => ({ status_cd: '0', status_desc: JSON.stringify([{ ErrorCode: '1005', ErrorMessage: 'Invalid/Expired Token' }]) }),
-  } as any;
+  } as unknown as Response;
   const NIC_OK = {
     ok: true, status: 200,
     json: async () => ({ status_cd: '1', status_desc: 'GSTR request succeeds', data: { Irn: 'X', CancelDate: '2026-05-21 17:36:00' } }),
-  } as any;
+  } as unknown as Response;
 
   const isAuth = (url: string) => url.includes('/authenticate');
 
   it('CANCEL: retries the cancel against NIC with the pinned token and returns success', async () => {
     // Sequence: auth(PINNED) → CANCEL→1005 → re-auth(PINNED, SAME) → retry CANCEL→success.
     const calls: string[] = [];
-    globalThis.fetch = vi.fn(async (url: any) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
       const u = String(url);
       calls.push(isAuth(u) ? 'auth' : 'cancel');
       if (isAuth(u)) return AUTH('PINNED-TOK');
       // 1st cancel fails with token error, 2nd (retry) succeeds.
       return calls.filter(c => c === 'cancel').length === 1 ? NIC_TOKEN_ERR : NIC_OK;
-    }) as any;
+    });
 
-    const res = await apiCall<any>(
+    const res = await apiCall<WhiteBooksEnvelope>(
       'dist-002', 'POST', '/einvoice/type/CANCEL/version/V1_03?email=x',
       { Irn: 'X', CnlRsn: '3', CnlRem: 'test' }, 'einvoice',
       { apiType: 'IRN_CANCEL', invoiceId: 'inv-x' },
@@ -277,42 +278,42 @@ describe('WI-090 — apiCall cancel-retry guard', () => {
   });
 
   it('CANCEL: throws SESSION_EXPIRED WITH raw NIC payload when NIC rejects twice', async () => {
-    globalThis.fetch = vi.fn(async (url: any) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
       const u = String(url);
       return isAuth(u) ? AUTH('PINNED-TOK') : NIC_TOKEN_ERR; // cancel always 1005
-    }) as any;
+    });
 
     let thrown: GstError | undefined;
     try {
-      await apiCall<any>(
+      await apiCall<WhiteBooksEnvelope>(
         'dist-002', 'POST', '/einvoice/type/CANCEL/version/V1_03?email=x',
         { Irn: 'X', CnlRsn: '3', CnlRem: 'test' }, 'einvoice',
         { apiType: 'IRN_CANCEL', invoiceId: 'inv-x' },
       );
-    } catch (e: any) { thrown = e; }
+    } catch (e) { thrown = e as GstError; }
     expect(thrown).toBeInstanceOf(GstError);
     expect(thrown!.code).toBe('SESSION_EXPIRED');
     // Decisive: the raw NIC body is attached (responsePayload no longer NULL).
     expect(thrown!.response).toBeTruthy();
-    expect(thrown!.response.status_desc).toContain('1005');
+    expect((thrown!.response as WhiteBooksEnvelope).status_desc).toContain('1005');
   });
 
   it('DISPATCH: still short-circuits to SESSION_EXPIRED with NO retry NIC call', async () => {
     const calls: string[] = [];
-    globalThis.fetch = vi.fn(async (url: any) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
       const u = String(url);
       calls.push(isAuth(u) ? 'auth' : 'generate');
       return isAuth(u) ? AUTH('PINNED-TOK') : NIC_TOKEN_ERR; // generate always 1005
-    }) as any;
+    });
 
     let thrown: GstError | undefined;
     try {
-      await apiCall<any>(
+      await apiCall<WhiteBooksEnvelope>(
         'dist-002', 'POST', '/einvoice/type/GENERATE/version/V1_03?email=x',
         { foo: 'bar' }, 'einvoice',
         { apiType: 'IRN_GENERATE', invoiceId: 'inv-x' },
       );
-    } catch (e: any) { thrown = e; }
+    } catch (e) { thrown = e as GstError; }
     expect(thrown).toBeInstanceOf(GstError);
     expect(thrown!.code).toBe('SESSION_EXPIRED');
     // No retry GENERATE call: auth, generate(1005), re-auth — then short-circuit.
@@ -334,25 +335,25 @@ describe('WI-091b — pingEinvoiceSession bounded retry', () => {
   const AUTH_OK = {
     ok: true, status: 200,
     json: async () => ({ status_cd: 'Sucess', data: { AuthToken: 'PROBE-TOK', TokenExpiry: '2099-12-31 23:59:59' } }),
-  } as any;
+  } as unknown as Response;
   const GSTN_1005 = {
     ok: true, status: 200,
     json: async () => ({ status_cd: '0', status_desc: JSON.stringify([{ ErrorCode: '1005', ErrorMessage: 'Invalid Token' }]) }),
-  } as any;
+  } as unknown as Response;
   const GSTN_OK = {
     ok: true, status: 200,
     json: async () => ({ status_cd: '1', status_desc: 'GSTR request succeeds', data: { Gstin: '29AAGCB1286Q000', Status: 'ACT' } }),
-  } as any;
+  } as unknown as Response;
   const isAuth = (u: string) => u.includes('/authenticate');
 
   it('fails attempts 1 & 2, succeeds on attempt 3 → resolves (NIC flicker ridden through)', async () => {
     let gstnCalls = 0;
-    globalThis.fetch = vi.fn(async (url: any) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
       const u = String(url);
       if (isAuth(u)) return AUTH_OK;
       gstnCalls++;
       return gstnCalls <= 2 ? GSTN_1005 : GSTN_OK; // dead for 2 ticks, then alive
-    }) as any;
+    });
 
     // Must NOT throw — the 3rd attempt lands in a green window.
     await expect(pingEinvoiceSession('dist-002', '29AAGCB1286Q000')).resolves.toBeUndefined();
@@ -360,9 +361,9 @@ describe('WI-091b — pingEinvoiceSession bounded retry', () => {
   }, 15000);
 
   it('all 3 attempts fail (1005) → throws (caller maps to PreflightError 503)', async () => {
-    globalThis.fetch = vi.fn(async (url: any) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
       return isAuth(String(url)) ? AUTH_OK : GSTN_1005; // dead the whole time
-    }) as any;
+    });
 
     await expect(pingEinvoiceSession('dist-002', '29AAGCB1286Q000')).rejects.toBeInstanceOf(GstError);
   }, 15000);
@@ -381,7 +382,7 @@ describe('WI-060 — getAuthToken fallback (cont.)', () => {
           // No TokenExpiry field
         },
       }),
-    } as any));
+    } as unknown as Response));
 
     await getAuthToken('dist-002', 'einvoice');
 

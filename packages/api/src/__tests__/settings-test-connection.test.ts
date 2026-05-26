@@ -29,7 +29,7 @@ const { getAuthTokenMock, clearTokenCacheMock, validateGstinMock } = vi.hoisted(
 }));
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     getAuthToken: getAuthTokenMock,
@@ -38,7 +38,7 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
 });
 
 vi.mock('../services/gst/gstService.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/gstService.js')>();
   return {
     ...original,
     validateGstin: validateGstinMock,
@@ -49,6 +49,7 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { generateToken } from './helpers.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
 
 let app: Express;
 let sharmaAdminToken: string;
@@ -63,7 +64,7 @@ beforeAll(async () => {
   sharmaAdminToken = generateToken({
     userId: sharmaAdmin.id,
     email: sharmaAdmin.email,
-    role: sharmaAdmin.role as any,
+    role: sharmaAdmin.role as UserRole,
     distributorId: sharmaAdmin.distributorId,
   });
 });

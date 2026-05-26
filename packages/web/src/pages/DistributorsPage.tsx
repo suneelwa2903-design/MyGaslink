@@ -357,10 +357,10 @@ function DistributorFormModal({
       ...data,
       providerCodes: selectedProviders,
       // Convert empty strings to null for nullable fields
-      subscriptionPlan: (data as any).subscriptionPlan || null,
-      billingTier: (data as any).billingTier || null,
+      subscriptionPlan: data.subscriptionPlan || null,
+      billingTier: data.billingTier || null,
     };
-    mutation.mutate(payload as any);
+    mutation.mutate(payload);
   };
 
   return (

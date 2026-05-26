@@ -8,6 +8,8 @@ import * as portalService from '../services/customerPortalService.js';
 import { mapCustomer, mapOrder, mapOrders, mapInvoice, mapInvoices, mapPayment, mapPayments } from '../utils/mappers.js';
 import { z } from 'zod';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 // All routes in this module require 'customer' role.
@@ -26,8 +28,9 @@ router.get('/dashboard',
       { from: req.query.from as string, to: req.query.to as string }
     );
     return sendSuccess(res, stats);
-  } catch (err: any) {
-    return sendError(res, err.message, err.statusCode || 500);
+  } catch (err: unknown) {
+    const e = err as ServiceError;
+    return sendError(res, e.message, e.statusCode || 500);
   }
 });
 
@@ -101,8 +104,9 @@ router.post('/orders',
         req.user!.distributorId!, req.user!.customerId, req.user!.userId, req.body
       );
       return sendCreated(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -132,8 +136,9 @@ router.patch('/orders/:id/cancel',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, 'Cancelled by customer'
       );
       return sendSuccess(res, mapOrder(cancelled));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -161,8 +166,9 @@ router.patch('/orders/:id',
         req.user!.distributorId!, req.user!.customerId, param(req.params.id), req.body.items, req.body.deliveryDate,
       );
       return sendSuccess(res, mapOrder(order));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -181,8 +187,9 @@ router.post('/orders/:id/dispute',
         req.user!.distributorId!, req.user!.customerId, param(req.params.id), req.body.reason,
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -231,8 +238,9 @@ router.get('/invoices/with-gst',
       }
     );
     return sendSuccess(res, mapInvoices(invoices));
-  } catch (err: any) {
-    return sendError(res, err.message, 500);
+  } catch (err: unknown) {
+    const e = err as ServiceError;
+    return sendError(res, e.message, 500);
   }
 });
 
@@ -250,8 +258,9 @@ router.get('/invoices/download-summary',
       req.user!.distributorId!, req.user!.customerId, dateFrom, dateTo
     );
     return sendSuccess(res, summary);
-  } catch (err: any) {
-    return sendError(res, err.message, 500);
+  } catch (err: unknown) {
+    const e = err as ServiceError;
+    return sendError(res, e.message, 500);
   }
 });
 
@@ -307,8 +316,9 @@ router.get('/invoices/:id/pdf',
       'Content-Length': String(pdfBuffer.length),
     });
     return res.send(pdfBuffer);
-  } catch (err: any) {
-    return sendError(res, err.message, err.statusCode || 500);
+  } catch (err: unknown) {
+    const e = err as ServiceError;
+    return sendError(res, e.message, e.statusCode || 500);
   }
 });
 
@@ -414,8 +424,9 @@ router.put('/account',
         req.user!.distributorId!, req.user!.customerId, req.body
       );
       return sendSuccess(res, result);
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );

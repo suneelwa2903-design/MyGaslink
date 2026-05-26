@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { toNum } from '../utils/decimal.js';
 
@@ -61,7 +62,7 @@ export async function deleteCylinderType(id: string, distributorId: string) {
 
 // Cylinder Prices
 export async function listPrices(distributorId: string, cylinderTypeId?: string) {
-  const where: any = { distributorId };
+  const where: Prisma.CylinderPriceWhereInput = { distributorId };
   if (cylinderTypeId) where.cylinderTypeId = cylinderTypeId;
   return prisma.cylinderPrice.findMany({
     where,

@@ -1,10 +1,10 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 import { utcDayRange } from '../utils/dateOnly.js';
 
 export async function listDrivers(distributorId: string, status?: string) {
   const where: Prisma.DriverWhereInput = { distributorId, deletedAt: null };
-  if (status) where.status = status as any;
+  if (status) where.status = status as $Enums.DriverStatus;
 
   // WI-079: scope the assignment include to TODAY's date range so the
   // surfaced vehicle reflects today's confirmed driver-vehicle mapping
@@ -73,7 +73,16 @@ export async function createDriver(distributorId: string, data: {
   });
 }
 
-export async function updateDriver(id: string, distributorId: string, data: Record<string, any>) {
+export async function updateDriver(id: string, distributorId: string, data: {
+  driverName?: string;
+  phone?: string;
+  licenseNumber?: string | null;
+  employmentType?: string | null;
+  status?: $Enums.DriverStatus;
+  deactivationNotes?: string | null;
+  availableToday?: boolean;
+  preferredVehicleId?: string | null;
+}) {
   const existing = await prisma.driver.findFirst({ where: { id, distributorId, deletedAt: null } });
   if (!existing) return null;
 
@@ -158,7 +167,7 @@ export async function updateAssignmentStatus(
   if (!assignment) throw new DriverError('Assignment not found', 404);
 
   const updateData: Prisma.DriverVehicleAssignmentUpdateInput = {
-    status: newStatus as any,
+    status: newStatus as $Enums.AssignmentStatus,
   };
 
   // Auto-increment trip number on RETURNED_INVENTORY

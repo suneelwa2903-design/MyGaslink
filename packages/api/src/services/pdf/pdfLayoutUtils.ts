@@ -123,7 +123,7 @@ export function drawTableHeader(
   doc.fontSize(9).fillColor('#ffffff').font('Helvetica-Bold');
   let cx = x + 5;
   for (const col of colDefs) {
-    doc.text(col.label, cx, y + 10, { width: col.width - 10, align: (col.align as any) || 'left' });
+    doc.text(col.label, cx, y + 10, { width: col.width - 10, align: (col.align as PDFKit.Mixins.TextOptions['align']) || 'left' });
     cx += col.width;
   }
   doc.fillColor('black').font('Helvetica');
@@ -143,8 +143,8 @@ export function drawTextBlock(
   doc.font(options.bold ? 'Helvetica-Bold' : 'Helvetica');
   doc.fillColor(options.color || 'black');
   try {
-    const heightInfo = doc.heightOfString(text, { width: w }) as any;
-    const height: number = typeof heightInfo === 'number' ? heightInfo : heightInfo?.height ?? fontSize * 1.5;
+    const heightInfo: number = doc.heightOfString(text, { width: w });
+    const height: number = typeof heightInfo === 'number' ? heightInfo : fontSize * 1.5;
     doc.text(text, x, y, { width: w, lineGap: 0, paragraphGap: 0 });
     doc.font('Helvetica').fillColor('black');
     return height;

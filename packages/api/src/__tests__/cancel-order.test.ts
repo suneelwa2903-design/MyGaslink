@@ -4,7 +4,7 @@ import request from 'supertest';
 // CRITICAL: vi.mock must be hoisted before module imports so the dynamic
 // import inside cancelOrder sees the mocked functions at call time.
 vi.mock('../services/gst/gstService.js', async (orig) => {
-  const original: any = await orig();
+  const original = (await orig()) as typeof import('../services/gst/gstService.js');
   return {
     ...original,
     cancelEwb: vi.fn(async () => ({ status: 'success' })),
@@ -16,6 +16,7 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { loginAsDistAdmin, getSeedData } from './helpers.js';
 import type { Express } from 'express';
+import type { $Enums } from '@prisma/client';
 import * as gstService from '../services/gst/gstService.js';
 
 // Anti-pattern #7: use a fixed far-future date that real dev data never occupies.
@@ -246,7 +247,7 @@ describe('cancelOrder — pending_delivery with active EWB', () => {
       data: {
         distributorId,
         customerId: customer.id,
-        entryType: 'invoice_entry' as any,
+        entryType: 'invoice_entry' as $Enums.LedgerEntryType,
         referenceId: orderId,
         invoiceId,
         amountDelta: 500,
@@ -281,7 +282,7 @@ describe('cancelOrder — pending_delivery with active EWB', () => {
 
     // Ledger reversal created
     const reversalEntries = await prisma.customerLedgerEntry.findMany({
-      where: { invoiceId, entryType: 'adjustment' as any },
+      where: { invoiceId, entryType: 'adjustment' as $Enums.LedgerEntryType },
     });
     expect(reversalEntries.length).toBeGreaterThan(0);
     // Reversal should be negative of the original 500

@@ -14,6 +14,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { prisma } from '../lib/prisma.js';
 import { modifyMyOrder, createMyOrder } from '../services/customerPortalService.js';
 import { UserRole } from '@gaslink/shared';
+import type { $Enums } from '@prisma/client';
+
+type ModifiedOrderItem = Awaited<ReturnType<typeof modifyMyOrder>>['items'][number];
 
 const DIST = 'dist-002';
 const TEST_DATE = new Date('2099-12-31');
@@ -46,12 +49,12 @@ async function makeCustomer(name: string) {
   return c;
 }
 
-async function makeOrder(customerId: string, status: string, qty: number, unitPrice: number) {
+async function makeOrder(customerId: string, status: $Enums.OrderStatus, qty: number, unitPrice: number) {
   const order = await prisma.order.create({
     data: {
       distributorId: DIST,
       customerId,
-      status: status as any,
+      status,
       orderType: 'delivery',
       orderNumber: `MOD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       orderDate: TEST_DATE,
@@ -103,7 +106,7 @@ describe('WI-093 — modifyMyOrder', () => {
     ]);
 
     expect(Number(updated.totalAmount)).toBe(5000);
-    const item = updated.items.find((i: any) => i.cylinderTypeId === cylId)!;
+    const item = updated.items.find((i: ModifiedOrderItem) => i.cylinderTypeId === cylId)!;
     expect(item.quantity).toBe(5);
     expect(Number(item.totalPrice)).toBe(5000);
 

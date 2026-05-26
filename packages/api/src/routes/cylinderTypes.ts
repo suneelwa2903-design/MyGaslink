@@ -9,6 +9,8 @@ import * as cylinderTypeService from '../services/cylinderTypeService.js';
 import { mapCylinderType, mapCylinderTypes } from '../utils/mappers.js';
 import { z } from 'zod';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 const createCylinderTypeSchema = z.object({
@@ -58,9 +60,10 @@ router.post('/',
     try {
       const type = await cylinderTypeService.createCylinderType(req.user!.distributorId!, req.body);
       return sendCreated(res, mapCylinderType(type));
-    } catch (err: any) {
-      if (err.code === 'P2002') return sendError(res, 'Cylinder type with this name already exists', 409);
-      return sendError(res, err.message);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.code === 'P2002') return sendError(res, 'Cylinder type with this name already exists', 409);
+      return sendError(res, e.message);
     }
   }
 );

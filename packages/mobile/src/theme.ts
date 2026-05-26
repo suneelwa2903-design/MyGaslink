@@ -57,14 +57,17 @@ export const SEVERITY_COLORS = {
 
 // ─── Theme hook ─────────────────────────────────────────────────────────────
 
-export type ThemeColors = typeof COLORS.light;
-
 export function useTheme() {
   const dark = useIsDark();
   const colors = dark ? COLORS.dark : COLORS.light;
 
   return { dark, colors, accent: ACCENT };
 }
+
+// The active palette is whichever variant `useTheme` returns (light or dark),
+// so model it as that union rather than just `COLORS.light` — otherwise the
+// dark palette's literal hex values aren't assignable to a light-only type.
+export type ThemeColors = ReturnType<typeof useTheme>['colors'];
 
 // ─── Tab bar config helper ──────────────────────────────────────────────────
 

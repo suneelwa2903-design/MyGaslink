@@ -25,12 +25,11 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
 
   // Project-wide rule severity tuning.
-  // no-explicit-any is intentionally a WARNING until a dedicated post-launch
-  // typing session — see TECH_DEBT note in CLAUDE.md. Do not promote to error
-  // without typing all 700+ instances first.
+  // no-explicit-any is an ERROR: all 759 instances were typed in the dedicated
+  // typing session (2026-05-26). Keep it at error — no new `any` may land.
   {
     rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },

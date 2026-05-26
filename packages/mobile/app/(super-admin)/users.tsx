@@ -5,7 +5,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Card, Badge, Button, EmptyState } from '../../src/components/ui';
-import { useTheme, ACCENT } from '../../src/theme';
+import { useTheme, ACCENT, type ThemeColors } from '../../src/theme';
+
+type AccentColors = typeof ACCENT;
 import type { User } from '@gaslink/shared';
 import { UserRole } from '@gaslink/shared';
 
@@ -41,7 +43,7 @@ export default function UsersScreen() {
   // API may return { users: [...] } or [...] directly — handle both
   const users: User[] = Array.isArray(usersData)
     ? usersData
-    : (usersData as any)?.users ?? [];
+    : usersData?.users ?? [];
 
   const filtered = users.filter((u) =>
     !search || `${u.firstName ?? ''} ${u.lastName ?? ''} ${u.email ?? ''}`.toLowerCase().includes(search.toLowerCase()),
@@ -164,8 +166,8 @@ function CreateUserModal({ visible, onClose, dark, colors, accent }: {
   visible: boolean;
   onClose: () => void;
   dark: boolean;
-  colors: any;
-  accent: any;
+  colors: ThemeColors;
+  accent: AccentColors;
 }) {
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', phone: '', role: UserRole.DISTRIBUTOR_ADMIN, password: '',
@@ -256,7 +258,7 @@ function FormField({ label, value, onChange, colors, ...props }: {
   value: string;
   onChange: (v: string) => void;
   dark: boolean;
-  colors: any;
+  colors: ThemeColors;
   keyboardType?: 'default' | 'phone-pad' | 'email-address';
   secureTextEntry?: boolean;
 }) {

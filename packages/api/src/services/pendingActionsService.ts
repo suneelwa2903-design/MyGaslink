@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { $Enums } from '@prisma/client';
 import { DEFAULT_SLA_HOURS } from '@gaslink/shared';
 
 export async function listPendingActions(
@@ -8,9 +9,9 @@ export async function listPendingActions(
 ) {
   const where: Prisma.PendingActionWhereInput = {};
   if (distributorId) where.distributorId = distributorId;
-  if (filters.module) where.module = filters.module as any;
-  if (filters.status) where.status = filters.status as any;
-  if (filters.severity) where.severity = filters.severity as any;
+  if (filters.module) where.module = filters.module as $Enums.PendingActionModule;
+  if (filters.status) where.status = filters.status as $Enums.PendingActionStatus;
+  if (filters.severity) where.severity = filters.severity as $Enums.PendingActionSeverity;
 
   return prisma.pendingAction.findMany({
     where,
@@ -24,7 +25,7 @@ export async function createPendingAction(
     module: string; entityType: string; entityId: string;
     actionType: string; description: string;
     severity?: string; requiresApproval?: boolean;
-    errorCode?: string; errorMessage?: string; errorContext?: any;
+    errorCode?: string; errorMessage?: string; errorContext?: Prisma.InputJsonValue;
     // WI-127: optional explicit SLA deadline (e.g. CUSTOMER_DISPUTE = end of
     // today). When omitted, derived from severity via DEFAULT_SLA_HOURS.
     slaDeadline?: Date;
@@ -37,17 +38,17 @@ export async function createPendingAction(
   return prisma.pendingAction.create({
     data: {
       distributorId,
-      module: data.module as any,
+      module: data.module as $Enums.PendingActionModule,
       entityType: data.entityType,
       entityId: data.entityId,
       actionType: data.actionType,
       description: data.description,
-      severity: severity as any,
+      severity: severity as $Enums.PendingActionSeverity,
       requiresApproval: data.requiresApproval ?? false,
       slaDeadline,
       errorCode: data.errorCode || null,
       errorMessage: data.errorMessage || null,
-      errorContext: data.errorContext || null,
+      errorContext: data.errorContext ?? Prisma.JsonNull,
     },
   });
 }

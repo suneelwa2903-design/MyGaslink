@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 import type { CustomerLedgerRow, CustomerLedgerResponse } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
 
@@ -16,10 +16,10 @@ export async function listPayments(
 ) {
   const where: Prisma.PaymentTransactionWhereInput = { distributorId, deletedAt: null };
   if (filters.customerId) where.customerId = filters.customerId;
-  if (filters.paymentMethod) where.paymentMethod = filters.paymentMethod as any;
+  if (filters.paymentMethod) where.paymentMethod = filters.paymentMethod as $Enums.PaymentMethod;
   if (filters.allocationStatus) {
     const list = Array.isArray(filters.allocationStatus) ? filters.allocationStatus : [filters.allocationStatus];
-    where.allocationStatus = { in: list as any };
+    where.allocationStatus = { in: list as $Enums.PaymentAllocationStatus[] };
   }
   if (filters.dateFrom || filters.dateTo) {
     where.transactionDate = {};
@@ -88,7 +88,7 @@ export async function createPayment(
         distributorId,
         customerId: data.customerId,
         amount: data.amount,
-        paymentMethod: data.paymentMethod as any,
+        paymentMethod: data.paymentMethod as $Enums.PaymentMethod,
         referenceNumber: data.referenceNumber || null,
         transactionDate: new Date(data.transactionDate),
         allocationStatus: 'unallocated',
@@ -188,7 +188,7 @@ export async function createPayment(
 
     const updatedPayment = await tx.paymentTransaction.update({
       where: { id: payment.id },
-      data: { allocationStatus: allocationStatus as any },
+      data: { allocationStatus: allocationStatus as $Enums.PaymentAllocationStatus },
       include: {
         customer: { select: { id: true, customerName: true } },
         allocations: {
@@ -280,7 +280,7 @@ export async function allocatePayment(
     const allocationStatus = newUnallocated <= 1e-9 ? 'fully_allocated' : 'partially_allocated';
     const updatedPayment = await tx.paymentTransaction.update({
       where: { id: payment.id },
-      data: { allocationStatus: allocationStatus as any },
+      data: { allocationStatus: allocationStatus as $Enums.PaymentAllocationStatus },
       include: {
         customer: { select: { id: true, customerName: true } },
         allocations: {

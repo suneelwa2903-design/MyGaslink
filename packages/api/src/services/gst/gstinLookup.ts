@@ -8,6 +8,7 @@ import { prisma } from '../../lib/prisma.js';
 import { getCredentials, getAuthToken, GstError } from './whitebooksClient.js';
 import { logger } from '../../utils/logger.js';
 import { INDIAN_STATES } from '@gaslink/shared';
+import type { NicError } from './nicTypes.js';
 
 const DEFAULT_IP = '127.0.0.1';
 
@@ -101,7 +102,16 @@ export interface GstinDetails {
   }>;
 }
 
-function buildAddressString(addr: Record<string, string | undefined>): string {
+/** Nested NIC address block (`pradr.addr` / `adadr[].addr`) plus the flat
+ * sandbox `Addr*` aliases that some responses inline. All fields optional. */
+type NicAddressBlock = {
+  bnm?: string; bno?: string; flno?: string; st?: string; loc?: string;
+  dst?: string; pncd?: string; stcd?: string; city?: string;
+  AddrBno?: string; AddrFlno?: string; AddrBnm?: string; AddrSt?: string;
+  AddrLoc?: string;
+};
+
+function buildAddressString(addr: NicAddressBlock): string {
   const parts = [
     addr.bno || addr.AddrBno,
     addr.flno || addr.AddrFlno,
@@ -237,9 +247,9 @@ export async function lookupGstin(
     let errorMsg = json.status_desc || `GSTIN lookup failed for ${gstin}`;
     if (typeof json.status_desc === 'string') {
       try {
-        const errors = JSON.parse(json.status_desc);
+        const errors = JSON.parse(json.status_desc) as NicError[];
         if (Array.isArray(errors) && errors.length > 0) {
-          errorMsg = errors.map((e: any) => `[${e.ErrorCode}] ${e.ErrorMessage}`).join('; ');
+          errorMsg = errors.map((e) => `[${e.ErrorCode}] ${e.ErrorMessage}`).join('; ');
         }
       } catch {
         // Not JSON, use as-is
@@ -268,7 +278,7 @@ export async function lookupGstin(
 
   // Also check for nested address format (NIC production format)
   const nestedAddr = data.pradr?.addr;
-  const finalAddress = address || (nestedAddr ? buildAddressString(nestedAddr as any) : '');
+  const finalAddress = address || (nestedAddr ? buildAddressString(nestedAddr) : '');
 
   // City: use locality, district, or building name as fallback
   const city = (data.AddrLoc || nestedAddr?.loc || nestedAddr?.dst || data.AddrDst || data.AddrBnm || '').trim();

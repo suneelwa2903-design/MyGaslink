@@ -2,6 +2,7 @@ import swaggerJsdoc from 'swagger-jsdoc';
 import swaggerUi from 'swagger-ui-express';
 import type { Express, Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import type { JwtPayload } from '@gaslink/shared';
 import { config } from './config/index.js';
 import { prisma } from './lib/prisma.js';
 
@@ -2064,7 +2065,7 @@ async function requireSuperAdminForDocs(req: Request, res: Response, next: NextF
     const queryToken = req.query.token as string | undefined;
     if (queryToken) {
       try {
-        const decoded = jwt.verify(queryToken, config.jwt.accessSecret) as any;
+        const decoded = jwt.verify(queryToken, config.jwt.accessSecret) as JwtPayload;
         const user = await prisma.user.findUnique({
           where: { id: decoded.userId },
           select: { id: true, status: true, role: true },
@@ -2084,7 +2085,7 @@ async function requireSuperAdminForDocs(req: Request, res: Response, next: NextF
 
   const token = authHeader.slice(7);
   try {
-    const decoded = jwt.verify(token, config.jwt.accessSecret) as any;
+    const decoded = jwt.verify(token, config.jwt.accessSecret) as JwtPayload;
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       select: { id: true, status: true, role: true },

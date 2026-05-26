@@ -145,7 +145,7 @@ function ActionModal({ type, cylinderTypes, onClose, onSuccess, dark, colors }: 
     type === 'outgoing_empties' ? '/inventory/outgoing-empties' :
     '/inventory/manual-adjustment';
 
-  const mutation = useApiMutation<void, any>(
+  const mutation = useApiMutation<void, Record<string, unknown>>(
     'post', endpoint,
     {
       invalidateKeys: [['inv-summary'], ['depot-history-recent']],

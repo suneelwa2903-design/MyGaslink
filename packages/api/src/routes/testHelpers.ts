@@ -15,13 +15,14 @@
  */
 
 import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { sendSuccess, sendForbidden } from '../utils/apiResponse.js';
 import { injectStaleCacheEntry, getCacheEntry } from '../services/gst/whitebooksClient.js';
 
 const router = Router();
 
 /** Runtime guard — belt-and-suspenders on top of the mount-time NODE_ENV check. */
-function guardProd(_req: any, res: any, next: () => void) {
+function guardProd(_req: Request, res: Response, next: NextFunction) {
   if (process.env.NODE_ENV === 'production') {
     return sendForbidden(res, 'Test helpers are not available in production');
   }

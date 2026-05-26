@@ -8,6 +8,8 @@ import * as billingService from '../services/billingService.js';
 import { mapBillingCycle, mapBillingCycles } from '../utils/mappers.js';
 import { z } from 'zod';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 // GET /api/billing/cycles
@@ -57,8 +59,9 @@ router.post('/generate',
     try {
       const cycle = await billingService.generateBillingCycle(req.body.distributorId, req.body);
       return sendCreated(res, mapBillingCycle(cycle));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -71,8 +74,9 @@ router.put('/cycles/:id/mark-paid',
     try {
       const cycle = await billingService.markBillingPaid(param(req.params.id));
       return sendSuccess(res, mapBillingCycle(cycle));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );

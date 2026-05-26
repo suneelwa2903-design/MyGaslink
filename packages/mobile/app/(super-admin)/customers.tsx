@@ -8,6 +8,10 @@ import { useTheme, formatINR } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
 import type { Customer, PaginationMeta } from '@gaslink/shared';
 
+// The super-admin customers list carries a derived `outstandingBalance` not in
+// the shared Customer DTO. Model it as an optional extension.
+type CustomerRow = Customer & { outstandingBalance?: number };
+
 // ── Status config ────────────────────────────────────────────────────────────
 
 const STATUS_MAP: Record<string, { variant: 'success' | 'warning' | 'danger' | 'neutral'; label: string }> = {
@@ -31,15 +35,15 @@ export default function CustomersScreen() {
   if (selectedDistributorId) params.distributorId = selectedDistributorId;
 
   const { data, isLoading, refetch } = useApiQuery<
-    { customers: Customer[]; pagination?: PaginationMeta } | Customer[]
+    { customers: CustomerRow[]; pagination?: PaginationMeta } | CustomerRow[]
   >(
     ['sa-customers', search, statusFilter, String(page), selectedDistributorId ?? 'all'],
     '/customers',
     params,
   );
 
-  const customers: Customer[] = Array.isArray(data) ? data : (data as any)?.customers ?? [];
-  const pagination: PaginationMeta | undefined = Array.isArray(data) ? undefined : (data as any)?.pagination;
+  const customers: CustomerRow[] = Array.isArray(data) ? data : data?.customers ?? [];
+  const pagination: PaginationMeta | undefined = Array.isArray(data) ? undefined : data?.pagination;
 
   const handleRefresh = useCallback(() => {
     setPage(1);
@@ -176,15 +180,15 @@ export default function CustomersScreen() {
                         <Text style={{ fontWeight: '600', fontSize: 13, color: colors.text }} numberOfLines={1}>{customer.gstin}</Text>
                       </View>
                     )}
-                    {(customer as any).outstandingBalance != null && (
+                    {customer.outstandingBalance != null && (
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 11, color: colors.textSecondary }}>Outstanding</Text>
                         <Text style={{
                           fontWeight: '700',
                           fontSize: 13,
-                          color: (customer as any).outstandingBalance > 0 ? accent.orange : accent.green,
+                          color: customer.outstandingBalance > 0 ? accent.orange : accent.green,
                         }}>
-                          {formatINR((customer as any).outstandingBalance)}
+                          {formatINR(customer.outstandingBalance)}
                         </Text>
                       </View>
                     )}

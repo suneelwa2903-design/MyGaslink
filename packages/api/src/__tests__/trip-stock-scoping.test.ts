@@ -31,6 +31,8 @@ import { prisma } from '../lib/prisma.js';
 import { generateToken } from './helpers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
 import type { Express } from 'express';
+import type { $Enums } from '@prisma/client';
+import type { UserRole } from '@gaslink/shared';
 
 const PHONES = ['9913000001', '9913000002', '9913000003', '9913000004', '9913000005', '9913000006'];
 const today = startOfUtcDay();
@@ -63,7 +65,7 @@ async function mkDriver(distributorId: string, phone: string, name: string, vehi
   const vehicle = await prisma.vehicle.create({
     data: { distributorId, vehicleNumber, vehicleType: 'Truck', status: 'returned' },
   });
-  const token = generateToken({ userId: user.id, email, role: 'driver' as any, distributorId });
+  const token = generateToken({ userId: user.id, email, role: 'driver' as UserRole, distributorId });
   return { driverId: driver.id, vehicleId: vehicle.id, token };
 }
 
@@ -72,22 +74,22 @@ async function mkCyl(distributorId: string, typeName: string) {
   return c.id;
 }
 
-async function mkDva(driverId: string, vehicleId: string, distributorId: string, tripNumber: number, status: string) {
+async function mkDva(driverId: string, vehicleId: string, distributorId: string, tripNumber: number, status: $Enums.AssignmentStatus) {
   await prisma.driverVehicleAssignment.create({
-    data: { driverId, vehicleId, distributorId, assignmentDate: today, tripNumber, status: status as any },
+    data: { driverId, vehicleId, distributorId, assignmentDate: today, tripNumber, status },
   });
 }
 
 async function mkOrder(opts: {
   distributorId: string; customerId: string; driverId: string; vehicleId: string;
-  orderNumber: string; status: string; tripNumber: number | null;
+  orderNumber: string; status: $Enums.OrderStatus; tripNumber: number | null;
   cylinderTypeId: string; quantity: number; deliveredQuantity?: number; emptiesCollected?: number;
 }) {
   await prisma.order.create({
     data: {
       orderNumber: opts.orderNumber, distributorId: opts.distributorId, customerId: opts.customerId,
       driverId: opts.driverId, vehicleId: opts.vehicleId, orderDate: today, deliveryDate: today,
-      status: opts.status as any, orderType: 'delivery', totalAmount: 1000, tripNumber: opts.tripNumber,
+      status: opts.status, orderType: 'delivery', totalAmount: 1000, tripNumber: opts.tripNumber,
       items: {
         create: [{
           cylinderTypeId: opts.cylinderTypeId, quantity: opts.quantity, unitPrice: 1000, totalPrice: 1000,
@@ -226,7 +228,7 @@ describe('WI-094c — GET /drivers/me/assignment orders scoped to current trip',
     // (A-T2P pending + A-T2D delivered, tripNumber=2). Current DVA is trip 2.
     const res = await assignment(aToken);
     expect(res.status).toBe(200);
-    const nums: string[] = res.body.data.orders.map((o: any) => o.orderNumber);
+    const nums: string[] = res.body.data.orders.map((o: { orderNumber: string }) => o.orderNumber);
     expect(nums).toEqual(expect.arrayContaining(['TEST-TSS-A-T2P', 'TEST-TSS-A-T2D']));
     expect(nums).not.toContain('TEST-TSS-A-T1D');
   });
@@ -234,7 +236,7 @@ describe('WI-094c — GET /drivers/me/assignment orders scoped to current trip',
   it('❌ 8 — cross-tenant: dist-001 driver sees only its own orders', async () => {
     const res = await assignment(dToken);
     expect(res.status).toBe(200);
-    const nums: string[] = res.body.data.orders.map((o: any) => o.orderNumber);
+    const nums: string[] = res.body.data.orders.map((o: { orderNumber: string }) => o.orderNumber);
     expect(nums).toContain('TEST-TSS-D-P');
     expect(nums.some((n) => n.startsWith('TEST-TSS-A-'))).toBe(false);
   });

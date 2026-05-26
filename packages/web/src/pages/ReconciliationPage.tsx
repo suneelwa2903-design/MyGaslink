@@ -3,17 +3,29 @@ import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Loader, EmptyState, Badge } from '@/components/ui';
 import toast from 'react-hot-toast';
 
+interface ReconciliationVehicle {
+  vehicleId: string;
+  vehicleNumber: string;
+  pendingCancelledStock: number;
+  pendingUndeliveredOrders: number;
+}
+
+interface ReconciliationConfirmInput {
+  physicalStockConfirmed: boolean;
+  notes?: string;
+}
+
+interface ReconciliationConfirmResult {
+  cancelledStockReturned: number;
+  undeliveredOrdersCancelled: number;
+}
+
 export default function ReconciliationPage() {
   const queryClient = useQueryClient();
 
   const { data: vehicles, isLoading } = useQuery({
     queryKey: ['reconciliation-pending'],
-    queryFn: () => apiGet<Array<{
-      vehicleId: string;
-      vehicleNumber: string;
-      pendingCancelledStock: number;
-      pendingUndeliveredOrders: number;
-    }>>('/delivery/reconciliation/pending'),
+    queryFn: () => apiGet<ReconciliationVehicle[]>('/delivery/reconciliation/pending'),
   });
 
   const confirm = useMutation({
@@ -22,15 +34,15 @@ export default function ReconciliationPage() {
       data,
     }: {
       vehicleId: string;
-      data: any;
-    }) => apiPost(`/delivery/reconciliation/confirm/${vehicleId}`, data),
-    onSuccess: (result: any) => {
+      data: ReconciliationConfirmInput;
+    }) => apiPost<ReconciliationConfirmResult>(`/delivery/reconciliation/confirm/${vehicleId}`, data),
+    onSuccess: (result) => {
       toast.success(
         `Reconciliation complete: ${result.cancelledStockReturned} stock returned, ${result.undeliveredOrdersCancelled} orders cancelled`,
       );
       queryClient.invalidateQueries({ queryKey: ['reconciliation-pending'] });
     },
-    onError: (err: any) => toast.error(getErrorMessage(err)),
+    onError: (err) => toast.error(getErrorMessage(err)),
   });
 
   return (
@@ -52,7 +64,7 @@ export default function ReconciliationPage() {
         />
       ) : (
         <div className="grid gap-4">
-          {vehicles.map((v: any) => (
+          {vehicles.map((v) => (
             <div
               key={v.vehicleId}
               className="bg-white dark:bg-surface-800 rounded-xl p-6 shadow-sm"

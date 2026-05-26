@@ -57,7 +57,7 @@ describe('Inventory - Incoming Fulls', () => {
     expect(Array.isArray(res.body.data)).toBe(true);
     // Should have at least one entry with fulls > 0
     const has19kg = res.body.data.some(
-      (s: any) => s.closingFulls > 0 || s.incomingFulls > 0,
+      (s: { closingFulls: number; incomingFulls: number }) => s.closingFulls > 0 || s.incomingFulls > 0,
     );
     expect(has19kg).toBe(true);
   });

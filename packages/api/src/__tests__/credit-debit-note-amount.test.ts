@@ -14,7 +14,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     // Approve flow fires processCreditNoteGst → apiCall. Stub auth to avoid
@@ -27,6 +27,7 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { generateToken } from './helpers.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
 
 let app: Express;
 let sharmaAdminToken: string;
@@ -45,7 +46,7 @@ beforeAll(async () => {
   sharmaAdminToken = generateToken({
     userId: sharmaAdmin.id,
     email: sharmaAdmin.email,
-    role: sharmaAdmin.role as any,
+    role: sharmaAdmin.role as UserRole,
     distributorId: sharmaAdmin.distributorId,
   });
 
@@ -106,7 +107,7 @@ describe('WI-055 — Credit Note amount-based create', () => {
     const row = await prisma.creditNote.findUniqueOrThrow({ where: { id: cnId } });
     expect(Number(row.totalAmount)).toBeCloseTo(amount, 2);
     expect(row.reason).toBe('Test price correction');
-    expect((row as any).note).toBe('Reviewed with customer 2026-05-16');
+    expect(row.note).toBe('Reviewed with customer 2026-05-16');
 
     // Cleanup so re-running the suite doesn't accumulate rows.
     await prisma.creditNote.delete({ where: { id: cnId } });
@@ -175,7 +176,7 @@ describe('WI-055 — Debit Note amount-based create (no upper bound)', () => {
     const dnId = res.body.data.debitNoteId;
     const row = await prisma.debitNote.findUniqueOrThrow({ where: { id: dnId } });
     expect(Number(row.totalAmount)).toBeCloseTo(over, 2);
-    expect((row as any).note).toBe('Customer informed by phone');
+    expect(row.note).toBe('Customer informed by phone');
     await prisma.debitNote.delete({ where: { id: dnId } });
   });
 

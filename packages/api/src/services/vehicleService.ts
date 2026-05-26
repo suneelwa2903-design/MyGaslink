@@ -1,10 +1,10 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, $Enums } from '@prisma/client';
 import { startOfUtcDay } from '../utils/dateOnly.js';
 
 export async function listVehicles(distributorId: string, status?: string) {
   const where: Prisma.VehicleWhereInput = { distributorId, deletedAt: null };
-  if (status) where.status = status as any;
+  if (status) where.status = status as $Enums.VehicleStatus;
 
   return prisma.vehicle.findMany({
     where,
@@ -54,7 +54,13 @@ export async function createVehicle(distributorId: string, data: {
   });
 }
 
-export async function updateVehicle(id: string, distributorId: string, data: Record<string, any>) {
+export async function updateVehicle(id: string, distributorId: string, data: {
+  vehicleNumber?: string;
+  vehicleType?: string | null;
+  capacity?: number | null;
+  status?: $Enums.VehicleStatus;
+  deactivationNotes?: string | null;
+}) {
   const existing = await prisma.vehicle.findFirst({ where: { id, distributorId, deletedAt: null } });
   if (!existing) return null;
 

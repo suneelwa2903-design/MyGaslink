@@ -409,7 +409,7 @@ describe('GET /api/drivers/me/assignment', () => {
     expect(res.status).toBe(200);
     expect(res.body.data).not.toBeNull();
     expect(res.body.data.assignmentId).toBe(dvaAId);
-    const orderNumbers: string[] = res.body.data.orders.map((o: any) => o.orderNumber);
+    const orderNumbers: string[] = res.body.data.orders.map((o: { orderNumber: string }) => o.orderNumber);
     expect(orderNumbers).toEqual(expect.arrayContaining([ORDER_A1_NUM, ORDER_A2_NUM]));
     expect(orderNumbers).not.toContain(ORDER_B1_NUM);
     // Each order should have items expanded so the mobile UI can render
@@ -422,7 +422,7 @@ describe('GET /api/drivers/me/assignment', () => {
     const res = await request(app).get('/api/drivers/me/assignment').set(auth(driverBToken));
     expect(res.status).toBe(200);
     expect(res.body.data.assignmentId).toBe(dvaBId);
-    const orderNumbers: string[] = res.body.data.orders.map((o: any) => o.orderNumber);
+    const orderNumbers: string[] = res.body.data.orders.map((o: { orderNumber: string }) => o.orderNumber);
     expect(orderNumbers).toContain(ORDER_B1_NUM);
     expect(orderNumbers).not.toContain(ORDER_A1_NUM);
     expect(orderNumbers).not.toContain(ORDER_A2_NUM);

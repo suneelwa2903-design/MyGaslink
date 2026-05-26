@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 
 vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
-  const original: any = await orig();
+  const original = await orig<typeof import('../services/gst/whitebooksClient.js')>();
   return {
     ...original,
     getAuthToken: vi.fn(async () => 'fake-token'),
@@ -26,6 +26,10 @@ import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { generateToken } from './helpers.js';
 import type { Express } from 'express';
+import type { UserRole } from '@gaslink/shared';
+
+/** Invoice list row shape (only fields the tests read). */
+interface InvoiceListRow { invoiceId: string; creditNotesCount: number }
 
 let app: Express;
 let sharmaAdminToken: string;
@@ -44,7 +48,7 @@ beforeAll(async () => {
   sharmaAdminToken = generateToken({
     userId: sharmaAdmin.id,
     email: sharmaAdmin.email,
-    role: sharmaAdmin.role as any,
+    role: sharmaAdmin.role as UserRole,
     distributorId: sharmaAdmin.distributorId,
   });
 
@@ -133,7 +137,7 @@ describe('WI-056 — Invoice list response shape', () => {
       .get(`/api/invoices?customerId=${inv.customerId}&pageSize=50`)
       .set(auth(sharmaAdminToken));
 
-    const row = list.body.data.invoices.find((r: any) => r.invoiceId === inv.id);
+    const row = list.body.data.invoices.find((r: InvoiceListRow) => r.invoiceId === inv.id);
     expect(row).toBeTruthy();
     expect(row.creditNotesCount).toBeGreaterThanOrEqual(1);
 
@@ -189,10 +193,10 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
     const PDFDocument = (await import('pdfkit')).default;
     const drawnStrings: string[] = [];
     const originalText = PDFDocument.prototype.text;
-    const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
-      function (this: any, str: any, ...rest: any[]) {
+    const spy = vi.spyOn(PDFDocument.prototype, 'text').mockImplementation(
+      function (this: PDFKit.PDFDocument, str: unknown, ...rest: unknown[]) {
         if (typeof str === 'string') drawnStrings.push(str);
-        return originalText.call(this, str, ...rest);
+        return (originalText as (this: PDFKit.PDFDocument, ...a: unknown[]) => PDFKit.PDFDocument).call(this, str, ...rest);
       },
     );
 
@@ -227,10 +231,10 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
     const PDFDocument = (await import('pdfkit')).default;
     const drawnStrings: string[] = [];
     const originalText = PDFDocument.prototype.text;
-    const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
-      function (this: any, str: any, ...rest: any[]) {
+    const spy = vi.spyOn(PDFDocument.prototype, 'text').mockImplementation(
+      function (this: PDFKit.PDFDocument, str: unknown, ...rest: unknown[]) {
         if (typeof str === 'string') drawnStrings.push(str);
-        return originalText.call(this, str, ...rest);
+        return (originalText as (this: PDFKit.PDFDocument, ...a: unknown[]) => PDFKit.PDFDocument).call(this, str, ...rest);
       },
     );
 
@@ -323,10 +327,10 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
     const PDFDocument = (await import('pdfkit')).default;
     const drawnStrings: string[] = [];
     const originalText = PDFDocument.prototype.text;
-    const textSpy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
-      function (this: any, str: any, ...rest: any[]) {
+    const textSpy = vi.spyOn(PDFDocument.prototype, 'text').mockImplementation(
+      function (this: PDFKit.PDFDocument, str: unknown, ...rest: unknown[]) {
         if (typeof str === 'string') drawnStrings.push(str);
-        return originalText.call(this, str, ...rest);
+        return (originalText as (this: PDFKit.PDFDocument, ...a: unknown[]) => PDFKit.PDFDocument).call(this, str, ...rest);
       },
     );
 
@@ -341,6 +345,8 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
       },
     });
 
+    type GstDocFindFirst = typeof prisma.gstDocument.findFirst;
+    type GstDocRow = Awaited<ReturnType<GstDocFindFirst>>;
     const fakeCrnDoc = {
       id: 'wi092-fake-crn-doc',
       invoiceId: inv.id,
@@ -353,18 +359,19 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
       ewbNo: null,
       irnStatus: 'success',
       isLatest: true,
-    };
+    } as unknown as NonNullable<GstDocRow>;
 
     // Manual save/restore rather than vi.spyOn: Prisma model delegates don't
     // restore reliably via mockRestore (they're proxy-backed), and a leaked
     // findFirst override would break every later test that reads gst_documents.
-    const originalFindFirst = prisma.gstDocument.findFirst;
+    const delegate = prisma.gstDocument as { findFirst: GstDocFindFirst };
+    const originalFindFirst = delegate.findFirst;
     let crnLookupCalls = 0;
-    (prisma.gstDocument as any).findFirst = async (..._args: any[]) => {
+    delegate.findFirst = (async () => {
       crnLookupCalls++;
       // 1st lookup misses (IRN hasn't landed yet); 2nd (post-retry) finds it.
       return crnLookupCalls === 1 ? null : fakeCrnDoc;
-    };
+    }) as GstDocFindFirst;
 
     try {
       const res = await request(app)
@@ -377,7 +384,7 @@ describe('WI-056 — Credit Note PDF reads IRN from gst_documents', () => {
       expect(crnLookupCalls).toBe(2);
       expect(drawnStrings.some((s) => /CRN Details/i.test(s))).toBe(true);
     } finally {
-      (prisma.gstDocument as any).findFirst = originalFindFirst;
+      delegate.findFirst = originalFindFirst;
       textSpy.mockRestore();
       await prisma.creditNote.delete({ where: { id: cn.id } });
     }
@@ -389,10 +396,10 @@ describe('WI-077 — Debit Note PDF skips IRN block for B2C-style (no IRN/EWB) D
     const PDFDocument = (await import('pdfkit')).default;
     const drawnStrings: string[] = [];
     const originalText = PDFDocument.prototype.text;
-    const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
-      function (this: any, str: any, ...rest: any[]) {
+    const spy = vi.spyOn(PDFDocument.prototype, 'text').mockImplementation(
+      function (this: PDFKit.PDFDocument, str: unknown, ...rest: unknown[]) {
         if (typeof str === 'string') drawnStrings.push(str);
-        return originalText.call(this, str, ...rest);
+        return (originalText as (this: PDFKit.PDFDocument, ...a: unknown[]) => PDFKit.PDFDocument).call(this, str, ...rest);
       },
     );
 
@@ -427,10 +434,10 @@ describe('WI-077 — Debit Note PDF skips IRN block for B2C-style (no IRN/EWB) D
     const PDFDocument = (await import('pdfkit')).default;
     const drawnStrings: string[] = [];
     const originalText = PDFDocument.prototype.text;
-    const spy = vi.spyOn(PDFDocument.prototype as any, 'text').mockImplementation(
-      function (this: any, str: any, ...rest: any[]) {
+    const spy = vi.spyOn(PDFDocument.prototype, 'text').mockImplementation(
+      function (this: PDFKit.PDFDocument, str: unknown, ...rest: unknown[]) {
         if (typeof str === 'string') drawnStrings.push(str);
-        return originalText.call(this, str, ...rest);
+        return (originalText as (this: PDFKit.PDFDocument, ...a: unknown[]) => PDFKit.PDFDocument).call(this, str, ...rest);
       },
     );
 

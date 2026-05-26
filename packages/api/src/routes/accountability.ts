@@ -8,6 +8,8 @@ import { createAccountabilitySchema, resolveAccountabilitySchema } from '@gaslin
 import * as accountabilityService from '../services/accountabilityService.js';
 import { mapAccountabilityLog, mapAccountabilityLogs } from '../utils/mappers.js';
 
+type ServiceError = { message: string; statusCode?: number; code?: string };
+
 const router = Router();
 
 // GET /api/accountability
@@ -58,8 +60,9 @@ router.post('/',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapAccountabilityLog(log));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -75,8 +78,9 @@ router.put('/:id/resolve',
         param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendSuccess(res, mapAccountabilityLog(log));
-    } catch (err: any) {
-      return sendError(res, err.message, err.statusCode || 500);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
