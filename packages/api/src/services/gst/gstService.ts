@@ -870,7 +870,7 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
 export async function cancelIrn(invoiceId: string, distributorId: string, reason: string) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    select: { irn: true, invoiceNumber: true },
+    select: { irn: true, invoiceNumber: true, orderId: true },
   });
   if (!invoice?.irn) throw new GstError('Invoice has no IRN to cancel', 'NO_IRN');
 
@@ -918,7 +918,7 @@ export async function cancelIrn(invoiceId: string, distributorId: string, reason
     distributorId, 'POST',
     `/einvoice/type/CANCEL/version/V1_03?email=${encodeURIComponent(email)}`,
     cancelPayload, 'einvoice',
-    { apiType: 'IRN_CANCEL', invoiceId },
+    { apiType: 'IRN_CANCEL', invoiceId, orderId: invoice.orderId },
   );
 
   await prisma.invoice.update({
@@ -963,7 +963,7 @@ export async function cancelEwb(invoiceId: string, distributorId: string, reason
     `/ewaybillapi/v1.03/ewayapi/canewb?email=${encodeURIComponent(email)}`,
     { ewbNo: parseInt(gstDoc.ewbNo), cancelRsnCode, cancelRmrk: reason.substring(0, 100) },
     'ewaybill',
-    { apiType: 'EWB_CANCEL', invoiceId },
+    { apiType: 'EWB_CANCEL', invoiceId, orderId: gstDoc.orderId },
   );
 
   await prisma.invoice.update({

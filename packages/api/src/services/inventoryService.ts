@@ -267,8 +267,8 @@ export async function recordIncomingFulls(
 ) {
   const eventDate = new Date(data.documentDate);
 
-  return prisma.$transaction(async (tx) => {
-    const event = await createInventoryEvent(tx, {
+  const event = await prisma.$transaction(async (tx) => {
+    return createInventoryEvent(tx, {
       distributorId,
       cylinderTypeId: data.cylinderTypeId,
       eventType: 'incoming_fulls',
@@ -283,10 +283,13 @@ export async function recordIncomingFulls(
       createdBy: userId,
       notes: data.notes,
     });
-
-    await recalculateSummariesFromDate(distributorId, data.cylinderTypeId, eventDate);
-    return event;
   });
+
+  // Recalculate AFTER the transaction commits: recalculateSummariesFromDate
+  // uses the global prisma client, which cannot see events written via `tx`
+  // while the transaction is still open (read-committed isolation).
+  await recalculateSummariesFromDate(distributorId, data.cylinderTypeId, eventDate);
+  return event;
 }
 
 /**
@@ -308,8 +311,8 @@ export async function recordOutgoingEmpties(
 ) {
   const eventDate = new Date(data.documentDate);
 
-  return prisma.$transaction(async (tx) => {
-    const event = await createInventoryEvent(tx, {
+  const event = await prisma.$transaction(async (tx) => {
+    return createInventoryEvent(tx, {
       distributorId,
       cylinderTypeId: data.cylinderTypeId,
       eventType: 'outgoing_empties',
@@ -324,10 +327,13 @@ export async function recordOutgoingEmpties(
       createdBy: userId,
       notes: data.notes,
     });
-
-    await recalculateSummariesFromDate(distributorId, data.cylinderTypeId, eventDate);
-    return event;
   });
+
+  // Recalculate AFTER the transaction commits: recalculateSummariesFromDate
+  // uses the global prisma client, which cannot see events written via `tx`
+  // while the transaction is still open (read-committed isolation).
+  await recalculateSummariesFromDate(distributorId, data.cylinderTypeId, eventDate);
+  return event;
 }
 
 /**
@@ -392,8 +398,8 @@ export async function recordManualAdjustment(
   const eventDate = new Date(data.adjustmentDate);
   const change = data.adjustmentType === 'add' ? data.quantity : -data.quantity;
 
-  return prisma.$transaction(async (tx) => {
-    const event = await createInventoryEvent(tx, {
+  const event = await prisma.$transaction(async (tx) => {
+    return createInventoryEvent(tx, {
       distributorId,
       cylinderTypeId: data.cylinderTypeId,
       eventType: 'manual_adjustment',
@@ -403,10 +409,13 @@ export async function recordManualAdjustment(
       createdBy: userId,
       notes: data.reason,
     });
-
-    await recalculateSummariesFromDate(distributorId, data.cylinderTypeId, eventDate);
-    return event;
   });
+
+  // Recalculate AFTER the transaction commits: recalculateSummariesFromDate
+  // uses the global prisma client, which cannot see events written via `tx`
+  // while the transaction is still open (read-committed isolation).
+  await recalculateSummariesFromDate(distributorId, data.cylinderTypeId, eventDate);
+  return event;
 }
 
 /**
@@ -418,9 +427,13 @@ export async function returnCancelledStock(
   data: { eventIds: string[]; returnDate: string; notes?: string }
 ) {
   const returnDate = new Date(data.returnDate);
+  // Collect cylinder types affected inside the tx, then recompute AFTER commit
+  // (recalculateSummariesFromDate uses the global prisma client and cannot see
+  // the cancellation_return events written via `tx` while the tx is open).
+  const affected: { cylinderTypeId: string; eventDate: Date }[] = [];
 
-  return prisma.$transaction(async (tx) => {
-    const results = [];
+  const results = await prisma.$transaction(async (tx) => {
+    const inner: { eventId: string; status: string }[] = [];
     for (const eventId of data.eventIds) {
       const cse = await tx.cancelledStockEvent.findFirst({
         where: { id: eventId, distributorId, status: 'on_vehicle' },
@@ -446,11 +459,16 @@ export async function returnCancelledStock(
         notes: data.notes || 'Cancelled stock returned to depot',
       });
 
-      await recalculateSummariesFromDate(distributorId, cse.cylinderTypeId, returnDate);
-      results.push({ eventId, status: 'returned_to_depot' });
+      affected.push({ cylinderTypeId: cse.cylinderTypeId, eventDate: returnDate });
+      inner.push({ eventId, status: 'returned_to_depot' });
     }
-    return results;
+    return inner;
   });
+
+  for (const { cylinderTypeId, eventDate } of affected) {
+    await recalculateSummariesFromDate(distributorId, cylinderTypeId, eventDate);
+  }
+  return results;
 }
 
 /**

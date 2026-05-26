@@ -236,6 +236,35 @@ describe('gstReissueService — delivery mismatch flow', () => {
     }
   });
 
+  it('reissue cancel + regenerate logs carry order_id (audit linkage)', async () => {
+    const f = await seedReissueFixture({ isB2B: true, withActiveEwb: true });
+    try {
+      apiCallMock
+        .mockResolvedValueOnce(ewbCancelOk())     // cancelEwb     -> EWB_CANCEL
+        .mockResolvedValueOnce(irnCancelOk())     // cancelIrn     -> IRN_CANCEL
+        .mockResolvedValueOnce(irnSuccess());     // regenerate    -> IRN_GENERATE_REISSUE
+      const result = await reissue({ invoiceId: f.invoiceId, distributorId: 'dist-002', userId: 'test-user' });
+      expect(result.ok).toBe(true);
+
+      const logs = await prisma.gstApiLog.findMany({
+        where: {
+          distributorId: 'dist-002',
+          invoiceId: f.invoiceId,
+          apiType: { in: ['EWB_CANCEL', 'IRN_CANCEL', 'IRN_GENERATE_REISSUE'] },
+        },
+        select: { apiType: true, orderId: true },
+      });
+      const byType = Object.fromEntries(logs.map((l) => [l.apiType, l.orderId]));
+      // All three were order_id=NULL before the fix.
+      expect(byType['EWB_CANCEL']).toBe(f.orderId);
+      expect(byType['IRN_CANCEL']).toBe(f.orderId);
+      expect(byType['IRN_GENERATE_REISSUE']).toBe(f.orderId);
+    } finally {
+      await prisma.gstApiLog.deleteMany({ where: { invoiceId: f.invoiceId } });
+      await teardown(f.orderId);
+    }
+  });
+
   it('Exact-qty delivery: caller never invokes reissue, so this test asserts the early-return is safe', async () => {
     const f = await seedReissueFixture({
       isB2B: true, withActiveEwb: true, orderedQty: 10, deliveredQty: 10,

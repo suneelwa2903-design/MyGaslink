@@ -444,7 +444,7 @@ async function regenerateB2bIrn(
   // the invoice in a half-state.
   const inv0 = await prisma.invoice.findUniqueOrThrow({
     where: { id: invoiceId },
-    select: { invoiceNumber: true },
+    select: { invoiceNumber: true, orderId: true },
   });
   const freshNumber = await freshRevisionNumber(distributorId, distributor, inv0.invoiceNumber);
   await prisma.invoice.update({
@@ -465,7 +465,7 @@ async function regenerateB2bIrn(
     distributorId, 'POST',
     `/einvoice/type/GENERATE/version/V1_03?email=${encodeURIComponent(credEmail)}`,
     payload, 'einvoice',
-    { apiType: 'IRN_GENERATE_REISSUE', invoiceId },
+    { apiType: 'IRN_GENERATE_REISSUE', invoiceId, orderId: inv0.orderId },
   );
 
   let response: IrnResponse;
