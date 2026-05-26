@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
       # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
       # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
       - run: corepack enable
@@ -51,6 +53,8 @@ jobs:
       NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
       # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
       # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
       - run: corepack enable
@@ -71,6 +75,8 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
       # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
       # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
       - run: corepack enable
@@ -93,6 +99,8 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -139,6 +147,8 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -184,6 +194,8 @@ jobs:
     needs: deploy-production
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
 
       - name: Run database backup
         uses: appleboy/ssh-action@v1
