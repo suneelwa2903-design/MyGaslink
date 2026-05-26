@@ -512,3 +512,41 @@ Priority: `critical` · `high` · `medium` · `low`.
   still-`pending_*` orders, and currently cancels IRN but not EWB there), medium-high
   risk touching live NIC cancel ordering and the EWB-active-blocks-IRN invariant.
   Parked pre-launch.
+
+---
+
+## Additions (2026-05-25)
+
+**#48 — Replace driver polling with push notifications** *(blocks production release)*
+- Status: **PENDING** · Priority: **critical** · Timing: **[PRE-GO-LIVE — SUPER CRITICAL]** · Category: Driver Mobile App / Infrastructure
+- Today both driver screens poll every 30s: `(driver)/orders.tsx:73` polls
+  `GET /api/orders?status=pending_delivery` (`refetchInterval: 30_000`, added by
+  WI-115 / #35) and `(driver)/trip.tsx:100` polls `GET /drivers/me/trip-ewbs`
+  (`refetchInterval: 30_000`, GST tenants only). The push-notification layer is a
+  no-op stub ([mobile/src/services/notifications.ts](packages/mobile/src/services/notifications.ts) —
+  `registerForPushNotifications` returns null; all listeners/badge/schedule are no-ops).
+- Two events need push:
+  1. **Order assigned to driver** → notify the driver immediately. Emit point:
+     `assignDriver` ([orderService.ts](packages/api/src/services/orderService.ts), also the
+     preflight/auto-assign paths that set `driverId`).
+  2. **EWB generation complete** (WhiteBooks async callback) → notify the driver.
+     Emit point: the GST service completion path
+     ([gstService.ts](packages/api/src/services/gst/gstService.ts) / `gstPreflightService.ts`).
+- Requires: an **EAS build** (push is unsupported in Expo Go — see notifications.ts
+  header and #14 for the production EAS profile), a **push-token registry on the
+  server** (new table + register endpoint), the two **emit points** above, and
+  **keep the 30s polling as a fallback** for offline / missed pushes.
+- Gap / What remains: build all of the above and **fully test on a physical Android
+  AND iOS device** before go-live. **Marked blocking for production release.**
+  Related: #13 (WhatsApp channel), #39 (dispute-resolution push), #35 (the polling it replaces).
+
+**#47 — GST API log retention job**
+- Status: **PENDING** · Priority: low · Timing: **[POST-LAUNCH — WEEK 2]** · Category: Infrastructure / DevOps
+- `gst_api_logs` grows unbounded — every `apiCall` persists one row with the full
+  outgoing request + raw NIC response payload, on both success and failure (CLAUDE.md
+  anti-pattern #11). Estimated ~24 MB/month at 3 distributors.
+- Gap / What remains: add a daily cron (alongside the existing
+  `startOverdueInvoicesCron` in [jobs/overdueInvoicesJob.ts](packages/api/src/jobs/overdueInvoicesJob.ts))
+  that deletes `gst_api_logs` rows older than 90 days. Keeps the table stable at
+  ~72 MB indefinitely. **No compliance risk** — legally-required GST data lives in
+  `gst_documents` and `invoices`, not in this forensic-log table. Estimated effort: 1 hour.
