@@ -596,7 +596,7 @@ export default function LandingPage() {
         <div className="max-w-4xl mx-auto">
           <Reveal><div className="text-center mb-14"><span className="text-xs font-bold text-flame-500 uppercase tracking-widest">Team</span><h2 className="text-4xl lg:text-5xl font-extrabold mt-3 mb-5">Built by Distributors</h2><p className="text-slate-500 dark:text-slate-400 text-lg">We've lived the chaos. That's why we built the solution.</p></div></Reveal>
           <div className="grid sm:grid-cols-2 gap-8">
-            {[{ n: 'Suneel Kumar', r: 'Co-Founder & CEO', d: 'IIM Lucknow alumnus. 10+ years in strategy and digital operations.', img: '/founders/suneel.jpg' }, { n: 'Bhargava Mannava', r: 'Co-Founder & CTO', d: '8+ years running an LPG distributorship and building tech.', img: '/founders/bhargava.jpg' }].map((m, i) => (
+            {[{ n: 'Suneel Kumar', r: 'Co-Founder — Product, Technology & Strategy', d: "IIM Lucknow Alumnus · ISB Online Marketing · 10+ years leading strategy and building global enterprise systems. The architect of GasLink's go-to-market strategy. Spent a year in hands-on LPG distribution operations before co-founding GasLink — bringing operational ground truth to every product decision.", img: '/founders/suneel.jpg' }, { n: 'Bhargava Mannava', r: 'Co-Founder — Business, Commercial & Customer Officer', d: 'SRM University · HCL Technologies alumnus. A decade of hands-on LPG distribution operations — the commercial DNA behind GasLink. Deep expertise in business development, customer relationships, and enterprise operations. The voice of the customer inside the product, turning distributor and customer insights into the commercial engine that drives the platform.', img: '/founders/bhargava.jpg' }].map((m, i) => (
               <Reveal key={i} delay={i * .1}><div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center hover:border-flame-300 dark:hover:border-flame-500/30 transition-colors"><img src={m.img} alt={m.n} className="h-24 w-24 rounded-full mx-auto mb-5 object-cover ring-4 ring-white dark:ring-slate-800" /><h3 className="font-extrabold text-xl">{m.n}</h3><p className="text-sm text-flame-500 font-semibold mb-3">{m.r}</p><p className="text-sm text-slate-500 dark:text-slate-400">{m.d}</p></div></Reveal>
             ))}
           </div>
@@ -627,9 +627,22 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-10 mb-12">
             <div className="md:col-span-2"><div className="flex items-center gap-2.5 mb-4"><img src="/logo.png" alt="MyGasLink" className="h-8 w-8 rounded-lg object-contain" /><span className="text-base font-extrabold">MyGas<span className="text-flame-500">Link</span></span></div><p className="text-sm text-slate-500 max-w-sm leading-relaxed">India's most comprehensive LPG distribution management platform.</p></div>
             <div><h4 className="font-bold mb-4">Product</h4><div className="space-y-3">{['Features', 'Pricing', 'Mobile App', 'API'].map(l => <p key={l} className="text-sm text-slate-500 hover:text-flame-500 cursor-pointer transition-colors">{l}</p>)}</div></div>
-            <div><h4 className="font-bold mb-4">Company</h4><div className="space-y-3">{['About', 'Blog', 'Contact', 'Privacy', 'Terms'].map(l => <p key={l} className="text-sm text-slate-500 hover:text-flame-500 cursor-pointer transition-colors">{l}</p>)}</div></div>
+            <div><h4 className="font-bold mb-4">Company</h4><div className="space-y-3">{['About', 'Blog', 'Contact'].map(l => <p key={l} className="text-sm text-slate-500 hover:text-flame-500 cursor-pointer transition-colors">{l}</p>)}<Link to="/privacy" className="block text-sm text-slate-500 hover:text-flame-500 transition-colors">Privacy</Link><Link to="/terms" className="block text-sm text-slate-500 hover:text-flame-500 transition-colors">Terms</Link></div></div>
           </div>
-          <div className="border-t border-slate-200 dark:border-slate-800 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4"><p className="text-xs text-slate-400">&copy; {new Date().getFullYear()} MyGasLink. All rights reserved.</p><p className="text-xs text-slate-400">Made with 🔥 in India</p></div>
+          <div className="border-t border-slate-200 dark:border-slate-800 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-xs text-slate-400 space-y-1 text-center sm:text-left">
+              <p>&copy; {new Date().getFullYear()} GasLink Consulting Solutions</p>
+              <p>GSTIN: 36ABCFG7518A1ZQ</p>
+              <p>Bachupally, Hyderabad, Telangana – 500090</p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-400">
+              <Link to="/privacy" className="hover:text-flame-500 transition-colors">Privacy Policy</Link>
+              <span aria-hidden="true">·</span>
+              <Link to="/terms" className="hover:text-flame-500 transition-colors">Terms of Service</Link>
+              <span aria-hidden="true">·</span>
+              <a href="mailto:info@mygaslink.com" className="hover:text-flame-500 transition-colors">info@mygaslink.com</a>
+            </div>
+          </div>
         </div>
       </footer>
     </div>

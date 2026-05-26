@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { UserProfile, UserRole } from '@gaslink/shared';
-import { tokenStorage } from '../lib/api';
+import { tokenStorage, apiGet } from '../lib/api';
 
 interface AuthState {
   user: UserProfile | null;
@@ -54,8 +54,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         set({ isLoading: false });
         return;
       }
-      // Token exists - try to fetch profile
-      const { apiGet } = await import('../lib/api');
+      // Token exists - try to fetch profile.
+      // apiGet is imported statically at the top: lib/api has no dependency on
+      // this store (no circular import), so there's no reason to defer it via a
+      // dynamic import — and the dynamic import previously defeated test mocking.
       const user = await apiGet<UserProfile>('/auth/me');
       set({ user, isAuthenticated: true, isLoading: false });
     } catch {

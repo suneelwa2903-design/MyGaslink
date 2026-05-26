@@ -252,8 +252,8 @@ export default function LoginPage() {
         {/* Bottom bar */}
         <div className="absolute bottom-8 left-8 right-8 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="/founders/suneel.jpg" alt="Suneel" className="h-9 w-9 rounded-full object-cover ring-2 ring-slate-700" />
-            <img src="/founders/bhargava.jpg" alt="Bhargava" className="h-9 w-9 rounded-full object-cover ring-2 ring-slate-700 -ml-2" />
+            <img src="/founders/suneel.jpg" alt="Suneel Kumar, Co-Founder" className="h-9 w-9 rounded-full object-cover ring-2 ring-slate-700" />
+            <img src="/founders/bhargava.jpg" alt="Bhargava Mannava, Co-Founder" className="h-9 w-9 rounded-full object-cover ring-2 ring-slate-700 -ml-2" />
             <p className="text-[11px] text-slate-500 ml-1">Built by distributors</p>
           </div>
           <div className="flex items-center gap-2 opacity-40">
