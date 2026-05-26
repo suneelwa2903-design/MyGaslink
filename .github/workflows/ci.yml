@@ -55,6 +55,17 @@ jobs:
       JWT_ACCESS_SECRET: test-access-secret-minimum-32-characters
       JWT_REFRESH_SECRET: test-refresh-secret-minimum-32-characters
       NODE_ENV: test
+      # seed.ts requireEnv-guards these WhiteBooks GSP creds. The test suite
+      # mocks the WhiteBooks client, so placeholder values are sufficient to
+      # seed the gst_credential rows without hitting any real API.
+      WHITEBOOKS_EINVOICE_CLIENT_ID: test-einvoice-client-id
+      WHITEBOOKS_EINVOICE_CLIENT_SECRET: test-einvoice-client-secret
+      WHITEBOOKS_EINVOICE_USERNAME: test-einvoice-username
+      WHITEBOOKS_EINVOICE_PASSWORD: test-einvoice-password
+      WHITEBOOKS_EWAYBILL_CLIENT_ID: test-ewaybill-client-id
+      WHITEBOOKS_EWAYBILL_CLIENT_SECRET: test-ewaybill-client-secret
+      WHITEBOOKS_EWAYBILL_USERNAME: test-ewaybill-username
+      WHITEBOOKS_EWAYBILL_PASSWORD: test-ewaybill-password
     steps:
       - uses: actions/checkout@v4
         with:
