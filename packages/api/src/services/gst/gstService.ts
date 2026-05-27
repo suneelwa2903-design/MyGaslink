@@ -1547,6 +1547,10 @@ export async function createPendingAction(
       return existing;
     }
 
+    // Consolidated EWB (gencewb) is optional and non-blocking — the dispatch
+    // and per-order EWBs already succeeded. Record it for audit but create it
+    // pre-resolved so it never surfaces as an open action item to the distributor.
+    const nonBlocking = actionType === 'CONSOLIDATED_EWB_FAILED';
     const row = await prisma.pendingAction.create({
       data: {
         distributorId,
@@ -1558,7 +1562,10 @@ export async function createPendingAction(
         errorCode,
         errorMessage: errorMessage.substring(0, 500),
         severity,
-        status: 'open',
+        status: nonBlocking ? 'resolved' : 'open',
+        ...(nonBlocking
+          ? { resolutionNotes: 'Non-blocking — consolidated EWB is optional.', resolvedAt: new Date(), resolvedBy: 'system' }
+          : {}),
       },
       select: { id: true },
     });

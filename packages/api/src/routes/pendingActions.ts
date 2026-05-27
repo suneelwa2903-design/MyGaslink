@@ -20,14 +20,18 @@ router.get('/',
     // than 400 — the notification bell polls this on every page load.
     if (!distributorId) return sendSuccess(res, { actions: [] });
 
+    const offset = req.query.offset ? Math.max(0, Number(req.query.offset)) : 0;
     const actions = await pendingActionsService.listPendingActions(
       distributorId,
       {
         module: req.query.module as string,
         status: req.query.status as string,
         severity: req.query.severity as string,
+        offset: Number.isFinite(offset) ? offset : 0,
       }
     );
+    // Fixed server-side page (PENDING_ACTIONS_PAGE_SIZE); the client derives
+    // "has next page" from whether it received a full page.
     return sendSuccess(res, { actions: mapPendingActions(actions) });
   } catch (err) {
     return sendError(res, (err as Error).message);

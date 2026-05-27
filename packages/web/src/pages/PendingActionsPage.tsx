@@ -34,10 +34,12 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
   const queryClient = useQueryClient();
   const [moduleFilter, setModuleFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('open');
+  const [offset, setOffset] = useState(0);
   const [resolveAction, setResolveAction] = useState<PendingAction | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState('');
 
-  const queryParams: Record<string, unknown> = {};
+  const PAGE_SIZE = 50;
+  const queryParams: Record<string, unknown> = { offset };
   if (moduleFilter) queryParams.module = moduleFilter;
   if (statusFilter) queryParams.status = statusFilter;
 
@@ -125,8 +127,8 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
       {/* Filters */}
       <div className="card p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Select options={moduleOptions} placeholder="All Modules" value={moduleFilter} onChange={(e) => setModuleFilter(e.target.value)} />
-          <Select options={statusOptions} placeholder="All Statuses" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} />
+          <Select options={moduleOptions} placeholder="All Modules" value={moduleFilter} onChange={(e) => { setModuleFilter(e.target.value); setOffset(0); }} />
+          <Select options={statusOptions} placeholder="All Statuses" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setOffset(0); }} />
         </div>
       </div>
 
@@ -212,6 +214,19 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pagination — server returns a fixed page of PAGE_SIZE; a full page implies more may follow. */}
+      {(offset > 0 || (actions?.length ?? 0) === PAGE_SIZE) && (
+        <div className="flex items-center justify-between">
+          <Button variant="secondary" size="sm" disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}>
+            Previous
+          </Button>
+          <span className="text-xs text-surface-500">Showing {offset + 1}–{offset + (actions?.length ?? 0)}</span>
+          <Button variant="secondary" size="sm" disabled={(actions?.length ?? 0) < PAGE_SIZE} onClick={() => setOffset((o) => o + PAGE_SIZE)}>
+            Next
+          </Button>
         </div>
       )}
 

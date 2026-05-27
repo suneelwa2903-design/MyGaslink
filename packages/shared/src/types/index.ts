@@ -567,7 +567,10 @@ export interface DashboardStats {
   ordersToday: number;
   deliveredToday: number;
   revenueToday: number;
-  pendingOrders: number;
+  /** Orders awaiting dispatch: pending_driver_assignment + pending_dispatch. */
+  pendingDispatch: number;
+  /** Dispatched, awaiting delivery: pending_delivery. */
+  inFlight: number;
   overdueInvoices: number;
   totalOutstanding: number;
   inventoryAlerts: number;

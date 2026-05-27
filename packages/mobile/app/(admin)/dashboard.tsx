@@ -125,7 +125,7 @@ const KPI_CARDS: KpiCardConfig[] = [
     isCurrency: true,
   },
   {
-    key: 'pendingOrders',
+    key: 'pendingDispatch',
     label: 'Pending Orders',
     icon: 'time-outline',
     color: ACCENT.orange,

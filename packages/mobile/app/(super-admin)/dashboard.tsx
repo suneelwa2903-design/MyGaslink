@@ -271,7 +271,7 @@ export default function AnalyticsScreen() {
                 <MetricCard title="Revenue" value={formatINR(stats?.revenueToday)} color={accent.green} />
               </View>
               <View style={{ flex: 1 }}>
-                <MetricCard title="Pending" value={stats?.pendingOrders ?? 0} color={accent.orange} />
+                <MetricCard title="Pending" value={stats?.pendingDispatch ?? 0} color={accent.orange} />
               </View>
             </View>
 

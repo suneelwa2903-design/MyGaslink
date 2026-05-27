@@ -15,7 +15,7 @@ export async function getDashboardStats(distributorId: string) {
 
   const [
     ordersToday, deliveredToday, revenueTodayResult,
-    pendingOrders, overdueInvoices, outstandingResult,
+    pendingDispatch, inFlight, overdueInvoices, outstandingResult,
     inventoryAlerts, pendingActions,
   ] = await Promise.all([
     prisma.order.count({
@@ -36,10 +36,18 @@ export async function getDashboardStats(distributorId: string) {
       },
       _sum: { totalAmount: true },
     }),
+    // Awaiting dispatch: placed/assigned but not yet dispatched.
     prisma.order.count({
       where: {
         distributorId, deletedAt: null,
-        status: { in: ['pending_driver_assignment', 'pending_dispatch', 'pending_delivery'] },
+        status: { in: ['pending_driver_assignment', 'pending_dispatch'] },
+      },
+    }),
+    // In-flight: dispatched, awaiting delivery.
+    prisma.order.count({
+      where: {
+        distributorId, deletedAt: null,
+        status: 'pending_delivery',
       },
     }),
     prisma.invoice.count({
@@ -61,7 +69,8 @@ export async function getDashboardStats(distributorId: string) {
     ordersToday,
     deliveredToday,
     revenueToday: toNum(revenueTodayResult._sum.totalAmount),
-    pendingOrders,
+    pendingDispatch,
+    inFlight,
     overdueInvoices,
     totalOutstanding: toNum(outstandingResult._sum.outstandingAmount),
     inventoryAlerts,

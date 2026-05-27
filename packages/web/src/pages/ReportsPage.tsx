@@ -44,17 +44,17 @@ export default function ReportsPage() {
   // Filter option data (lazy/shared)
   const { data: customers } = useQuery({
     queryKey: ['report-customers'],
-    queryFn: () => apiGet<{ customers: { id: string; customerName: string }[] }>('/customers', { pageSize: 500 }),
+    queryFn: () => apiGet<{ customers: { customerId: string; customerName: string }[] }>('/customers', { pageSize: 100 }),
     select: (d) => d.customers,
   });
   const { data: cylinderTypes } = useQuery({
     queryKey: ['report-cyl'],
-    queryFn: () => apiGet<{ cylinderTypes: { id: string; typeName: string }[] }>('/cylinder-types'),
+    queryFn: () => apiGet<{ cylinderTypes: { cylinderTypeId: string; typeName: string }[] }>('/cylinder-types'),
     select: (d) => d.cylinderTypes,
   });
   const { data: drivers } = useQuery({
     queryKey: ['report-drivers'],
-    queryFn: () => apiGet<{ drivers: { id: string; driverName: string }[] }>('/drivers'),
+    queryFn: () => apiGet<{ drivers: { driverId: string; driverName: string }[] }>('/drivers'),
     select: (d) => d.drivers,
   });
 
@@ -121,21 +121,21 @@ export default function ReportsPage() {
             <div className="min-w-[200px]">
               <label className="label text-xs">Customer{def.customerRequired ? ' *' : ''}</label>
               <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)} placeholder="Select customer"
-                options={(customers ?? []).map((c) => ({ value: c.id, label: c.customerName }))} />
+                options={(customers ?? []).map((c) => ({ value: c.customerId, label: c.customerName }))} />
             </div>
           )}
           {def.filters.includes('cylinderType') && (
             <div className="min-w-[160px]">
               <label className="label text-xs">Cylinder Type</label>
               <Select value={cylinderTypeId} onChange={(e) => setCylinderTypeId(e.target.value)} placeholder="All types"
-                options={(cylinderTypes ?? []).map((c) => ({ value: c.id, label: c.typeName }))} />
+                options={(cylinderTypes ?? []).map((c) => ({ value: c.cylinderTypeId, label: c.typeName }))} />
             </div>
           )}
           {def.filters.includes('driver') && (
             <div className="min-w-[160px]">
               <label className="label text-xs">Driver</label>
               <Select value={driverId} onChange={(e) => setDriverId(e.target.value)} placeholder="All drivers"
-                options={(drivers ?? []).map((d) => ({ value: d.id, label: d.driverName }))} />
+                options={(drivers ?? []).map((d) => ({ value: d.driverId, label: d.driverName }))} />
             </div>
           )}
           <div className="ml-auto flex gap-2">

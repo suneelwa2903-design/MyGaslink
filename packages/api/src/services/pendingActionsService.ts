@@ -3,9 +3,11 @@ import { Prisma } from '@prisma/client';
 import type { $Enums } from '@prisma/client';
 import { DEFAULT_SLA_HOURS } from '@gaslink/shared';
 
+export const PENDING_ACTIONS_PAGE_SIZE = 50;
+
 export async function listPendingActions(
   distributorId?: string,
-  filters: { module?: string; status?: string; severity?: string } = {}
+  filters: { module?: string; status?: string; severity?: string; offset?: number } = {}
 ) {
   const where: Prisma.PendingActionWhereInput = {};
   if (distributorId) where.distributorId = distributorId;
@@ -16,6 +18,8 @@ export async function listPendingActions(
   return prisma.pendingAction.findMany({
     where,
     orderBy: [{ severity: 'desc' }, { createdAt: 'desc' }],
+    take: PENDING_ACTIONS_PAGE_SIZE,
+    skip: Math.max(0, filters.offset ?? 0),
   });
 }
 

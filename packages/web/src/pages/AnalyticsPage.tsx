@@ -214,7 +214,7 @@ export default function AnalyticsPage() {
   // (which redirects to Settings).
   const dashboardMetrics = dashboardStats
     ? [
-        { label: 'Pending Orders', value: dashboardStats.pendingOrders, icon: HiOutlineClock, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-500/10', link: '/app/orders?status=pending_driver_assignment', hint: 'Orders placed but not yet assigned to a driver. Assign drivers to dispatch them.' },
+        { label: 'Pending Orders', value: dashboardStats.pendingDispatch, icon: HiOutlineClock, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-500/10', link: '/app/orders?status=pending_driver_assignment,pending_dispatch', hint: 'Orders awaiting dispatch (placed or assigned, not yet dispatched). Assign drivers and dispatch them.' },
         { label: 'Outstanding Amount', value: formatCurrency(dashboardStats.totalOutstanding), icon: HiOutlineBanknotes, color: 'text-flame-500', bg: 'bg-flame-50 dark:bg-flame-500/10', link: '/app/collections', hint: 'Total owed across all unpaid invoices. Click to see the breakdown by customer.' },
         { label: 'Overdue Invoices', value: dashboardStats.overdueInvoices, icon: HiOutlineExclamationTriangle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', link: '/app/billing-payments?status=overdue', hint: 'Invoices past their credit-period due date. Requires immediate collection action.' },
         { label: 'Inventory Alerts', value: dashboardStats.inventoryAlerts, icon: HiOutlineCube, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', link: '/app/inventory', hint: 'Cylinder types at or below their warning/critical stock threshold.' },
@@ -347,11 +347,11 @@ export default function AnalyticsPage() {
               <div className="card p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-semibold text-surface-900 dark:text-white">Today&apos;s dispatch</h3>
-                  <button onClick={() => navigate('/app/orders?status=pending_driver_assignment')} className="text-xs font-medium text-brand-600 dark:text-brand-400">Assign drivers →</button>
+                  <button onClick={() => navigate('/app/orders?status=pending_driver_assignment,pending_dispatch')} className="text-xs font-medium text-brand-600 dark:text-brand-400">Assign drivers →</button>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-500/10 cursor-pointer" onClick={() => navigate('/app/orders?status=pending_driver_assignment')}>
-                    <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{dashboardStats.pendingOrders}</p>
+                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-500/10 cursor-pointer" onClick={() => navigate('/app/orders?status=pending_driver_assignment,pending_dispatch')}>
+                    <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{dashboardStats.pendingDispatch}</p>
                     <p className="text-xs text-surface-600 dark:text-surface-400">Pending dispatch</p>
                   </div>
                   <div className="p-3 rounded-lg bg-brand-50 dark:bg-brand-500/10">
