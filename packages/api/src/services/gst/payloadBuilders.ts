@@ -222,7 +222,9 @@ export function buildIrnPayload(data: InvoiceData): IrnPayload {
 
     return {
       SlNo: String(item.slNo),
-      IsServc: 'N',
+      // SAC service codes (99xxxx, e.g. 996511 transport) must be flagged as a
+      // service — NIC rejects them as goods with error 3047 otherwise.
+      IsServc: item.hsnCode?.startsWith('99') ? 'Y' : 'N',
       PrdDesc: sanitize(item.description, 50, 'LPG Cylinder'),
       HsnCd: item.hsnCode || '27111900',  // Must be string for WhiteBooks API
       Qty: item.quantity,

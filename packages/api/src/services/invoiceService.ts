@@ -93,7 +93,7 @@ export async function createInvoiceFromOrder(
     where: { id: orderId, distributorId, deletedAt: null },
     include: {
       items: { include: { cylinderType: true } },
-      customer: { select: { creditPeriodDays: true, gstin: true, billingState: true } },
+      customer: { select: { creditPeriodDays: true, gstin: true, billingState: true, transportChargePerCylinder: true } },
     },
   });
 
@@ -132,10 +132,12 @@ export async function createInvoiceFromOrder(
   // Prices are GST-inclusive. When GST is enabled, reverse-calculate the base price.
   let totalAmount = 0;
   let totalBaseAmount = 0;
+  let totalDeliveredQty = 0;
   const invoiceItems: Prisma.InvoiceItemCreateManyInvoiceInput[] = [];
 
   for (const oi of order.items) {
     const qty = oi.deliveredQuantity ?? oi.quantity;
+    totalDeliveredQty += qty;
     const effectivePrice = Math.max(toNum(oi.unitPrice) - toNum(oi.discountPerUnit), 0);
     const lineTotal = effectivePrice * qty;
     totalAmount += lineTotal;
@@ -166,6 +168,41 @@ export async function createInvoiceFromOrder(
         discountPerUnit: oi.discountPerUnit,
         gstRate: 0,
         totalPrice: lineTotal,
+      });
+    }
+  }
+
+  // Inward transport charge (HSN 996511, 18%): optional per-customer fee of
+  // ₹X (GST-inclusive) per delivered cylinder. Stored as a separate invoice
+  // line, identical shape to cylinder lines so it flows through the PDF, IRN
+  // (IsServc='Y' for 99xxxx) and EWB the same way. Skipped when rate is 0.
+  const transportRate = toNum(order.customer?.transportChargePerCylinder);
+  if (transportRate > 0 && totalDeliveredQty > 0) {
+    const transportTotal = transportRate * totalDeliveredQty; // GST-inclusive
+    totalAmount += transportTotal;
+    if (gstEnabled) {
+      const transportBase = transportRate / (1 + GST_RATES.IGST);
+      totalBaseAmount += transportBase * totalDeliveredQty;
+      invoiceItems.push({
+        cylinderTypeId: null,
+        description: 'Inward Transportation Charges',
+        hsnCode: '996511',
+        quantity: totalDeliveredQty,
+        unitPrice: Math.round(transportBase * 100) / 100,
+        discountPerUnit: 0,
+        gstRate: 18,
+        totalPrice: transportTotal,
+      });
+    } else {
+      invoiceItems.push({
+        cylinderTypeId: null,
+        description: 'Inward Transportation Charges',
+        hsnCode: '996511',
+        quantity: totalDeliveredQty,
+        unitPrice: transportRate,
+        discountPerUnit: 0,
+        gstRate: 0,
+        totalPrice: transportTotal,
       });
     }
   }

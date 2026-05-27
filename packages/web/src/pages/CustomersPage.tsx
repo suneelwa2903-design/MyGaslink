@@ -282,6 +282,8 @@ function CustomerFormModal({
 }) {
   const queryClient = useQueryClient();
   const isEdit = !!customer;
+  const role = useAuthStore(selectRole);
+  const canEditTransport = role === UserRole.DISTRIBUTOR_ADMIN || role === UserRole.SUPER_ADMIN;
 
   const { register, handleSubmit, control, getValues, setValue, watch, formState: { errors } } = useForm<CreateCustomerInput>({
     resolver: zodResolver(createCustomerSchema) as Resolver<CreateCustomerInput>,
@@ -303,6 +305,7 @@ function CustomerFormModal({
           shippingState: customer.shippingState || '',
           shippingPincode: customer.shippingPincode || '',
           creditPeriodDays: customer.creditPeriodDays,
+          transportChargePerCylinder: customer.transportChargePerCylinder ?? 0,
           contacts: customer.contacts.map((c) => ({ name: c.name, phone: c.phone, email: c.email || '', isPrimary: c.isPrimary })),
           cylinderDiscounts: customer.cylinderDiscounts.map((d) => ({ cylinderTypeId: d.cylinderTypeId, discountPerUnit: d.discountPerUnit })),
         }
@@ -310,6 +313,7 @@ function CustomerFormModal({
           customerName: '',
           phone: '',
           creditPeriodDays: 30,
+          transportChargePerCylinder: 0,
           contacts: [],
           cylinderDiscounts: [],
         },
@@ -451,6 +455,16 @@ function CustomerFormModal({
               </div>
             </div>
             <Input label="Credit Period (days)" type="number" {...register('creditPeriodDays', { valueAsNumber: true })} />
+            {canEditTransport && (
+              <Input
+                label="Transport Charge (₹/cylinder, GST incl.)"
+                type="number"
+                step="0.01"
+                min="0"
+                error={errors.transportChargePerCylinder?.message}
+                {...register('transportChargePerCylinder', { valueAsNumber: true })}
+              />
+            )}
           </div>
         </div>
 

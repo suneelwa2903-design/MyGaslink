@@ -158,6 +158,12 @@ export async function computeSummaryForDate(
         // Returns-only orders: empties collected from customer
         collectedEmpties += event.emptiesChange;
         break;
+      case 'reconciliation_empties_return':
+        // Empties physically verified returned to depot at trip reconciliation
+        // (positive emptiesChange). Feeds the closing-empties balance via the
+        // collectedEmpties bucket, same as delivery-time collection.
+        collectedEmpties += event.emptiesChange;
+        break;
     }
   }
 

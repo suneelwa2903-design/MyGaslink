@@ -381,6 +381,9 @@ export async function confirmVehicleReconciliation(
   data: {
     physicalStockConfirmed: boolean; // true = physical matches system
     notes?: string;
+    // WI: supervisor's physically-verified per-type empties count at trip end.
+    // Optional — entries with quantity <= 0 are ignored.
+    emptiesReturned?: Array<{ cylinderTypeId: string; quantity: number }>;
   }
 ) {
   if (!data.physicalStockConfirmed) {
@@ -427,12 +430,14 @@ export async function confirmVehicleReconciliation(
     gstInvoicesCancelled: number;
     inventoryRestored: Record<string, number>;
     ordersToBeForceCanelled: typeof ordersToBeForceCanelled;
+    emptiesReturned: number;
   } = {
     cancelledStockReturned: 0,
     undeliveredOrdersCancelled: 0,
     gstInvoicesCancelled: 0,
     inventoryRestored: {},
     ordersToBeForceCanelled,
+    emptiesReturned: 0,
   };
 
   // 1. Return all cancelled stock on this vehicle to depot
@@ -587,7 +592,7 @@ export async function confirmVehicleReconciliation(
   const reconcileDva = await prisma.driverVehicleAssignment.findFirst({
     where: { vehicleId, distributorId, assignmentDate: startOfUtcDay(), status: { not: 'cancelled' } },
     orderBy: { tripNumber: 'desc' },
-    select: { id: true },
+    select: { id: true, vehicle: { select: { vehicleNumber: true } }, driver: { select: { driverName: true } } },
   });
   if (reconcileDva) {
     await prisma.driverVehicleAssignment.update({
@@ -602,6 +607,40 @@ export async function confirmVehicleReconciliation(
     });
   }
 
+  // WI: physically-verified empties returned to depot at reconciliation. Each
+  // non-zero entry is persisted (audit) and written as a positive-empties
+  // inventory event so the depot empties balance reflects the verified count.
+  // Optional — if no entries (or all zero), nothing is written and reconcile
+  // still completes. Requires a DVA to anchor the events.
+  const empties = (data.emptiesReturned ?? []).filter((e) => e.quantity > 0);
+  if (empties.length > 0 && reconcileDva) {
+    const now = new Date();
+    for (const e of empties) {
+      await prisma.$transaction(async (tx) => {
+        await tx.reconciliationEmptiesReturned.create({
+          data: { distributorId, dvaId: reconcileDva.id, cylinderTypeId: e.cylinderTypeId, quantity: e.quantity },
+        });
+        await createInventoryEvent(tx, {
+          distributorId,
+          cylinderTypeId: e.cylinderTypeId,
+          eventType: 'reconciliation_empties_return',
+          fullsChange: 0,
+          emptiesChange: e.quantity,
+          eventDate: now,
+          referenceId: reconcileDva.id,
+          referenceType: 'driver_vehicle_assignment',
+          vehicleNumber: reconcileDva.vehicle?.vehicleNumber,
+          driverName: reconcileDva.driver?.driverName,
+          createdBy: userId,
+          notes: 'Empties physically verified returned to depot at reconciliation',
+        });
+      });
+      // Recompute AFTER commit so the snapshot sees the just-written event.
+      await recalculateSummariesFromDate(distributorId, e.cylinderTypeId, now);
+    }
+    results.emptiesReturned = empties.reduce((s, e) => s + e.quantity, 0);
+  }
+
   logger.info('Vehicle reconciliation complete', { vehicleId, distributorId, results });
 
   return {
@@ -609,6 +648,7 @@ export async function confirmVehicleReconciliation(
     cancelledStockReturned: results.cancelledStockReturned,
     undeliveredOrdersCancelled: results.undeliveredOrdersCancelled,
     gstInvoicesCancelled: results.gstInvoicesCancelled,
+    emptiesReturned: results.emptiesReturned,
     inventoryRestored: results.inventoryRestored,
     ordersToBeForceCanelled: results.ordersToBeForceCanelled,
   };
@@ -633,6 +673,39 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
       include: { customer: { select: { customerName: true } } },
     });
 
+    // ── Empties returned step: cylinder types active on today's trip plus the
+    // sum of delivery-time collection events (pre-fills the verify inputs). The
+    // active types come from this vehicle's dispatch events today; the collected
+    // totals come from collection/returns_collection events on the trip's orders.
+    const todayStart = startOfUtcDay();
+    const dispatchEvents = await prisma.inventoryEvent.findMany({
+      where: { distributorId, eventType: 'dispatch', vehicleNumber: vehicle.vehicleNumber, eventDate: todayStart },
+      select: { cylinderTypeId: true },
+    });
+    const tripOrders = await prisma.order.findMany({
+      where: { vehicleId: vehicle.id, distributorId, deliveryDate: todayStart },
+      select: { id: true },
+    });
+    const tripOrderIds = tripOrders.map((o) => o.id);
+    const collectionEvents = tripOrderIds.length
+      ? await prisma.inventoryEvent.findMany({
+          where: { distributorId, eventType: { in: ['collection', 'returns_collection'] }, referenceType: 'order', referenceId: { in: tripOrderIds } },
+          select: { cylinderTypeId: true, emptiesChange: true },
+        })
+      : [];
+    const collectedByType = new Map<string, number>();
+    for (const e of collectionEvents) collectedByType.set(e.cylinderTypeId, (collectedByType.get(e.cylinderTypeId) ?? 0) + e.emptiesChange);
+    const activeTypeIds = new Set<string>([...dispatchEvents.map((e) => e.cylinderTypeId), ...collectedByType.keys()]);
+    const typeNames = activeTypeIds.size
+      ? await prisma.cylinderType.findMany({ where: { id: { in: [...activeTypeIds] }, distributorId }, select: { id: true, typeName: true } })
+      : [];
+    const typeNameMap = new Map(typeNames.map((t) => [t.id, t.typeName]));
+    const emptiesTypes = [...activeTypeIds].map((cylinderTypeId) => ({
+      cylinderTypeId,
+      typeName: typeNameMap.get(cylinderTypeId) ?? '—',
+      collectedQty: collectedByType.get(cylinderTypeId) ?? 0,
+    }));
+
     result.push({
       vehicleId: vehicle.id,
       vehicleNumber: vehicle.vehicleNumber,
@@ -644,6 +717,7 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
         orderNumber: o.orderNumber,
         customerName: o.customer?.customerName ?? null,
       })),
+      emptiesTypes,
     });
   }
 

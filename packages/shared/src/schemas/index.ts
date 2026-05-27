@@ -98,6 +98,8 @@ export const createCustomerSchema = z.object({
   shippingState: z.string().max(100).optional(),
   shippingPincode: z.string().max(10).optional(),
   creditPeriodDays: z.number().int().min(0).max(365).default(30),
+  // Optional inward transport charge, ₹ per delivered cylinder (GST-inclusive). 0 = none.
+  transportChargePerCylinder: z.number().min(0).max(100000).default(0),
   contacts: z.array(customerContactSchema).optional(),
   cylinderDiscounts: z.array(cylinderDiscountSchema).optional(),
 });

@@ -118,6 +118,10 @@ router.post('/reconciliation/confirm/:vehicleId',
   validate(z.object({
     physicalStockConfirmed: z.boolean(),
     notes: z.string().max(500).optional(),
+    emptiesReturned: z.array(z.object({
+      cylinderTypeId: z.string().uuid(),
+      quantity: z.number().int().min(0),
+    })).optional(),
   })),
   auditLog('reconcile_vehicle', 'vehicle'),
   async (req, res) => {

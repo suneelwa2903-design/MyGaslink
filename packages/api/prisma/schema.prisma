@@ -146,6 +146,7 @@ enum InventoryEventType {
   write_off
   returns_collection
   dispatch
+  reconciliation_empties_return
 }
 
 enum ReplenishmentStatus {
@@ -447,6 +448,9 @@ model Customer {
   shippingState         String?        @map("shipping_state")
   shippingPincode       String?        @map("shipping_pincode")
   creditPeriodDays      Int            @default(30) @map("credit_period_days")
+  // Optional per-customer inward transportation charge (₹ per delivered
+  // cylinder, GST-inclusive — same basis as cylinder rates). 0 = no charge.
+  transportChargePerCylinder Decimal   @default(0) @map("transport_charge_per_cylinder") @db.Decimal(18, 4)
   status                CustomerStatus @default(active)
   stopSupply            Boolean        @default(false) @map("stop_supply")
   preferredDriverId     String?        @map("preferred_driver_id")
@@ -834,6 +838,7 @@ model DriverVehicleAssignment {
 
   driver  Driver  @relation(fields: [driverId], references: [id])
   vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+  reconciliationEmpties ReconciliationEmptiesReturned[]
 
   @@index([distributorId, assignmentDate])
   @@index([driverId, assignmentDate])
@@ -845,6 +850,25 @@ model DriverVehicleAssignment {
   // so the natural key is (driverId, assignmentDate, tripNumber).
   @@unique([driverId, assignmentDate, tripNumber])
   @@map("driver_vehicle_assignments")
+}
+
+// Supervisor's physically-verified per-type empties count captured at trip-end
+// reconciliation. Separate from delivery-time `collection` events so a gap
+// (collected-per-app vs physically-returned) can be measured. One row per
+// cylinder type per reconciled trip (DVA).
+model ReconciliationEmptiesReturned {
+  id             String   @id @default(uuid())
+  distributorId  String   @map("distributor_id")
+  dvaId          String   @map("dva_id")
+  cylinderTypeId String   @map("cylinder_type_id")
+  quantity       Int
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  dva DriverVehicleAssignment @relation(fields: [dvaId], references: [id])
+
+  @@index([distributorId])
+  @@index([dvaId])
+  @@map("reconciliation_empties_returned")
 }
 
 model DriverAssignment {

@@ -162,6 +162,8 @@ export enum InventoryEventType {
   INITIAL_BALANCE = 'initial_balance',
   WRITE_OFF = 'write_off',
   RETURNS_COLLECTION = 'returns_collection',
+  DISPATCH = 'dispatch',
+  RECONCILIATION_EMPTIES_RETURN = 'reconciliation_empties_return',
 }
 
 export enum ReplenishmentStatus {

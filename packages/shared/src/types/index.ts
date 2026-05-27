@@ -172,6 +172,7 @@ export interface Customer {
   shippingState: string | null;
   shippingPincode: string | null;
   creditPeriodDays: number;
+  transportChargePerCylinder: number;
   status: CustomerStatus;
   stopSupply: boolean;
   preferredDriverId: string | null;

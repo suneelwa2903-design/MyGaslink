@@ -14,6 +14,8 @@ function parseFilters(q: Request['query']): ReportFilters {
     customerId: typeof q.customerId === 'string' ? q.customerId : undefined,
     cylinderTypeId: typeof q.cylinderTypeId === 'string' ? q.cylinderTypeId : undefined,
     driverId: typeof q.driverId === 'string' ? q.driverId : undefined,
+    vehicleId: typeof q.vehicleId === 'string' ? q.vehicleId : undefined,
+    groupBy: q.groupBy === 'trip' ? 'trip' : q.groupBy === 'day' ? 'day' : undefined,
   };
 }
 

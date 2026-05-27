@@ -10,9 +10,10 @@ type LineChartData = { x: string; y: number }[];
 type BarChartData = { labels: string[]; series: { name: string; values: number[] }[] };
 interface ReportColumn { key: string; label: string; money?: boolean }
 interface ReportChart { type: 'line' | 'bar'; title: string; data: LineChartData | BarChartData }
-interface ReportResult { columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue>; chart?: ReportChart }
+interface ReportTableData { title: string; columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue> }
+interface ReportResult { columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue>; chart?: ReportChart; secondary?: ReportTableData }
 
-type FilterKey = 'cylinderType' | 'driver' | 'customer';
+type FilterKey = 'cylinderType' | 'driver' | 'customer' | 'vehicle' | 'groupBy';
 interface ReportDef { key: string; label: string; filters: FilterKey[]; customerRequired?: boolean }
 
 const REPORTS: ReportDef[] = [
@@ -22,6 +23,7 @@ const REPORTS: ReportDef[] = [
   { key: 'delivery-performance', label: 'Delivery Performance', filters: ['driver'] },
   { key: 'inventory-movement', label: 'Inventory Movement', filters: ['cylinderType'] },
   { key: 'customer-statement', label: 'Customer Statement', filters: ['customer'], customerRequired: true },
+  { key: 'vehicle-ledger', label: 'Vehicle Ledger', filters: ['vehicle', 'driver', 'cylinderType', 'groupBy'] },
 ];
 
 const fmtMoney = (v: ReportCellValue | undefined) => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -37,6 +39,8 @@ export default function ReportsPage() {
   const [cylinderTypeId, setCylinderTypeId] = useState('');
   const [driverId, setDriverId] = useState('');
   const [customerId, setCustomerId] = useState('');
+  const [vehicleId, setVehicleId] = useState('');
+  const [groupBy, setGroupBy] = useState<'day' | 'trip'>('day');
   const [downloading, setDownloading] = useState(false);
 
   const def = REPORTS.find((r) => r.key === reportKey)!;
@@ -57,14 +61,21 @@ export default function ReportsPage() {
     queryFn: () => apiGet<{ drivers: { driverId: string; driverName: string }[] }>('/drivers'),
     select: (d) => d.drivers,
   });
+  const { data: vehicles } = useQuery({
+    queryKey: ['report-vehicles'],
+    queryFn: () => apiGet<{ vehicles: { vehicleId: string; vehicleNumber: string | null }[] }>('/vehicles'),
+    select: (d) => d.vehicles,
+  });
 
   const params = useMemo(() => {
     const p: Record<string, unknown> = { dateFrom, dateTo };
     if (def.filters.includes('cylinderType') && cylinderTypeId) p.cylinderTypeId = cylinderTypeId;
     if (def.filters.includes('driver') && driverId) p.driverId = driverId;
     if (def.filters.includes('customer') && customerId) p.customerId = customerId;
+    if (def.filters.includes('vehicle') && vehicleId) p.vehicleId = vehicleId;
+    if (def.filters.includes('groupBy')) p.groupBy = groupBy;
     return p;
-  }, [dateFrom, dateTo, cylinderTypeId, driverId, customerId, def]);
+  }, [dateFrom, dateTo, cylinderTypeId, driverId, customerId, vehicleId, groupBy, def]);
 
   const needsCustomer = def.customerRequired && !customerId;
 
@@ -138,6 +149,20 @@ export default function ReportsPage() {
                 options={(drivers ?? []).map((d) => ({ value: d.driverId, label: d.driverName }))} />
             </div>
           )}
+          {def.filters.includes('vehicle') && (
+            <div className="min-w-[160px]">
+              <label className="label text-xs">Vehicle</label>
+              <Select value={vehicleId} onChange={(e) => setVehicleId(e.target.value)} placeholder="All vehicles"
+                options={(vehicles ?? []).filter((v) => v.vehicleNumber).map((v) => ({ value: v.vehicleId, label: v.vehicleNumber as string }))} />
+            </div>
+          )}
+          {def.filters.includes('groupBy') && (
+            <div>
+              <label className="label text-xs">Group By</label>
+              <Select value={groupBy} onChange={(e) => setGroupBy(e.target.value as 'day' | 'trip')}
+                options={[{ value: 'day', label: 'Day' }, { value: 'trip', label: 'Trip' }]} />
+            </div>
+          )}
           <div className="ml-auto flex gap-2">
             <Button variant="secondary" onClick={downloadCsv} loading={downloading} disabled={needsCustomer || !report}>
               <HiOutlineArrowDownTray className="h-4 w-4" /> CSV
@@ -157,12 +182,15 @@ export default function ReportsPage() {
         <div className="flex justify-center py-20"><Loader size="lg" /></div>
       ) : isError ? (
         <EmptyState title="Could not load report" description={getErrorMessage(error)} />
-      ) : !report || report.rows.length === 0 ? (
+      ) : !report || (report.rows.length === 0 && !report.secondary?.rows.length) ? (
         <EmptyState title="No data" description="No records match the selected filters." />
       ) : (
         <>
           {report.chart && <ReportChartView chart={report.chart} />}
-          <ReportTable report={report} />
+          {report.secondary && report.secondary.rows.length > 0 && (
+            <SecondaryTable table={report.secondary} />
+          )}
+          {report.rows.length > 0 && <ReportTable report={report} />}
         </>
       )}
     </div>
@@ -195,6 +223,43 @@ function ReportTable({ report }: { report: ReportResult }) {
               {report.columns.map((c) => (
                 <td key={c.key} className={`px-4 py-3 ${c.money ? 'text-right tabular-nums' : ''} text-surface-900 dark:text-white`}>
                   {report.totals![c.key] === '' || report.totals![c.key] == null ? '' : (c.money ? fmtMoney(report.totals![c.key]) : String(report.totals![c.key]))}
+                </td>
+              ))}
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SecondaryTable({ table }: { table: ReportTableData }) {
+  return (
+    <div className="card overflow-x-auto">
+      <h3 className="px-4 pt-4 font-semibold text-surface-900 dark:text-white">{table.title}</h3>
+      <table className="w-full text-sm mt-2">
+        <thead>
+          <tr className="border-b border-surface-200 dark:border-surface-700 text-left">
+            {table.columns.map((c) => (
+              <th key={c.key} className={`px-4 py-3 font-semibold text-surface-600 dark:text-surface-300 ${c.money ? 'text-right' : ''}`}>{c.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, i) => (
+            <tr key={i} className="border-b border-surface-100 dark:border-surface-800">
+              {table.columns.map((c) => (
+                <td key={c.key} className={`px-4 py-2.5 ${c.money ? 'text-right tabular-nums' : ''} text-surface-800 dark:text-surface-200`}>
+                  {c.money ? fmtMoney(row[c.key]) : String(row[c.key] ?? '')}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {table.totals && (
+            <tr className="border-t-2 border-surface-300 dark:border-surface-600 font-bold bg-surface-50 dark:bg-surface-800/50">
+              {table.columns.map((c) => (
+                <td key={c.key} className={`px-4 py-3 ${c.money ? 'text-right tabular-nums' : ''} text-surface-900 dark:text-white`}>
+                  {table.totals![c.key] === '' || table.totals![c.key] == null ? '' : (c.money ? fmtMoney(table.totals![c.key]) : String(table.totals![c.key]))}
                 </td>
               ))}
             </tr>

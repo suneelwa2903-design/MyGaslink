@@ -88,6 +88,9 @@ interface CustomerInput extends HasId {
 export function mapCustomer(c: CustomerInput | null | undefined): MappedRecord | null | undefined {
   if (!c) return c;
   const mapped = renameId(c, 'customerId');
+  if (mapped.transportChargePerCylinder != null) {
+    mapped.transportChargePerCylinder = Number(mapped.transportChargePerCylinder);
+  }
   if (mapped.contacts) {
     mapped.contacts = (mapped.contacts as HasId[]).map((ct) => renameId(ct, 'contactId'));
   }

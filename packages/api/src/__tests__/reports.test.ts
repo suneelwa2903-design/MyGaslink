@@ -38,6 +38,38 @@ describe('GET /api/reports/:reportType', () => {
     });
   }
 
+  it('vehicle-ledger returns the movement envelope plus an IOC secondary table', async () => {
+    const res = await request(app)
+      .get('/api/reports/vehicle-ledger')
+      .query({ dateFrom: '2026-05-01', dateTo: '2026-05-31', groupBy: 'day' })
+      .set(auth());
+    expect(res.status).toBe(200);
+    const keys = res.body.data.columns.map((c: ReportColumn) => c.key);
+    expect(keys).toContain('vehicleNumber');
+    expect(keys).toContain('fullsDispatched');
+    expect(keys).toContain('emptiesReturnedVerified');
+    expect(keys).toContain('emptiesGap');
+    // secondary IOC table is always present (may have empty rows).
+    expect(res.body.data.secondary).toBeTruthy();
+    expect(res.body.data.secondary.title).toMatch(/IOC/);
+    const iocKeys = res.body.data.secondary.columns.map((c: ReportColumn) => c.key);
+    expect(iocKeys).toContain('documentNumber');
+    expect(iocKeys).toContain('quantity');
+  });
+
+  it('vehicle-ledger groupBy=trip is accepted and returns rows', async () => {
+    const res = await request(app)
+      .get('/api/reports/vehicle-ledger')
+      .query({ dateFrom: '2026-05-01', dateTo: '2026-05-31', groupBy: 'trip' })
+      .set(auth());
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data.rows)).toBe(true);
+    // emptiesGap must equal collected − verified on every row.
+    for (const r of res.body.data.rows) {
+      expect(r.emptiesGap).toBe((r.emptiesCollected as number) - (r.emptiesReturnedVerified as number));
+    }
+  });
+
   it('unknown report type → 404', async () => {
     const res = await request(app).get('/api/reports/nonsense').set(auth());
     expect(res.status).toBe(404);

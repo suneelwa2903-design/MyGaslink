@@ -21,6 +21,7 @@ interface CustomerUpdateData {
   shippingState?: string | null;
   shippingPincode?: string | null;
   creditPeriodDays?: number;
+  transportChargePerCylinder?: number;
   contacts?: Array<{ name: string; phone: string; email?: string | null; isPrimary?: boolean }>;
   cylinderDiscounts?: Array<{ cylinderTypeId: string; discountPerUnit: number }>;
 }
@@ -100,6 +101,7 @@ export async function createCustomer(
     shippingState?: string;
     shippingPincode?: string;
     creditPeriodDays?: number;
+    transportChargePerCylinder?: number;
     contacts?: { name: string; phone: string; email?: string; isPrimary?: boolean }[];
     cylinderDiscounts?: { cylinderTypeId: string; discountPerUnit: number }[];
   }
@@ -140,6 +142,7 @@ export async function createCustomer(
       shippingState: data.shippingState || null,
       shippingPincode: data.shippingPincode || null,
       creditPeriodDays: data.creditPeriodDays ?? 30,
+      transportChargePerCylinder: data.transportChargePerCylinder ?? 0,
       contacts: data.contacts && data.contacts.length > 0
         ? { create: data.contacts.map(c => ({ name: c.name, phone: c.phone, email: c.email || null, isPrimary: c.isPrimary ?? false })) }
         : undefined,
@@ -177,7 +180,7 @@ export async function updateCustomer(
   return prisma.$transaction(async (tx) => {
     // Log audit trail for changed fields
     const trackFields: (keyof CustomerUpdateData)[] = [
-      'customerName', 'businessName', 'gstin', 'phone', 'email',
+      'customerName', 'businessName', 'gstin', 'phone', 'email', 'transportChargePerCylinder',
       'billingAddressLine1', 'billingCity', 'billingState', 'billingPincode',
       'shippingAddressLine1', 'shippingCity', 'shippingState', 'shippingPincode',
       'creditPeriodDays',
@@ -248,6 +251,7 @@ export async function updateCustomer(
     if (data.shippingState !== undefined) updateData.shippingState = data.shippingState;
     if (data.shippingPincode !== undefined) updateData.shippingPincode = data.shippingPincode;
     if (data.creditPeriodDays !== undefined) updateData.creditPeriodDays = data.creditPeriodDays;
+    if (data.transportChargePerCylinder !== undefined) updateData.transportChargePerCylinder = data.transportChargePerCylinder;
 
     const updated = await tx.customer.update({
       where: { id },
