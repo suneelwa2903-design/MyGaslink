@@ -137,6 +137,13 @@ export async function createInvoiceFromOrder(
 
   for (const oi of order.items) {
     const qty = oi.deliveredQuantity ?? oi.quantity;
+    // Skip cylinder types the driver delivered zero of. The order may have
+    // included the line, but a qty=0 invoice line is visual noise on the PDF
+    // and a junk row in the IRN ItemList (NIC tolerates it but it shouldn't
+    // be there per business logic). Live case: Maruthi RSHD2627000659
+    // (2026-05-28) — 5 KG ordered=2 delivered=0 produced a "5 KG qty=0
+    // ₹0.00" line on the invoice PDF.
+    if (qty <= 0) continue;
     totalDeliveredQty += qty;
     const effectivePrice = Math.max(toNum(oi.unitPrice) - toNum(oi.discountPerUnit), 0);
     const lineTotal = effectivePrice * qty;

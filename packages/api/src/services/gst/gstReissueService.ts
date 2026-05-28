@@ -69,6 +69,12 @@ interface GstDocReissueWriteData {
   ewbNo?: string | null;
   ewbDate?: Date | null;
   ewbValidTill?: Date | null;
+  // Persisted so a phantom-active NIC response (status_cd=1, no ewayBillNo)
+  // leaves enough forensic data on the gst_documents row to diagnose later
+  // without grepping gst_api_logs by timestamp. Mirrors what
+  // gstPreflightService.upsertLatestGstDocument writes on the dispatch path.
+  requestPayload?: Prisma.InputJsonValue;
+  responsePayload?: Prisma.InputJsonValue;
 }
 
 export type ReissueResult =
@@ -267,14 +273,28 @@ export async function reissueForDeliveryMismatch(args: {
   const orderItems = invoice.order?.items ?? [];
   const orderItemByCylinder = new Map(orderItems.map((oi) => [oi.cylinderTypeId, oi]));
   let revisedSubtotal = 0;
+  let revisedDeliveredCylinderQty = 0; // For transport-line recompute below.
   const revisedItems: Array<{
     id: string; cylinderTypeId: string | null;
     quantity: number; unitPrice: number; discountPerUnit: number;
     gstRate: number; totalPrice: number;
   }> = [];
+  // Pass 1 — cylinder lines (cylinderTypeId !== null). Update qty to the
+  // driver's deliveredQuantity. Drop the line entirely if newQty=0 — a
+  // qty=0 invoice line is junk on the PDF and in the IRN ItemList.
+  // Transport line (cylinderTypeId === null, HSN 996511) is handled in
+  // pass 2 below because its qty depends on the cylinder totals.
   for (const item of invoice.items) {
-    const orderItem = item.cylinderTypeId ? orderItemByCylinder.get(item.cylinderTypeId) : null;
+    if (item.cylinderTypeId === null) continue; // Defer transport / other service lines.
+    const orderItem = orderItemByCylinder.get(item.cylinderTypeId);
     const newQty = orderItem?.deliveredQuantity ?? item.quantity;
+    if (newQty <= 0) {
+      // Delete the invoice item — no line on the PDF, no slot in the IRN
+      // ItemList. Live case: Maruthi RSHD2627000659 (2026-05-28) — 5 KG
+      // delivered=0 surfaced as a "5 KG qty=0 ₹0.00" row on the invoice.
+      await prisma.invoiceItem.delete({ where: { id: item.id } });
+      continue;
+    }
     const unitPrice = toNum(item.unitPrice);
     const discountPerUnit = toNum(item.discountPerUnit);
     const originalTotalPrice = toNum(item.totalPrice);
@@ -284,6 +304,55 @@ export async function reissueForDeliveryMismatch(args: {
     // to `unitPrice - discount` for the (defensive) zero-original-qty
     // case — that path shouldn't occur in practice because invoiceItems
     // are created with qty >= 1.
+    const perUnitInclusive = originalQty > 0
+      ? originalTotalPrice / originalQty
+      : Math.max(unitPrice - discountPerUnit, 0);
+    const lineTotal = round2(newQty * perUnitInclusive);
+    revisedSubtotal += lineTotal;
+    revisedDeliveredCylinderQty += newQty;
+    revisedItems.push({
+      id: item.id,
+      cylinderTypeId: item.cylinderTypeId,
+      quantity: newQty,
+      unitPrice,
+      discountPerUnit,
+      gstRate: item.gstRate,
+      totalPrice: lineTotal,
+    });
+    if (newQty !== item.quantity || lineTotal !== toNum(item.totalPrice)) {
+      await prisma.invoiceItem.update({
+        where: { id: item.id },
+        data: { quantity: newQty, totalPrice: lineTotal },
+      });
+    }
+  }
+  // Pass 2 — transport / other service lines (cylinderTypeId === null).
+  //
+  // The original loop skipped these (no orderItemByCylinder match), so the
+  // transport line carried the ordered cylinder count forward through every
+  // reissue while the cylinder lines updated to the delivered count. Live
+  // bug: Maruthi RSHD2627000659 (2026-05-28) — 4 cylinders ordered →
+  // 3 delivered, but the "Inward Transportation Charges" line still showed
+  // qty=5 and ₹1,250 (₹250/cyl × 5) — over-charging the customer by ₹500.
+  //
+  // Transport qty must mirror the sum of delivered cylinder qtys on this
+  // invoice (`revisedDeliveredCylinderQty` from pass 1). totalPrice is
+  // recomputed from the same per-unit-inclusive logic used in pass 1, so
+  // the unit convention stays stable across reissues. A zero-delivery
+  // invoice would have exited via the WI-112 void path above, so
+  // revisedDeliveredCylinderQty=0 here can only happen if every cylinder
+  // line got deleted — drop the transport line too in that defensive case.
+  for (const item of invoice.items) {
+    if (item.cylinderTypeId !== null) continue; // Already handled in pass 1.
+    const newQty = revisedDeliveredCylinderQty;
+    if (newQty <= 0) {
+      await prisma.invoiceItem.delete({ where: { id: item.id } });
+      continue;
+    }
+    const unitPrice = toNum(item.unitPrice);
+    const discountPerUnit = toNum(item.discountPerUnit);
+    const originalTotalPrice = toNum(item.totalPrice);
+    const originalQty = item.quantity;
     const perUnitInclusive = originalQty > 0
       ? originalTotalPrice / originalQty
       : Math.max(unitPrice - discountPerUnit, 0);
@@ -608,52 +677,88 @@ async function regenerateB2cEwb(
     { apiType: 'EWB_GENERATE_REISSUE_B2C', invoiceId },
   );
   const parsed = parseEwbResponse(resp);
+  // WI-091-equivalent phantom-active guard on the reissue path. NIC sandbox
+  // sometimes returns status_cd=1 with NO `ewayBillNo` (bare "Sucess"). The
+  // dispatch path (gstPreflightService runB2cPreflight) and the post-delivery
+  // path (gstService processInvoiceGst B2C branch) both already treat this
+  // as a failure — mark the invoice ewbStatus='failed' + raise an
+  // EWB_GENERATION pending action — but the reissue path was unconditionally
+  // marking ewbStatus='active' with ewbNo=NULL (phantom-active row). Live
+  // bug: Bangalore Foods RSHD2627000660 (2026-05-28 10:20:34) — green EWB
+  // badge in the UI with no real NIC number behind it. Treat parity with
+  // the other two paths.
+  const ewbOk = !!parsed.ewbNo;
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { ewbStatus: 'active' },
+    data: { ewbStatus: ewbOk ? 'active' : 'failed' },
   });
   await upsertLatestGstDoc(invoiceId, distributorId, {
-    ewbStatus: 'active',
+    ewbStatus: ewbOk ? 'active' : 'failed',
     ewbNo: parsed.ewbNo,
     ewbDate: parsed.validFromDate,
     ewbValidTill: parsed.validToDate,
+    requestPayload: toJson(ewbPayload),
+    responsePayload: toJson(resp),
   });
+  if (!ewbOk) {
+    logger.warn('B2C reissue EWB: NIC returned status_cd=1 with no ewayBillNo — marked failed (phantom-active guard)', {
+      invoiceId, invoiceNumber: freshNumber,
+      statusDesc: (resp as { status_desc?: string })?.status_desc,
+    });
+    await createPendingAction(
+      distributorId, invoiceId, 'EWB_GENERATION',
+      `Invoice ${freshNumber}: B2C reissue EWB returned success but no e-Way Bill number. Retry from Billing once NIC is healthy.`,
+      'high',
+    );
+    return null;
+  }
   return parsed.ewbNo;
 }
 
 /**
- * Find-or-update the latest gst_documents row for an invoice. Mirrors
- * the helper in gstPreflightService but kept local to avoid an import
- * cycle on what is otherwise a private helper.
+ * Append a new gst_documents row for this invoice as the new "latest",
+ * atomically demoting any prior isLatest=true rows to isLatest=false.
+ *
+ * Previously this was a find-or-update upsert. That left a hole: when
+ * the dispatch path (gstPreflightService) and the post-delivery path
+ * (gstService.processInvoiceGst B2C) had each created their own
+ * isLatest=true row for the same invoice (race observed live on
+ * Bangalore Foods RSHD2627000660, 2026-05-28), the upsert only updated
+ * ONE of them — the other stayed isLatest=true. The UI then read an
+ * arbitrary "latest" with potentially stale ewbNo/status.
+ *
+ * The reissue path is the only writer that needs to be airtight here:
+ * it explicitly cancels and re-emits the compliance doc, so the new row
+ * is by definition the new latest. Run an updateMany + create inside a
+ * $transaction so the cutover is atomic. Older rows are preserved with
+ * isLatest=false for revision history.
  */
 async function upsertLatestGstDoc(
   invoiceId: string,
   distributorId: string,
   data: GstDocReissueWriteData,
 ) {
-  const existing = await prisma.gstDocument.findFirst({
-    where: { invoiceId, isLatest: true, deletedAt: null },
-    select: { id: true },
-  });
-  if (existing) {
-    await prisma.gstDocument.update({ where: { id: existing.id }, data });
-    return;
-  }
   const invoice = await prisma.invoice.findFirstOrThrow({
     where: { id: invoiceId },
     select: { invoiceNumber: true, orderId: true },
   });
-  await prisma.gstDocument.create({
-    data: {
-      invoiceId,
-      orderId: invoice.orderId!,
-      distributorId,
-      docType: 'INV',
-      gstDocNo: invoice.invoiceNumber,
-      isLatest: true,
-      ...data,
-    },
-  });
+  await prisma.$transaction([
+    prisma.gstDocument.updateMany({
+      where: { invoiceId, isLatest: true, deletedAt: null },
+      data: { isLatest: false },
+    }),
+    prisma.gstDocument.create({
+      data: {
+        invoiceId,
+        orderId: invoice.orderId!,
+        distributorId,
+        docType: 'INV',
+        gstDocNo: invoice.invoiceNumber,
+        isLatest: true,
+        ...data,
+      },
+    }),
+  ]);
 }
 
 /**
