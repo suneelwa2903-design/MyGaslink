@@ -665,9 +665,42 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
 
   const result = [];
   for (const vehicle of vehicles) {
-    const cancelledCount = await prisma.cancelledStockEvent.count({
+    // Per-line cancelled-stock detail for the inline display on the Vehicle
+    // Return card (replaces the old "Undelivered Stock" tab — same data, but
+    // inlined per vehicle so the user closes the trip in one action). Caps at
+    // 100 lines per vehicle; no realistic trip carries more.
+    const cancelledLineRows = await prisma.cancelledStockEvent.findMany({
       where: { vehicleId: vehicle.id, distributorId, status: { in: ['on_vehicle', 'pending_return'] } },
+      include: {
+        cylinderType: { select: { typeName: true } },
+        order: {
+          select: {
+            orderNumber: true,
+            customer: { select: { customerName: true } },
+            items: { select: { cylinderTypeId: true, quantity: true, deliveredQuantity: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
     });
+    const pendingCancelledStockLines = cancelledLineRows.map((cse) => {
+      const orderItem = cse.order?.items.find((i) => i.cylinderTypeId === cse.cylinderTypeId);
+      const orderedQty = orderItem?.quantity ?? cse.quantity;
+      const deliveredQty = orderItem?.deliveredQuantity ?? 0;
+      return {
+        cseId: cse.id,
+        cylinderTypeId: cse.cylinderTypeId,
+        cylinderTypeName: cse.cylinderType?.typeName ?? '—',
+        orderNumber: cse.order?.orderNumber ?? null,
+        customerName: cse.order?.customer?.customerName ?? null,
+        orderedQty,
+        deliveredQty,
+        shortfallQty: cse.quantity,
+        status: cse.status,
+      };
+    });
+    const cancelledCount = pendingCancelledStockLines.length;
     const pendingOrders = await prisma.order.findMany({
       where: { vehicleId: vehicle.id, distributorId, status: { in: ['pending_delivery', 'pending_dispatch'] }, deletedAt: null },
       include: { customer: { select: { customerName: true } } },
@@ -717,6 +750,7 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
         orderNumber: o.orderNumber,
         customerName: o.customer?.customerName ?? null,
       })),
+      pendingCancelledStockLines,
       emptiesTypes,
     });
   }

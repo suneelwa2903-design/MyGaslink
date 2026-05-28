@@ -9,7 +9,6 @@ import {
   HiOutlineLockClosed,
   HiOutlineLockOpen,
   HiOutlinePlus,
-  HiOutlineArrowUturnLeft,
   HiOutlineAdjustmentsHorizontal,
   HiOutlineArrowTrendingUp,
   HiOutlineArrowTrendingDown,
@@ -18,7 +17,6 @@ import {
 import {
   type InventorySummary,
   type InventoryEvent,
-  type CancelledStock,
   type CustomerInventoryBalance,
   type InventoryForecast,
   type CylinderType,
@@ -29,7 +27,6 @@ import {
   outgoingEmptiesSchema,
   type OutgoingEmptiesInput,
   type ManualAdjustmentInput,
-  CancelledStockStatus,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -51,6 +48,24 @@ interface PendingOrderSummary {
   customerName: string | null;
 }
 
+interface PendingCancelledStockLine {
+  cseId: string;
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  orderNumber: string | null;
+  customerName: string | null;
+  orderedQty: number;
+  deliveredQty: number;
+  shortfallQty: number;
+  status: 'on_vehicle' | 'pending_return' | string;
+}
+
+interface ReconciliationEmptyType {
+  cylinderTypeId: string;
+  typeName: string;
+  collectedQty: number;
+}
+
 interface ReconciliationVehicle {
   vehicleId: string;
   vehicleNumber: string;
@@ -58,16 +73,20 @@ interface ReconciliationVehicle {
   pendingUndeliveredOrders: number;
   totalPendingItems: number;
   pendingOrderSummaries: PendingOrderSummary[];
+  pendingCancelledStockLines: PendingCancelledStockLine[];
+  emptiesTypes: ReconciliationEmptyType[];
 }
 
 interface ReconciliationConfirmInput {
   physicalStockConfirmed: boolean;
   notes?: string;
+  emptiesReturned?: { cylinderTypeId: string; quantity: number }[];
 }
 
 interface ReconciliationConfirmResult {
   cancelledStockReturned: number;
   undeliveredOrdersCancelled: number;
+  emptiesReturned?: number;
 }
 
 export default function InventoryPage() {
@@ -77,9 +96,9 @@ export default function InventoryPage() {
   // "AI Demand Forecast" header button → /app/inventory?tab=forecast).
   const initialTab = (typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('tab')
-    : null) as ('daily' | 'depot' | 'onboarding' | 'cancelled' | 'forecast' | 'customer' | 'reconciliation') | null;
-  const validTabs = ['daily', 'depot', 'onboarding', 'cancelled', 'forecast', 'customer', 'reconciliation'];
-  const [tab, setTab] = useState<'daily' | 'depot' | 'onboarding' | 'cancelled' | 'forecast' | 'customer' | 'reconciliation'>(
+    : null) as ('daily' | 'depot' | 'onboarding' | 'forecast' | 'customer' | 'reconciliation') | null;
+  const validTabs = ['daily', 'depot', 'onboarding', 'forecast', 'customer', 'reconciliation'];
+  const [tab, setTab] = useState<'daily' | 'depot' | 'onboarding' | 'forecast' | 'customer' | 'reconciliation'>(
     initialTab && validTabs.includes(initialTab) ? initialTab : 'daily',
   );
   const [incomingOpen, setIncomingOpen] = useState(false);
@@ -95,12 +114,6 @@ export default function InventoryPage() {
   const { data: inventory, isLoading } = useQuery({
     queryKey: ['inventory', selectedDate],
     queryFn: () => apiGet<InventorySummary[]>(`/inventory/summary/${selectedDate}`),
-  });
-
-  const { data: cancelledStock, isLoading: cancelledLoading } = useQuery({
-    queryKey: ['cancelled-stock'],
-    queryFn: () => apiGet<CancelledStock[]>('/inventory/cancelled-stock'),
-    enabled: tab === 'cancelled',
   });
 
   const { data: forecast, isLoading: forecastLoading } = useQuery({
@@ -152,9 +165,10 @@ export default function InventoryPage() {
     }) => apiPost<ReconciliationConfirmResult>(`/delivery/reconciliation/confirm/${vehicleId}`, data),
     onSuccess: (result) => {
       toast.success(
-        `Reconciliation complete: ${result.cancelledStockReturned} stock returned, ${result.undeliveredOrdersCancelled} orders cancelled`,
+        `Reconciliation complete: ${result.cancelledStockReturned} stock returned, ${result.undeliveredOrdersCancelled} orders cancelled, ${result.emptiesReturned ?? 0} empties verified`,
       );
       queryClient.invalidateQueries({ queryKey: ['reconciliation-pending'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
     },
     onError: (err) => toast.error(getErrorMessage(err)),
   });
@@ -190,17 +204,6 @@ export default function InventoryPage() {
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const returnToDepotMutation = useMutation({
-    mutationFn: (eventIds: string[]) =>
-      apiPost('/inventory/cancelled-stock/return', { eventIds, returnDate: todayString() }),
-    onSuccess: () => {
-      toast.success('Stock returned to depot');
-      queryClient.invalidateQueries({ queryKey: ['cancelled-stock'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
-
   const adjustMutation = useMutation({
     mutationFn: (data: ManualAdjustmentInput) => apiPost('/inventory/manual-adjustment', data),
     onSuccess: () => {
@@ -214,12 +217,15 @@ export default function InventoryPage() {
   const isLocked = inventory?.[0]?.isLocked ?? false;
   const isToday = selectedDate === todayString();
 
-  // WI-080 F4 rename + F5 new tab (Stock at Onboarding, after Depot History).
+  // The "Undelivered Stock" tab was retired alongside the Vehicle Return
+  // redesign — cancelled-stock lines are now shown inline on the matching
+  // vehicle's Vehicle Return card, and the single "Confirm" action there
+  // returns them to depot as part of closing the trip. Historical undelivered
+  // stock is available via the Vehicle Ledger and Inventory Movement reports.
   const tabs = [
     { key: 'daily' as const, label: 'Daily Summary' },
     { key: 'depot' as const, label: 'Depot History' },
     { key: 'onboarding' as const, label: 'Stock at Onboarding' },
-    { key: 'cancelled' as const, label: 'Undelivered Stock' },
     { key: 'forecast' as const, label: 'AI Demand Forecast' },
     { key: 'customer' as const, label: 'Customer Balances' },
     { key: 'reconciliation' as const, label: 'Vehicle Return' },
@@ -332,29 +338,38 @@ export default function InventoryPage() {
         ) : !inventory?.length ? (
           <EmptyState title="No inventory data" description="No inventory data for this date." />
         ) : (
-          // WI-080: full ledger columns. The two depot-movement columns
-          // (Incoming Fulls / Outgoing Empties) are grouped under a pastel
-          // green "Depot" header. All numerics centre-aligned.
+          // Inventory model rework — columns are grouped by physical zone so the
+          // daily snapshot reads as a zone-by-zone ledger:
+          //   DEPOT IN/OUT · OPENING · IN TRANSIT · CUSTOMER (audit) · ADJ · CLOSING
+          // In-Flight Fulls and Empties on Vehicle drain to 0 when every dispatched
+          // cylinder is delivered + every collected empty is supervisor-verified at
+          // reconcile. Non-zero at end of day = real reconciliation gap to act on.
           <div className="table-container">
             <table className="table">
               <thead>
                 <tr>
                   <th rowSpan={2} className="align-bottom">Cylinder Type</th>
-                  <th colSpan={2} className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Depot</th>
-                  <th rowSpan={2} className="text-center align-bottom">Opening Fulls</th>
-                  <th rowSpan={2} className="text-center align-bottom">Opening Empties</th>
-                  <th rowSpan={2} className="text-center align-bottom">Dispatched</th>
-                  <th rowSpan={2} className="text-center align-bottom">Delivered<br /><span className="text-[10px] font-normal opacity-70">(to customer)</span></th>
-                  <th rowSpan={2} className="text-center align-bottom">Collected Empties</th>
-                  <th rowSpan={2} className="text-center align-bottom">Returned</th>
-                  <th rowSpan={2} className="text-center align-bottom">Manual Adj</th>
-                  <th rowSpan={2} className="text-center align-bottom">Closing Fulls</th>
-                  <th rowSpan={2} className="text-center align-bottom">Closing Empties</th>
-                  <th rowSpan={2} className="align-bottom">Status</th>
+                  <th colSpan={2} className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Depot In/Out</th>
+                  <th colSpan={2} className="text-center bg-surface-100 dark:bg-surface-700/50">Opening</th>
+                  <th colSpan={2} className="text-center bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300">In Transit</th>
+                  <th colSpan={2} className="text-center bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300">Customer (audit)</th>
+                  <th colSpan={2} className="text-center bg-surface-100 dark:bg-surface-700/50">Adjustments</th>
+                  <th colSpan={3} className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Closing</th>
                 </tr>
                 <tr>
                   <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Incoming Fulls</th>
                   <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Outgoing Empties</th>
+                  <th className="text-center bg-surface-100 dark:bg-surface-700/50">Fulls</th>
+                  <th className="text-center bg-surface-100 dark:bg-surface-700/50">Empties</th>
+                  <th className="text-center bg-amber-50 dark:bg-amber-900/20" title="Cylinders currently on vehicles — reaches zero when all vehicles return.">In-Flight Fulls</th>
+                  <th className="text-center bg-amber-50 dark:bg-amber-900/20" title="Empties collected at customer stops not yet verified at depot — non-zero at end of day means missing empties.">Empties on Vehicle</th>
+                  <th className="text-center bg-blue-50 dark:bg-blue-900/20" title="Cumulative delivered to customer today. Audit only — does not affect depot stock.">Delivered</th>
+                  <th className="text-center bg-blue-50 dark:bg-blue-900/20" title="Empties collected at customer doorstep. Audit only — depot empties are credited only on supervisor verification at reconcile.">Collected</th>
+                  <th className="text-center bg-surface-100 dark:bg-surface-700/50">Returned</th>
+                  <th className="text-center bg-surface-100 dark:bg-surface-700/50">Manual Adj</th>
+                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Closing Fulls</th>
+                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Closing Empties</th>
+                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -363,30 +378,56 @@ export default function InventoryPage() {
                   const isCritical = item.thresholdCritical !== null && item.closingFulls <= item.thresholdCritical;
                   // Sign-guarded so a zero renders "0" (not "+0"/"-0").
                   const signed = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `${n}` : '0');
+                  // Manual Adj is rare — render greyed when zero so the eye
+                  // doesn't latch onto noise. Emphasise only when non-zero.
+                  const adjZero = (item.manualAdjustment ?? 0) === 0;
+                  // In-Flight sub-tooltip: when any cancelled stock for this
+                  // cylinder type is sitting on a vehicle pending reconcile,
+                  // surface that to the user — it explains why In-Flight > 0
+                  // at end of day even if every delivery is confirmed.
+                  const inFlightTip = (item.cancelledStockQty ?? 0) > 0
+                    ? `${item.cancelledStockQty} cancelled, pending vehicle return`
+                    : undefined;
                   return (
                     <tr key={item.cylinderTypeId}>
                       <td className="font-medium text-surface-900 dark:text-white">{item.cylinderTypeName}</td>
+
+                      {/* Depot In/Out */}
                       <td className="text-center bg-[#dcfce7]/40 dark:bg-emerald-900/20 text-accent-700 dark:text-accent-400">
                         {item.incomingFulls > 0 ? `+${item.incomingFulls}` : '0'}
                       </td>
                       <td className="text-center bg-[#dcfce7]/40 dark:bg-emerald-900/20">
                         {item.outgoingEmpties > 0 ? `${item.outgoingEmpties}` : '0'}
                       </td>
+
+                      {/* Opening */}
                       <td className="text-center">{item.openingFulls}</td>
                       <td className="text-center">{item.openingEmpties}</td>
-                      <td className="text-center text-amber-600 dark:text-amber-400">
-                        {item.dispatchedQty > 0 ? `${item.dispatchedQty}` : '0'}
+
+                      {/* In Transit */}
+                      <td className="text-center text-amber-700 dark:text-amber-300 font-medium" title={inFlightTip}>
+                        {item.inFlightFulls ?? 0}
+                        {inFlightTip ? <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">●</span> : null}
                       </td>
-                      <td className="text-center text-brand-600 dark:text-brand-400">
+                      <td className="text-center text-amber-700 dark:text-amber-300">{item.emptiesOnVehicle ?? 0}</td>
+
+                      {/* Customer (audit) */}
+                      <td className="text-center text-blue-600 dark:text-blue-400">
                         {item.deliveredQty > 0 ? `${item.deliveredQty}` : '0'}
                       </td>
-                      <td className="text-center">{item.collectedEmpties}</td>
+                      <td className="text-center text-blue-600 dark:text-blue-400">{item.collectedEmpties}</td>
+
+                      {/* Adjustments */}
                       <td className="text-center text-flame-600 dark:text-flame-400">{item.cancelledStockQty}</td>
-                      <td className="text-center">{signed(item.manualAdjustment)}</td>
+                      <td className={cn('text-center', adjZero ? 'text-surface-400 text-xs' : 'font-medium')}>
+                        {signed(item.manualAdjustment)}
+                      </td>
+
+                      {/* Closing */}
                       <td className={cn('text-center font-semibold', isCritical && 'text-red-500')}>
                         {item.closingFulls}
                       </td>
-                      <td className="text-center">{item.closingEmpties}</td>
+                      <td className="text-center font-semibold">{item.closingEmpties}</td>
                       <td>
                         <div className="flex gap-1">
                           {isCritical && <Badge variant="danger">Critical</Badge>}
@@ -542,58 +583,6 @@ export default function InventoryPage() {
         )
       )}
 
-      {tab === 'cancelled' && (
-        cancelledLoading ? (
-          <div className="flex justify-center py-20"><Loader size="lg" /></div>
-        ) : !cancelledStock?.length ? (
-          <EmptyState title="No undelivered stock" description="No undelivered stock found across all dates." />
-        ) : (
-          <div className="table-container">
-            <p className="text-xs text-surface-500 dark:text-surface-400 px-4 pt-3 pb-1">Showing all undelivered stock across all dates</p>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Cylinder Type</th>
-                  <th>Qty</th>
-                  <th>Driver</th>
-                  <th>Vehicle</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cancelledStock.map((cs) => (
-                  <tr key={cs.eventId}>
-                    <td className="font-medium">{cs.cylinderTypeName}</td>
-                    <td>{cs.quantity}</td>
-                    <td>{cs.driverName}</td>
-                    <td>{cs.vehicleNumber}</td>
-                    <td>
-                      <Badge variant={cs.status === CancelledStockStatus.RETURNED_TO_DEPOT ? 'success' : cs.status === CancelledStockStatus.ON_VEHICLE ? 'warning' : 'neutral'}>
-                        {cs.status.replace(/_/g, ' ')}
-                      </Badge>
-                    </td>
-                    <td>
-                      {(cs.status === CancelledStockStatus.ON_VEHICLE || cs.status === CancelledStockStatus.PENDING) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => returnToDepotMutation.mutate([cs.eventId])}
-                          loading={returnToDepotMutation.isPending}
-                        >
-                          <HiOutlineArrowUturnLeft className="h-3 w-3" />
-                          Return
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
-      )}
-
       {tab === 'forecast' && (
         <div className="space-y-4">
           {/* WI-080 F3: always-visible advisory banner. */}
@@ -666,61 +655,12 @@ export default function InventoryPage() {
         ) : (
           <div className="grid gap-4">
             {reconciliationVehicles.map((v) => (
-              <div
+              <VehicleReturnCard
                 key={v.vehicleId}
-                className="bg-white dark:bg-surface-800 rounded-xl p-6 shadow-sm"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg font-semibold">{v.vehicleNumber}</h3>
-                    <p className="text-sm text-surface-500">
-                      {v.pendingCancelledStock} cancelled stock + {v.pendingUndeliveredOrders} undelivered orders
-                    </p>
-                  </div>
-                  <Badge variant="warning">Pending Verification</Badge>
-                </div>
-                <div className="flex gap-3">
-                  <Button
-                    onClick={() => {
-                      const pending = v.pendingOrderSummaries ?? [];
-                      if (pending.length > 0) {
-                        const names = pending
-                          .map((o) => `${o.orderNumber} (${o.customerName ?? 'Unknown'})`)
-                          .join('\n');
-                        const ok = confirm(
-                          `Warning: The following orders are still pending delivery and will be force-cancelled:\n\n${names}\n\nAre you sure you want to proceed?`,
-                        );
-                        if (!ok) return;
-                      }
-                      reconciliationConfirm.mutate({
-                        vehicleId: v.vehicleId,
-                        data: {
-                          physicalStockConfirmed: true,
-                          notes: 'Physical stock matches system',
-                        },
-                      });
-                    }}
-                    disabled={reconciliationConfirm.isPending}
-                  >
-                    Confirm Physical Stock Matches
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() =>
-                      reconciliationConfirm.mutate({
-                        vehicleId: v.vehicleId,
-                        data: {
-                          physicalStockConfirmed: false,
-                          notes: 'Stock mismatch detected',
-                        },
-                      })
-                    }
-                    disabled={reconciliationConfirm.isPending}
-                  >
-                    Report Mismatch
-                  </Button>
-                </div>
-              </div>
+                vehicle={v}
+                isPending={reconciliationConfirm.isPending}
+                onConfirm={(input) => reconciliationConfirm.mutate({ vehicleId: v.vehicleId, data: input })}
+              />
             ))}
           </div>
         )
@@ -759,6 +699,163 @@ export default function InventoryPage() {
           onSubmit={(data) => adjustMutation.mutate(data)}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Vehicle Return card ─────────────────────────────────────────────────────
+// One card per vehicle waiting to be reconciled. Two inline sections:
+//   A. Cancelled-stock lines (informational — confirm action returns them).
+//   B. Empties verification — one editable input per active cylinder type,
+//      pre-filled with the delivery-time collected amount. The supervisor
+//      adjusts to the physically-verified count if different. A single
+//      "Confirm & Reconcile" button writes everything atomically; the gap
+//      between collected and verified surfaces on the Vehicle Ledger.
+//
+// Empties are always sent (even when unchanged from pre-fill) so the gap
+// column is computed correctly for every reconciliation.
+function VehicleReturnCard({
+  vehicle,
+  isPending,
+  onConfirm,
+}: {
+  vehicle: ReconciliationVehicle;
+  isPending: boolean;
+  onConfirm: (input: ReconciliationConfirmInput) => void;
+}) {
+  const [empties, setEmpties] = useState<Record<string, number>>(() =>
+    Object.fromEntries(
+      (vehicle.emptiesTypes ?? []).map((t) => [t.cylinderTypeId, t.collectedQty]),
+    ),
+  );
+  const setQty = (id: string, value: string) => {
+    const n = Math.max(0, Math.floor(Number(value) || 0));
+    setEmpties((prev) => ({ ...prev, [id]: n }));
+  };
+  const submit = () => {
+    const pendingDeliveries = vehicle.pendingOrderSummaries ?? [];
+    if (pendingDeliveries.length > 0) {
+      const names = pendingDeliveries
+        .map((o) => `${o.orderNumber} (${o.customerName ?? 'Unknown'})`)
+        .join('\n');
+      const ok = confirm(
+        `Warning: The following orders are still pending delivery and will be force-cancelled:\n\n${names}\n\nProceed?`,
+      );
+      if (!ok) return;
+    }
+    onConfirm({
+      physicalStockConfirmed: true,
+      notes: 'Physical stock matches system',
+      emptiesReturned: (vehicle.emptiesTypes ?? []).map((t) => ({
+        cylinderTypeId: t.cylinderTypeId,
+        quantity: empties[t.cylinderTypeId] ?? 0,
+      })),
+    });
+  };
+  const lines = vehicle.pendingCancelledStockLines ?? [];
+  const emptiesTypes = vehicle.emptiesTypes ?? [];
+
+  return (
+    <div className="bg-white dark:bg-surface-800 rounded-xl p-6 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold">{vehicle.vehicleNumber}</h3>
+          <p className="text-sm text-surface-500">
+            {lines.length} cancelled-stock line{lines.length === 1 ? '' : 's'}
+            {vehicle.pendingUndeliveredOrders > 0
+              ? ` · ${vehicle.pendingUndeliveredOrders} undelivered order${vehicle.pendingUndeliveredOrders === 1 ? '' : 's'} will be force-cancelled`
+              : ''}
+          </p>
+        </div>
+        <Badge variant="warning">Pending Verification</Badge>
+      </div>
+
+      {/* Section A — cancelled-stock lines (informational) */}
+      {lines.length > 0 && (
+        <div className="mb-5">
+          <h4 className="text-sm font-medium text-surface-800 dark:text-surface-200 mb-2">
+            Cylinders returning to depot
+          </h4>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Cylinder Type</th>
+                  <th className="text-center">Ordered</th>
+                  <th className="text-center">Delivered</th>
+                  <th className="text-center">Shortfall</th>
+                  <th>Order</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l) => (
+                  <tr key={l.cseId}>
+                    <td className="font-medium">{l.cylinderTypeName}</td>
+                    <td className="text-center">{l.orderedQty}</td>
+                    <td className="text-center">{l.deliveredQty}</td>
+                    <td className="text-center text-flame-600 dark:text-flame-400">{l.shortfallQty}</td>
+                    <td className="text-xs">
+                      {l.orderNumber}
+                      {l.customerName ? <span className="text-surface-500"> · {l.customerName}</span> : null}
+                    </td>
+                    <td>
+                      <Badge variant={l.status === 'on_vehicle' ? 'warning' : 'neutral'}>
+                        {String(l.status).replace(/_/g, ' ')}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Section B — empties verification */}
+      {emptiesTypes.length > 0 && (
+        <div className="mb-5">
+          <h4 className="text-sm font-medium text-surface-800 dark:text-surface-200">
+            Empties returning to depot
+          </h4>
+          <p className="text-xs text-surface-500 mb-2">
+            Pre-filled with the empties collected at customer stops during this trip.
+            Adjust the number if the physical count differs.
+          </p>
+          <div className="grid gap-2 max-w-md">
+            {emptiesTypes.map((t) => (
+              <div key={t.cylinderTypeId} className="flex items-center justify-between gap-3">
+                <label className="text-sm text-surface-700 dark:text-surface-300">
+                  {t.typeName}
+                  <span className="ml-1 text-xs text-surface-400">(collected {t.collectedQty})</span>
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={empties[t.cylinderTypeId] ?? 0}
+                  onChange={(e) => setQty(t.cylinderTypeId, e.target.value)}
+                  className="input py-1.5 text-sm w-24 text-right"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-3">
+        <Button onClick={submit} disabled={isPending}>
+          Confirm &amp; Reconcile
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() =>
+            onConfirm({ physicalStockConfirmed: false, notes: 'Stock mismatch detected' })
+          }
+          disabled={isPending}
+        >
+          Report Mismatch
+        </Button>
+      </div>
     </div>
   );
 }

@@ -561,6 +561,26 @@ export async function preflightAddToTrip(params: {
   const succeeded = results.filter((r) => r.success).length;
   const failed = results.length - succeeded;
 
+  // Mirror of the WI-129 block in preflightDispatch — without this, dispatches
+  // through the Add-to-Trip path write the `dispatch` inventory event but never
+  // recompute the daily summary, so the "Dispatched" / "In-Flight" columns on
+  // the Daily Summary lag until the next delivery confirmation triggers a
+  // recompute. With this, the snapshot reflects the dispatch immediately on
+  // both paths. No-op when the flag is OFF (no dispatch events written).
+  if (isDispatchDebitEnabled(distributorId)) {
+    const succeededOrderIds = new Set(
+      results.filter((r) => r.success).map((r) => r.orderId),
+    );
+    const cylinderTypeIds = new Set<string>();
+    for (const order of orders) {
+      if (!succeededOrderIds.has(order.id)) continue;
+      for (const item of order.items) cylinderTypeIds.add(item.cylinderTypeId);
+    }
+    for (const ctId of cylinderTypeIds) {
+      await recalculateSummariesFromDate(distributorId, ctId, targetDate);
+    }
+  }
+
   // WI-090: keep the vehicle 'dispatched' when orders are added to an
   // already-running trip. preflightDispatch (new-trip path) sets this on
   // first dispatch, but if the vehicle status was reset in the meantime

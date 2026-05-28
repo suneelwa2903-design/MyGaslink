@@ -90,13 +90,16 @@ describe('Feature 2 — empties returned at reconciliation', () => {
     expect(auditRows).toHaveLength(1);
     expect(auditRows[0].quantity).toBe(12);
 
-    // Closing empties for the test type must reflect the verified return.
+    // Inventory model rework: closing empties is now driven by the new
+    // `emptiesReturnedVerified` bucket (NOT `collectedEmpties` — that bucket
+    // is reserved for delivery-time audit). Closing still goes up by the
+    // verified amount; the assertion target just moved.
     const summary = await prisma.inventorySummary.findFirst({
       where: { distributorId: DIST, cylinderTypeId: cylTypeId },
       orderBy: { summaryDate: 'desc' },
     });
     expect(summary).toBeTruthy();
-    expect(summary!.collectedEmpties).toBeGreaterThanOrEqual(12);
+    expect(summary!.emptiesReturnedVerified).toBeGreaterThanOrEqual(12);
     expect(summary!.closingEmpties).toBeGreaterThanOrEqual(12);
   });
 

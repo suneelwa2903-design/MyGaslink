@@ -1141,6 +1141,7 @@ model InventorySummary {
   deliveredQty    Int      @default(0) @map("delivered_qty")
   dispatchedQty   Int      @default(0) @map("dispatched_qty")
   collectedEmpties Int     @default(0) @map("collected_empties")
+  emptiesReturnedVerified Int @default(0) @map("empties_returned_verified")
   cancelledStockQty Int    @default(0) @map("cancelled_stock_qty")
   manualAdjustment Int     @default(0) @map("manual_adjustment")
   closingFulls    Int      @default(0) @map("closing_fulls")

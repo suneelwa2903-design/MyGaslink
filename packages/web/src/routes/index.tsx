@@ -274,9 +274,6 @@ export function AppRoutes() {
 
           <Route path="billing/suspended" element={<BillingSuspendedPage />} />
 
-          {/* Reconciliation now in Inventory */}
-          <Route path="reconciliation" element={<Navigate to="/app/inventory" replace />} />
-
           <Route
             path="provider-catalog"
             element={

@@ -440,6 +440,13 @@ export interface InventorySummary {
   dispatchedQty: number;
   deliveredQty: number;
   collectedEmpties: number;
+  // Inventory model rework: supervisor-verified empties returned to depot at
+  // reconciliation. Under the new model this — not `collectedEmpties` — drives
+  // closing-empties. `collectedEmpties` stays as cumulative collected-at-doorstep
+  // (audit only). `inFlightFulls` and `emptiesOnVehicle` are derived for UI.
+  emptiesReturnedVerified: number;
+  inFlightFulls: number;
+  emptiesOnVehicle: number;
   cancelledStockQty: number;
   manualAdjustment: number;
   closingFulls: number;

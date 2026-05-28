@@ -65,6 +65,7 @@ export async function computeSummaryForDate(
   deliveredQty: number;
   dispatchedQty: number;
   collectedEmpties: number;
+  emptiesReturnedVerified: number;
   cancelledStockQty: number;
   manualAdjustment: number;
   closingFulls: number;
@@ -97,6 +98,12 @@ export async function computeSummaryForDate(
   let outgoingEmpties = 0;
   let deliveredQty = 0;
   let collectedEmpties = 0;
+  // Inventory model rework — separates "empties collected at doorstep" (audit
+  // only) from "empties supervisor-verified returned to depot" (drives depot
+  // closing-empties). `reconciliation_empties_return` events feed this bucket;
+  // `collection` / `returns_collection` events keep feeding `collectedEmpties`
+  // for the Vehicle Ledger and customer-balance views.
+  let emptiesReturnedVerified = 0;
   let cancelledStockQty = 0;
   let manualAdjustment = 0;
   // WI-106: dispatch-debit accumulators. Always computed (cheap); only used by
@@ -160,9 +167,12 @@ export async function computeSummaryForDate(
         break;
       case 'reconciliation_empties_return':
         // Empties physically verified returned to depot at trip reconciliation
-        // (positive emptiesChange). Feeds the closing-empties balance via the
-        // collectedEmpties bucket, same as delivery-time collection.
-        collectedEmpties += event.emptiesChange;
+        // (positive emptiesChange). Under the new inventory model this is the
+        // ONLY event that credits depot closing-empties — delivery-time
+        // `collection` / `returns_collection` no longer feed the balance, only
+        // the supervisor's verified count at reconcile does. Prevents the
+        // earlier double-count where the same empty incremented closing twice.
+        emptiesReturnedVerified += event.emptiesChange;
         break;
     }
   }
@@ -174,7 +184,11 @@ export async function computeSummaryForDate(
   const closingFulls = isDispatchDebitEnabled(distributorId)
     ? openingFulls + incomingFulls - dispatchedQty + returnedQty + manualAdjustment
     : openingFulls + incomingFulls - deliveredQty + cancelledStockQty + manualAdjustment;
-  const closingEmpties = openingEmpties + collectedEmpties + initialEmpties - outgoingEmpties;
+  // New-model closing-empties: only supervisor-verified returns at reconcile +
+  // onboarding initial balance feed the depot balance; delivery-time collection
+  // no longer does. Equivalent under the old model only when verified == collected
+  // (which is rarely true — that's why the old formula systematically over-credited).
+  const closingEmpties = openingEmpties + emptiesReturnedVerified + initialEmpties - outgoingEmpties;
 
   return {
     openingFulls,
@@ -184,6 +198,7 @@ export async function computeSummaryForDate(
     deliveredQty,
     dispatchedQty,
     collectedEmpties,
+    emptiesReturnedVerified,
     cancelledStockQty,
     manualAdjustment,
     closingFulls,
@@ -233,6 +248,25 @@ export async function recalculateSummariesFromDate(
   const sortedDates = Array.from(allDates).sort().map(t => new Date(t));
 
   for (const date of sortedDates) {
+    // Lock-skip guard: a row marked isLocked=true is the authoritative close
+    // for that day — never overwrite it, even if new events arrive on that
+    // date later. Without this, a future event on a locked date would silently
+    // re-derive the snapshot under the current (possibly newer) formula and
+    // erase the locked close. Closes the hole in the earlier behaviour where
+    // only the existing-summary-dates query filtered on isLocked while the
+    // event-dates path bypassed the filter.
+    const existing = await prisma.inventorySummary.findUnique({
+      where: {
+        distributorId_cylinderTypeId_summaryDate: {
+          distributorId,
+          cylinderTypeId,
+          summaryDate: date,
+        },
+      },
+      select: { isLocked: true },
+    });
+    if (existing?.isLocked) continue;
+
     const summary = await computeSummaryForDate(distributorId, cylinderTypeId, date);
 
     await prisma.inventorySummary.upsert({
@@ -526,8 +560,18 @@ export async function getInventorySummary(distributorId: string, date: string) {
       where: { distributorId_cylinderTypeId: { distributorId, cylinderTypeId: ct.id } },
     });
 
+    // Derived UI fields for the new inventory model. inFlightFulls drains to
+    // zero when every dispatched cylinder is either delivered or returned;
+    // emptiesOnVehicle drains to zero when every collected empty is supervisor-
+    // verified at reconcile. Non-zero at end-of-day = real anomaly to surface.
+    const inFlightFulls =
+      (summary.dispatchedQty ?? 0) - (summary.deliveredQty ?? 0) - (summary.cancelledStockQty ?? 0);
+    const emptiesOnVehicle =
+      (summary.collectedEmpties ?? 0) - (summary.emptiesReturnedVerified ?? 0);
     summaries.push({
       ...summary,
+      inFlightFulls,
+      emptiesOnVehicle,
       cylinderType: { id: ct.id, typeName: ct.typeName, capacity: ct.capacity, unit: ct.unit },
       cylinderTypeName: ct.typeName,
       thresholdWarning: threshold?.warningLevel ?? null,
