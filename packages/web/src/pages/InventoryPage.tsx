@@ -663,14 +663,18 @@ const GROUP_COLOR: Record<ColGroup, { band: string; title: string }> = {
   CLOSING:     { band: 'bg-blue-50 dark:bg-blue-950/40',   title: 'text-blue-800 dark:text-blue-300' },
 };
 
-// Data-cell tint per group — matches the same 3-colour ramp used on the
-// header band, follows the dark-mode pattern (50 / 950-40) used above.
+// Data-cell tint per group — light-mode hex values for CORPORATION /
+// AT CUSTOMER / ADJUSTMENTS are intentionally slightly more saturated than
+// Tailwind's bg-blue-50 / bg-teal-50 defaults (which render almost white on
+// most displays). OPENING / ON VEHICLE share the same amber; AT CUSTOMER /
+// ADJUSTMENTS share the same teal. Dark mode follows the same 950/40 pattern
+// the group header band already uses.
 const GROUP_CELL_TINT: Record<ColGroup, string> = {
-  CORPORATION:   'bg-blue-50 dark:bg-blue-950/40',
+  CORPORATION:   'bg-[#E6F1FB] dark:bg-blue-950/40',
   OPENING:       'bg-amber-50 dark:bg-amber-950/40',
-  'ON VEHICLE':  'bg-teal-50 dark:bg-teal-950/40',
-  'AT CUSTOMER': 'bg-blue-50 dark:bg-blue-950/40',
-  ADJUSTMENTS:   'bg-amber-50 dark:bg-amber-950/40',
+  'ON VEHICLE':  'bg-amber-50 dark:bg-amber-950/40',
+  'AT CUSTOMER': 'bg-[#E1F5EE] dark:bg-teal-950/40',
+  ADJUSTMENTS:   'bg-[#E1F5EE] dark:bg-teal-950/40',
   CLOSING:       'bg-teal-50 dark:bg-teal-950/40',
 };
 
