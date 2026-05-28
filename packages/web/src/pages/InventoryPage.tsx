@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -338,110 +338,7 @@ export default function InventoryPage() {
         ) : !inventory?.length ? (
           <EmptyState title="No inventory data" description="No inventory data for this date." />
         ) : (
-          // Inventory model rework — columns are grouped by physical zone so the
-          // daily snapshot reads as a zone-by-zone ledger:
-          //   DEPOT IN/OUT · OPENING · IN TRANSIT · CUSTOMER (audit) · ADJ · CLOSING
-          // In-Flight Fulls and Empties on Vehicle drain to 0 when every dispatched
-          // cylinder is delivered + every collected empty is supervisor-verified at
-          // reconcile. Non-zero at end of day = real reconciliation gap to act on.
-          <div className="table-container">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th rowSpan={2} className="align-bottom">Cylinder Type</th>
-                  <th colSpan={2} className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Depot In/Out</th>
-                  <th colSpan={2} className="text-center bg-surface-100 dark:bg-surface-700/50">Opening</th>
-                  <th colSpan={2} className="text-center bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300">In Transit</th>
-                  <th colSpan={2} className="text-center bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300">Customer (audit)</th>
-                  <th colSpan={2} className="text-center bg-surface-100 dark:bg-surface-700/50">Adjustments</th>
-                  <th colSpan={3} className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Closing</th>
-                </tr>
-                <tr>
-                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Incoming Fulls</th>
-                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Outgoing Empties</th>
-                  <th className="text-center bg-surface-100 dark:bg-surface-700/50">Fulls</th>
-                  <th className="text-center bg-surface-100 dark:bg-surface-700/50">Empties</th>
-                  <th className="text-center bg-amber-50 dark:bg-amber-900/20" title="Cylinders currently on vehicles — reaches zero when all vehicles return.">In-Flight Fulls</th>
-                  <th className="text-center bg-amber-50 dark:bg-amber-900/20" title="Empties collected at customer stops not yet verified at depot — non-zero at end of day means missing empties.">Empties on Vehicle</th>
-                  <th className="text-center bg-blue-50 dark:bg-blue-900/20" title="Cumulative delivered to customer today. Audit only — does not affect depot stock.">Delivered</th>
-                  <th className="text-center bg-blue-50 dark:bg-blue-900/20" title="Empties collected at customer doorstep. Audit only — depot empties are credited only on supervisor verification at reconcile.">Collected</th>
-                  <th className="text-center bg-surface-100 dark:bg-surface-700/50">Returned</th>
-                  <th className="text-center bg-surface-100 dark:bg-surface-700/50">Manual Adj</th>
-                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Closing Fulls</th>
-                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Closing Empties</th>
-                  <th className="text-center bg-[#dcfce7] dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inventory.map((item) => {
-                  const isWarning = item.thresholdWarning !== null && item.closingFulls <= item.thresholdWarning;
-                  const isCritical = item.thresholdCritical !== null && item.closingFulls <= item.thresholdCritical;
-                  // Sign-guarded so a zero renders "0" (not "+0"/"-0").
-                  const signed = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `${n}` : '0');
-                  // Manual Adj is rare — render greyed when zero so the eye
-                  // doesn't latch onto noise. Emphasise only when non-zero.
-                  const adjZero = (item.manualAdjustment ?? 0) === 0;
-                  // In-Flight sub-tooltip: when any cancelled stock for this
-                  // cylinder type is sitting on a vehicle pending reconcile,
-                  // surface that to the user — it explains why In-Flight > 0
-                  // at end of day even if every delivery is confirmed.
-                  const inFlightTip = (item.cancelledStockQty ?? 0) > 0
-                    ? `${item.cancelledStockQty} cancelled, pending vehicle return`
-                    : undefined;
-                  return (
-                    <tr key={item.cylinderTypeId}>
-                      <td className="font-medium text-surface-900 dark:text-white">{item.cylinderTypeName}</td>
-
-                      {/* Depot In/Out */}
-                      <td className="text-center bg-[#dcfce7]/40 dark:bg-emerald-900/20 text-accent-700 dark:text-accent-400">
-                        {item.incomingFulls > 0 ? `+${item.incomingFulls}` : '0'}
-                      </td>
-                      <td className="text-center bg-[#dcfce7]/40 dark:bg-emerald-900/20">
-                        {item.outgoingEmpties > 0 ? `${item.outgoingEmpties}` : '0'}
-                      </td>
-
-                      {/* Opening */}
-                      <td className="text-center">{item.openingFulls}</td>
-                      <td className="text-center">{item.openingEmpties}</td>
-
-                      {/* In Transit */}
-                      <td className="text-center text-amber-700 dark:text-amber-300 font-medium" title={inFlightTip}>
-                        {item.inFlightFulls ?? 0}
-                        {inFlightTip ? <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">●</span> : null}
-                      </td>
-                      <td className="text-center text-amber-700 dark:text-amber-300">{item.emptiesOnVehicle ?? 0}</td>
-
-                      {/* Customer (audit) */}
-                      <td className="text-center text-blue-600 dark:text-blue-400">
-                        {item.deliveredQty > 0 ? `${item.deliveredQty}` : '0'}
-                      </td>
-                      <td className="text-center text-blue-600 dark:text-blue-400">{item.collectedEmpties}</td>
-
-                      {/* Adjustments */}
-                      <td className="text-center text-flame-600 dark:text-flame-400">{item.cancelledStockQty}</td>
-                      <td className={cn('text-center', adjZero ? 'text-surface-400 text-xs' : 'font-medium')}>
-                        {signed(item.manualAdjustment)}
-                      </td>
-
-                      {/* Closing */}
-                      <td className={cn('text-center font-semibold', isCritical && 'text-red-500')}>
-                        {item.closingFulls}
-                      </td>
-                      <td className="text-center font-semibold">{item.closingEmpties}</td>
-                      <td>
-                        <div className="flex gap-1">
-                          {isCritical && <Badge variant="danger">Critical</Badge>}
-                          {isWarning && !isCritical && <Badge variant="warning">Warning</Badge>}
-                          {!isCritical && !isWarning && <Badge variant="success">OK</Badge>}
-                          {item.isLocked && <Badge variant="neutral">Locked</Badge>}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <DailySummary inventory={inventory} />
         )
       )}
 
@@ -703,6 +600,199 @@ export default function InventoryPage() {
   );
 }
 
+// ─── Daily Summary — grouped columns + column selector + legend ─────────────
+// Six column groups, each tinted with one of three colours (blue/amber/teal)
+// used twice. The header band is the 50-stop tint, group title text is 800.
+// The column-header row underneath stays white. Cylinder Type and Status are
+// always shown — every other column is hideable via the Columns dropdown.
+// Hidden-group bands collapse when all their columns are hidden.
+
+type ColGroup = 'CORPORATION' | 'OPENING' | 'ON VEHICLE' | 'AT CUSTOMER' | 'ADJUSTMENTS' | 'CLOSING';
+type ColKey =
+  | 'corp_in' | 'corp_out'
+  | 'open_f' | 'open_e'
+  | 'veh_f' | 'veh_e'
+  | 'cust_d' | 'cust_c'
+  | 'adj_r' | 'adj_m'
+  | 'close_f' | 'close_e';
+
+const GROUPS_ORDER: ColGroup[] = ['CORPORATION', 'OPENING', 'ON VEHICLE', 'AT CUSTOMER', 'ADJUSTMENTS', 'CLOSING'];
+
+// 3-colour ramp, each used twice. The 50-stop is the header band, 800 is the
+// title text. Light-blue 50 also doubles as the legend example background.
+const GROUP_COLOR: Record<ColGroup, { band: string; title: string }> = {
+  CORPORATION: { band: 'bg-blue-50 dark:bg-blue-950/40',   title: 'text-blue-800 dark:text-blue-300' },
+  OPENING:     { band: 'bg-amber-50 dark:bg-amber-950/40', title: 'text-amber-800 dark:text-amber-300' },
+  'ON VEHICLE':{ band: 'bg-amber-50 dark:bg-amber-950/40', title: 'text-amber-800 dark:text-amber-300' },
+  'AT CUSTOMER': { band: 'bg-teal-50 dark:bg-teal-950/40', title: 'text-teal-800 dark:text-teal-300' },
+  ADJUSTMENTS: { band: 'bg-teal-50 dark:bg-teal-950/40',   title: 'text-teal-800 dark:text-teal-300' },
+  CLOSING:     { band: 'bg-blue-50 dark:bg-blue-950/40',   title: 'text-blue-800 dark:text-blue-300' },
+};
+
+interface ColDef {
+  key: ColKey;
+  group: ColGroup;
+  label: string;
+  render: (item: InventorySummary) => ReactNode;
+  cellClass?: string | ((item: InventorySummary) => string);
+}
+
+const COLS: ColDef[] = [
+  { key: 'corp_in', group: 'CORPORATION', label: 'Incoming Fulls', render: (i) => i.incomingFulls > 0 ? `+${i.incomingFulls}` : '0', cellClass: 'text-blue-700 dark:text-blue-300' },
+  { key: 'corp_out', group: 'CORPORATION', label: 'Outgoing Empties', render: (i) => i.outgoingEmpties > 0 ? `${i.outgoingEmpties}` : '0', cellClass: 'text-blue-700 dark:text-blue-300' },
+  { key: 'open_f', group: 'OPENING', label: 'Fulls', render: (i) => i.openingFulls },
+  { key: 'open_e', group: 'OPENING', label: 'Empties', render: (i) => i.openingEmpties },
+  { key: 'veh_f', group: 'ON VEHICLE', label: 'Fulls', render: (i) => i.inFlightFulls ?? 0, cellClass: 'text-amber-700 dark:text-amber-300 font-medium' },
+  { key: 'veh_e', group: 'ON VEHICLE', label: 'Empties', render: (i) => i.emptiesOnVehicle ?? 0, cellClass: 'text-amber-700 dark:text-amber-300' },
+  { key: 'cust_d', group: 'AT CUSTOMER', label: 'Delivered Fulls', render: (i) => i.deliveredQty > 0 ? `${i.deliveredQty}` : '0', cellClass: 'text-teal-700 dark:text-teal-300' },
+  { key: 'cust_c', group: 'AT CUSTOMER', label: 'Collected Empties', render: (i) => i.collectedEmpties, cellClass: 'text-teal-700 dark:text-teal-300' },
+  { key: 'adj_r', group: 'ADJUSTMENTS', label: 'Returned', render: (i) => i.cancelledStockQty, cellClass: 'text-flame-600 dark:text-flame-400' },
+  {
+    key: 'adj_m', group: 'ADJUSTMENTS', label: 'Manual',
+    render: (i) => { const n = i.manualAdjustment; return n > 0 ? `+${n}` : n < 0 ? `${n}` : '0'; },
+    cellClass: (i) => (i.manualAdjustment ?? 0) === 0 ? 'text-surface-400 text-xs' : 'font-medium',
+  },
+  { key: 'close_f', group: 'CLOSING', label: 'Fulls', render: (i) => i.closingFulls, cellClass: 'font-semibold' },
+  { key: 'close_e', group: 'CLOSING', label: 'Empties', render: (i) => i.closingEmpties, cellClass: 'font-semibold' },
+];
+
+const COL_PREF_KEY = 'gaslink_inventory_col_prefs';
+
+function loadHidden(): Set<ColKey> {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(COL_PREF_KEY) : null;
+    if (raw) return new Set(JSON.parse(raw) as ColKey[]);
+  } catch { /* ignore */ }
+  return new Set();
+}
+function saveHidden(h: Set<ColKey>) {
+  try { localStorage.setItem(COL_PREF_KEY, JSON.stringify([...h])); } catch { /* ignore */ }
+}
+
+function DailySummary({ inventory }: { inventory: InventorySummary[] }) {
+  const [hidden, setHidden] = useState<Set<ColKey>>(() => loadHidden());
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const toggle = (k: ColKey) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      saveHidden(next);
+      return next;
+    });
+  };
+
+  const visibleCols = COLS.filter((c) => !hidden.has(c.key));
+  const visibleGroups = GROUPS_ORDER
+    .map((g) => ({ name: g, cols: visibleCols.filter((c) => c.group === g) }))
+    .filter((g) => g.cols.length > 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Columns selector */}
+      <div className="flex items-center justify-end relative">
+        <Button variant="secondary" size="sm" onClick={() => setPickerOpen((v) => !v)}>
+          Columns
+        </Button>
+        {pickerOpen && (
+          <div className="absolute right-0 top-9 z-20 w-64 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg shadow-lg p-3 space-y-2 text-sm">
+            <div className="text-xs text-surface-500 dark:text-surface-400 mb-1">
+              Show / hide columns (Cylinder Type and Status are always shown)
+            </div>
+            {GROUPS_ORDER.map((g) => (
+              <div key={g}>
+                <div className={cn('text-[11px] font-semibold uppercase tracking-wide', GROUP_COLOR[g].title)}>{g}</div>
+                {COLS.filter((c) => c.group === g).map((c) => (
+                  <label key={c.key} className="flex items-center gap-2 py-0.5 cursor-pointer hover:bg-surface-50 dark:hover:bg-surface-700/40 px-1 rounded">
+                    <input
+                      type="checkbox"
+                      checked={!hidden.has(c.key)}
+                      onChange={() => toggle(c.key)}
+                      className="rounded"
+                    />
+                    <span className="text-surface-800 dark:text-surface-200">{c.label}</span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Table */}
+      <div className="table-container">
+        <table className="table">
+          <thead>
+            <tr>
+              <th rowSpan={2} className="align-bottom">Cylinder Type</th>
+              {visibleGroups.map((g) => (
+                <th key={g.name} colSpan={g.cols.length} className={cn('text-center text-[11px] uppercase tracking-wide', GROUP_COLOR[g.name].band, GROUP_COLOR[g.name].title)}>
+                  {g.name}
+                </th>
+              ))}
+              <th rowSpan={2} className="align-bottom">Status</th>
+            </tr>
+            <tr>
+              {visibleGroups.flatMap((g) => g.cols.map((c) => (
+                <th key={c.key} className="text-center font-medium text-surface-700 dark:text-surface-300">
+                  {c.label}
+                </th>
+              )))}
+            </tr>
+          </thead>
+          <tbody>
+            {inventory.map((item) => {
+              const isWarning = item.thresholdWarning !== null && item.closingFulls <= item.thresholdWarning;
+              const isCritical = item.thresholdCritical !== null && item.closingFulls <= item.thresholdCritical;
+              return (
+                <tr key={item.cylinderTypeId}>
+                  <td className="font-medium text-surface-900 dark:text-white">{item.cylinderTypeName}</td>
+                  {visibleGroups.flatMap((g) => g.cols.map((c) => {
+                    const cls = typeof c.cellClass === 'function' ? c.cellClass(item) : c.cellClass;
+                    // Critical-low override for Closing Fulls cell
+                    const extra = c.key === 'close_f' && isCritical ? 'text-red-500' : '';
+                    return (
+                      <td key={c.key} className={cn('text-center', cls, extra)}>
+                        {c.render(item)}
+                      </td>
+                    );
+                  }))}
+                  <td>
+                    <div className="flex gap-1">
+                      {isCritical && <Badge variant="danger">Critical</Badge>}
+                      {isWarning && !isCritical && <Badge variant="warning">Warning</Badge>}
+                      {!isCritical && !isWarning && <Badge variant="success">OK</Badge>}
+                      {item.isLocked && <Badge variant="neutral">Locked</Badge>}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Legend — always visible, two parts */}
+      <div className="space-y-3 pt-2">
+        <div className="space-y-1 text-[12px] text-surface-600 dark:text-surface-400">
+          <p><span className="font-semibold text-surface-800 dark:text-surface-200">Corporation</span> — Cylinders received from your corporation (Incoming Fulls) or empty cylinders sent back (Outgoing Empties). These are your supply movements for the day.</p>
+          <p><span className="font-semibold text-surface-800 dark:text-surface-200">Opening</span> — Your depot stock at the start of the day, carried forward from yesterday&apos;s closing.</p>
+          <p><span className="font-semibold text-surface-800 dark:text-surface-200">On Vehicle</span> — Cylinders and empties currently with drivers. Fulls on Vehicle drops to zero when all vehicles return. Empties on Vehicle drops to zero when all vehicles reconcile at depot.</p>
+          <p><span className="font-semibold text-surface-800 dark:text-surface-200">At Customer</span> — Informational only, does not affect depot stock. Delivered Fulls = fulls confirmed received by customers. Collected Empties = empties the driver recorded collecting during the trip.</p>
+          <p><span className="font-semibold text-surface-800 dark:text-surface-200">Adjustments</span> — Returned = cylinders brought back from cancelled orders. Manual = stock corrections entered by the inventory team.</p>
+          <p><span className="font-semibold text-surface-800 dark:text-surface-200">Closing</span> — Your depot stock position for the day, updated in real time.</p>
+        </div>
+        <div className="border-l-4 border-blue-400 bg-blue-50 dark:bg-blue-950/40 px-4 py-3 rounded-r text-[13px] text-surface-800 dark:text-surface-200">
+          <p className="font-semibold mb-1 text-blue-800 dark:text-blue-300">Example — 19 KG cylinders on a typical day:</p>
+          <p>
+            Opening Fulls = 200. You receive a corporation load of 50 (Incoming Fulls = +50, Closing Fulls = 250). You dispatch Driver A with 30 cylinders (Fulls on Vehicle = 30, Closing Fulls = 220). Driver A delivers 28 to customers (Delivered Fulls = 28, Fulls on Vehicle drops to 2). Driver A collects 20 empties from customers on the trip (Collected Empties = 20 — informational, not in your depot yet). Driver A returns; you verify 19 empties came back (Closing Empties rises by 19, Empties on Vehicle drops to 1 — that 1 is unaccounted). You also dispatch Driver B with 10 cylinders during the day (Fulls on Vehicle = 10 for Driver B&apos;s trip until they return). End of day once all drivers back: Fulls on Vehicle = 0, Empties on Vehicle = 0 or gap only.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Vehicle Return card ─────────────────────────────────────────────────────
 // One card per vehicle waiting to be reconciled. Two inline sections:
 //   A. Cancelled-stock lines (informational — confirm action returns them).
@@ -951,7 +1041,7 @@ function IncomingFullsModal({
   date: string;
 }) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit, formState: { errors } } = useForm<IncomingFullsInput>({
+  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<IncomingFullsInput>({
     resolver: zodResolver(incomingFullsSchema),
     defaultValues: { cylinderTypeId: '', quantity: 1, documentType: '', documentNumber: '', documentDate: date },
   });
@@ -968,6 +1058,19 @@ function IncomingFullsModal({
 
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
   const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
+
+  // Auto-fill Vehicle Number + Driver Name when a vehicle is selected. Both
+  // remain manually editable afterwards (we only setValue on selection, not on
+  // subsequent typing). `currentDriverName` comes from the most recent
+  // assignment of that vehicle (may be null if never assigned).
+  const selectedVehicleId = watch('vehicleId');
+  useEffect(() => {
+    if (!selectedVehicleId) return;
+    const v = vehicles.find((x) => x.vehicleId === selectedVehicleId);
+    if (!v) return;
+    setValue('vehicleNumber', v.vehicleNumber ?? '', { shouldValidate: false, shouldDirty: true });
+    setValue('driverName', v.currentDriverName ?? '', { shouldValidate: false, shouldDirty: true });
+  }, [selectedVehicleId, vehicles, setValue]);
 
   return (
     <Modal open={open} onClose={onClose} title="Record Incoming Fulls">

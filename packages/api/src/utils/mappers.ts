@@ -294,7 +294,19 @@ export function mapDrivers(list: DriverInput[]): MappedRecord[] {
 
 export function mapVehicle(v: VehicleRow | null | undefined): MappedRecord | null | undefined {
   if (!v) return v;
-  return renameId(v, 'vehicleId');
+  const mapped = renameId(v, 'vehicleId');
+  // Derive `currentDriverName` from the most recent assignment if the service
+  // included one. Used by Incoming Fulls / Outgoing Empties modals to auto-fill
+  // the Driver Name field when a vehicle is selected. Strip the raw assignments
+  // payload from the response — callers that need it can hit /vehicles/:id.
+  const assignments = (v as VehicleRow & { vehicleAssignments?: Array<{ driver?: { driverName?: string | null } | null }> }).vehicleAssignments;
+  if (Array.isArray(assignments) && assignments.length > 0) {
+    mapped.currentDriverName = assignments[0]?.driver?.driverName ?? null;
+  } else {
+    mapped.currentDriverName = null;
+  }
+  delete (mapped as Record<string, unknown>).vehicleAssignments;
+  return mapped;
 }
 
 export function mapVehicles(list: VehicleRow[]): MappedRecord[] {

@@ -10,8 +10,11 @@ export async function listVehicles(distributorId: string, status?: string) {
     where,
     include: {
       vehicleInventory: true,
+      // Fetch the most recent assignment regardless of reconciled status — for
+      // an idle vehicle the active assignment is empty, but the modal still
+      // needs the *last known* driver as the default to auto-fill. Mapper
+      // derives `currentDriverName` from this and strips the rest.
       vehicleAssignments: {
-        where: { isReconciled: false },
         include: { driver: { select: { id: true, driverName: true } } },
         orderBy: { assignmentDate: 'desc' },
         take: 1,

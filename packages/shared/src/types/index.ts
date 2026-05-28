@@ -406,6 +406,10 @@ export interface Vehicle {
   vehicleType: string | null;
   capacity: number | null;
   status: VehicleStatus;
+  // Most recent assigned driver's name — populated by GET /vehicles list so
+  // Incoming Fulls / Outgoing Empties modals can auto-fill Driver Name when a
+  // vehicle is selected. May be null for vehicles that have never been assigned.
+  currentDriverName?: string | null;
   createdAt: string;
   updatedAt: string;
 }
