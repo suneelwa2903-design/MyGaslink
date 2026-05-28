@@ -41,6 +41,11 @@ export default function ReportsPage() {
   const [customerId, setCustomerId] = useState('');
   const [vehicleId, setVehicleId] = useState('');
   const [groupBy, setGroupBy] = useState<'day' | 'trip'>('day');
+  // WI-5 — Vehicle Ledger View dropdown: All / Corporation Loads Only /
+  // Vehicle Trips Only. Client-side filter over the unified table; the
+  // backend continues to return both primary (trips) and secondary
+  // (corporation loads) so other reports remain unaffected.
+  const [vehicleLedgerView, setVehicleLedgerView] = useState<'all' | 'corporation' | 'trips'>('all');
   const [downloading, setDownloading] = useState(false);
 
   const def = REPORTS.find((r) => r.key === reportKey)!;
@@ -163,6 +168,21 @@ export default function ReportsPage() {
                 options={[{ value: 'day', label: 'Day' }, { value: 'trip', label: 'Trip' }]} />
             </div>
           )}
+          {/* WI-5 — View filter, Vehicle Ledger only */}
+          {reportKey === 'vehicle-ledger' && (
+            <div>
+              <label className="label text-xs">View</label>
+              <Select
+                value={vehicleLedgerView}
+                onChange={(e) => setVehicleLedgerView(e.target.value as 'all' | 'corporation' | 'trips')}
+                options={[
+                  { value: 'all', label: 'All' },
+                  { value: 'corporation', label: 'Corporation Loads Only' },
+                  { value: 'trips', label: 'Vehicle Trips Only' },
+                ]}
+              />
+            </div>
+          )}
           <div className="ml-auto flex gap-2">
             <Button variant="secondary" onClick={downloadCsv} loading={downloading} disabled={needsCustomer || !report}>
               <HiOutlineArrowDownTray className="h-4 w-4" /> CSV
@@ -187,10 +207,16 @@ export default function ReportsPage() {
       ) : (
         <>
           {report.chart && <ReportChartView chart={report.chart} />}
-          {report.secondary && report.secondary.rows.length > 0 && (
-            <SecondaryTable table={report.secondary} />
+          {reportKey === 'vehicle-ledger' ? (
+            <UnifiedVehicleLedger report={report} view={vehicleLedgerView} />
+          ) : (
+            <>
+              {report.secondary && report.secondary.rows.length > 0 && (
+                <SecondaryTable table={report.secondary} />
+              )}
+              {report.rows.length > 0 && <ReportTable report={report} />}
+            </>
           )}
-          {report.rows.length > 0 && <ReportTable report={report} />}
         </>
       )}
     </div>
@@ -264,6 +290,111 @@ function SecondaryTable({ table }: { table: ReportTableData }) {
               ))}
             </tr>
           )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─── WI-5 — Vehicle Ledger unified table ────────────────────────────────────
+// Renders a single table with a Type column ("Corporation" or "Trip"), with
+// a View filter that scopes to one source or both. Date sort: desc. When the
+// view is "Corporation Only", trip-only columns are dropped from the header.
+// When the view is "Vehicle Trips Only", the corporation column set is hidden.
+
+interface UnifiedRow {
+  type: 'Corporation' | 'Trip';
+  date: string;
+  vehicleNumber: string;
+  driverName: string;
+  cylinderType: string;
+  documentNumber: string;
+  quantity: number | string;
+  // The raw row carried through for trip-specific columns.
+  raw: Record<string, ReportCellValue>;
+}
+
+function UnifiedVehicleLedger({ report, view }: { report: ReportResult; view: 'all' | 'corporation' | 'trips' }) {
+  const tripRows: UnifiedRow[] = (report.rows ?? []).map((r) => ({
+    type: 'Trip',
+    date: String(r.date ?? r.tripDate ?? r.eventDate ?? ''),
+    vehicleNumber: String(r.vehicleNumber ?? ''),
+    driverName: String(r.driverName ?? ''),
+    cylinderType: String(r.cylinderType ?? r.cylinderTypeName ?? ''),
+    documentNumber: '',
+    quantity: r.fullsDispatched ?? r.deliveredQty ?? r.collectedEmpties ?? '',
+    raw: r,
+  }));
+  const corporationRows: UnifiedRow[] = (report.secondary?.rows ?? []).map((r) => ({
+    type: 'Corporation',
+    date: String(r.date ?? ''),
+    vehicleNumber: '—',
+    driverName: '—',
+    cylinderType: String(r.cylinderType ?? ''),
+    documentNumber: String(r.documentNumber ?? ''),
+    quantity: r.quantity ?? '',
+    raw: r,
+  }));
+
+  const filtered =
+    view === 'corporation' ? corporationRows
+      : view === 'trips' ? tripRows
+      : [...corporationRows, ...tripRows];
+
+  // Sort by date desc (string compare on yyyy-mm-dd is fine; non-iso falls
+  // back to localeCompare).
+  filtered.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  if (filtered.length === 0) {
+    return (
+      <div className="card p-8 text-center text-surface-400 text-sm">
+        No records match the selected filters.
+      </div>
+    );
+  }
+
+  // Column set depends on the view.
+  const showType = view === 'all';
+  const showVehicle = view !== 'corporation';
+  const showDriver = view !== 'corporation';
+  const showDocument = view !== 'trips';
+
+  return (
+    <div className="card overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-surface-200 dark:border-surface-700 text-left">
+            <th className="px-4 py-3 font-semibold text-surface-600 dark:text-surface-300">Date</th>
+            {showType && <th className="px-4 py-3 font-semibold text-surface-600 dark:text-surface-300">Type</th>}
+            {showVehicle && <th className="px-4 py-3 font-semibold text-surface-600 dark:text-surface-300">Vehicle</th>}
+            {showDriver && <th className="px-4 py-3 font-semibold text-surface-600 dark:text-surface-300">Driver</th>}
+            <th className="px-4 py-3 font-semibold text-surface-600 dark:text-surface-300">Cylinder</th>
+            {showDocument && <th className="px-4 py-3 font-semibold text-surface-600 dark:text-surface-300">Doc / Ref</th>}
+            <th className="px-4 py-3 font-semibold text-surface-600 dark:text-surface-300 text-right">Quantity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map((row, i) => (
+            <tr key={`${row.type}-${i}`} className="border-b border-surface-100 dark:border-surface-800">
+              <td className="px-4 py-2.5 text-surface-800 dark:text-surface-200">{row.date}</td>
+              {showType && (
+                <td className="px-4 py-2.5">
+                  <span className={
+                    row.type === 'Corporation'
+                      ? 'badge-info'
+                      : 'badge-neutral'
+                  }>
+                    {row.type}
+                  </span>
+                </td>
+              )}
+              {showVehicle && <td className="px-4 py-2.5 text-surface-800 dark:text-surface-200">{row.vehicleNumber}</td>}
+              {showDriver && <td className="px-4 py-2.5 text-surface-800 dark:text-surface-200">{row.driverName}</td>}
+              <td className="px-4 py-2.5 text-surface-800 dark:text-surface-200">{row.cylinderType}</td>
+              {showDocument && <td className="px-4 py-2.5 text-surface-800 dark:text-surface-200">{row.documentNumber || '—'}</td>}
+              <td className="px-4 py-2.5 text-right tabular-nums text-surface-800 dark:text-surface-200">{String(row.quantity ?? '')}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
