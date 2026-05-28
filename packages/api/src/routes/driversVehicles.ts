@@ -505,10 +505,22 @@ driverRouter.get('/me/trip-ewbs',
       // ='INV' filters out CN/DN docs which carry separate EWBs on the same
       // table. ewbStatus in [active, cancelled] excludes failed/pending docs
       // that never got a real NIC EWB number (e.g. B2C below threshold).
+      //
+      // WI-107 fix: filter by isLatest=true so a reissued EWB does not show
+      // the superseded original alongside the new one. The reissue path runs
+      // `updateMany({ isLatest:true } → { isLatest:false })` + create
+      // new-row atomically (gstReissueService.upsertLatestGstDoc), so the
+      // current EWB for each order is exactly the isLatest=true row. A
+      // single-doc lifecycle that ends in 'cancelled' (no reissue) keeps
+      // isLatest=true and still surfaces — the driver retains the
+      // checkpoint reference for that order. Pre-fix the endpoint returned
+      // both the cancelled OLD and the active NEW after a reissue (gst-
+      // reissue.test.ts > WI-107 — trip-ewbs Compliance Docs).
       const docs = await prisma.gstDocument.findMany({
         where: {
           distributorId,
           docType: 'INV',
+          isLatest: true,
           ewbNo: { not: null },
           ewbStatus: { in: ['active', 'cancelled'] },
           order: {
