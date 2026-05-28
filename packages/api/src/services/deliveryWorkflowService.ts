@@ -440,6 +440,42 @@ export async function confirmVehicleReconciliation(
     emptiesReturned: 0,
   };
 
+  // Validate empties verified ≤ empties collected on this trip BEFORE any DB
+  // mutation. Must run before the DVA is stamped isReconciled=true (the active-
+  // DVA lookup inside the helper filters by isReconciled=false), and before any
+  // events are written. Catches both the pre-fill carry-over bug (where trip 1
+  // collections leaked into trip 2's pre-fill) and any supervisor typo.
+  const emptiesInput = (data.emptiesReturned ?? []).filter((e) => e.quantity > 0);
+  if (emptiesInput.length > 0) {
+    const vehicleForValidation = await prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+      select: { vehicleNumber: true },
+    });
+    const { collectedByType } = await aggregateActiveTripCollections(
+      vehicleId, distributorId, vehicleForValidation?.vehicleNumber ?? null,
+    );
+    const overByType: Array<{ cylinderTypeId: string; verified: number; collected: number }> = [];
+    for (const e of emptiesInput) {
+      const collected = collectedByType.get(e.cylinderTypeId) ?? 0;
+      if (e.quantity > collected) overByType.push({ cylinderTypeId: e.cylinderTypeId, verified: e.quantity, collected });
+    }
+    if (overByType.length > 0) {
+      const names = await prisma.cylinderType.findMany({
+        where: { id: { in: overByType.map((o) => o.cylinderTypeId) }, distributorId },
+        select: { id: true, typeName: true },
+      });
+      const nameMap = new Map(names.map((n) => [n.id, n.typeName]));
+      const detail = overByType
+        .map((o) => `${nameMap.get(o.cylinderTypeId) ?? o.cylinderTypeId}: verified ${o.verified} > collected ${o.collected}`)
+        .join('; ');
+      const err = new Error(
+        `Empties verified cannot exceed empties collected on this trip. ${detail}.`,
+      );
+      (err as Error & { statusCode?: number }).statusCode = 400;
+      throw err;
+    }
+  }
+
   // 1. Return all cancelled stock on this vehicle to depot
   const cancelledStock = await prisma.cancelledStockEvent.findMany({
     where: { vehicleId, distributorId, status: { in: ['on_vehicle', 'pending_return'] } },
@@ -612,7 +648,8 @@ export async function confirmVehicleReconciliation(
   // inventory event so the depot empties balance reflects the verified count.
   // Optional — if no entries (or all zero), nothing is written and reconcile
   // still completes. Requires a DVA to anchor the events.
-  const empties = (data.emptiesReturned ?? []).filter((e) => e.quantity > 0);
+  // Reuse the `emptiesInput` already validated above.
+  const empties = emptiesInput;
   if (empties.length > 0 && reconcileDva) {
     const now = new Date();
     for (const e of empties) {
@@ -652,6 +689,72 @@ export async function confirmVehicleReconciliation(
     inventoryRestored: results.inventoryRestored,
     ordersToBeForceCanelled: results.ordersToBeForceCanelled,
   };
+}
+
+/**
+ * Trip-scoped collection aggregation used by both pending-list pre-fill and the
+ * reconcile validation guard. Returns the active trip's tripNumber, the set of
+ * cylinder types touched on the trip, and per-type collected-empties totals
+ * scoped to THIS trip (not all of today). This is the fix for the cross-trip
+ * carry-over bug where a second trip's pre-fill incorrectly included trip 1's
+ * already-reconciled collections.
+ */
+async function aggregateActiveTripCollections(
+  vehicleId: string,
+  distributorId: string,
+  vehicleNumber: string | null,
+): Promise<{ activeTripNumber: number | null; collectedByType: Map<string, number>; activeTypeIds: Set<string> }> {
+  const todayStart = startOfUtcDay();
+  // Most recent NON-reconciled DVA for this vehicle today → that's the trip
+  // being reconciled. After reconcile, isReconciled flips to true; the next
+  // dispatch creates a new tripNumber on the same DVA.
+  const activeDva = await prisma.driverVehicleAssignment.findFirst({
+    where: { vehicleId, distributorId, assignmentDate: todayStart, isReconciled: false, status: { not: 'cancelled' } },
+    orderBy: { tripNumber: 'desc' },
+    select: { tripNumber: true },
+  });
+  const collectedByType = new Map<string, number>();
+  const activeTypeIds = new Set<string>();
+  if (!activeDva) {
+    return { activeTripNumber: null, collectedByType, activeTypeIds };
+  }
+  const tripNumber = activeDva.tripNumber;
+  // Orders dispatched on this exact trip. tripNumber is stamped at dispatch
+  // (WI-065). Joining by tripNumber excludes orders from prior trips on the
+  // same vehicle+date that have already been reconciled.
+  const tripOrders = await prisma.order.findMany({
+    where: { vehicleId, distributorId, deliveryDate: todayStart, tripNumber },
+    select: { id: true },
+  });
+  const tripOrderIds = tripOrders.map((o) => o.id);
+  if (tripOrderIds.length === 0) {
+    // Edge: vehicle in returned state but no orders carry this trip number —
+    // fall back to today's dispatch events for the cylinder type set so the
+    // empties step still surfaces the relevant types.
+    const fallbackDispatch = vehicleNumber
+      ? await prisma.inventoryEvent.findMany({
+          where: { distributorId, eventType: 'dispatch', vehicleNumber, eventDate: todayStart },
+          select: { cylinderTypeId: true },
+        })
+      : [];
+    for (const e of fallbackDispatch) activeTypeIds.add(e.cylinderTypeId);
+    return { activeTripNumber: tripNumber, collectedByType, activeTypeIds };
+  }
+  // Dispatch events on this trip — scope by referenceId not vehicleNumber so we
+  // don't bleed in dispatches from an earlier trip on the same vehicle.
+  const dispatchEvents = await prisma.inventoryEvent.findMany({
+    where: { distributorId, eventType: 'dispatch', referenceType: 'order', referenceId: { in: tripOrderIds } },
+    select: { cylinderTypeId: true },
+  });
+  // Collection + returns_collection events for orders on this trip ONLY.
+  const collectionEvents = await prisma.inventoryEvent.findMany({
+    where: { distributorId, eventType: { in: ['collection', 'returns_collection'] }, referenceType: 'order', referenceId: { in: tripOrderIds } },
+    select: { cylinderTypeId: true, emptiesChange: true },
+  });
+  for (const e of collectionEvents) collectedByType.set(e.cylinderTypeId, (collectedByType.get(e.cylinderTypeId) ?? 0) + e.emptiesChange);
+  for (const e of dispatchEvents) activeTypeIds.add(e.cylinderTypeId);
+  for (const k of collectedByType.keys()) activeTypeIds.add(k);
+  return { activeTripNumber: tripNumber, collectedByType, activeTypeIds };
 }
 
 /**
@@ -706,29 +809,10 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
       include: { customer: { select: { customerName: true } } },
     });
 
-    // ── Empties returned step: cylinder types active on today's trip plus the
-    // sum of delivery-time collection events (pre-fills the verify inputs). The
-    // active types come from this vehicle's dispatch events today; the collected
-    // totals come from collection/returns_collection events on the trip's orders.
-    const todayStart = startOfUtcDay();
-    const dispatchEvents = await prisma.inventoryEvent.findMany({
-      where: { distributorId, eventType: 'dispatch', vehicleNumber: vehicle.vehicleNumber, eventDate: todayStart },
-      select: { cylinderTypeId: true },
-    });
-    const tripOrders = await prisma.order.findMany({
-      where: { vehicleId: vehicle.id, distributorId, deliveryDate: todayStart },
-      select: { id: true },
-    });
-    const tripOrderIds = tripOrders.map((o) => o.id);
-    const collectionEvents = tripOrderIds.length
-      ? await prisma.inventoryEvent.findMany({
-          where: { distributorId, eventType: { in: ['collection', 'returns_collection'] }, referenceType: 'order', referenceId: { in: tripOrderIds } },
-          select: { cylinderTypeId: true, emptiesChange: true },
-        })
-      : [];
-    const collectedByType = new Map<string, number>();
-    for (const e of collectionEvents) collectedByType.set(e.cylinderTypeId, (collectedByType.get(e.cylinderTypeId) ?? 0) + e.emptiesChange);
-    const activeTypeIds = new Set<string>([...dispatchEvents.map((e) => e.cylinderTypeId), ...collectedByType.keys()]);
+    // Empties pre-fill — scoped to the active (non-reconciled) trip's orders
+    // only. Replaces the prior today-wide aggregation which leaked prior trips'
+    // already-reconciled collections into the next trip's pre-fill.
+    const { collectedByType, activeTypeIds } = await aggregateActiveTripCollections(vehicle.id, distributorId, vehicle.vehicleNumber);
     const typeNames = activeTypeIds.size
       ? await prisma.cylinderType.findMany({ where: { id: { in: [...activeTypeIds] }, distributorId }, select: { id: true, typeName: true } })
       : [];
@@ -738,6 +822,21 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
       typeName: typeNameMap.get(cylinderTypeId) ?? '—',
       collectedQty: collectedByType.get(cylinderTypeId) ?? 0,
     }));
+
+    // Surface whether this vehicle has an open STOCK_MISMATCH pending action so
+    // the card can render an amber "Mismatch reported — check Pending Actions"
+    // banner under the vehicle number. The mutation creates this PA when
+    // physicalStockConfirmed=false; the vehicle remains in `returned` status.
+    const openMismatchPa = await prisma.pendingAction.findFirst({
+      where: {
+        distributorId,
+        entityId: vehicle.id,
+        entityType: 'vehicle',
+        actionType: 'STOCK_MISMATCH',
+        status: { in: ['open', 'in_progress'] },
+      },
+      select: { id: true, createdAt: true, description: true },
+    });
 
     result.push({
       vehicleId: vehicle.id,
@@ -752,6 +851,7 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
       })),
       pendingCancelledStockLines,
       emptiesTypes,
+      mismatchReported: !!openMismatchPa,
     });
   }
 

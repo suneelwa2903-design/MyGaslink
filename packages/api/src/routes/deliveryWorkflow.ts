@@ -132,6 +132,11 @@ router.post('/reconciliation/confirm/:vehicleId',
       return sendSuccess(res, result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      // The service throws a 400 with `statusCode: 400` for validation rejects
+      // (e.g. empties verified > empties collected). Surface that distinctly so
+      // the UI shows the actual validation message, not a generic 500.
+      const statusCode = (err as { statusCode?: number }).statusCode;
+      if (statusCode === 400) return sendError(res, message, 400);
       return sendError(res, message, 500);
     }
   }

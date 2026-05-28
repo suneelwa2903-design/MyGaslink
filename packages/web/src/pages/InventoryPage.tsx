@@ -76,6 +76,9 @@ interface ReconciliationVehicle {
   pendingOrderSummaries: PendingOrderSummary[];
   pendingCancelledStockLines: PendingCancelledStockLine[];
   emptiesTypes: ReconciliationEmptyType[];
+  // Open STOCK_MISMATCH pending action exists for this vehicle — the card
+  // surfaces an amber badge until the PA is resolved.
+  mismatchReported?: boolean;
 }
 
 interface ReconciliationConfirmInput {
@@ -84,11 +87,19 @@ interface ReconciliationConfirmInput {
   emptiesReturned?: { cylinderTypeId: string; quantity: number }[];
 }
 
-interface ReconciliationConfirmResult {
-  cancelledStockReturned: number;
-  undeliveredOrdersCancelled: number;
-  emptiesReturned?: number;
-}
+// Discriminated union so the toast handler can't accidentally render undefined
+// fields from the mismatch branch (which doesn't have the count fields).
+type ReconciliationConfirmResult =
+  | {
+      status: 'reconciled';
+      cancelledStockReturned: number;
+      undeliveredOrdersCancelled: number;
+      emptiesReturned?: number;
+    }
+  | {
+      status: 'mismatch_reported';
+      message: string;
+    };
 
 export default function InventoryPage() {
   const queryClient = useQueryClient();
@@ -165,11 +176,24 @@ export default function InventoryPage() {
       data: ReconciliationConfirmInput;
     }) => apiPost<ReconciliationConfirmResult>(`/delivery/reconciliation/confirm/${vehicleId}`, data),
     onSuccess: (result) => {
-      toast.success(
-        `Reconciliation complete: ${result.cancelledStockReturned} stock returned, ${result.undeliveredOrdersCancelled} orders cancelled, ${result.emptiesReturned ?? 0} empties verified`,
-      );
+      if (result.status === 'mismatch_reported') {
+        // Stock mismatch path — no inventory was reconciled. The trip stays
+        // open until the operations team resolves the pending action.
+        toast(
+          'Stock mismatch reported. A pending action has been created for investigation. This trip remains open until resolved.',
+          { icon: '⚠️', duration: 6000 },
+        );
+      } else {
+        // Happy path — fall back to 0 on each count so the template never
+        // renders `undefined` if the server omits an optional field.
+        toast.success(
+          `Reconciliation complete: ${result.cancelledStockReturned ?? 0} stock returned, ${result.undeliveredOrdersCancelled ?? 0} orders cancelled, ${result.emptiesReturned ?? 0} empties verified`,
+        );
+      }
       queryClient.invalidateQueries({ queryKey: ['reconciliation-pending'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      // Refresh the pending-actions list — a mismatch creates a new one.
+      queryClient.invalidateQueries({ queryKey: ['pending-actions'] });
     },
     onError: (err) => toast.error(getErrorMessage(err)),
   });
@@ -871,7 +895,13 @@ function VehicleReturnCard({
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold">{vehicle.vehicleNumber}</h3>
-          <p className="text-sm text-surface-500">
+          {vehicle.mismatchReported && (
+            <p className="mt-1 inline-flex items-center gap-1 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 text-xs px-2 py-0.5">
+              <span aria-hidden>⚠️</span>
+              Mismatch reported — check Pending Actions
+            </p>
+          )}
+          <p className="text-sm text-surface-500 mt-1">
             {lines.length} cancelled-stock line{lines.length === 1 ? '' : 's'}
             {vehicle.pendingUndeliveredOrders > 0
               ? ` · ${vehicle.pendingUndeliveredOrders} undelivered order${vehicle.pendingUndeliveredOrders === 1 ? '' : 's'} will be force-cancelled`
