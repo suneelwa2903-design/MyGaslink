@@ -125,8 +125,10 @@ router.get('/empty-prices/list', async (req, res) => {
 });
 
 // PUT /empty-prices must be before PUT /:id (static beats param in registration order).
+// WI-2: admin-only — deposit price drives downstream mismatch unit-amount calcs;
+// inventory/finance roles must not be able to silently shift those amounts.
 router.put('/empty-prices',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin'),
   validate(emptyPriceSchema),
   auditLog('upsert', 'empty_cylinder_price'),
   async (req, res) => {

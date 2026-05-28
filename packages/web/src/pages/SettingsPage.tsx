@@ -770,17 +770,19 @@ function PricesTab() {
         </Button>
       </div>
 
-      {/* Section 2: Empty Cylinder Prices */}
+      {/* Section 2: Empty Deposit Prices (WI-2 — renamed from "Empty Cylinder
+          Prices"; same underlying empty_cylinder_prices store. Drives Report
+          Mismatch unit-amount calculation downstream.) */}
       <div className="card p-6 space-y-5">
-        <h3 className="font-semibold text-surface-900 dark:text-white">Empty Cylinder Prices</h3>
+        <h3 className="font-semibold text-surface-900 dark:text-white">Empty Deposit Prices</h3>
 
         <div className="table-container">
           <table className="table">
             <thead>
               <tr>
                 <th>Type Name</th>
-                <th>Current Empty Price</th>
-                <th>New Empty Price</th>
+                <th>Current Empty Deposit Price</th>
+                <th>New Empty Deposit Price (₹)</th>
               </tr>
             </thead>
             <tbody>
@@ -797,7 +799,7 @@ function PricesTab() {
                       type="number"
                       min="0"
                       step="0.01"
-                      placeholder="₹ Empty price"
+                      placeholder="₹ Empty deposit price"
                       className="input w-36"
                       value={emptyPriceInputs[ct.cylinderTypeId] ?? ''}
                       onChange={(e) => setEmptyPriceInputs((prev) => ({ ...prev, [ct.cylinderTypeId]: e.target.value }))}
@@ -810,11 +812,13 @@ function PricesTab() {
         </div>
 
         <p className="text-xs text-surface-400">
-          Empty cylinder cost is indicative and shown in customer ledger for accountability.
+          The empty deposit price is the value of one empty cylinder. Used in
+          customer ledgers and in the Report Mismatch unit-amount calculation
+          (Inventory → Vehicle Return).
         </p>
 
         <Button onClick={handleSaveEmptyPrices} loading={emptyPriceMutation.isPending}>
-          Save Empty Prices
+          Save Empty Deposit Prices
         </Button>
       </div>
     </div>

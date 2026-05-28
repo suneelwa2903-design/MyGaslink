@@ -317,6 +317,12 @@ export function mapVehicles(list: VehicleRow[]): MappedRecord[] {
 
 type CylinderTypeInput = CylinderTypeRow & {
   prices?: CylinderPriceRow[];
+  // WI-2: empty deposit price is stored in the EmptyCylinderPrice 1:1
+  // join. We flatten the most-recent value onto each cylinder-type row as
+  // `emptyDepositPrice` so the web/mobile clients no longer need a second
+  // round-trip to /empty-prices/list for the deposit-amount column on the
+  // Settings page / Report Mismatch unit-amount calc.
+  emptyPrices?: Array<{ emptyCylinderPrice: unknown }>;
 };
 
 export function mapCylinderType(ct: CylinderTypeInput | null | undefined): MappedRecord | null | undefined {
@@ -324,6 +330,15 @@ export function mapCylinderType(ct: CylinderTypeInput | null | undefined): Mappe
   const mapped = renameId(ct, 'cylinderTypeId');
   if (mapped.prices) {
     mapped.prices = (mapped.prices as CylinderPriceRow[]).map((p) => renameId(p, 'priceId'));
+  }
+  // WI-2: flatten the deposit price. Prisma returns Decimal; coerce to
+  // number for the wire shape. `null` when no row exists (price not yet
+  // configured for this type).
+  if (ct.emptyPrices && ct.emptyPrices.length > 0) {
+    const v = ct.emptyPrices[0].emptyCylinderPrice;
+    mapped.emptyDepositPrice = v == null ? null : Number(v);
+  } else {
+    mapped.emptyDepositPrice = null;
   }
   return mapped;
 }
