@@ -380,6 +380,7 @@ model Distributor {
   pendingActions        PendingAction[]
   paymentCommitments    PaymentCommitment[]
   accountabilityLogs    AccountabilityLog[]
+  stockMismatchRecords  StockMismatchRecord[]
   auditLogs             AuditLog[]
   licenses              License[]
   gstCredentials        GstCredential[]
@@ -472,6 +473,7 @@ model Customer {
   auditTrail            CustomerAuditTrail[]
   accountabilityLogs    AccountabilityLog[]
   paymentCommitments    PaymentCommitment[]
+  stockMismatchRecords  StockMismatchRecord[]
 
   @@index([distributorId, status])
   @@index([distributorId, customerName])
@@ -607,6 +609,7 @@ model CylinderType {
   thresholds         CylinderThreshold[]
   cancelledStocks    CancelledStockEvent[]
   accountabilityLogs AccountabilityLog[]
+  stockMismatchRecords StockMismatchRecord[]
 
   @@unique([distributorId, typeName])
   @@index([providerCatalogId])
@@ -778,6 +781,7 @@ model Driver {
   driverAssignments    DriverAssignment[]
   accountabilityLogs   AccountabilityLog[]
   cancelledStockEvents CancelledStockEvent[]
+  stockMismatchRecords StockMismatchRecord[]
 
   @@index([distributorId, status])
   @@map("drivers")
@@ -802,6 +806,7 @@ model Vehicle {
   vehicleAssignments DriverVehicleAssignment[]
   vehicleInventory   VehicleInventory[]
   cancelledStockEvents CancelledStockEvent[]
+  stockMismatchRecords StockMismatchRecord[]
 
   @@unique([distributorId, vehicleNumber])
   @@map("vehicles")
@@ -1610,4 +1615,68 @@ model ProviderCatalogCylinderType {
   @@unique([providerCode, shortName])
   @@unique([providerCode, weight])
   @@map("provider_catalog_cylinder_types")
+}
+
+// ─── WI-4 — Stock Mismatch Records (Report Mismatch + Mismatch Log) ─────────
+//
+// One row per (mismatchType × cylinderType) line. All lines from a single
+// "Report Mismatch" submission share a `reportId` UUID so the log can group
+// them visually if needed; otherwise each row is independently filterable.
+
+enum MismatchType {
+  empties_short
+  fulls_short
+  both
+}
+
+enum AccountableParty {
+  driver
+  customer
+}
+
+enum MismatchResolutionAction {
+  write_off
+  settle_against_due
+}
+
+enum MismatchStatus {
+  open
+  resolved
+}
+
+model StockMismatchRecord {
+  id                String                    @id @default(uuid()) @map("mismatch_id")
+  reportId          String                    @map("report_id")
+  distributorId     String                    @map("distributor_id")
+  vehicleId         String                    @map("vehicle_id")
+  vehicleNumber     String                    @map("vehicle_number")
+  driverId          String?                   @map("driver_id")
+  customerId        String?                   @map("customer_id")
+  tripDate          DateTime                  @map("trip_date") @db.Date
+  mismatchType      MismatchType              @map("mismatch_type")
+  cylinderTypeId    String                    @map("cylinder_type_id")
+  qtyUnaccounted    Int                       @map("qty_unaccounted")
+  unitAmount        Decimal                   @map("unit_amount")        @db.Decimal(12, 2)
+  totalAmount       Decimal                   @map("total_amount")       @db.Decimal(14, 2)
+  accountableParty  AccountableParty          @map("accountable_party")
+  resolutionAction  MismatchResolutionAction  @map("resolution_action")
+  resolutionNotes   String                    @map("resolution_notes")
+  status            MismatchStatus            @default(open)
+  resolvedAt        DateTime?                 @map("resolved_at")
+  resolvedBy        String?                   @map("resolved_by")
+  createdBy         String                    @map("created_by")
+  createdAt         DateTime                  @default(now())            @map("created_at")
+  updatedAt         DateTime                  @updatedAt                 @map("updated_at")
+
+  distributor  Distributor  @relation(fields: [distributorId], references: [id])
+  vehicle      Vehicle      @relation(fields: [vehicleId], references: [id])
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+  driver       Driver?      @relation(fields: [driverId], references: [id])
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+
+  @@index([distributorId, status])
+  @@index([distributorId, vehicleId])
+  @@index([distributorId, tripDate])
+  @@index([reportId])
+  @@map("stock_mismatch_records")
 }

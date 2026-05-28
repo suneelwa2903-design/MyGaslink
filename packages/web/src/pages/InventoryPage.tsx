@@ -31,6 +31,7 @@ import {
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { ReportMismatchModal, MismatchLogSection } from '@/components/inventory/ReportMismatchModal';
 import { cn } from '@/lib/cn';
 
 function todayString(): string {
@@ -116,6 +117,9 @@ export default function InventoryPage() {
   const [incomingOpen, setIncomingOpen] = useState(false);
   const [outgoingOpen, setOutgoingOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
+  // WI-4 — Report Mismatch modal is opened per-vehicle from a Vehicle
+  // Return card. Null = closed.
+  const [mismatchVehicle, setMismatchVehicle] = useState<ReconciliationVehicle | null>(null);
 
   // Depot History state
   const [depotPage, setDepotPage] = useState(1);
@@ -574,25 +578,39 @@ export default function InventoryPage() {
       )}
 
       {tab === 'reconciliation' && (
-        reconciliationLoading ? (
-          <div className="flex justify-center py-20"><Loader size="lg" /></div>
-        ) : !reconciliationVehicles?.length ? (
-          <EmptyState
-            title="No vehicles pending"
-            description="All returned vehicles have been reconciled"
-          />
-        ) : (
-          <div className="grid gap-4">
-            {reconciliationVehicles.map((v) => (
-              <VehicleReturnCard
-                key={v.vehicleId}
-                vehicle={v}
-                isPending={reconciliationConfirm.isPending}
-                onConfirm={(input) => reconciliationConfirm.mutate({ vehicleId: v.vehicleId, data: input })}
-              />
-            ))}
-          </div>
-        )
+        <>
+          {reconciliationLoading ? (
+            <div className="flex justify-center py-20"><Loader size="lg" /></div>
+          ) : !reconciliationVehicles?.length ? (
+            <EmptyState
+              title="No vehicles pending"
+              description="All returned vehicles have been reconciled"
+            />
+          ) : (
+            <div className="grid gap-4">
+              {reconciliationVehicles.map((v) => (
+                <VehicleReturnCard
+                  key={v.vehicleId}
+                  vehicle={v}
+                  isPending={reconciliationConfirm.isPending}
+                  onConfirm={(input) => reconciliationConfirm.mutate({ vehicleId: v.vehicleId, data: input })}
+                  onReportMismatch={(target) => setMismatchVehicle(target)}
+                />
+              ))}
+            </div>
+          )}
+          {/* WI-4 — Mismatch & Correction Log (collapsible) */}
+          <MismatchLogSection />
+        </>
+      )}
+
+      {/* WI-4 — Report Mismatch Modal */}
+      {mismatchVehicle && (
+        <ReportMismatchModal
+          vehicle={mismatchVehicle}
+          cylinderTypes={cylinderTypes ?? []}
+          onClose={() => setMismatchVehicle(null)}
+        />
       )}
 
       {/* Incoming Fulls Modal */}
@@ -860,10 +878,12 @@ function VehicleReturnCard({
   vehicle,
   isPending,
   onConfirm,
+  onReportMismatch,
 }: {
   vehicle: ReconciliationVehicle;
   isPending: boolean;
   onConfirm: (input: ReconciliationConfirmInput) => void;
+  onReportMismatch: (v: ReconciliationVehicle) => void;
 }) {
   const [empties, setEmpties] = useState<Record<string, number>>(() =>
     Object.fromEntries(
@@ -994,11 +1014,13 @@ function VehicleReturnCard({
         <Button onClick={submit} disabled={isPending}>
           Confirm &amp; Reconcile
         </Button>
+        {/* WI-4: Report Mismatch now opens a structured 3-step modal that
+            posts to /inventory/mismatch-reports (records + PA + inventory
+            event in one transaction). The legacy generic-PA endpoint is
+            no longer used by this button. */}
         <Button
           variant="secondary"
-          onClick={() =>
-            onConfirm({ physicalStockConfirmed: false, notes: 'Stock mismatch detected' })
-          }
+          onClick={() => onReportMismatch(vehicle)}
           disabled={isPending}
         >
           Report Mismatch

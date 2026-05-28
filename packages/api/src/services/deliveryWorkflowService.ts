@@ -707,7 +707,10 @@ export async function confirmVehicleReconciliation(
  * carry-over bug where a second trip's pre-fill incorrectly included trip 1's
  * already-reconciled collections.
  */
-async function aggregateActiveTripCollections(
+// WI-4 — exported so the mismatch service can read the per-vehicle
+// per-cylinder collected-empties figure to bound qtyUnaccounted against
+// "actual gap" on the empties_short path.
+export async function aggregateActiveTripCollections(
   vehicleId: string,
   distributorId: string,
   vehicleNumber: string | null,

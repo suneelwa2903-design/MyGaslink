@@ -376,4 +376,110 @@ router.get('/reconciliation',
   }
 });
 
+// ─── WI-4 — Stock Mismatch Records ──────────────────────────────────────────
+
+const mismatchLineSchema = z.object({
+  mismatchType: z.enum(['empties_short', 'fulls_short', 'both']),
+  cylinderTypeId: z.string().uuid(),
+  qtyUnaccounted: z.number().int().positive(),
+  unitAmount: z.number().min(0),
+  totalAmount: z.number().min(0),
+});
+
+const createMismatchReportSchema = z.object({
+  vehicleId: z.string().uuid(),
+  tripDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  accountableParty: z.enum(['driver', 'customer']),
+  driverId: z.string().uuid().optional(),
+  customerId: z.string().uuid().optional(),
+  resolutionAction: z.enum(['write_off', 'settle_against_due']),
+  resolutionNotes: z.string().min(1, 'Resolution notes are required').max(1000),
+  lines: z.array(mismatchLineSchema).min(1),
+});
+
+// POST /api/inventory/mismatch-reports
+router.post('/mismatch-reports',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  validate(createMismatchReportSchema),
+  auditLog('create', 'stock_mismatch_report'),
+  async (req, res) => {
+    try {
+      const { createMismatchReport } = await import('../services/stockMismatchService.js');
+      const result = await createMismatchReport(
+        req.user!.distributorId!, req.user!.userId, req.body,
+      );
+      return sendCreated(res, result);
+    } catch (err) {
+      const e = err as { message: string; statusCode?: number };
+      return sendError(res, e.message, e.statusCode ?? 500);
+    }
+  }
+);
+
+// GET /api/inventory/mismatch-reports — paginated, filterable Mismatch Log.
+router.get('/mismatch-reports',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const { listMismatchReports } = await import('../services/stockMismatchService.js');
+      const result = await listMismatchReports(req.user!.distributorId!, {
+        vehicleId: req.query.vehicleId as string | undefined,
+        driverId: req.query.driverId as string | undefined,
+        customerId: req.query.customerId as string | undefined,
+        status: req.query.status as 'open' | 'resolved' | undefined,
+        mismatchType: req.query.mismatchType as 'empties_short' | 'fulls_short' | 'both' | undefined,
+        dateFrom: req.query.dateFrom as string | undefined,
+        dateTo: req.query.dateTo as string | undefined,
+        page: req.query.page ? Number(req.query.page) : undefined,
+        pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
+      });
+      if (req.query.format === 'csv') {
+        const header = ['Date', 'Vehicle', 'Driver/Customer', 'Type', 'Cylinder', 'Qty', 'Unit ₹', 'Total ₹', 'Resolution', 'Status', 'Notes'];
+        const lines = result.data.map((r) => [
+          r.tripDate,
+          r.vehicleNumber,
+          r.accountableParty === 'driver' ? (r.driverName ?? '—') : (r.customerName ?? '—'),
+          r.mismatchType,
+          r.cylinderTypeName,
+          String(r.qtyUnaccounted),
+          String(r.unitAmount),
+          String(r.totalAmount),
+          r.resolutionAction,
+          r.status,
+          (r.resolutionNotes ?? '').replace(/"/g, '""'),
+        ].map((v) => `"${v}"`).join(','));
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="mismatch-log.csv"');
+        return res.send([header.join(','), ...lines].join('\n'));
+      }
+      return sendSuccess(res, result);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// PATCH /api/inventory/mismatch-reports/:id — admin notes/resolution edit
+// within 24 hours of creation.
+router.patch('/mismatch-reports/:id',
+  requireRole('super_admin', 'distributor_admin'),
+  validate(z.object({
+    resolutionNotes: z.string().min(1).max(1000).optional(),
+    resolutionAction: z.enum(['write_off', 'settle_against_due']).optional(),
+  })),
+  auditLog('update', 'stock_mismatch_report'),
+  async (req, res) => {
+    try {
+      const { updateMismatchReport } = await import('../services/stockMismatchService.js');
+      const updated = await updateMismatchReport(
+        req.user!.distributorId!, param(req.params.id), req.body,
+      );
+      return sendSuccess(res, updated);
+    } catch (err) {
+      const e = err as { message: string; statusCode?: number };
+      return sendError(res, e.message, e.statusCode ?? 500);
+    }
+  }
+);
+
 export default router;
