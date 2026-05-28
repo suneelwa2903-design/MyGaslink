@@ -76,7 +76,10 @@ export default function SettingsPage() {
   const allowedTabs = tabs.map((t) => t.key);
   const rawTab = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null;
   const initialTab = rawTab as SettingsTabKey | null;
-  const defaultTab = isOps ? 'cylinders' : 'general';
+  // Admin/super-admin land on Onboarding (the setup checklist) by default;
+  // ops roles (inventory/finance) don't see Onboarding, so they default to
+  // Cylinder Types. A ?tab= query param still overrides either default.
+  const defaultTab = isOps ? 'cylinders' : 'onboarding';
   const [tab, setTab] = useState<SettingsTabKey>(
     initialTab && allowedTabs.includes(initialTab) ? initialTab : defaultTab,
   );
