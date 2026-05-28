@@ -117,6 +117,67 @@ router.post('/manual-adjustment',
   }
 );
 
+// WI-3 — GET /api/inventory/manual-adjustments  (Adjustment History tab)
+// Returns paginated manual_adjustment events with cylinder type + entered-by
+// hydrated. Filter by date range, cylinder type, and bucket (fulls/empties/all).
+// Pass format=csv for a downloadable spreadsheet.
+router.get('/manual-adjustments',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const result = await inventoryService.listManualAdjustments(
+        req.user!.distributorId!,
+        {
+          bucket: req.query.bucket as 'fulls' | 'empties' | 'all' | undefined,
+          cylinderTypeId: req.query.cylinderTypeId as string | undefined,
+          dateFrom: req.query.dateFrom as string | undefined,
+          dateTo: req.query.dateTo as string | undefined,
+          page: req.query.page ? Number(req.query.page) : undefined,
+          pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
+        },
+      );
+      if (req.query.format === 'csv') {
+        const header = ['Date', 'Cylinder Type', 'Bucket', 'Quantity', 'Reason', 'Entered By'];
+        const lines = result.data.map((r) => [
+          r.eventDate.toISOString().slice(0, 10),
+          r.cylinderTypeName,
+          r.bucket,
+          String(r.quantity),
+          (r.reason ?? '').replace(/"/g, '""'),
+          (r.enteredByName ?? '').replace(/"/g, '""'),
+        ].map((v) => `"${v}"`).join(','));
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="manual-adjustments.csv"');
+        return res.send([header.join(','), ...lines].join('\n'));
+      }
+      return sendSuccess(res, result);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// WI-3 — PATCH /api/inventory/manual-adjustments/:id (admin-only)
+// Edit just the notes/reason text on an existing adjustment, within 24h
+// of creation. Numeric change (qty/bucket) is immutable so the summary
+// stays consistent.
+router.patch('/manual-adjustments/:id',
+  requireRole('super_admin', 'distributor_admin'),
+  validate(z.object({ notes: z.string().min(1).max(500) })),
+  auditLog('update', 'manual_adjustment'),
+  async (req, res) => {
+    try {
+      const updated = await inventoryService.updateManualAdjustmentNotes(
+        req.user!.distributorId!, param(req.params.id), req.body.notes,
+      );
+      return sendSuccess(res, mapInventoryEvent(updated));
+    } catch (err) {
+      const e = err as { message: string; statusCode?: number };
+      return sendError(res, e.message, e.statusCode ?? 500);
+    }
+  }
+);
+
 // GET /api/inventory/depot-history
 router.get('/depot-history',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),

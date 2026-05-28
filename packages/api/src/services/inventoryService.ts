@@ -113,6 +113,11 @@ export async function computeSummaryForDate(
   let emptiesReturnedVerified = 0;
   let cancelledStockQty = 0;
   let manualAdjustment = 0;
+  // WI-3: manual_adjustment events now carry both fullsChange AND
+  // emptiesChange (Adjust Stock supports the Empties bucket). Track the
+  // empties side separately so the closingEmpties formula has its own
+  // bucket — keeping the existing closingFulls calc byte-for-byte intact.
+  let manualEmpties = 0;
   // WI-106: dispatch-debit accumulators. Always computed (cheap); only used by
   // the flag-on closingFulls formula below. When the flag is off there are no
   // `dispatch` events and the old formula ignores these, so flag-off totals are
@@ -158,7 +163,13 @@ export async function computeSummaryForDate(
         returnedQty += event.fullsChange;
         break;
       case 'manual_adjustment':
+        // WI-3: a single manual_adjustment event may carry fullsChange OR
+        // emptiesChange (the Adjust Stock modal toggles between them). We
+        // sum each onto its own bucket so the closingFulls calc stays
+        // byte-for-byte intact while closingEmpties picks up the new
+        // manualEmpties term.
         manualAdjustment += event.fullsChange;
+        manualEmpties += event.emptiesChange;
         break;
       case 'initial_balance':
         // Fulls portion → manual adjustment column; empties tracked separately.
@@ -191,11 +202,12 @@ export async function computeSummaryForDate(
   const closingFulls = isDispatchDebitEnabled(distributorId)
     ? openingFulls + incomingFulls - dispatchedQty + returnedQty + manualAdjustment
     : openingFulls + incomingFulls - deliveredQty + cancelledStockQty + manualAdjustment;
-  // New-model closing-empties: only supervisor-verified returns at reconcile +
-  // onboarding initial balance feed the depot balance; delivery-time collection
-  // no longer does. Equivalent under the old model only when verified == collected
-  // (which is rarely true — that's why the old formula systematically over-credited).
-  const closingEmpties = openingEmpties + emptiesReturnedVerified + initialEmpties - outgoingEmpties;
+  // New-model closing-empties: supervisor-verified returns at reconcile +
+  // onboarding initial balance + WI-3 inventory-team manual adjustments
+  // (Adjust Stock → Empties bucket) feed the depot balance; delivery-time
+  // collection no longer does. Equivalent under the old model only when
+  // verified == collected (rarely true — old formula over-credited).
+  const closingEmpties = openingEmpties + emptiesReturnedVerified + initialEmpties + manualEmpties - outgoingEmpties;
 
   return {
     openingFulls,
@@ -444,6 +456,10 @@ export async function recordManualAdjustment(
   userId: string,
   data: {
     cylinderTypeId: string;
+    // WI-3 — defaults to 'fulls' for backward-compat with the original
+    // modal which only adjusted fulls. The Empties bucket flows through
+    // the computeSummaryForDate manualEmpties term.
+    bucket?: 'fulls' | 'empties';
     adjustmentType: 'add' | 'subtract';
     quantity: number;
     reason: string;
@@ -451,6 +467,7 @@ export async function recordManualAdjustment(
   }
 ) {
   const eventDate = new Date(data.adjustmentDate);
+  const bucket = data.bucket ?? 'fulls';
   const change = data.adjustmentType === 'add' ? data.quantity : -data.quantity;
 
   const event = await prisma.$transaction(async (tx) => {
@@ -458,8 +475,8 @@ export async function recordManualAdjustment(
       distributorId,
       cylinderTypeId: data.cylinderTypeId,
       eventType: 'manual_adjustment',
-      fullsChange: change,
-      emptiesChange: 0,
+      fullsChange: bucket === 'fulls' ? change : 0,
+      emptiesChange: bucket === 'empties' ? change : 0,
       eventDate,
       createdBy: userId,
       notes: data.reason,
@@ -471,6 +488,114 @@ export async function recordManualAdjustment(
   // while the transaction is still open (read-committed isolation).
   await recalculateSummariesFromDate(distributorId, data.cylinderTypeId, eventDate);
   return event;
+}
+
+// WI-3 — Adjustment History query. Returns all manual_adjustment events
+// for this distributor with filters and pagination. The createdBy column
+// is a user id; we look up the user inline so the consumer can render
+// "Entered By" without a second round-trip per row.
+export async function listManualAdjustments(
+  distributorId: string,
+  filters: {
+    bucket?: 'fulls' | 'empties' | 'all';
+    cylinderTypeId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    page?: number;
+    pageSize?: number;
+  },
+) {
+  const page = Math.max(1, filters.page ?? 1);
+  const pageSize = Math.min(200, Math.max(1, filters.pageSize ?? 50));
+
+  const where: Prisma.InventoryEventWhereInput = {
+    distributorId,
+    eventType: 'manual_adjustment',
+  };
+  if (filters.cylinderTypeId) where.cylinderTypeId = filters.cylinderTypeId;
+  if (filters.dateFrom || filters.dateTo) {
+    where.eventDate = {};
+    if (filters.dateFrom) where.eventDate.gte = new Date(filters.dateFrom);
+    if (filters.dateTo) where.eventDate.lte = new Date(filters.dateTo);
+  }
+  // bucket filter: a manual_adjustment row is in the Fulls bucket if
+  // fullsChange != 0, Empties bucket if emptiesChange != 0. 'all' = no
+  // bucket filter.
+  if (filters.bucket === 'fulls') where.fullsChange = { not: 0 };
+  else if (filters.bucket === 'empties') where.emptiesChange = { not: 0 };
+
+  const [rows, total] = await Promise.all([
+    prisma.inventoryEvent.findMany({
+      where,
+      include: { cylinderType: { select: { typeName: true } } },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.inventoryEvent.count({ where }),
+  ]);
+
+  // Hydrate createdBy → firstName/lastName for the "Entered By" column.
+  const userIds = Array.from(new Set(rows.map((r) => r.createdBy).filter(Boolean)));
+  const users = userIds.length === 0
+    ? []
+    : await prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, firstName: true, lastName: true, email: true },
+      });
+  const userMap = new Map(users.map((u) => [u.id, u]));
+
+  return {
+    data: rows.map((r) => {
+      const bucket: 'fulls' | 'empties' = r.fullsChange !== 0 ? 'fulls' : 'empties';
+      const quantity = bucket === 'fulls' ? r.fullsChange : r.emptiesChange;
+      const user = userMap.get(r.createdBy);
+      return {
+        eventId: r.id,
+        cylinderTypeId: r.cylinderTypeId,
+        cylinderTypeName: r.cylinderType?.typeName ?? '—',
+        bucket,
+        quantity,
+        reason: r.notes ?? '',
+        eventDate: r.eventDate,
+        createdAt: r.createdAt,
+        enteredByUserId: r.createdBy,
+        enteredByName: user ? `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email : '—',
+      };
+    }),
+    meta: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+  };
+}
+
+// WI-3 — admin-only edit of a manual_adjustment's notes (reason) field,
+// within 24 hours of creation. The numeric change (qty/bucket) is
+// immutable so the closing summary stays consistent — only the
+// human-readable rationale can be corrected.
+export async function updateManualAdjustmentNotes(
+  distributorId: string,
+  eventId: string,
+  notes: string,
+) {
+  const existing = await prisma.inventoryEvent.findFirst({
+    where: { id: eventId, distributorId, eventType: 'manual_adjustment' },
+  });
+  if (!existing) throw new InventoryError('Adjustment not found', 404);
+  const ageMs = Date.now() - existing.createdAt.getTime();
+  if (ageMs > 24 * 3600 * 1000) {
+    throw new InventoryError('Adjustments can only be edited within 24 hours of creation', 400);
+  }
+  return prisma.inventoryEvent.update({
+    where: { id: eventId },
+    data: { notes },
+  });
+}
+
+class InventoryError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
 }
 
 /**

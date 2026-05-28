@@ -29,7 +29,7 @@ import {
   type OutgoingEmptiesInput,
   type ManualAdjustmentInput,
 } from '@gaslink/shared';
-import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -1008,7 +1008,25 @@ function VehicleReturnCard({
   );
 }
 
-// ─── Adjust Stock Modal (WI-080 F2) ──────────────────────────────────────────
+// ─── Adjust Stock Modal (WI-3 — Fulls/Empties toggle + History tab) ─────────
+
+interface ManualAdjustmentHistoryRow {
+  eventId: string;
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  bucket: 'fulls' | 'empties';
+  quantity: number;
+  reason: string;
+  eventDate: string;
+  createdAt: string;
+  enteredByUserId: string;
+  enteredByName: string;
+}
+
+interface AdjustmentHistoryResponse {
+  data: ManualAdjustmentHistoryRow[];
+  meta: { page: number; pageSize: number; total: number; totalPages: number };
+}
 
 function AdjustStockModal({
   open,
@@ -1025,6 +1043,9 @@ function AdjustStockModal({
   submitting: boolean;
   onSubmit: (data: ManualAdjustmentInput) => void;
 }) {
+  const [tab, setTab] = useState<'new' | 'history'>('new');
+  // ── New Adjustment tab state ──
+  const [bucket, setBucket] = useState<'fulls' | 'empties'>('fulls');
   const [cylinderTypeId, setCylinderTypeId] = useState('');
   const [quantity, setQuantity] = useState<string>('');
   const [reason, setReason] = useState('');
@@ -1038,9 +1059,9 @@ function AdjustStockModal({
     if (!Number.isFinite(qty) || qty === 0) return setError('Quantity must be a non-zero number (positive to add, negative to subtract)');
     if (!reason.trim()) return setError('Reason is required');
     setError(null);
-    // API expects adjustmentType + positive quantity; map the signed input.
     onSubmit({
       cylinderTypeId,
+      bucket,
       adjustmentType: qty > 0 ? 'add' : 'subtract',
       quantity: Math.abs(qty),
       reason: reason.trim(),
@@ -1048,37 +1069,227 @@ function AdjustStockModal({
     });
   };
 
+  // ── History tab state ──
+  const [histPage, setHistPage] = useState(1);
+  const [histBucket, setHistBucket] = useState<'all' | 'fulls' | 'empties'>('all');
+  const [histCylinderTypeId, setHistCylinderTypeId] = useState('');
+  const [histFrom, setHistFrom] = useState('');
+  const [histTo, setHistTo] = useState('');
+  const PAGE_SIZE = 50;
+
+  const historyQuery = useQuery<AdjustmentHistoryResponse>({
+    queryKey: ['manual-adjustments', { histPage, histBucket, histCylinderTypeId, histFrom, histTo }],
+    queryFn: () => {
+      const q = new URLSearchParams();
+      q.set('page', String(histPage));
+      q.set('pageSize', String(PAGE_SIZE));
+      if (histBucket !== 'all') q.set('bucket', histBucket);
+      if (histCylinderTypeId) q.set('cylinderTypeId', histCylinderTypeId);
+      if (histFrom) q.set('dateFrom', histFrom);
+      if (histTo) q.set('dateTo', histTo);
+      return apiGet<AdjustmentHistoryResponse>(`/inventory/manual-adjustments?${q.toString()}`);
+    },
+    enabled: open && tab === 'history',
+  });
+
+  const downloadCsv = async () => {
+    // Use the raw `api` axios instance (not apiGet) so we get the Blob
+    // through the auth+distributor interceptors without the envelope
+    // unwrap. Matches the pattern used by PDF downloads elsewhere
+    // (BillingPaymentsPage, OrdersPage, CustomersPage).
+    const params: Record<string, string> = { format: 'csv' };
+    if (histBucket !== 'all') params.bucket = histBucket;
+    if (histCylinderTypeId) params.cylinderTypeId = histCylinderTypeId;
+    if (histFrom) params.dateFrom = histFrom;
+    if (histTo) params.dateTo = histTo;
+    try {
+      const res = await api.get('/inventory/manual-adjustments', { params, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'manual-adjustments.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(getErrorMessage(e));
+    }
+  };
+
   return (
     <Modal open={open} onClose={onClose} title="Adjust Stock">
-      <div className="space-y-4">
-        <Select
-          label="Cylinder Type"
-          options={cylinderOptions}
-          placeholder="Select type"
-          required
-          value={cylinderTypeId}
-          onChange={(e) => setCylinderTypeId(e.target.value)}
-        />
-        <Input
-          label="Quantity (positive = add, negative = subtract)"
-          type="number"
-          placeholder="e.g. 10 or -5"
-          value={quantity}
-          onChange={(e) => setQuantity(e.target.value)}
-        />
-        <Input
-          label="Reason"
-          placeholder="Reason for adjustment"
-          required
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        />
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        <div className="flex justify-end gap-3 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="button" onClick={submit} loading={submitting}>Adjust</Button>
-        </div>
+      {/* Tab strip */}
+      <div className="flex border-b border-surface-200 dark:border-surface-700 mb-4">
+        <button
+          type="button"
+          onClick={() => setTab('new')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+            tab === 'new'
+              ? 'border-brand-500 text-brand-600 dark:text-brand-400'
+              : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300'
+          }`}
+        >
+          New Adjustment
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('history')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+            tab === 'history'
+              ? 'border-brand-500 text-brand-600 dark:text-brand-400'
+              : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300'
+          }`}
+        >
+          Adjustment History
+        </button>
       </div>
+
+      {tab === 'new' ? (
+        <div className="space-y-4">
+          {/* Fulls / Empties toggle */}
+          <div>
+            <label className="label">Bucket</label>
+            <div className="inline-flex rounded-md border border-surface-300 dark:border-surface-700 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setBucket('fulls')}
+                className={`px-4 py-1.5 text-sm font-medium ${
+                  bucket === 'fulls'
+                    ? 'bg-brand-500 text-white'
+                    : 'bg-white dark:bg-surface-800 text-surface-700 dark:text-surface-300'
+                }`}
+              >
+                Fulls
+              </button>
+              <button
+                type="button"
+                onClick={() => setBucket('empties')}
+                className={`px-4 py-1.5 text-sm font-medium ${
+                  bucket === 'empties'
+                    ? 'bg-brand-500 text-white'
+                    : 'bg-white dark:bg-surface-800 text-surface-700 dark:text-surface-300'
+                }`}
+              >
+                Empties
+              </button>
+            </div>
+          </div>
+          <Select
+            label="Cylinder Type"
+            options={cylinderOptions}
+            placeholder="Select type"
+            required
+            value={cylinderTypeId}
+            onChange={(e) => setCylinderTypeId(e.target.value)}
+          />
+          <Input
+            label="Quantity (positive = add, negative = subtract)"
+            type="number"
+            placeholder="e.g. 10 or -5"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+          />
+          <Input
+            label="Reason / Notes"
+            placeholder="Reason for adjustment (required)"
+            required
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          {error && <p className="text-sm text-red-500">{error}</p>}
+          <div className="flex justify-end gap-3 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button type="button" onClick={submit} loading={submitting}>Adjust</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* History filters */}
+          <div className="grid grid-cols-2 gap-3">
+            <Select
+              label="Bucket"
+              options={[
+                { value: 'all', label: 'All' },
+                { value: 'fulls', label: 'Fulls' },
+                { value: 'empties', label: 'Empties' },
+              ]}
+              value={histBucket}
+              onChange={(e) => { setHistPage(1); setHistBucket(e.target.value as 'all' | 'fulls' | 'empties'); }}
+            />
+            <Select
+              label="Cylinder Type"
+              options={[{ value: '', label: 'All' }, ...cylinderOptions]}
+              value={histCylinderTypeId}
+              onChange={(e) => { setHistPage(1); setHistCylinderTypeId(e.target.value); }}
+            />
+            <Input
+              label="From"
+              type="date"
+              value={histFrom}
+              onChange={(e) => { setHistPage(1); setHistFrom(e.target.value); }}
+            />
+            <Input
+              label="To"
+              type="date"
+              value={histTo}
+              onChange={(e) => { setHistPage(1); setHistTo(e.target.value); }}
+            />
+          </div>
+
+          {/* Rows */}
+          <div className="border border-surface-200 dark:border-surface-700 rounded-md overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-50 dark:bg-surface-800/50 text-xs uppercase text-surface-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Cylinder</th>
+                  <th className="px-3 py-2 text-left">Bucket</th>
+                  <th className="px-3 py-2 text-right">Qty</th>
+                  <th className="px-3 py-2 text-left">Reason</th>
+                  <th className="px-3 py-2 text-left">Entered By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyQuery.isLoading ? (
+                  <tr><td colSpan={6} className="px-3 py-4 text-center text-surface-400">Loading…</td></tr>
+                ) : (historyQuery.data?.data.length ?? 0) === 0 ? (
+                  <tr><td colSpan={6} className="px-3 py-4 text-center text-surface-400">No adjustments match these filters.</td></tr>
+                ) : (
+                  historyQuery.data!.data.map((r) => (
+                    <tr key={r.eventId} className="border-t border-surface-200 dark:border-surface-700">
+                      <td className="px-3 py-2 text-surface-600 dark:text-surface-400">{new Date(r.eventDate).toLocaleDateString('en-IN')}</td>
+                      <td className="px-3 py-2 font-medium">{r.cylinderTypeName}</td>
+                      <td className="px-3 py-2 capitalize">{r.bucket}</td>
+                      <td className={`px-3 py-2 text-right font-mono ${r.quantity >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {r.quantity >= 0 ? `+${r.quantity}` : r.quantity}
+                      </td>
+                      <td className="px-3 py-2 text-surface-700 dark:text-surface-300">{r.reason}</td>
+                      <td className="px-3 py-2 text-surface-500">{r.enteredByName}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination + CSV */}
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <Button type="button" variant="secondary" onClick={downloadCsv} disabled={(historyQuery.data?.data.length ?? 0) === 0}>
+              Download CSV
+            </Button>
+            <div className="flex items-center gap-2 text-sm text-surface-500">
+              <Button type="button" variant="secondary" disabled={histPage <= 1} onClick={() => setHistPage((p) => Math.max(1, p - 1))}>
+                Prev
+              </Button>
+              <span>
+                Page {historyQuery.data?.meta.page ?? 1} / {historyQuery.data?.meta.totalPages ?? 1}
+              </span>
+              <Button type="button" variant="secondary" disabled={(historyQuery.data?.meta.totalPages ?? 1) <= histPage} onClick={() => setHistPage((p) => p + 1)}>
+                Next
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

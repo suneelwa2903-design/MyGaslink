@@ -249,8 +249,12 @@ export const outgoingEmptiesSchema = z.object({
   notes: z.string().max(500).optional(),
 });
 
+// WI-3 — Adjust Stock now supports both Fulls and Empties adjustments via
+// a `bucket` discriminator. Existing payloads (no bucket) default to 'fulls'
+// for backward compatibility with the original modal.
 export const manualAdjustmentSchema = z.object({
   cylinderTypeId: uuid,
+  bucket: z.enum(['fulls', 'empties']).default('fulls'),
   adjustmentType: z.enum(['add', 'subtract']),
   quantity: z.number().int().positive(),
   reason: z.string().min(1, 'Reason is required').max(500),
