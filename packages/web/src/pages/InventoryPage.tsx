@@ -652,30 +652,33 @@ type ColKey =
 
 const GROUPS_ORDER: ColGroup[] = ['CORPORATION', 'OPENING', 'ON VEHICLE', 'AT CUSTOMER', 'ADJUSTMENTS', 'CLOSING'];
 
-// 3-colour ramp, each used twice. The 50-stop is the header band, 800 is the
-// title text. Light-blue 50 also doubles as the legend example background.
-const GROUP_COLOR: Record<ColGroup, { band: string; title: string }> = {
-  CORPORATION: { band: 'bg-blue-50 dark:bg-blue-950/40',   title: 'text-blue-800 dark:text-blue-300' },
-  OPENING:     { band: 'bg-amber-50 dark:bg-amber-950/40', title: 'text-amber-800 dark:text-amber-300' },
-  'ON VEHICLE':{ band: 'bg-amber-50 dark:bg-amber-950/40', title: 'text-amber-800 dark:text-amber-300' },
-  'AT CUSTOMER': { band: 'bg-teal-50 dark:bg-teal-950/40', title: 'text-teal-800 dark:text-teal-300' },
-  ADJUSTMENTS: { band: 'bg-teal-50 dark:bg-teal-950/40',   title: 'text-teal-800 dark:text-teal-300' },
-  CLOSING:     { band: 'bg-blue-50 dark:bg-blue-950/40',   title: 'text-blue-800 dark:text-blue-300' },
+// 3-colour ramp, each used twice in an alternating pattern down the columns:
+//   CORPORATION  blue   |  OPENING amber   |  ON VEHICLE teal
+//   AT CUSTOMER  blue   |  ADJUSTMENTS amber  |  CLOSING teal
+// One tint per group, used at all three layers (group header band, inner
+// column header row, and every data cell in the column). Hex values are the
+// saturated 50-stops the user specified — Tailwind's default bg-blue-50 /
+// bg-teal-50 are too pale to register against white. Dark mode uses the
+// matching X-950/40 fill so the same group tint shows through.
+const GROUP_TINT: Record<ColGroup, string> = {
+  CORPORATION:   'bg-[#E6F1FB] dark:bg-blue-950/40',
+  OPENING:       'bg-[#FAEEDA] dark:bg-amber-950/40',
+  'ON VEHICLE':  'bg-[#E1F5EE] dark:bg-teal-950/40',
+  'AT CUSTOMER': 'bg-[#E6F1FB] dark:bg-blue-950/40',
+  ADJUSTMENTS:   'bg-[#FAEEDA] dark:bg-amber-950/40',
+  CLOSING:       'bg-[#E1F5EE] dark:bg-teal-950/40',
 };
 
-// Data-cell tint per group — light-mode hex values for CORPORATION /
-// AT CUSTOMER / ADJUSTMENTS are intentionally slightly more saturated than
-// Tailwind's bg-blue-50 / bg-teal-50 defaults (which render almost white on
-// most displays). OPENING / ON VEHICLE share the same amber; AT CUSTOMER /
-// ADJUSTMENTS share the same teal. Dark mode follows the same 950/40 pattern
-// the group header band already uses.
-const GROUP_CELL_TINT: Record<ColGroup, string> = {
-  CORPORATION:   'bg-[#E6F1FB] dark:bg-blue-950/40',
-  OPENING:       'bg-amber-50 dark:bg-amber-950/40',
-  'ON VEHICLE':  'bg-amber-50 dark:bg-amber-950/40',
-  'AT CUSTOMER': 'bg-[#E1F5EE] dark:bg-teal-950/40',
-  ADJUSTMENTS:   'bg-[#E1F5EE] dark:bg-teal-950/40',
-  CLOSING:       'bg-teal-50 dark:bg-teal-950/40',
+// Title-text colour per group — paired with GROUP_TINT (blue→blue, amber→
+// amber, teal→teal). Used on the group header band and in the Columns
+// dropdown section headings.
+const GROUP_TITLE: Record<ColGroup, string> = {
+  CORPORATION:   'text-blue-800 dark:text-blue-300',
+  OPENING:       'text-amber-800 dark:text-amber-300',
+  'ON VEHICLE':  'text-teal-800 dark:text-teal-300',
+  'AT CUSTOMER': 'text-blue-800 dark:text-blue-300',
+  ADJUSTMENTS:   'text-amber-800 dark:text-amber-300',
+  CLOSING:       'text-teal-800 dark:text-teal-300',
 };
 
 interface ColDef {
@@ -750,7 +753,7 @@ function DailySummary({ inventory }: { inventory: InventorySummary[] }) {
             </div>
             {GROUPS_ORDER.map((g) => (
               <div key={g}>
-                <div className={cn('text-[11px] font-semibold uppercase tracking-wide', GROUP_COLOR[g].title)}>{g}</div>
+                <div className={cn('text-[11px] font-semibold uppercase tracking-wide', GROUP_TITLE[g])}>{g}</div>
                 {COLS.filter((c) => c.group === g).map((c) => (
                   <label key={c.key} className="flex items-center gap-2 py-0.5 cursor-pointer hover:bg-surface-50 dark:hover:bg-surface-700/40 px-1 rounded">
                     <input
@@ -775,15 +778,15 @@ function DailySummary({ inventory }: { inventory: InventorySummary[] }) {
             <tr>
               <th rowSpan={2} className="align-bottom">Cylinder Type</th>
               {visibleGroups.map((g) => (
-                <th key={g.name} colSpan={g.cols.length} className={cn('text-center text-[11px] uppercase tracking-wide', GROUP_COLOR[g.name].band, GROUP_COLOR[g.name].title)}>
+                <th key={g.name} colSpan={g.cols.length} className={cn('text-center text-[11px] uppercase tracking-wide', GROUP_TINT[g.name], GROUP_TITLE[g.name])}>
                   {g.name}
                 </th>
               ))}
-              <th rowSpan={2} className="align-bottom">Status</th>
+              <th rowSpan={2} className={cn('align-bottom', GROUP_TINT.CLOSING)}>Status</th>
             </tr>
             <tr>
               {visibleGroups.flatMap((g) => g.cols.map((c) => (
-                <th key={c.key} className="text-center font-medium text-surface-700 dark:text-surface-300">
+                <th key={c.key} className={cn('text-center font-medium text-surface-700 dark:text-surface-300', GROUP_TINT[c.group])}>
                   {c.label}
                 </th>
               )))}
@@ -801,12 +804,12 @@ function DailySummary({ inventory }: { inventory: InventorySummary[] }) {
                     // Critical-low override for Closing Fulls cell
                     const extra = c.key === 'close_f' && isCritical ? 'text-red-500' : '';
                     return (
-                      <td key={c.key} className={cn('text-center', GROUP_CELL_TINT[c.group], cls, extra)}>
+                      <td key={c.key} className={cn('text-center', GROUP_TINT[c.group], cls, extra)}>
                         {c.render(item)}
                       </td>
                     );
                   }))}
-                  <td className={cn(GROUP_CELL_TINT.CLOSING)}>
+                  <td className={cn(GROUP_TINT.CLOSING)}>
                     <div className="flex gap-1">
                       {isCritical && <Badge variant="danger">Critical</Badge>}
                       {isWarning && !isCritical && <Badge variant="warning">Warning</Badge>}
