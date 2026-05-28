@@ -4,7 +4,7 @@ import { cn } from '@/lib/cn';
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
   error?: string;
-  options: Array<{ value: string; label: string }>;
+  options: Array<{ value: string; label: string; disabled?: boolean }>;
   placeholder?: string;
 }
 
@@ -27,7 +27,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
         >
           {placeholder && <option value="">{placeholder}</option>}
           {options.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
+            <option key={opt.value} value={opt.value} disabled={opt.disabled}>{opt.label}</option>
           ))}
         </select>
         {error && <p className="error-text">{error}</p>}

@@ -213,27 +213,39 @@ export const createDebitNoteSchema = z.object({
 
 // ─── Inventory Schemas ───────────────────────────────────────────────────────
 
+// WI-1.4 — Incoming Fulls modal: "Supply Type" / "Supply Reference No." /
+// "Supply Date" are display labels for documentType / documentNumber /
+// documentDate (backend columns unchanged). `amount` is the optional total
+// invoice value from the corporation, captured for reconciliation.
 export const incomingFullsSchema = z.object({
   cylinderTypeId: uuid,
   quantity: z.number().int().positive(),
-  documentType: z.string().min(1, 'Document type is required').max(50),
+  documentType: z.string().min(1, 'Supply type is required').max(50),
   documentNumber: z.string().min(1).max(100),
   documentDate: dateString,
   vehicleNumber: z.string().max(20).optional(),
   driverName: z.string().max(100).optional(),
   vehicleId: uuid.optional(),
+  amount: nonNegativeNumber.optional(),
   notes: z.string().max(500).optional(),
 });
 
+// WI-1.4 — Outgoing Empties modal: "Challan Type" / "Challan No." /
+// "Challan Date" are display labels for documentType / documentNumber /
+// documentDate. `authorizationRef`, `amount`, `condition` are new metadata
+// fields the modal collects (all optional).
 export const outgoingEmptiesSchema = z.object({
   cylinderTypeId: uuid,
   quantity: z.number().int().positive(),
-  documentType: z.string().min(1, 'Document type is required').max(50),
+  documentType: z.string().min(1, 'Challan type is required').max(50),
   documentNumber: z.string().min(1).max(100),
   documentDate: dateString,
   vehicleNumber: z.string().max(20).optional(),
   driverName: z.string().max(100).optional(),
   vehicleId: uuid.optional(),
+  authorizationRef: z.string().max(100).optional(),
+  amount: nonNegativeNumber.optional(),
+  condition: z.enum(['good', 'defective']).optional(),
   notes: z.string().max(500).optional(),
 });
 

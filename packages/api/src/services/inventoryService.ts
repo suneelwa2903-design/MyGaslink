@@ -24,6 +24,10 @@ export async function createInventoryEvent(
     documentDate?: Date;
     vehicleNumber?: string;
     driverName?: string;
+    // WI-1.4 — captured by the Incoming Fulls / Outgoing Empties modals
+    amount?: number;
+    condition?: 'good' | 'defective';
+    authorizationRef?: string;
     notes?: string;
     createdBy: string;
   }
@@ -43,6 +47,9 @@ export async function createInventoryEvent(
       documentDate: data.documentDate || null,
       vehicleNumber: data.vehicleNumber || null,
       driverName: data.driverName || null,
+      amount: data.amount ?? null,
+      condition: data.condition ?? null,
+      authorizationRef: data.authorizationRef ?? null,
       notes: data.notes || null,
       createdBy: data.createdBy,
     },
@@ -144,7 +151,7 @@ export async function computeSummaryForDate(
         // WI-083a2 — GAP 3: cancelled stock returned from vehicle belongs in the
         // Cancelled column, not Incoming. Both buckets add to closingFulls equally
         // (formula: + cancelledStockQty), so the balance is unchanged — only the
-        // display column changes. Incoming is for IOC refills; this is a return.
+        // display column changes. Incoming is for Corporation refills; this is a return.
         cancelledStockQty += event.fullsChange;
         // WI-106: under the flag-on formula this is the ONLY credit for returned
         // stock (the `cancellation` event is no longer produced).
@@ -302,6 +309,7 @@ export async function recordIncomingFulls(
     documentDate: string;
     vehicleNumber?: string;
     driverName?: string;
+    amount?: number;
     notes?: string;
   }
 ) {
@@ -320,6 +328,7 @@ export async function recordIncomingFulls(
       documentDate: eventDate,
       vehicleNumber: data.vehicleNumber,
       driverName: data.driverName,
+      amount: data.amount,
       createdBy: userId,
       notes: data.notes,
     });
@@ -346,6 +355,9 @@ export async function recordOutgoingEmpties(
     documentDate: string;
     vehicleNumber?: string;
     driverName?: string;
+    authorizationRef?: string;
+    amount?: number;
+    condition?: 'good' | 'defective';
     notes?: string;
   }
 ) {
@@ -364,6 +376,9 @@ export async function recordOutgoingEmpties(
       documentDate: eventDate,
       vehicleNumber: data.vehicleNumber,
       driverName: data.driverName,
+      authorizationRef: data.authorizationRef,
+      amount: data.amount,
+      condition: data.condition,
       createdBy: userId,
       notes: data.notes,
     });

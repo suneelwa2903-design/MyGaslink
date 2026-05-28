@@ -38,7 +38,7 @@ describe('GET /api/reports/:reportType', () => {
     });
   }
 
-  it('vehicle-ledger returns the movement envelope plus an IOC secondary table', async () => {
+  it('vehicle-ledger returns the movement envelope plus a Corporation secondary table', async () => {
     const res = await request(app)
       .get('/api/reports/vehicle-ledger')
       .query({ dateFrom: '2026-05-01', dateTo: '2026-05-31', groupBy: 'day' })
@@ -49,12 +49,12 @@ describe('GET /api/reports/:reportType', () => {
     expect(keys).toContain('fullsDispatched');
     expect(keys).toContain('emptiesReturnedVerified');
     expect(keys).toContain('emptiesGap');
-    // secondary IOC table is always present (may have empty rows).
+    // secondary Corporation table is always present (may have empty rows).
     expect(res.body.data.secondary).toBeTruthy();
-    expect(res.body.data.secondary.title).toMatch(/IOC/);
-    const iocKeys = res.body.data.secondary.columns.map((c: ReportColumn) => c.key);
-    expect(iocKeys).toContain('documentNumber');
-    expect(iocKeys).toContain('quantity');
+    expect(res.body.data.secondary.title).toMatch(/Corporation/);
+    const corporationKeys = res.body.data.secondary.columns.map((c: ReportColumn) => c.key);
+    expect(corporationKeys).toContain('documentNumber');
+    expect(corporationKeys).toContain('quantity');
   });
 
   it('vehicle-ledger groupBy=trip is accepted and returns rows', async () => {

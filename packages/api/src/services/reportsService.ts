@@ -36,7 +36,7 @@ export interface ReportResult {
   totals?: Record<string, unknown>;
   chart?: ReportChart;
   // Optional secondary table rendered above the main grid (e.g. the
-  // depot-level IOC loads table in the Vehicle Ledger report).
+  // depot-level Corporation loads table in the Vehicle Ledger report).
   secondary?: ReportTable;
 }
 
@@ -307,7 +307,7 @@ export async function customerStatement(distributorId: string, f: ReportFilters)
 // Per-vehicle (per-trip or per-day) physical movement of cylinders, built
 // entirely from inventory_events (no new table). Attribution of each event to a
 // vehicle/driver/trip is resolved through the originating order / DVA / cancelled
-// stock event. A depot-level IOC-loads table is returned separately (secondary).
+// stock event. A depot-level Corporation-loads table is returned separately (secondary).
 type LedgerAttr = { vehicleId: string | null; vehicleNumber: string; driverName: string; tripNumber: number | null };
 export async function vehicleLedger(distributorId: string, f: ReportFilters): Promise<ReportResult> {
   const { from, to } = range(f);
@@ -367,9 +367,9 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
     return { vehicleId: null, vehicleNumber: e.vehicleNumber ?? '—', driverName: e.driverName ?? '—', tripNumber: null };
   };
 
-  // ── IOC loads received (depot-level secondary table) ────────────────────────
-  type IocRow = { date: string; documentNumber: string; cylinderType: string; quantity: number };
-  const iocMap = new Map<string, IocRow>();
+  // ── Corporation loads received (depot-level secondary table) ───────────────
+  type CorporationRow = { date: string; documentNumber: string; cylinderType: string; quantity: number };
+  const corporationMap = new Map<string, CorporationRow>();
   // ── Movement rows ──────────────────────────────────────────────────────────
   type MoveRow = {
     date: string; vehicleNumber: string; driverName: string; tripNumber: number | string; cylinderType: string;
@@ -384,9 +384,9 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
       const docNo = e.documentNumber ?? '—';
       const docDate = e.documentDate ? dayKey(new Date(e.documentDate)) : dk;
       const key = `${docDate}|${docNo}|${e.cylinderTypeId}`;
-      const cur = iocMap.get(key) ?? { date: docDate, documentNumber: docNo, cylinderType: e.cylinderType?.typeName ?? '—', quantity: 0 };
+      const cur = corporationMap.get(key) ?? { date: docDate, documentNumber: docNo, cylinderType: e.cylinderType?.typeName ?? '—', quantity: 0 };
       cur.quantity += e.fullsChange;
-      iocMap.set(key, cur);
+      corporationMap.set(key, cur);
       continue;
     }
 
@@ -441,17 +441,17 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
     cancelledReturns: rows.reduce((s, r) => s + r.cancelledReturns, 0),
   };
 
-  const iocRows = [...iocMap.values()].sort((a, b) => (a.date === b.date ? a.documentNumber.localeCompare(b.documentNumber) : a.date.localeCompare(b.date)));
+  const corporationRows = [...corporationMap.values()].sort((a, b) => (a.date === b.date ? a.documentNumber.localeCompare(b.documentNumber) : a.date.localeCompare(b.date)));
   const secondary: ReportTable = {
-    title: 'IOC Loads Received (Depot)',
+    title: 'Corporation Loads Received (Depot)',
     columns: [
       { key: 'date', label: 'Date' },
       { key: 'documentNumber', label: 'Document No' },
       { key: 'cylinderType', label: 'Cylinder Type' },
       { key: 'quantity', label: 'Fulls Received' },
     ],
-    rows: iocRows,
-    totals: { date: 'TOTAL', documentNumber: '', cylinderType: '', quantity: iocRows.reduce((s, r) => s + r.quantity, 0) },
+    rows: corporationRows,
+    totals: { date: 'TOTAL', documentNumber: '', cylinderType: '', quantity: corporationRows.reduce((s, r) => s + r.quantity, 0) },
   };
 
   return {

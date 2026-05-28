@@ -895,12 +895,21 @@ function AssignDriverModal({
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  // WI-079: only drivers with a confirmed vehicle mapping for today can
-  // be assigned (the server auto-resolves the vehicle from that mapping).
-  // Label shows the vehicle number, not the phone.
-  const driverOptions = drivers
-    .filter((d) => d.vehicleNumber)
-    .map((d) => ({ value: d.driverId, label: `${d.driverName} — ${d.vehicleNumber}` }));
+  // WI-079 / Fix 3 — server-side `assignDriver` requires a confirmed
+  // vehicle mapping for the order's delivery date. We surface ALL active
+  // drivers in the dropdown (so the user always sees their roster) and
+  // visually disable the ones with no vehicle today, marked "(no vehicle
+  // today)". When the entire list has no vehicles, we render a helpful
+  // empty-state pointing the user to Fleet → Vehicle Mapping instead of
+  // an empty Select.
+  const driverOptions = drivers.map((d) => ({
+    value: d.driverId,
+    label: d.vehicleNumber
+      ? `${d.driverName} — ${d.vehicleNumber}`
+      : `${d.driverName} — (no vehicle today)`,
+    disabled: !d.vehicleNumber,
+  }));
+  const anyDriverHasVehicle = drivers.some((d) => d.vehicleNumber);
 
   return (
     <Modal open={open} onClose={onClose} title={`Assign Driver - ${order.orderNumber}`}>
@@ -913,6 +922,16 @@ function AssignDriverModal({
           error={errors.driverId?.message}
           {...register('driverId')}
         />
+        {drivers.length === 0 ? (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            No active drivers. Add a driver in Fleet → Drivers first.
+          </p>
+        ) : !anyDriverHasVehicle ? (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            None of your drivers have a confirmed vehicle for today. Set one in
+            Fleet → Vehicle Mapping before assigning.
+          </p>
+        ) : null}
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={mutation.isPending}>Assign</Button>
@@ -953,10 +972,17 @@ function BulkAssignDriverModal({
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  // WI-079: confirmed-vehicle-today filter + vehicle-number label (see AssignDriverModal).
-  const driverOptions = drivers
-    .filter((d) => d.vehicleNumber)
-    .map((d) => ({ value: d.driverId, label: `${d.driverName} — ${d.vehicleNumber}` }));
+  // WI-079 / Fix 3 — see AssignDriverModal. Show all active drivers and
+  // visually disable the ones without a vehicle today, so the dropdown is
+  // never empty when drivers exist.
+  const driverOptions = drivers.map((d) => ({
+    value: d.driverId,
+    label: d.vehicleNumber
+      ? `${d.driverName} — ${d.vehicleNumber}`
+      : `${d.driverName} — (no vehicle today)`,
+    disabled: !d.vehicleNumber,
+  }));
+  const anyDriverHasVehicle = drivers.some((d) => d.vehicleNumber);
 
   return (
     <Modal open={open} onClose={onClose} title={`Bulk Assign Driver (${orderIds.length} orders)`}>
@@ -969,6 +995,16 @@ function BulkAssignDriverModal({
           error={errors.driverId?.message}
           {...register('driverId', { required: 'Driver is required' })}
         />
+        {drivers.length === 0 ? (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            No active drivers. Add a driver in Fleet → Drivers first.
+          </p>
+        ) : !anyDriverHasVehicle ? (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            None of your drivers have a confirmed vehicle for today. Set one in
+            Fleet → Vehicle Mapping before assigning.
+          </p>
+        ) : null}
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={mutation.isPending}>Assign to All</Button>

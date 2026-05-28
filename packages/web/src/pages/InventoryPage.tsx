@@ -1146,11 +1146,23 @@ function IncomingFullsModal({
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
         <Select label="Cylinder Type" options={cylinderOptions} placeholder="Select type" required error={errors.cylinderTypeId?.message} {...register('cylinderTypeId')} />
         <Input label="Quantity" type="number" min={1} required error={errors.quantity?.message} {...register('quantity', { valueAsNumber: true })} />
-        <Input label="Document Type" placeholder="e.g. Delivery Challan" required error={errors.documentType?.message} {...register('documentType')} />
-        <Input label="Document Number" required error={errors.documentNumber?.message} {...register('documentNumber')} />
-        <Input label="Document Date" type="date" required error={errors.documentDate?.message} {...register('documentDate')} />
+        {/* WI-1.4: Document* labels renamed to Supply* in the UI; backend
+            column names (document_type / document_number / document_date)
+            stay the same to preserve historical rows. */}
+        <Input label="Supply Type" placeholder="e.g. Delivery Challan" required error={errors.documentType?.message} {...register('documentType')} />
+        <Input label="Supply Reference No." required error={errors.documentNumber?.message} {...register('documentNumber')} />
+        <Input label="Supply Date" type="date" required error={errors.documentDate?.message} {...register('documentDate')} />
         <Select label="Vehicle" options={vehicleOptions} placeholder="Select vehicle (optional)" {...register('vehicleId')} />
         <Select label="Driver" options={driverOptions} placeholder="Select driver (optional)" {...register('driverName')} />
+        <Input
+          label="Amount (₹)"
+          type="number"
+          min={0}
+          step="0.01"
+          placeholder="Total invoice value from the corporation (optional)"
+          error={errors.amount?.message}
+          {...register('amount', { setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v) })}
+        />
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
@@ -1221,11 +1233,34 @@ function OutgoingEmptiesModal({
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
         <Select label="Cylinder Type" options={cylinderOptions} placeholder="Select type" required error={errors.cylinderTypeId?.message} {...register('cylinderTypeId')} />
         <Input label="Quantity" type="number" min={1} required error={errors.quantity?.message} {...register('quantity', { valueAsNumber: true })} />
-        <Input label="Document Type" placeholder="e.g. Return Challan" required error={errors.documentType?.message} {...register('documentType')} />
-        <Input label="Document Number" required error={errors.documentNumber?.message} {...register('documentNumber')} />
-        <Input label="Document Date" type="date" required error={errors.documentDate?.message} {...register('documentDate')} />
+        {/* WI-1.4: Document* labels renamed to Challan* in the UI; backend
+            column names (document_type / document_number / document_date)
+            stay the same to preserve historical rows. */}
+        <Input label="Challan Type" placeholder="e.g. Return Challan" required error={errors.documentType?.message} {...register('documentType')} />
+        <Input label="Challan No." required error={errors.documentNumber?.message} {...register('documentNumber')} />
+        <Input label="Challan Date" type="date" required error={errors.documentDate?.message} {...register('documentDate')} />
         <Select label="Vehicle" options={vehicleOptions} placeholder="Select vehicle (optional)" {...register('vehicleId')} />
         <Select label="Driver" options={driverOptions} placeholder="Select driver (optional)" {...register('driverName')} />
+        <Input label="Authorization Ref." placeholder="Reference / approval no. (optional)" error={errors.authorizationRef?.message} {...register('authorizationRef')} />
+        <Input
+          label="Amount (₹)"
+          type="number"
+          min={0}
+          step="0.01"
+          placeholder="Value of empties returned (optional)"
+          error={errors.amount?.message}
+          {...register('amount', { setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v) })}
+        />
+        <Select
+          label="Condition"
+          options={[
+            { value: 'good', label: 'Good' },
+            { value: 'defective', label: 'Defective' },
+          ]}
+          placeholder="Select condition (optional)"
+          error={errors.condition?.message}
+          {...register('condition')}
+        />
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
