@@ -13,6 +13,20 @@ import { allocateNumber } from './numberingService.js';
 const legacyOrderNumber = (prefix: string) =>
   `${prefix}-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
 
+// Order total = cylinder subtotal + (transportRate × Σ qty). Transport rate
+// is the customer's GST-inclusive per-cylinder fee. Same basis the invoice
+// uses at delivery time — keeps order.totalAmount and invoice.totalAmount
+// apples-to-apples whenever the rate and quantities match.
+export function computeOrderTotal(
+  cylinderItems: Array<{ totalPrice: number; quantity: number }>,
+  transportRatePerCylinder: number,
+): number {
+  const cylinderSubtotal = cylinderItems.reduce((s, it) => s + it.totalPrice, 0);
+  const totalQty = cylinderItems.reduce((s, it) => s + it.quantity, 0);
+  const transportRate = Math.max(transportRatePerCylinder, 0);
+  return cylinderSubtotal + transportRate * totalQty;
+}
+
 const orderInclude = {
   customer: { select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true } },
   driver: { select: { id: true, driverName: true } },
@@ -93,7 +107,7 @@ export async function createOrder(
   // Validate customer belongs to distributor and supply is not stopped
   const customer = await prisma.customer.findFirst({
     where: { id: data.customerId, distributorId, deletedAt: null },
-    select: { id: true, customerName: true, stopSupply: true, preferredDriverId: true },
+    select: { id: true, customerName: true, stopSupply: true, preferredDriverId: true, transportChargePerCylinder: true },
   });
   if (!customer) throw new OrderError('Customer not found', 404);
   if (customer.stopSupply) throw new OrderError('Supply is stopped for this customer', 400);
@@ -195,7 +209,7 @@ export async function createOrder(
     };
   }));
 
-  const totalAmount = itemsWithPrices.reduce((sum, item) => sum + item.totalPrice, 0);
+  const totalAmount = computeOrderTotal(itemsWithPrices, toNum(customer.transportChargePerCylinder));
 
   // Check preferred driver availability
   let driverId: string | null = null;
@@ -487,7 +501,7 @@ export async function updateOrder(
 ) {
   const order = await prisma.order.findFirst({
     where: { id, distributorId, deletedAt: null },
-    include: { items: true },
+    include: { items: true, customer: { select: { transportChargePerCylinder: true } } },
   });
   if (!order) throw new OrderError('Order not found', 404);
   if (['delivered', 'modified_delivered', 'cancelled'].includes(order.status)) {
@@ -518,7 +532,7 @@ export async function updateOrder(
         data: itemsWithPrices.map(item => ({ orderId: id, ...item })),
       });
 
-      updateData.totalAmount = itemsWithPrices.reduce((sum, item) => sum + item.totalPrice, 0);
+      updateData.totalAmount = computeOrderTotal(itemsWithPrices, toNum(order.customer?.transportChargePerCylinder));
     }
 
     const updated = await tx.order.update({
@@ -745,7 +759,7 @@ export async function confirmDelivery(
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, distributorId, deletedAt: null },
-    include: { items: true, customer: { select: { id: true, creditPeriodDays: true } } },
+    include: { items: true, customer: { select: { id: true, creditPeriodDays: true, transportChargePerCylinder: true } } },
   });
   if (!order) throw new OrderError('Order not found', 404);
   // Returns-only orders are confirmed through the same endpoint — the
@@ -832,15 +846,20 @@ export async function confirmDelivery(
       }
     }
 
-    // Recalculate total based on delivered quantities
-    let newTotal = 0;
-    for (const item of data.items) {
+    // Recalculate total based on delivered quantities + transport fee
+    // (same basis the invoice line uses at delivery time, so post-delivery
+    // order.totalAmount stays apples-to-apples with invoice.totalAmount).
+    const deliveredLines = data.items.map((item) => {
       const orderItem = order.items.find(i => i.cylinderTypeId === item.cylinderTypeId);
-      if (orderItem) {
-        const effectivePrice = Math.max(toNum(orderItem.unitPrice) - toNum(orderItem.discountPerUnit), 0);
-        newTotal += effectivePrice * item.deliveredQuantity;
-      }
-    }
+      const effectivePrice = orderItem
+        ? Math.max(toNum(orderItem.unitPrice) - toNum(orderItem.discountPerUnit), 0)
+        : 0;
+      return {
+        quantity: item.deliveredQuantity,
+        totalPrice: effectivePrice * item.deliveredQuantity,
+      };
+    });
+    const newTotal = computeOrderTotal(deliveredLines, toNum(order.customer?.transportChargePerCylinder));
 
     const updated = await tx.order.update({
       where: { id: orderId },

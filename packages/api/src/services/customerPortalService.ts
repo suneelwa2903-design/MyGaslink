@@ -3,6 +3,7 @@ import type { Prisma, $Enums } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 import { getEffectivePrice } from './cylinderTypeService.js';
 import { computeCustomerOverdue } from './paymentService.js';
+import { computeOrderTotal } from './orderService.js';
 
 /**
  * Get customer dashboard stats.
@@ -320,7 +321,11 @@ export async function modifyMyOrder(
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, customerId, distributorId, deletedAt: null },
-    include: { items: true, invoice: { select: { id: true } } },
+    include: {
+      items: true,
+      invoice: { select: { id: true } },
+      customer: { select: { transportChargePerCylinder: true } },
+    },
   });
   if (!order) throw new PortalError('Order not found', 404);
   // Customer self-modify is allowed only before a driver is assigned. Once a
@@ -349,17 +354,18 @@ export async function modifyMyOrder(
   }
 
   return prisma.$transaction(async (tx) => {
-    let totalAmount = 0;
+    const updatedLines: Array<{ quantity: number; totalPrice: number }> = [];
     for (const it of items) {
       const existing = order.items.find((oi) => oi.cylinderTypeId === it.cylinderTypeId)!;
       const effectivePrice = Math.max(toNum(existing.unitPrice) - toNum(existing.discountPerUnit), 0);
       const totalPrice = effectivePrice * it.quantity;
-      totalAmount += totalPrice;
+      updatedLines.push({ quantity: it.quantity, totalPrice });
       await tx.orderItem.update({
         where: { id: existing.id },
         data: { quantity: it.quantity, totalPrice },
       });
     }
+    const totalAmount = computeOrderTotal(updatedLines, toNum(order.customer?.transportChargePerCylinder));
 
     if (order.invoice) {
       const inv = await tx.invoice.findUnique({ where: { id: order.invoice.id } });

@@ -15,6 +15,7 @@ import { prisma } from '../lib/prisma.js';
 import { logger } from '../utils/logger.js';
 import { toNum } from '../utils/decimal.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
+import { computeOrderTotal } from './orderService.js';
 
 // ─── Customer Delivery Confirmation ─────────────────────────────────────────
 
@@ -56,6 +57,7 @@ export async function customerConfirmDelivery(
     include: {
       items: true,
       invoice: { select: { id: true, status: true, irnStatus: true } },
+      customer: { select: { transportChargePerCylinder: true } },
     },
   });
   if (!order) throw new Error('Order not found');
@@ -103,8 +105,10 @@ export async function customerConfirmDelivery(
 
     // Quantities differ - update items, recalculate, and regenerate invoice
     return prisma.$transaction(async (tx) => {
-      // Update order items with customer-confirmed quantities
-      let newTotal = 0;
+      // Update order items with customer-confirmed quantities, then recompute
+      // totalAmount including the transport fee (cylinderSubtotal + rate × qty)
+      // so the order stays apples-to-apples with the regenerated invoice.
+      const deliveredLines: Array<{ quantity: number; totalPrice: number }> = [];
       for (const ci of data.items!) {
         const orderItem = order.items.find(i => i.cylinderTypeId === ci.cylinderTypeId);
         if (orderItem) {
@@ -116,9 +120,13 @@ export async function customerConfirmDelivery(
             },
           });
           const effectivePrice = Math.max(toNum(orderItem.unitPrice) - toNum(orderItem.discountPerUnit), 0);
-          newTotal += effectivePrice * ci.confirmedDelivered;
+          deliveredLines.push({
+            quantity: ci.confirmedDelivered,
+            totalPrice: effectivePrice * ci.confirmedDelivered,
+          });
         }
       }
+      const newTotal = computeOrderTotal(deliveredLines, toNum(order.customer?.transportChargePerCylinder));
 
       // Update order total
       const isModified = data.items!.some(ci => {
