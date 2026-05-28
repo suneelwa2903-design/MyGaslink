@@ -21,6 +21,7 @@ import {
   type InventoryForecast,
   type CylinderType,
   type Vehicle,
+  type Driver,
   type PaginationMeta,
   incomingFullsSchema,
   type IncomingFullsInput,
@@ -183,6 +184,13 @@ export default function InventoryPage() {
   const { data: vehicles } = useQuery({
     queryKey: ['vehicles-list'],
     queryFn: () => apiGet<{ vehicles: Vehicle[] }>('/vehicles'),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: drivers } = useQuery({
+    queryKey: ['drivers-list'],
+    queryFn: () => apiGet<{ drivers: Driver[] }>('/drivers', { status: 'active' }),
+    select: (d) => d.drivers,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -570,6 +578,7 @@ export default function InventoryPage() {
           onClose={() => setIncomingOpen(false)}
           cylinderTypes={cylinderTypes ?? []}
           vehicles={vehicles?.vehicles ?? []}
+          drivers={drivers ?? []}
           date={selectedDate}
         />
       )}
@@ -1032,12 +1041,14 @@ function IncomingFullsModal({
   onClose,
   cylinderTypes,
   vehicles,
+  drivers,
   date,
 }: {
   open: boolean;
   onClose: () => void;
   cylinderTypes: CylinderType[];
   vehicles: Vehicle[];
+  drivers: Driver[];
   date: string;
 }) {
   const queryClient = useQueryClient();
@@ -1058,19 +1069,28 @@ function IncomingFullsModal({
 
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
   const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
+  const driverOptions = drivers.map((d) => ({ value: d.driverName, label: d.driverName }));
 
-  // Auto-fill Vehicle Number + Driver Name when a vehicle is selected. Both
-  // remain manually editable afterwards (we only setValue on selection, not on
-  // subsequent typing). `currentDriverName` comes from the most recent
-  // assignment of that vehicle (may be null if never assigned).
+  // Vehicle and Driver are dropdowns — no free-text duplicates. Picking a
+  // vehicle copies its plate to the persisted `vehicleNumber` field and
+  // auto-selects the currently-assigned driver if one exists in the active
+  // drivers list. Both can be cleared or changed independently.
   const selectedVehicleId = watch('vehicleId');
   useEffect(() => {
-    if (!selectedVehicleId) return;
+    if (!selectedVehicleId) {
+      setValue('vehicleNumber', '', { shouldDirty: true });
+      return;
+    }
     const v = vehicles.find((x) => x.vehicleId === selectedVehicleId);
     if (!v) return;
-    setValue('vehicleNumber', v.vehicleNumber ?? '', { shouldValidate: false, shouldDirty: true });
-    setValue('driverName', v.currentDriverName ?? '', { shouldValidate: false, shouldDirty: true });
-  }, [selectedVehicleId, vehicles, setValue]);
+    setValue('vehicleNumber', v.vehicleNumber ?? '', { shouldDirty: true });
+    // Auto-select driver only when the vehicle's last assigned driver matches
+    // an active driver row. Otherwise leave driver dropdown alone — user picks.
+    if (v.currentDriverName) {
+      const match = drivers.find((d) => d.driverName === v.currentDriverName);
+      if (match) setValue('driverName', match.driverName, { shouldDirty: true });
+    }
+  }, [selectedVehicleId, vehicles, drivers, setValue]);
 
   return (
     <Modal open={open} onClose={onClose} title="Record Incoming Fulls">
@@ -1080,9 +1100,8 @@ function IncomingFullsModal({
         <Input label="Document Type" placeholder="e.g. Delivery Challan" required error={errors.documentType?.message} {...register('documentType')} />
         <Input label="Document Number" required error={errors.documentNumber?.message} {...register('documentNumber')} />
         <Input label="Document Date" type="date" required error={errors.documentDate?.message} {...register('documentDate')} />
-        <Select label="Vehicle (Optional)" options={vehicleOptions} placeholder="Select vehicle" {...register('vehicleId')} />
-        <Input label="Vehicle Number" placeholder="e.g. KA-01-AB-1234" {...register('vehicleNumber')} />
-        <Input label="Driver Name" placeholder="e.g. Raju" {...register('driverName')} />
+        <Select label="Vehicle" options={vehicleOptions} placeholder="Select vehicle (optional)" {...register('vehicleId')} />
+        <Select label="Driver" options={driverOptions} placeholder="Select driver (optional)" {...register('driverName')} />
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
