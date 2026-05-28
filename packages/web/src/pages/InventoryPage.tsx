@@ -590,6 +590,7 @@ export default function InventoryPage() {
           onClose={() => setOutgoingOpen(false)}
           cylinderTypes={cylinderTypes ?? []}
           vehicles={vehicles?.vehicles ?? []}
+          drivers={drivers ?? []}
           date={selectedDate}
         />
       )}
@@ -1119,16 +1120,18 @@ function OutgoingEmptiesModal({
   onClose,
   cylinderTypes,
   vehicles,
+  drivers,
   date,
 }: {
   open: boolean;
   onClose: () => void;
   cylinderTypes: CylinderType[];
   vehicles: Vehicle[];
+  drivers: Driver[];
   date: string;
 }) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit, formState: { errors } } = useForm<OutgoingEmptiesInput>({
+  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<OutgoingEmptiesInput>({
     resolver: zodResolver(outgoingEmptiesSchema),
     defaultValues: { cylinderTypeId: '', quantity: 1, documentType: '', documentNumber: '', documentDate: date },
   });
@@ -1145,6 +1148,25 @@ function OutgoingEmptiesModal({
 
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
   const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
+  const driverOptions = drivers.map((d) => ({ value: d.driverName, label: d.driverName }));
+
+  // Same shape as the Incoming Fulls modal: Vehicle + Driver are dropdowns,
+  // no free-text duplicates. Vehicle selection sets the persisted plate and
+  // auto-selects the vehicle's current driver if they're in the active list.
+  const selectedVehicleId = watch('vehicleId');
+  useEffect(() => {
+    if (!selectedVehicleId) {
+      setValue('vehicleNumber', '', { shouldDirty: true });
+      return;
+    }
+    const v = vehicles.find((x) => x.vehicleId === selectedVehicleId);
+    if (!v) return;
+    setValue('vehicleNumber', v.vehicleNumber ?? '', { shouldDirty: true });
+    if (v.currentDriverName) {
+      const match = drivers.find((d) => d.driverName === v.currentDriverName);
+      if (match) setValue('driverName', match.driverName, { shouldDirty: true });
+    }
+  }, [selectedVehicleId, vehicles, drivers, setValue]);
 
   return (
     <Modal open={open} onClose={onClose} title="Record Outgoing Empties">
@@ -1154,9 +1176,8 @@ function OutgoingEmptiesModal({
         <Input label="Document Type" placeholder="e.g. Return Challan" required error={errors.documentType?.message} {...register('documentType')} />
         <Input label="Document Number" required error={errors.documentNumber?.message} {...register('documentNumber')} />
         <Input label="Document Date" type="date" required error={errors.documentDate?.message} {...register('documentDate')} />
-        <Select label="Vehicle (Optional)" options={vehicleOptions} placeholder="Select vehicle" {...register('vehicleId')} />
-        <Input label="Vehicle Number" placeholder="e.g. KA-01-AB-1234" {...register('vehicleNumber')} />
-        <Input label="Driver Name" placeholder="e.g. Raju" {...register('driverName')} />
+        <Select label="Vehicle" options={vehicleOptions} placeholder="Select vehicle (optional)" {...register('vehicleId')} />
+        <Select label="Driver" options={driverOptions} placeholder="Select driver (optional)" {...register('driverName')} />
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
