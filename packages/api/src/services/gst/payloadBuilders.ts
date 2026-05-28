@@ -192,7 +192,6 @@ export function buildIrnPayload(data: InvoiceData): IrnPayload {
   let totalCgst = 0;
   let totalSgst = 0;
   let totalIgst = 0;
-  let totalDiscount = 0;
 
   const itemList = data.items.map(item => {
     // Reverse-calculate GST-exclusive price from inclusive price
@@ -218,7 +217,6 @@ export function buildIrnPayload(data: InvoiceData): IrnPayload {
     totalCgst += cgstAmt;
     totalSgst += sgstAmt;
     totalIgst += igstAmt;
-    totalDiscount += discount;
 
     return {
       SlNo: String(item.slNo),
@@ -253,7 +251,6 @@ export function buildIrnPayload(data: InvoiceData): IrnPayload {
   totalCgst = Math.round(totalCgst * 100) / 100;
   totalSgst = Math.round(totalSgst * 100) / 100;
   totalIgst = Math.round(totalIgst * 100) / 100;
-  totalDiscount = Math.round(totalDiscount * 100) / 100;
 
   const totInvVal = Math.round((totalAssVal + totalCgst + totalSgst + totalIgst) * 100) / 100;
 
@@ -311,7 +308,18 @@ export function buildIrnPayload(data: InvoiceData): IrnPayload {
       IgstVal: totalIgst,
       CesVal: 0,
       StCesVal: 0,
-      Discount: totalDiscount,
+      // WI-XXX: ValDtls.Discount is invoice-level (additional) discount, NOT
+      // the sum of per-item discounts. NIC validates:
+      //   TotInvVal = AssVal + ΣTaxes + OthChrg − ValDtls.Discount + RndOffAmt
+      // Per-line discounts are already reflected in each item's AssAmt (and
+      // therefore in AssVal). Putting ΣitemDiscount into ValDtls.Discount
+      // makes NIC subtract those discounts a SECOND time, producing error
+      // 2189 ("Total Invoice Value is not matching with calculated value")
+      // on every invoice that has any non-zero per-item discount. Proven
+      // live on 2026-05-28 with invoice ISHD2627001690 (Maruthi Agencies,
+      // dist-002): payload TotInvVal=37754.20, NIC's expected=32076.23,
+      // diff=5677.97 == exactly ΣitemDiscount.
+      Discount: 0,
       OthChrg: 0,
       RndOffAmt: rndOffAmt,
       TotInvVal: Math.round((totInvVal + rndOffAmt) * 100) / 100,

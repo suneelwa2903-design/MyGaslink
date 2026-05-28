@@ -138,6 +138,68 @@ describe('IRN payload shape validation (NIC /einvoice GENERATE)', () => {
     expect(payload.BuyerDtls.Gstin).toBeTruthy();
     expect(payload.BuyerDtls.Pos).toBeTruthy();
   });
+
+  describe('NIC 2189 guard — ValDtls.Discount must be 0 (anti-pattern #6)', () => {
+    // Bug discovered 2026-05-28 on invoice ISHD2627001690 (Maruthi Agencies,
+    // dist-002). NIC's TotInvVal validation is:
+    //   TotInvVal = AssVal + ΣTax + OthChrg − ValDtls.Discount + RndOffAmt
+    //
+    // ValDtls.Discount represents ADDITIONAL invoice-level discount (on top
+    // of per-line discounts). Per-line discounts are already netted into
+    // each item's AssAmt and therefore into AssVal. Populating
+    // ValDtls.Discount with ΣitemDiscount makes NIC subtract them a
+    // SECOND time, breaking the equation and triggering error 2189
+    // ("Total Invoice Value is not matching with calculated value") on
+    // every B2B invoice that carries any non-zero per-line discount.
+    //
+    // Live sandbox proof:
+    //   payload TotInvVal=37754.20
+    //   NIC's calc with our broken Discount=5677.97 → 32076.23
+    //   diff = 5677.97 = exactly ΣitemDiscount
+    // Fix: ValDtls.Discount is now hard-coded to 0. After the fix the same
+    // invoice generated IRN 1b70ed53641fd77e3eece028842d77b9634c7f5eb3cbe8ccd46dd19cf48103ba
+    // and EWB 141012068496 against the NIC sandbox on first try.
+    it('ValDtls.Discount is always 0 even when items have per-line discounts', () => {
+      const payload = buildIrnPayload(b2bFixture({
+        items: [
+          { slNo: 1, description: '19 KG', hsnCode: '27111900', quantity: 1, unit: 'NOS', unitPrice: 2000, discountPerUnit: 200, gstRate: 18 },
+          { slNo: 2, description: '425 KG', hsnCode: '27111900', quantity: 1, unit: 'NOS', unitPrice: 42000, discountPerUnit: 6000, gstRate: 18 },
+        ],
+      }));
+      expect(payload.ValDtls.Discount).toBe(0);
+    });
+
+    it('Per-line item.Discount is still emitted (invoice-level=0, line-level=actual)', () => {
+      const payload = buildIrnPayload(b2bFixture({
+        items: [
+          { slNo: 1, description: '19 KG', hsnCode: '27111900', quantity: 1, unit: 'NOS', unitPrice: 2000, discountPerUnit: 200, gstRate: 18 },
+        ],
+      }));
+      // ValDtls.Discount=0 but item.Discount=ratio'd discount (200/1.18=169.49)
+      expect(payload.ValDtls.Discount).toBe(0);
+      expect(payload.ItemList[0].Discount).toBeGreaterThan(0);
+    });
+
+    it("NIC's TotInvVal formula closes on a discount-bearing payload", () => {
+      // Re-implements NIC's per-spec validation:
+      //   TotInvVal = AssVal + Cgst + Sgst + Igst + Ces + StCes + OthChrg
+      //               − ValDtls.Discount + RndOffAmt
+      // With our fix (Discount=0), this must equal the TotInvVal we send.
+      const payload = buildIrnPayload(b2bFixture({
+        items: [
+          { slNo: 1, description: '19 KG', hsnCode: '27111900', quantity: 1, unit: 'NOS', unitPrice: 2000, discountPerUnit: 200, gstRate: 18 },
+          { slNo: 2, description: '425 KG', hsnCode: '27111900', quantity: 1, unit: 'NOS', unitPrice: 42000, discountPerUnit: 6000, gstRate: 18 },
+          { slNo: 3, description: '47.5 KG', hsnCode: '27111900', quantity: 1, unit: 'NOS', unitPrice: 4800, discountPerUnit: 500, gstRate: 18 },
+          { slNo: 4, description: '5 KG', hsnCode: '27111900', quantity: 2, unit: 'NOS', unitPrice: 600, discountPerUnit: 0, gstRate: 18 },
+        ],
+      }));
+      const v = payload.ValDtls;
+      const nicCalc = Math.round(
+        (v.AssVal + v.CgstVal + v.SgstVal + v.IgstVal + v.CesVal + v.StCesVal + v.OthChrg - v.Discount + v.RndOffAmt) * 100,
+      ) / 100;
+      expect(nicCalc).toBe(v.TotInvVal);
+    });
+  });
 });
 
 describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separate call after IRN)', () => {
