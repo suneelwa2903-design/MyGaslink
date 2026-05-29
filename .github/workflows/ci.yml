@@ -88,6 +88,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: test
+    # Vite reads `import.meta.env.VITE_API_URL` AT BUILD TIME and bakes it
+    # into the bundle. Without it the web defaults to `/api` (same-origin),
+    # so the deployed SPA POSTs to mygaslink.com/api/* — CloudFront falls
+    # back to index.html → axios parses HTML as JSON → undefined response.
+    env:
+      VITE_API_URL: https://api.mygaslink.com/api
     steps:
       - uses: actions/checkout@v4
         with:
