@@ -258,6 +258,50 @@ driverRouter.put('/assignments/:id/status',
 // Trip screen can render Customer, Items, Status in one round-trip.
 // Returns `null` (HTTP 200) when the driver has no assignment for today —
 // the mobile UI shows an "No active trip" empty state on null.
+// GET /api/drivers/me/events — SSE stream of trip/order events for the
+// authenticated driver. Replaces the 30-second polls in (driver)/orders.tsx
+// and (driver)/trip.tsx — see lib/sseManager.ts for the rationale.
+//
+// The handler ends the response on disconnect; sseManager handles
+// heartbeats and notifyDriver fan-out.
+driverRouter.get('/me/events',
+  requireRole('driver'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
+      if (!driver) {
+        return sendError(res, 'Driver record not found for this user', 404);
+      }
+
+      // SSE response headers. `X-Accel-Buffering: no` is required to defeat
+      // nginx's default proxy_buffering; without it the chunks pile up in
+      // the nginx buffer and the client gets nothing for ~minutes.
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      // Flush headers immediately so the client can begin parsing.
+      res.flushHeaders?.();
+
+      // Initial event so the client knows the stream is live.
+      res.write(`data: ${JSON.stringify({ type: 'connected', driverId: driver.id })}\n\n`);
+
+      const { addConnection, removeConnection } = await import('../lib/sseManager.js');
+      addConnection(driver.id, res);
+
+      const cleanup = () => removeConnection(driver.id, res);
+      req.on('close', cleanup);
+      req.on('error', cleanup);
+      // Do not call next() / sendSuccess — the response stays open until
+      // the client disconnects.
+      return;
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
 driverRouter.get('/me/assignment',
   requireRole('driver'),
   async (req, res) => {

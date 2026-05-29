@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Card, Badge, Button } from '../../src/components/ui';
+import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import { useTheme } from '../../src/theme';
 
 export default function InventoryProfileScreen() {
@@ -57,6 +58,7 @@ export default function InventoryProfileScreen() {
         </Card>
 
         <Button title="Sign Out" variant="danger" onPress={handleLogout} style={{ marginTop: 12 }} />
+        <DeleteAccountButton />
 
         <Text style={{ textAlign: 'center', fontSize: 11, color: colors.textMuted, marginTop: 8 }}>
           MyGasLink v1.0.0

@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
 import { AppHeader } from '../../src/components/AppHeader';
 import { attachAutoSync, startNetworkListener, subscribePendingDeliveries } from '../../src/services/deliveryQueue';
+import { connect as sseConnect, disconnect as sseDisconnect, onEvent as sseOnEvent } from '../../src/services/sseService';
+import { tokenStorage } from '../../src/lib/api';
 
 function PendingBadge({ count }: { count: number }) {
   if (count === 0) return null;
@@ -24,14 +27,62 @@ function PendingBadge({ count }: { count: number }) {
 
 export default function DriverLayout() {
   const dark = useIsDark();
+  const queryClient = useQueryClient();
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
     attachAutoSync();
     const unsubQueue = subscribePendingDeliveries((q) => setPendingCount(q.length));
     const unsubNet = startNetworkListener();
-    return () => { unsubQueue(); unsubNet(); };
-  }, []);
+
+    // SSE — replaces the 30s polls in (driver)/orders.tsx and (driver)/trip.tsx
+    // (see PENDING_ITEMS.md "Push Notifications" for context). The server
+    // pushes a tiny `{type:'order_assigned'|'order_updated'|'trip_updated'}`
+    // signal and we invalidate the relevant TanStack keys so the affected
+    // screen refetches once. notifyDriver is fire-and-forget; if the socket
+    // is down the screens still have their 5-minute fallback poll.
+    let connected = false;
+    tokenStorage
+      .getAccessToken()
+      .then((tok) => {
+        if (!tok) return;
+        sseConnect(tok);
+        connected = true;
+      })
+      .catch(() => {
+        // No token means the driver isn't authenticated yet; the layout
+        // unmounts when they bounce to /(auth)/login anyway.
+      });
+
+    const unsubSse = sseOnEvent((evt) => {
+      switch (evt.type) {
+        case 'order_assigned':
+        case 'order_updated':
+          queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+          break;
+        case 'trip_updated':
+          queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
+          queryClient.invalidateQueries({ queryKey: ['driver-trip-stock'] });
+          queryClient.invalidateQueries({ queryKey: ['driver-trip-ewbs'] });
+          queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+          break;
+        case 'connected':
+          // Handshake — no UI action needed.
+          break;
+        default:
+          // Unknown event type — ignore. Server can add new types without
+          // a mobile rebuild and the client will just no-op.
+          break;
+      }
+    });
+
+    return () => {
+      unsubQueue();
+      unsubNet();
+      unsubSse();
+      if (connected) sseDisconnect();
+    };
+  }, [queryClient]);
 
   return (
     <Tabs screenOptions={{

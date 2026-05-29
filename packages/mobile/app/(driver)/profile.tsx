@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Card, Button } from '../../src/components/ui';
+import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import { useTheme, ACCENT } from '../../src/theme';
 
 export default function DriverProfileScreen() {
@@ -60,6 +61,7 @@ export default function DriverProfileScreen() {
         </Card>
 
         <Button title="Sign Out" variant="danger" onPress={handleLogout} />
+        <DeleteAccountButton />
       </ScrollView>
     </SafeAreaView>
   );

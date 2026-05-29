@@ -1,10 +1,12 @@
 import { useState, useCallback } from 'react';
-import { View, Text, ScrollView, RefreshControl, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { Card, Badge, EmptyState } from '../../src/components/ui';
+import { useAuthStore } from '../../src/stores/authStore';
+import { Card, Badge, Button, EmptyState } from '../../src/components/ui';
+import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import { useTheme } from '../../src/theme';
 
 // ── Sub-tab types ────────────────────────────────────────────────────────────
@@ -99,7 +101,26 @@ type License = {
 export default function SettingsScreen() {
   const router = useRouter();
   const { dark, colors, accent } = useTheme();
+  const logout = useAuthStore((s) => s.logout);
   const [tab, setTab] = useState<SubTab>('general');
+
+  // Match the (driver)/profile.tsx logout pattern exactly so the super-admin
+  // has the same affordance every other role does. Prior to this the super-
+  // admin had no way to sign out in the app — the only escape was clearing
+  // app data, which also wiped the DPDP consent flag and the TanStack cache.
+  const handleLogout = () => {
+    Alert.alert('Logout', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: async () => {
+          await logout();
+          router.replace('/(auth)/login');
+        },
+      },
+    ]);
+  };
 
   // ─ General settings
   const { data: settingsRaw, isLoading: settingsLoading, refetch: refetchSettings } = useApiQuery<
@@ -395,6 +416,10 @@ export default function SettingsScreen() {
             )}
           </>
         )}
+        <View style={{ marginTop: 24, gap: 12 }}>
+          <Button title="Sign Out" variant="danger" onPress={handleLogout} />
+          <DeleteAccountButton />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

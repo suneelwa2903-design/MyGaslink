@@ -7,6 +7,7 @@ import { createInvoiceFromOrder } from './invoiceService.js';
 import { logger } from '../utils/logger.js';
 import { toNum } from '../utils/decimal.js';
 import { allocateNumber } from './numberingService.js';
+import { notifyDriver } from '../lib/sseManager.js';
 
 // WI-108: legacy random order-number generator, kept as the fallback when a
 // distributor has no docCode set (structured numbering not activated).
@@ -620,7 +621,7 @@ export async function assignDriver(
   }
   const vehicleId = mapping.vehicleId;
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const oldStatus = order.status;
     const updated = await tx.order.update({
       where: { id: orderId },
@@ -652,6 +653,18 @@ export async function assignDriver(
 
     return updated;
   });
+
+  // Push an SSE signal AFTER the tx commits. Fire-and-forget — notifyDriver
+  // silently no-ops if the driver isn't connected, and a write failure
+  // inside it just drops the stale connection. Doing this after commit
+  // means a rollback can't cause a phantom signal that the driver would
+  // chase with an empty fetch.
+  notifyDriver(data.driverId, {
+    type: 'order_assigned',
+    payload: { orderId },
+  });
+
+  return result;
 }
 
 export async function bulkAssignDriver(
@@ -1021,6 +1034,16 @@ export async function confirmDelivery(
     }
   } catch { /* GST processing is non-blocking */ }
 
+  // Signal the driver app so the "My Deliveries" list updates without
+  // waiting for the next refetch. order.driverId is captured pre-tx and
+  // can't have changed (confirmDelivery is the terminal status write).
+  if (order.driverId) {
+    notifyDriver(order.driverId, {
+      type: 'order_updated',
+      payload: { orderId, status: 'delivered' },
+    });
+  }
+
   return result;
 }
 
@@ -1123,6 +1146,13 @@ export async function confirmReturnsCollection(
   // Recalculate summaries AFTER transaction commits so events are visible
   for (const item of data.items) {
     await recalculateSummariesFromDate(distributorId, item.cylinderTypeId, order.deliveryDate);
+  }
+
+  if (order.driverId) {
+    notifyDriver(order.driverId, {
+      type: 'order_updated',
+      payload: { orderId, status: 'delivered' },
+    });
   }
 
   return result;

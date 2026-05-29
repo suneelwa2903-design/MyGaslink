@@ -71,10 +71,13 @@ export default function DriverOrdersScreen() {
     ['driver-orders'],
     '/orders',
     { status: 'pending_delivery' },
-    // WI-115: poll every 30s so newly dispatched orders appear without a manual
-    // pull-to-refresh (matches the Trip tab's 30s poll). Pull-to-refresh and
-    // post-submit invalidation still work as before.
-    { refetchInterval: 30_000 },
+    // Polling reduced from 30s → 5min. The driver layout owns an SSE stream
+    // (services/sseService.ts) that invalidates ['driver-orders'] on every
+    // order_assigned / order_updated event, so the screen refetches the
+    // instant the server commits. The 5-min interval is a fallback for the
+    // case where the SSE socket has silently dropped (e.g. cellular handoff)
+    // and reconnect hasn't kicked in yet.
+    { refetchInterval: 300_000 },
   );
   const orders: Order[] = ordersResponse?.orders ?? [];
 

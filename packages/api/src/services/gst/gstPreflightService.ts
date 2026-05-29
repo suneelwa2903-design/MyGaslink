@@ -25,6 +25,7 @@ import { getCredentials, pingEinvoiceSession, GstError } from './whitebooksClien
 import { callWithLog } from './apiLogger.js';
 import { buildIrnPayload, buildEwbPayload } from './payloadBuilders.js';
 import type { EwbResponse, IrnResponse, ConsolidatedEwbResponse } from './nicTypes.js';
+import { notifyDriver } from '../../lib/sseManager.js';
 
 /** The InvoiceData shape consumed by buildIrnPayload (kept un-exported there). */
 type InvoiceData = Parameters<typeof buildIrnPayload>[0];
@@ -370,6 +371,14 @@ export async function preflightDispatch(params: {
         data: { status: 'dispatched' },
       });
     }
+
+    // Push an SSE signal so the driver's Trip tab refreshes the moment
+    // dispatch completes — no more 30s polling wait for the EWB list to
+    // surface and Vehicle Stock to populate.
+    notifyDriver(driverId, {
+      type: 'trip_updated',
+      payload: { dvaId: mapping.id },
+    });
 
     // WI-038: bundle the per-order EWBs into a single consolidated EWB
     // (trip sheet) so the driver carries one printable doc. Single-order

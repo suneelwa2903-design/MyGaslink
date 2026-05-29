@@ -260,25 +260,17 @@ describe('Guard 4 — finance cannot approve a credit note (admin-only gate)', (
     const dist1Inv = await getDist1Invoice();
     if (!dist1Inv) return;
 
-    // Need a real item to pass createCreditNoteSchema.
-    const items = await prisma.invoiceItem.findMany({
-      where: { invoiceId: dist1Inv.id },
-      take: 1,
-    });
-    if (items.length === 0) return;
-
+    // WI-055 (c6849c2) replaced the items-array body with a single
+    // `amount` number. The old test sent `items: [...]` which silently
+    // 400'd zod validation — only visible when a seeded invoice existed
+    // (otherwise the early-return on `!dist1Inv` hid the broken assert).
     const createRes = await request(app)
       .post('/api/invoices/credit-notes')
       .set(auth(dist1FinanceToken))
       .send({
         invoiceId: dist1Inv.id,
         reason: 'Guard 4 role-escalation test',
-        items: [{
-          cylinderTypeId: items[0].cylinderTypeId,
-          quantity: 1,
-          unitPrice: 100,
-          gstRate: 18,
-        }],
+        amount: 100,
       });
     expect(createRes.status).toBe(201);
     const creditNoteId = createRes.body.data?.creditNoteId;
@@ -303,11 +295,6 @@ describe('Guard 4 — finance cannot approve a credit note (admin-only gate)', (
   it('finance cannot reject either — same admin gate covers reject', async () => {
     const dist1Inv = await getDist1Invoice();
     if (!dist1Inv) return;
-    const items = await prisma.invoiceItem.findMany({
-      where: { invoiceId: dist1Inv.id },
-      take: 1,
-    });
-    if (items.length === 0) return;
 
     const createRes = await request(app)
       .post('/api/invoices/credit-notes')
@@ -315,12 +302,7 @@ describe('Guard 4 — finance cannot approve a credit note (admin-only gate)', (
       .send({
         invoiceId: dist1Inv.id,
         reason: 'Guard 4 reject test',
-        items: [{
-          cylinderTypeId: items[0].cylinderTypeId,
-          quantity: 1,
-          unitPrice: 100,
-          gstRate: 18,
-        }],
+        amount: 100,
       });
     const creditNoteId = createRes.body.data?.creditNoteId;
     if (!creditNoteId) return;

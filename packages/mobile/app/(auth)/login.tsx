@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, Alert, Image } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, Alert, Image, Linking } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
 import { apiPost, tokenStorage, getErrorMessage } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useThemeStore } from '../../src/stores/themeStore';
@@ -10,6 +11,23 @@ import { useTheme, ACCENT } from '../../src/theme';
 import StarryBackground from '../../src/components/StarryBackground';
 import type { LoginResponse } from '@gaslink/shared';
 import logo from '../../assets/logo.png';
+
+/**
+ * M13 — DPDP consent gate.
+ *
+ * India's Digital Personal Data Protection Act 2023 requires explicit
+ * consent before collecting/processing personal data. The checkbox below
+ * the password field forces affirmative action on first login on this
+ * device; once consented we persist `dpdp_consent_v1=true` to SecureStore
+ * so the box is pre-checked on subsequent logins. The key is versioned so
+ * a policy change can force re-consent without colliding with the old
+ * value.
+ *
+ * Existing logged-in users never see this screen because authStore.hydrate
+ * routes them straight to their role's home, so we don't block them.
+ */
+const DPDP_CONSENT_KEY = 'dpdp_consent_v1';
+const PRIVACY_POLICY_URL = 'https://mygaslink.com/privacy';
 
 const FEATURE_HIGHLIGHTS = [
   { key: 'tracking', icon: 'location-outline' as const, label: 'Real-time Tracking' },
@@ -26,14 +44,40 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [dpdpConsent, setDpdpConsent] = useState(false);
   const toggleMode = useThemeStore((s) => s.toggleMode);
   const { dark, colors } = useTheme();
 
   const toggleTheme = toggleMode;
 
+  // Pre-fill consent from SecureStore so a returning user who has already
+  // consented doesn't have to tick the box every time they re-authenticate.
+  useEffect(() => {
+    SecureStore.getItemAsync(DPDP_CONSENT_KEY)
+      .then((v) => {
+        if (v === 'true') setDpdpConsent(true);
+      })
+      .catch(() => {
+        // SecureStore read failure is non-fatal — user just has to consent again.
+      });
+  }, []);
+
+  const handleOpenPrivacyPolicy = () => {
+    Linking.openURL(PRIVACY_POLICY_URL).catch(() =>
+      Alert.alert('Could not open browser', PRIVACY_POLICY_URL),
+    );
+  };
+
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
       Alert.alert('Error', 'Please enter email and password');
+      return;
+    }
+    if (!dpdpConsent) {
+      Alert.alert(
+        'Consent required',
+        'Please review and accept the Privacy Policy before signing in.',
+      );
       return;
     }
 
@@ -45,6 +89,13 @@ export default function LoginScreen() {
       });
 
       await tokenStorage.setTokens(result.tokens.accessToken, result.tokens.refreshToken);
+      // Persist the consent only after a successful login so a typo on the
+      // password field doesn't lock in a tick the user might want to revoke.
+      try {
+        await SecureStore.setItemAsync(DPDP_CONSENT_KEY, 'true');
+      } catch {
+        // Non-fatal — they'll just have to consent again next login.
+      }
       setUser(result.user);
 
       if (result.user.requiresPasswordReset) {
@@ -175,6 +226,62 @@ export default function LoginScreen() {
                 Forgot Password?
               </Text>
             </TouchableOpacity>
+
+            {/* M13 — DPDP consent (India DPDP Act 2023). Required before
+                login; persisted in SecureStore as `dpdp_consent_v1` so a
+                returning user only ticks it once per install. The
+                Privacy Policy text inside the label is its own tap target
+                — it opens https://mygaslink.com/privacy without toggling
+                the checkbox. */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+                gap: 10,
+                paddingVertical: 4,
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => setDpdpConsent((v) => !v)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: dpdpConsent }}
+                accessibilityLabel="I agree to the Privacy Policy and consent to processing of my personal data"
+                style={{
+                  width: 20,
+                  height: 20,
+                  marginTop: 1,
+                  borderRadius: 4,
+                  borderWidth: 1.5,
+                  borderColor: dpdpConsent ? flame : colors.inputBorder,
+                  backgroundColor: dpdpConsent ? flame : 'transparent',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {dpdpConsent ? (
+                  <Ionicons name="checkmark" size={14} color="#ffffff" />
+                ) : null}
+              </TouchableOpacity>
+              <Text
+                style={{
+                  flex: 1,
+                  fontSize: 12,
+                  color: colors.textSecondary,
+                  lineHeight: 17,
+                }}
+                onPress={() => setDpdpConsent((v) => !v)}
+              >
+                {'I agree to the '}
+                <Text
+                  style={{ color: flame, fontWeight: '600', textDecorationLine: 'underline' }}
+                  onPress={handleOpenPrivacyPolicy}
+                >
+                  Privacy Policy
+                </Text>
+                {' and consent to processing of my personal data.'}
+              </Text>
+            </View>
 
             {/* Sign In Button — solid flame red (#e11d1d via ACCENT.red),
                 52px tall, 14px radius. No gradient library; the solid brand

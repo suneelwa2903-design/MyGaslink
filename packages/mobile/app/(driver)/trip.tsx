@@ -99,9 +99,10 @@ export default function DriverTripScreen() {
     ['driver-trip-ewbs'],
     '/drivers/me/trip-ewbs',
     undefined,
-    // WI-101: poll every 30s so Compliance Docs picks up EWBs generated at
-    // dispatch without waiting for the first delivery confirm to invalidate.
-    { enabled: gstEnabled, refetchInterval: 30_000 },
+    // Polling reduced from 30s → 5min. The SSE stream wired in
+    // (driver)/_layout.tsx invalidates ['driver-trip-ewbs'] on trip_updated,
+    // so EWBs appear the instant preflightDispatch finishes. Fallback only.
+    { enabled: gstEnabled, refetchInterval: 300_000 },
   );
   const ewbs: TripEwb[] = ewbsResponse?.items ?? [];
   // WI-094c: trip-sheet numbers now come from the trip-ewbs response (so the

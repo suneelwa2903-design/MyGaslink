@@ -9,6 +9,7 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Button, Card } from '../../src/components/ui';
+import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import { useTheme, formatINR } from '../../src/theme';
 
 type ThemeColors = ReturnType<typeof useTheme>['colors'];
@@ -232,6 +233,7 @@ export default function CustomerAccountScreen() {
 
         {/* Logout */}
         <Button title="Sign Out" variant="danger" onPress={handleLogout} style={{ marginTop: 8 }} />
+        <DeleteAccountButton />
       </ScrollView>
 
       {/* Edit Profile Modal */}

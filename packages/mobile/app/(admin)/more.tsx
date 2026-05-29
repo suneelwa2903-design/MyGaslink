@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useAuthStore } from '../../src/stores/authStore';
+import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import type { UserProfile } from '@gaslink/shared';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
 
@@ -2155,6 +2156,8 @@ export default function AdminMoreScreen() {
               </View>
             </View>
           </View>
+          <Divider theme={theme} />
+          <DeleteAccountButton variant="inline" />
         </SectionCard>
 
         {/* ── Logout ──────────────────────────────────────────────── */}

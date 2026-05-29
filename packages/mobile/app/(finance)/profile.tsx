@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme } from '../../src/theme';
 import { Card, Badge, Button } from '../../src/components/ui';
+import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 
 export default function FinanceProfileScreen() {
   const { dark, colors, accent } = useTheme();
@@ -57,6 +58,7 @@ export default function FinanceProfileScreen() {
         </Card>
 
         <Button title="Sign Out" variant="danger" onPress={handleLogout} style={{ marginTop: 12 }} />
+        <DeleteAccountButton />
 
         <Text style={{ textAlign: 'center', fontSize: 11, color: colors.textMuted, marginTop: 8 }}>
           MyGasLink v1.0.0

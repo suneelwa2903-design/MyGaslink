@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
@@ -139,6 +139,28 @@ describe('Assignments — Recommendations', () => {
 });
 
 describe('Assignments — Per-order assign / reassign / unassign', () => {
+  // Defensive re-seed before EACH test so a parallel test file that
+  // deletes one of these DVAs mid-suite cannot break us. Idempotent —
+  // ensureDriverVehicleMapping is find-or-create, so a still-good DVA is
+  // returned unchanged. Belt-and-suspenders on top of the beforeAll seed.
+  beforeEach(async () => {
+    const vehicle = seedData.vehicles[0];
+    await ensureDriverVehicleMapping({
+      distributorId: 'dist-001',
+      driverId: seedData.drivers[0].id,
+      vehicleId: vehicle.id,
+      date: today(),
+    });
+    if (seedData.drivers[1]) {
+      await ensureDriverVehicleMapping({
+        distributorId: 'dist-001',
+        driverId: seedData.drivers[1].id,
+        vehicleId: seedData.vehicles[1]?.id ?? vehicle.id,
+        date: today(),
+      });
+    }
+  });
+
   it('POST /api/orders/:id/assign-driver sets driverId and moves status to pending_dispatch', async () => {
     const driver = seedData.drivers[0];
     const res = await request(app)

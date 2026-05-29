@@ -147,14 +147,20 @@ describe('Fix 1 — GET /api/drivers surfaces vehicle even after DVA reconciles'
       // out reconciled DVAs. The fix surfaces it.
       expect(me!.vehicleNumber).toBeTruthy();
     } finally {
-      // Tear down only what this test created. Don't touch a pre-existing
-      // today DVA so we leave manual testing state alone.
+      // Tear down only what this test created on the far-future date.
+      // Deliberately leave `createdTodayDvaId` in place if we created it:
+      // assignments.test.ts's beforeAll (running in parallel under vitest's
+      // fork pool) calls ensureDriverVehicleMapping for the same
+      // (Raju Kumar, today, dist-001) coordinate. If our finally raced and
+      // deleted this row mid-suite, assignments.test.ts's first assign-
+      // driver test failed with "Driver has no confirmed vehicle mapping".
+      // The created row is structurally identical to what that beforeAll
+      // would have written, so leaving it is a no-op from the next test's
+      // POV. The pre-existing-today guard (skip delete when we didn't
+      // create) was already correct for manual-testing state; this just
+      // extends the same "don't disturb today" rule to the test-created row.
       await prisma.driverVehicleAssignment.delete({ where: { id: dva.id } });
-      if (createdTodayDvaId) {
-        await prisma.driverVehicleAssignment.delete({
-          where: { id: createdTodayDvaId },
-        });
-      }
+      void createdTodayDvaId;
     }
   });
 });
