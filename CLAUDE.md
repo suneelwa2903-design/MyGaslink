@@ -26,7 +26,41 @@ Re-New GasLink is an LPG distribution management SaaS — monorepo with 3 packag
 - `packages/web` — React 19 + Vite + Tailwind + Zustand
 - `packages/mobile` — React Native + Expo 54 + NativeWind
 
-**Status:** Code ~90% built. Testing phase started 2026-03-28. Target: production launch.
+**Status:** Production live as of 2026-05-29. See PRODUCTION STATE below.
+
+---
+
+## PRODUCTION STATE
+
+*Last updated: 2026-05-29*
+
+- **LIVE AT:** mygaslink.com / api.mygaslink.com
+- **SUPER-ADMIN:** suneel@mygaslink.com (password set)
+- **EC2 HEAD:** `58404de` (check with `git log --oneline -1`)
+- **RDS MIGRATIONS:** 17 / 17 applied
+- **TESTS:** 716 passing
+- **`INVENTORY_DISPATCH_DEBIT`:** `true`
+- **`TZ`:** `Asia/Kolkata`
+
+### MUST DO BEFORE FIRST DISTRIBUTOR
+
+1. WhiteBooks production credentials → update `/etc/environment` on EC2
+2. DPDP consent checkbox in mobile app
+3. Account deletion UI in mobile app
+4. SSL cert pinning in mobile (**NON-NEGOTIABLE**)
+5. Push notifications (super-critical — drivers won't get delivery alerts otherwise)
+
+### ANDROID SUBMISSION — 3 steps remaining
+
+1. Ads declaration → "No ads"
+2. Confirm content rating "Submitted"
+3. `eas build --platform android --profile production`
+
+### PARKED (post-launch)
+
+- Monitoring (CloudWatch alarms + UptimeRobot)
+- GitHub billing fix (GH_PAT workaround is in place)
+- Test flakiness (timezone + anti-pattern-guards DB contamination)
 
 ---
 
