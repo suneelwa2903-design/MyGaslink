@@ -183,21 +183,39 @@ export async function bulkConfirmMappings(
     throw err;
   }
 
-  // Delete existing assignments for this date (replace)
-  await prisma.driverVehicleAssignment.deleteMany({
+  // Replace today's DVAs atomically. Reconciliation rows
+  // (reconciliation_empties_returned.dvaId → driver_vehicle_assignments.id) FK
+  // back to the DVAs, with no ON DELETE CASCADE in the schema, so a naive
+  // deleteMany on DVAs that already have a reconciled trip explodes with
+  // "Foreign key constraint violated on reconciliation_empties_returned_dva_id_fkey".
+  // Fix 3 (2026-05-29): delete the reconciliation children in the same
+  // transaction first so the parent delete is unblocked. The whole thing is
+  // wrapped so a mid-step failure leaves the day's DVAs intact.
+  const dvasToReplace = await prisma.driverVehicleAssignment.findMany({
     where: { distributorId, assignmentDate: targetDate },
+    select: { id: true },
   });
+  const dvaIds = dvasToReplace.map((d) => d.id);
 
-  // Create new assignments
-  const created = await prisma.driverVehicleAssignment.createMany({
-    data: toCreate.map(m => ({
-      distributorId,
-      driverId: m.driverId,
-      vehicleId: m.vehicleId,
-      assignmentDate: targetDate,
-      status: 'dispatch_ready' as const,
-      isReconciled: false,
-    })),
+  const created = await prisma.$transaction(async (tx) => {
+    if (dvaIds.length > 0) {
+      await tx.reconciliationEmptiesReturned.deleteMany({
+        where: { distributorId, dvaId: { in: dvaIds } },
+      });
+      await tx.driverVehicleAssignment.deleteMany({
+        where: { id: { in: dvaIds } },
+      });
+    }
+    return tx.driverVehicleAssignment.createMany({
+      data: toCreate.map(m => ({
+        distributorId,
+        driverId: m.driverId,
+        vehicleId: m.vehicleId,
+        assignmentDate: targetDate,
+        status: 'dispatch_ready' as const,
+        isReconciled: false,
+      })),
+    });
   });
 
   return {

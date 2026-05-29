@@ -16,6 +16,17 @@ export async function listDrivers(distributorId: string, status?: string) {
   // produced LOCAL midnight, which on this IST server truncated to the
   // PREVIOUS UTC day, so the Drivers tab showed yesterday's mapping while
   // the Vehicle Mapping tab (UTC date) showed today's.
+  //
+  // Fix 1 (2026-05-29): DO NOT filter by `isReconciled: false`. The Vehicle
+  // Mapping page (getRecommendedMappings) treats every DVA for today —
+  // reconciled or not — as the driver's confirmed mapping for the day, and
+  // the assign-driver dropdown must agree. With the old filter, the
+  // moment a trip reconciled the driver's vehicle disappeared from the
+  // dropdown (label flipped to "(no vehicle today)") while Vehicle Mapping
+  // still showed them as Confirmed. tripNumber++ creates a new DVA for the
+  // next trip so the date+desc ordering still picks the latest DVA for the
+  // day, which is the correct "current vehicle" — reconciliation state is
+  // orthogonal to "which vehicle is this driver on right now".
   const { gte: startOfToday, lt: startOfTomorrow } = utcDayRange();
 
   return prisma.driver.findMany({
@@ -23,7 +34,6 @@ export async function listDrivers(distributorId: string, status?: string) {
     include: {
       vehicleAssignments: {
         where: {
-          isReconciled: false,
           assignmentDate: { gte: startOfToday, lt: startOfTomorrow },
         },
         include: { vehicle: { select: { id: true, vehicleNumber: true } } },

@@ -1138,7 +1138,11 @@ function AdjustStockModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Adjust Stock">
+    <Modal open={open} onClose={onClose} title="Adjust Stock" size="xl">
+      {/* Fix 2 (2026-05-29): widen + raise floor so the history table breathes
+          (min 720×560). The xl Modal size gives ~896px max-width; min-w/h on
+          this inner wrapper guarantees the floor when the form tab is short. */}
+      <div className="min-w-[720px] min-h-[560px]">
       {/* Tab strip */}
       <div className="flex border-b border-surface-200 dark:border-surface-700 mb-4">
         <button
@@ -1257,40 +1261,46 @@ function AdjustStockModal({
             />
           </div>
 
-          {/* Rows */}
+          {/* Rows. Fix 2: tbody scrolls vertically so many rows don't push the
+              pagination off-screen; whitespace-nowrap on cells stops column
+              truncation. Header stays visible while body scrolls. */}
           <div className="border border-surface-200 dark:border-surface-700 rounded-md overflow-hidden">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm table-auto">
               <thead className="bg-surface-50 dark:bg-surface-800/50 text-xs uppercase text-surface-500">
                 <tr>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Cylinder</th>
-                  <th className="px-3 py-2 text-left">Bucket</th>
-                  <th className="px-3 py-2 text-right">Qty</th>
-                  <th className="px-3 py-2 text-left">Reason</th>
-                  <th className="px-3 py-2 text-left">Entered By</th>
+                  <th className="px-3 py-2 text-left whitespace-nowrap">Date</th>
+                  <th className="px-3 py-2 text-left whitespace-nowrap">Cylinder</th>
+                  <th className="px-3 py-2 text-left whitespace-nowrap">Bucket</th>
+                  <th className="px-3 py-2 text-right whitespace-nowrap">Qty</th>
+                  <th className="px-3 py-2 text-left whitespace-nowrap">Reason</th>
+                  <th className="px-3 py-2 text-left whitespace-nowrap">Entered By</th>
                 </tr>
               </thead>
-              <tbody>
-                {historyQuery.isLoading ? (
-                  <tr><td colSpan={6} className="px-3 py-4 text-center text-surface-400">Loading…</td></tr>
-                ) : (historyQuery.data?.data.length ?? 0) === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-4 text-center text-surface-400">No adjustments match these filters.</td></tr>
-                ) : (
-                  historyQuery.data!.data.map((r) => (
-                    <tr key={r.eventId} className="border-t border-surface-200 dark:border-surface-700">
-                      <td className="px-3 py-2 text-surface-600 dark:text-surface-400">{new Date(r.eventDate).toLocaleDateString('en-IN')}</td>
-                      <td className="px-3 py-2 font-medium">{r.cylinderTypeName}</td>
-                      <td className="px-3 py-2 capitalize">{r.bucket}</td>
-                      <td className={`px-3 py-2 text-right font-mono ${r.quantity >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {r.quantity >= 0 ? `+${r.quantity}` : r.quantity}
-                      </td>
-                      <td className="px-3 py-2 text-surface-700 dark:text-surface-300">{r.reason}</td>
-                      <td className="px-3 py-2 text-surface-500">{r.enteredByName}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
             </table>
+            <div className="max-h-[360px] overflow-y-auto">
+              <table className="w-full text-sm table-auto">
+                <tbody>
+                  {historyQuery.isLoading ? (
+                    <tr><td colSpan={6} className="px-3 py-4 text-center text-surface-400">Loading…</td></tr>
+                  ) : (historyQuery.data?.data.length ?? 0) === 0 ? (
+                    <tr><td colSpan={6} className="px-3 py-4 text-center text-surface-400">No adjustments match these filters.</td></tr>
+                  ) : (
+                    historyQuery.data!.data.map((r) => (
+                      <tr key={r.eventId} className="border-t border-surface-200 dark:border-surface-700">
+                        <td className="px-3 py-2 text-surface-600 dark:text-surface-400 whitespace-nowrap">{new Date(r.eventDate).toLocaleDateString('en-IN')}</td>
+                        <td className="px-3 py-2 font-medium whitespace-nowrap">{r.cylinderTypeName}</td>
+                        <td className="px-3 py-2 capitalize whitespace-nowrap">{r.bucket}</td>
+                        <td className={`px-3 py-2 text-right font-mono whitespace-nowrap ${r.quantity >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {r.quantity >= 0 ? `+${r.quantity}` : r.quantity}
+                        </td>
+                        <td className="px-3 py-2 text-surface-700 dark:text-surface-300 whitespace-nowrap">{r.reason}</td>
+                        <td className="px-3 py-2 text-surface-500 whitespace-nowrap">{r.enteredByName}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* Pagination + CSV */}
@@ -1312,6 +1322,7 @@ function AdjustStockModal({
           </div>
         </div>
       )}
+      </div>
     </Modal>
   );
 }
