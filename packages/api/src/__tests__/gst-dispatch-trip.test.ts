@@ -68,7 +68,9 @@ const TEST_DATE = '2099-12-31';
 // vehicle.status='dispatched' (FIX 1), and preflightDispatch always did —
 // so these tests must dispatch a DEDICATED vehicle and reset only it, never
 // the SEEDED dist-002 fleet used by live/manual dispatch testing.
-const TEST_VEHICLE_D2 = 'TEST-DISPATCH-TRIP-D2';
+// 2026-05-30: see note in gst-preflight.test.ts — RTO regex now requires
+// valid Indian plate format before reaching NIC.
+const TEST_VEHICLE_D2 = 'KA01-DT-0002';
 const apiCallMock = whitebooksClient.apiCall as unknown as ReturnType<typeof vi.fn>;
 
 function ewbGenOk(no = '181012000777') {

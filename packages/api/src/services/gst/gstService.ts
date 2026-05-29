@@ -1439,6 +1439,36 @@ const NIC_OUTAGE_PATTERNS = /\b5002\b|\b503\b|temporarily unavailable|service un
  * label). `ctx` carries the invoice / order / customer identifiers that make the
  * message actionable. Pure function (no I/O) so it is unit-testable.
  */
+// NIC error-code surface (added 2026-05-30 after the demo IRN+EWB session
+// surfaced error 225 — invalid vehicle plate — as a useless "failed
+// unexpectedly" pending action). NIC echoes the numeric code in its
+// `{"errorCodes":"NNN,"}` envelope; we pull it out and look up a human-
+// readable remedy. The glossary is intentionally NOT exhaustive — every
+// unknown code falls back to "NIC error N. Raw: …" so the operator at
+// least sees the code and the original message instead of silence.
+const NIC_CODE_RE = /"errorCodes"\s*:\s*"(\d+)/i;
+const NIC_GLOSSARY: Record<string, string> = {
+  '225': 'Invalid vehicle registration number. Update in Fleet → Vehicles to a valid Indian RTO format (e.g. KA01-AB-1234), then click Retry.',
+  '226': 'Invalid transport document number. Contact support.',
+  '616': 'GST JSON validation failed. Check customer GSTIN, pincode and address, then Retry.',
+  '619': 'GST JSON validation failed. Check customer GSTIN, pincode and address, then Retry.',
+  '702': 'NIC could not calculate distance between pincodes. Set transport distance manually, then Retry.',
+  '720': 'Distance exceeds 4000 km limit. Verify pincodes are correct.',
+  '721': 'Zero distance between pincodes. Verify depot and delivery pincodes differ.',
+  '2150': 'Duplicate IRN — already generated for this invoice.',
+  '3028': 'Supplier GSTIN invalid or inactive. Verify GSTIN on the GST portal.',
+  '3029': 'Recipient GSTIN invalid or inactive. Check customer GSTIN in Customers settings.',
+};
+// Backward compat: for codes that overlap with the legacy DUPLICATE / GSTIN /
+// OUTAGE pattern branches, preserve the legacy errorCode value the web pages
+// already consume to pick action-button labels. New codes get `NIC_<code>`.
+const NIC_CODE_LEGACY_ERROR_CODE: Record<string, string> = {
+  '2150': 'DUPLICATE_IRN',
+  '3028': 'GSTIN_INVALID',
+  '3029': 'GSTIN_INVALID',
+  '5002': 'NIC_OUTAGE',
+};
+
 export function buildPendingActionDescription(
   actionType: string,
   rawMessage: string,
@@ -1448,6 +1478,29 @@ export function buildPendingActionDescription(
   const ord = ctx.orderNumber ?? 'this order';
   const who = ctx.customerName ?? 'customer';
   const raw = rawMessage ?? '';
+
+  // First pass: numeric NIC code in the envelope. Matches before the
+  // pattern-bucket checks below so the operator sees the specific remedy.
+  // Falls through to existing patterns when no numeric code is present
+  // (transport-layer errors, locally-raised messages, etc.).
+  const nicMatch = raw.match(NIC_CODE_RE);
+  const nicCode = nicMatch?.[1];
+  if (nicCode) {
+    const remedy = NIC_GLOSSARY[nicCode];
+    const errorCode = NIC_CODE_LEGACY_ERROR_CODE[nicCode] ?? `NIC_${nicCode}`;
+    if (remedy) {
+      return {
+        description: `Invoice ${inv} for ${who}: NIC error ${nicCode} — ${remedy}`,
+        errorCode,
+      };
+    }
+    // Unknown code — still useful: code + raw excerpt so the operator can
+    // search support docs or file a ticket without digging into gst_api_logs.
+    return {
+      description: `Invoice ${inv} for ${who}: NIC error ${nicCode}. Message: ${raw.slice(0, 150)}. Click Retry or contact support.`,
+      errorCode,
+    };
+  }
 
   // Duplicate IRN (NIC 2150) — the IRN likely already exists; admin links it.
   if (DUPLICATE_IRN_PATTERNS.test(raw)) {

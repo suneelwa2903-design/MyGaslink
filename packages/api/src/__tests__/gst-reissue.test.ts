@@ -439,7 +439,9 @@ describe('gstReissueService — delivery mismatch flow', () => {
     // B2C invoice doesn't go through cancelIrn (no irn), only cancelEwb
     // and standalone genewaybill. Vehicle is required for the regen call,
     // so attach it to the order first.
-    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: 'dist-002' } });
+    // Pin to a known-valid seeded plate so vehicle-plate validation
+    // (added 2026-05-30, payloadBuilders Indian RTO regex) does not throw.
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: 'dist-002', vehicleNumber: 'KA01-MN-9999' } });
     await prisma.order.update({ where: { id: f.orderId }, data: { vehicleId: vehicle.id } });
     try {
       apiCallMock
@@ -580,7 +582,9 @@ describe('gstReissueService — delivery mismatch flow', () => {
   it('WI-107: B2B reissue generates a new EWB entry in gst_documents (ewbStatus active, cancelledAt cleared)', async () => {
     const f = await seedReissueFixture({ isB2B: true, withActiveEwb: true });
     // Step 4 needs a vehicle on the order to build the EWB payload.
-    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: 'dist-002' } });
+    // Pin to a valid plate (KA01-MN-9999) — vehicle-plate regex would reject
+    // stale TEST-XX rows that may exist in shared dev DB.
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: 'dist-002', vehicleNumber: 'KA01-MN-9999' } });
     await prisma.order.update({ where: { id: f.orderId }, data: { vehicleId: vehicle.id } });
     try {
       apiCallMock
@@ -615,7 +619,7 @@ describe('gstReissueService — delivery mismatch flow', () => {
 
   it('WI-107: Step 4 EWB failure is non-fatal — IRN revision stays committed, EWB_GENERATION pending action raised', async () => {
     const f = await seedReissueFixture({ isB2B: true, withActiveEwb: false });
-    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: 'dist-002' } });
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: 'dist-002', vehicleNumber: 'KA01-MN-9999' } });
     await prisma.order.update({ where: { id: f.orderId }, data: { vehicleId: vehicle.id } });
     try {
       apiCallMock
@@ -671,7 +675,7 @@ describe('WI-107 — trip-ewbs Compliance Docs shows the new EWB after B2B reiss
     await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     await prisma.driverVehicleAssignment.deleteMany({ where: { driver: { phone: PHONE } } });
     await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
-    await prisma.vehicle.deleteMany({ where: { vehicleNumber: { startsWith: 'TEST-W107-VEH' } } });
+    await prisma.vehicle.deleteMany({ where: { vehicleNumber: { in: ['KA01-W7-1070', 'KA01-WO-1070'] } } });
     await prisma.driver.deleteMany({ where: { phone: PHONE } });
     await prisma.user.deleteMany({ where: { email: { endsWith: '@test-w107.local' } } });
   }
@@ -694,7 +698,7 @@ describe('WI-107 — trip-ewbs Compliance Docs shows the new EWB after B2B reiss
       data: { email: 'driver@test-w107.local', passwordHash, firstName: 'W107', lastName: 'Drv', phone: PHONE, role: 'driver', status: 'active', distributorId: 'dist-002' },
     });
     const driver = await prisma.driver.create({ data: { distributorId: 'dist-002', driverName: 'W107 Drv', phone: PHONE, status: 'active' } });
-    const vehicle = await prisma.vehicle.create({ data: { distributorId: 'dist-002', vehicleNumber: 'TEST-W107-VEH', vehicleType: 'Truck', status: 'dispatched' } });
+    const vehicle = await prisma.vehicle.create({ data: { distributorId: 'dist-002', vehicleNumber: 'KA01-WO-1070', vehicleType: 'Truck', status: 'dispatched' } });
     await prisma.driverVehicleAssignment.create({
       data: { distributorId: 'dist-002', driverId: driver.id, vehicleId: vehicle.id, assignmentDate: TODAY, status: 'loaded_and_dispatched', tripNumber: 1 },
     });

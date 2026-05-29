@@ -406,7 +406,9 @@ describe('B2C reissue EWB — phantom-active guard (WI-091-equivalent)', () => {
     });
     createdOrderIds.push(order.id);
     // Need a vehicle on the order for B2C EWB reissue (it reads vehicleNumber).
-    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: DIST }, select: { id: true } });
+    // Pin to valid plate KA01-MN-9999 so vehicle-plate regex (payloadBuilders)
+    // doesn't reject stale TEST-XX rows in shared dev DB.
+    const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: DIST, vehicleNumber: 'KA01-MN-9999' }, select: { id: true } });
     await prisma.order.update({ where: { id: order.id }, data: { vehicleId: vehicle.id } });
     const invoice = await prisma.invoice.create({
       data: {

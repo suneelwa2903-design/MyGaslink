@@ -30,8 +30,13 @@ import { generateToken, loginAsFinance, loginAsInventory, getOrCreateTestVehicle
 
 // WI-090: dedicated test vehicles so teardown never resets the SEEDED
 // dist-002 / dist-001 fleet used by live/manual dispatch testing.
-const TEST_VEHICLE_D2 = 'TEST-PF-VEHICLE-D2';
-const TEST_VEHICLE_D1 = 'TEST-PF-VEHICLE-D1';
+// 2026-05-30: switched from 'TEST-PF-VEHICLE-D{1,2}' to valid Indian RTO
+// plate format. payloadBuilders.ts now pre-validates vehicleNumber against
+// `^[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}$` before calling NIC — the old strings
+// sanitized to 'TESTPFVEHICLED2', which fails the regex and made every
+// EWB-asserting test in this file see a thrown error instead of the mock.
+const TEST_VEHICLE_D2 = 'KA01-PF-0002';
+const TEST_VEHICLE_D1 = 'KA01-PF-0001';
 
 // ─── Test date isolation ────────────────────────────────────────────────────
 // CLAUDE.md anti-pattern #7: tests that seed time-sensitive data must

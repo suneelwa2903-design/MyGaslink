@@ -1368,21 +1368,38 @@ async function runB2cPreflight(params: {
       ewbNo: parsed.ewbNo, ewbValidTill: parsed.validToDate?.toISOString() ?? null,
     };
   } catch (err: unknown) {
-    const { code, message } = errInfo(err);
-    logger.error('Preflight B2C failed', { orderId, invoiceId, error: message });
+    const { message } = errInfo(err);
+    // Fix 4 (2026-05-30): commit forward, do NOT revert. Aligns the B2C
+    // EWB-throw branch with (a) the B2B EWB-after-IRN catch above which
+    // already commits forward, and (b) the B2C no-ewayBillNo branch
+    // immediately above which also commits forward. Pre-fix behavior
+    // (revert to pending_dispatch + return success:false) was the lone
+    // outlier — it broke the trip-level advance every time a single B2C
+    // order's EWB call threw (NIC error 225 on the live 2026-05-29 demo
+    // session was the proximate failure). The cylinder still leaves the
+    // depot, the operator gets a HIGH pending action to retry the EWB,
+    // and the trip can now advance once that retry succeeds (Fix 3's
+    // tryAdvanceTripAfterRetry).
+    logger.error('Preflight B2C EWB failed — dispatch continues (vehicle loaded)', {
+      orderId, invoiceId, error: message,
+    });
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: { ewbStatus: 'failed' },
     });
-    await revertToPendingDispatch(orderId);
     const pa = await createPendingAction(
       distributorId, invoiceId, 'EWB_GENERATION',
       `Order ${order.orderNumber}: ${message}`,
     );
+    await transitionToPendingDelivery(
+      orderId, userId,
+      `B2C dispatched; EWB pending — ${message.slice(0, 80)}`,
+      tripNumber,
+      buildDispatchCtx(order, vehicleNumber),
+    );
     return {
       orderId, orderNumber: order.orderNumber, customerName,
-      mode: 'B2C', success: false,
-      errorCode: code || 'UNKNOWN',
+      mode: 'B2C', success: true,
       errorMessage: message,
       pendingActionId: pa?.id,
     };
@@ -1423,5 +1440,137 @@ async function upsertLatestGstDocument(args: {
       ...args.data,
     },
   });
+}
+
+/**
+ * Trip auto-advance after a per-invoice GST retry succeeds.
+ *
+ * Background (live IRN+EWB E2E session, 2026-05-29): preflightDispatch advances
+ * `DVA.status → loaded_and_dispatched` only when every order in the batch
+ * succeeded (`failed === 0`, see the gate inside preflightDispatch). When the
+ * admin later fixes the cause and retries via `POST /api/invoices/:id/generate-
+ * gst`, processInvoiceGst updates the invoice but never re-evaluates the trip.
+ * Result: the trip permanently shows "Ready" on the driver app even after all
+ * EWBs are live. This helper closes that gap.
+ *
+ * Behaviour:
+ *   - No-op if the invoice's EWB isn't active (caller checks too, but the
+ *     internal guard makes the helper safely callable from anywhere).
+ *   - Handles the B2C revert edge case from Fix 4: if the order is still at
+ *     `pending_dispatch` (was reverted by the pre-Fix-4 B2C catch branch on a
+ *     prior failed preflight), transition it forward before advancing the trip.
+ *   - Counts "blockers" — any other order on the same (driver, date, trip)
+ *     coordinate still at pending_dispatch/preflight_in_progress, or with a
+ *     failed invoice IRN/EWB status. Only advances when blockers == 0.
+ *
+ * Non-blocking by design: the caller invokes this with a `.catch` so a helper
+ * error never fails the user-visible retry API call.
+ */
+export async function tryAdvanceTripAfterRetry(
+  invoiceId: string,
+  distributorId: string,
+  userId: string,
+): Promise<{ advanced: boolean; dvaId?: string }> {
+  // Step 1: invoice → order
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, distributorId },
+    select: { orderId: true, ewbStatus: true },
+  });
+  if (!invoice?.orderId || invoice.ewbStatus !== 'active') {
+    return { advanced: false };
+  }
+
+  // Step 2: order → driver + date + status
+  const order = await prisma.order.findUnique({
+    where: { id: invoice.orderId },
+    select: {
+      driverId: true,
+      deliveryDate: true,
+      distributorId: true,
+      tripNumber: true,
+      status: true,
+    },
+  });
+  if (!order?.driverId) {
+    return { advanced: false };
+  }
+
+  // Step 3: handle the B2C revert edge case. If the order is still at
+  // pending_dispatch (i.e. was reverted by the pre-Fix-4 B2C catch branch on a
+  // prior failed preflight), transition it forward to pending_delivery first —
+  // otherwise the blockers count below would see this order itself as a
+  // blocker and we'd never advance.
+  if (order.status === 'pending_dispatch') {
+    await transitionToPendingDelivery(
+      invoice.orderId,
+      userId,
+      'EWB retry succeeded — advancing order to pending_delivery',
+      order.tripNumber ?? undefined,
+      undefined,
+    );
+  }
+
+  // Step 4: find the dispatch-ready DVA for this driver+date. Iterate from the
+  // highest tripNumber so a partial-recovery on an old trip doesn't pick up the
+  // wrong DVA. If the DVA is already loaded_and_dispatched (someone else got
+  // there first) we do nothing — the trip is already advanced.
+  const dva = await prisma.driverVehicleAssignment.findFirst({
+    where: {
+      driverId: order.driverId,
+      distributorId,
+      assignmentDate: order.deliveryDate,
+      status: 'dispatch_ready',
+    },
+    orderBy: { tripNumber: 'desc' },
+    select: { id: true, vehicleId: true, tripNumber: true },
+  });
+  if (!dva) {
+    return { advanced: false };
+  }
+
+  // Step 5: count remaining blockers on this trip. A "blocker" is any other
+  // order on the same coordinate that would also need to be fixed before the
+  // trip can legitimately advance.
+  const blockers = await prisma.order.count({
+    where: {
+      driverId: order.driverId,
+      distributorId,
+      deliveryDate: order.deliveryDate,
+      tripNumber: dva.tripNumber,
+      deletedAt: null,
+      OR: [
+        { status: { in: ['pending_dispatch', 'preflight_in_progress'] } },
+        { invoice: { ewbStatus: { in: ['failed', 'pending'] } } },
+        { invoice: { irnStatus: 'failed' } },
+      ],
+    },
+  });
+  if (blockers > 0) {
+    return { advanced: false };
+  }
+
+  // Step 6: all clear — advance DVA + vehicle, fire the SSE notify. Mirrors the
+  // happy-path block inside preflightDispatch but skips the consolidated EWB
+  // (gencewb) regeneration — that's a best-effort post-dispatch artefact, and
+  // re-issuing it on a partial-recovery path can race the driver's existing
+  // trip sheet. Deferring to the next full preflight is safer.
+  await prisma.driverVehicleAssignment.update({
+    where: { id: dva.id },
+    data: {
+      status: 'loaded_and_dispatched',
+      dispatchedAt: new Date(),
+    },
+  });
+  if (dva.vehicleId) {
+    await prisma.vehicle.update({
+      where: { id: dva.vehicleId },
+      data: { status: 'dispatched' },
+    });
+  }
+  notifyDriver(order.driverId, {
+    type: 'trip_updated',
+    payload: { dvaId: dva.id },
+  });
+  return { advanced: true, dvaId: dva.id };
 }
 

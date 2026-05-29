@@ -11,6 +11,8 @@ import {
 import * as invoiceService from '../services/invoiceService.js';
 import { mapInvoice, mapInvoices, mapCreditNote, mapDebitNote } from '../utils/mappers.js';
 import * as gstService from '../services/gst/gstService.js';
+import { tryAdvanceTripAfterRetry } from '../services/gst/gstPreflightService.js';
+import { logger } from '../utils/logger.js';
 import { generateInvoicePdf } from '../services/pdf/invoicePdfService.js';
 import { generateCreditNotePdf } from '../services/pdf/creditNotePdfService.js';
 import { generateDebitNotePdf } from '../services/pdf/debitNotePdfService.js';
@@ -198,9 +200,22 @@ router.post('/:id/generate-gst',
   auditLog('generate_gst', 'invoice'),
   async (req, res) => {
     try {
-      const result = await gstService.processInvoiceGst(
-        param(req.params.id), req.user!.distributorId!
-      );
+      const invoiceId = param(req.params.id);
+      const distributorId = req.user!.distributorId!;
+      const result = await gstService.processInvoiceGst(invoiceId, distributorId);
+      // Fix 3 (2026-05-30): if the retry produced an active EWB, ask the trip-
+      // advance helper to re-evaluate the DVA. Fire-and-forget; a helper error
+      // must never fail the user-visible retry call.
+      // `result` is a union — narrow out the skipped/disabled branch first.
+      const ewbStatus = 'ewb' in result ? result.ewb?.status : undefined;
+      if (ewbStatus === 'active' || ewbStatus === 'already_exists') {
+        void tryAdvanceTripAfterRetry(invoiceId, distributorId, req.user!.userId).catch((err) => {
+          logger.warn('tryAdvanceTripAfterRetry non-blocking failure', {
+            invoiceId,
+            err: (err as Error).message,
+          });
+        });
+      }
       return sendSuccess(res, result);
     } catch (err: unknown) {
       const e = err as ServiceError;

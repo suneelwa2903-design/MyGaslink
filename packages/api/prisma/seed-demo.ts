@@ -53,13 +53,20 @@ function daysAgoUtc(n: number): Date {
 }
 
 // ─── Stable IDs — keep upserts deterministic across runs ──────────────────────
+// All PK constants are valid v4-shaped UUIDs. The original seed used readable
+// slugs ('demo-customer-foods' etc.), which the API's Zod schemas reject in
+// every POST/PUT body (createOrderSchema.customerId is `z.string().uuid()`).
+// Distributor.id stays as a slug because it's surfaced via the X-Distributor-Id
+// header (not UUID-validated). User.email is the user's natural key, also
+// outside UUID validation. The variant digit in position 13 is '4' (v4) and
+// position 17 is '8' so they parse as valid UUIDs.
 const DEMO = {
   distributorId: 'dist-demo',
-  customerB2cId: 'demo-customer-foods',
-  customerB2bInterId: 'demo-customer-caterers',
-  customerB2bIntraId: 'demo-customer-agencies',
-  driverId: 'demo-driver-1',
-  vehicleId: 'demo-vehicle-1',
+  customerB2cId: 'a0000000-0000-4000-8000-000000000001',
+  customerB2bInterId: 'a0000000-0000-4000-8000-000000000002',
+  customerB2bIntraId: 'a0000000-0000-4000-8000-000000000003',
+  driverId: 'a0000000-0000-4000-8000-000000000010',
+  vehicleId: 'a0000000-0000-4000-8000-000000000020',
   adminUserEmail: 'demo@gasdist.com',
   financeUserEmail: 'demo.finance@gasdist.com',
   inventoryUserEmail: 'demo.inventory@gasdist.com',
@@ -268,14 +275,14 @@ async function main(): Promise<void> {
     where: {
       distributorId_vehicleNumber: {
         distributorId: distributor.id,
-        vehicleNumber: 'DEMO-MN-0001',
+        vehicleNumber: 'KA01-DM-0001',
       },
     },
     update: {},
     create: {
       id: DEMO.vehicleId,
       distributorId: distributor.id,
-      vehicleNumber: 'DEMO-MN-0001',
+      vehicleNumber: 'KA01-DM-0001',
       vehicleType: 'Truck',
       capacity: 80,
       status: 'idle',

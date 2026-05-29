@@ -437,11 +437,30 @@ export function buildEwbPayload(
   const vals = irnPayload.ValDtls;
   const doc = irnPayload.DocDtls;
 
-  // Sanitize vehicle number
+  // Sanitize vehicle number to NIC's expected shape: uppercase, alphanumeric
+  // only, max 15 chars. Hyphens / spaces in the human-friendly form
+  // ("KA01-AB-1234") get stripped here.
   const vehicleNo = transportDetails.vehicleNumber
     .replace(/[^A-Za-z0-9]/g, '')
     .toUpperCase()
     .substring(0, 15);
+
+  // Pre-validate against the Indian RTO plate shape BEFORE NIC sees it. NIC
+  // otherwise responds with the cryptic error 225 (encountered live on
+  // 2026-05-29 with the demo vehicle 'DEMO-MN-0001' → 'DEMOMN0001' — "DEMO" is
+  // not a valid state code). The regex covers the standard format:
+  //   [state code: 2 letters][RTO district: 1-2 digits][series: 1-3 letters][number: 4 digits]
+  // e.g. KA01AB1234, MH12ABC1234, TS09AB1234. BH-series ("BH01A1234") and
+  // diplomatic/CD plates are not covered — they're unusual on commercial fleets
+  // and worth surfacing as a manual override if they ever come up.
+  const VALID_PLATE = /^[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}$/;
+  if (!VALID_PLATE.test(vehicleNo)) {
+    throw new Error(
+      `Invalid vehicle registration number "${transportDetails.vehicleNumber}". ` +
+        'Expected Indian RTO format e.g. KA01-AB-1234. Update in ' +
+        'Fleet → Vehicles and retry.',
+    );
+  }
 
   // WI-067: derive transDistance from the actual pincode pair instead
   // of the legacy `Math.max(1, distance || 1)` clamp. Sending '1' for
