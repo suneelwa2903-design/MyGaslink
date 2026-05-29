@@ -103,7 +103,25 @@ describe('inventory recompute-after-commit (read-committed isolation fix)', () =
 
   it('returnCancelledStock: cancelled_stock_qty + closing_fulls reflect the return immediately (no delivery)', async () => {
     // Seed a cancelled-stock event sitting on the vehicle.
-    const order = await prisma.order.findFirstOrThrow({ where: { distributorId: DIST } });
+    // CSE.orderId is a required FK. seed.ts seeds orders only for dist-001
+    // (Bhargava); dist-002 (Sharma) gets GST/customers/drivers/vehicles but
+    // no orders. Find an existing one or create a minimal placeholder so the
+    // test is hermetic on any fresh DB (CI) without relying on dev-DB history.
+    let order = await prisma.order.findFirst({ where: { distributorId: DIST } });
+    if (!order) {
+      const customer = await prisma.customer.findFirstOrThrow({ where: { distributorId: DIST } });
+      order = await prisma.order.create({
+        data: {
+          orderNumber: `TEST-RCT-${Date.now()}`,
+          distributorId: DIST,
+          customerId: customer.id,
+          orderDate: summaryDate,
+          deliveryDate: summaryDate,
+          status: 'pending_dispatch',
+          totalAmount: 0,
+        },
+      });
+    }
     const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { distributorId: DIST } });
     const driver = await prisma.driver.findFirstOrThrow({ where: { distributorId: DIST } });
     const cse = await prisma.cancelledStockEvent.create({
