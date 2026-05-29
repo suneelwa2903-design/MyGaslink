@@ -44,7 +44,14 @@ export function createApp() {
   // ─── Global Middleware ───────────────────────────────────────────────────────
 
   app.use(requestId);
-  app.use(helmet());
+  // Helmet defaults Cross-Origin-Resource-Policy to 'same-origin', which
+  // blocks the SPA at mygaslink.com from reading responses served by
+  // api.mygaslink.com (different origins). Use 'same-site' so any origin
+  // under the mygaslink.com registrable domain can consume the API while
+  // still blocking unrelated external sites.
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  }));
 
   app.use(cors({
     origin: config.cors.origins,
