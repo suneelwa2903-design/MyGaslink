@@ -90,12 +90,30 @@ export function ReportMismatchModal({
   const totalAmount = Math.round(qtyNum * unitAmount * 100) / 100;
 
   const mutation = useMutation({
-    mutationFn: (payload: MismatchSubmitPayload) => apiPost('/inventory/mismatch-reports', payload),
-    onSuccess: () => {
-      toast.success('Mismatch report submitted');
+    mutationFn: (payload: MismatchSubmitPayload) =>
+      apiPost<{ reportId: string; autoClose: { closed: boolean; reason?: string; closeError?: string } }>(
+        '/inventory/mismatch-reports', payload,
+      ),
+    onSuccess: (result) => {
+      // Option A — back-end auto-closes the trip when the mismatch covers
+      // the full remaining gap. Reflect that in the toast so the user knows
+      // why the Vehicle Return card disappeared (or didn't).
+      if (result.autoClose?.closed) {
+        toast.success('Mismatch recorded — trip closed and vehicle marked idle');
+      } else if (result.autoClose?.reason === 'gap_remaining') {
+        toast.success('Mismatch recorded — gap partial, vehicle still pending reconciliation');
+      } else if (result.autoClose?.reason === 'close_failed') {
+        toast.error(
+          `Mismatch recorded but auto-close failed: ${result.autoClose.closeError ?? 'unknown error'}. Please retry Confirm & Reconcile.`,
+          { duration: 8000 },
+        );
+      } else {
+        toast.success('Mismatch report submitted');
+      }
       queryClient.invalidateQueries({ queryKey: ['reconciliation-pending'] });
       queryClient.invalidateQueries({ queryKey: ['mismatch-log'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-actions'] });
       onClose();
     },
     onError: (e) => toast.error(getErrorMessage(e)),

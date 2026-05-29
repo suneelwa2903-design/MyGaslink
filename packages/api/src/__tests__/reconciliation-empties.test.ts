@@ -176,6 +176,10 @@ describe('Feature 2 — empties returned at reconciliation', () => {
     }
     expect(caught).not.toBeNull();
     expect(caught!.statusCode).toBe(400);
-    expect(caught!.message).toMatch(/cannot exceed empties collected/i);
+    // Wording updated by WI-4 Option A: now "cannot exceed empties remaining
+    // to verify" because the cap subtracts already-credited mismatch write-offs
+    // from collected. Semantics unchanged for the no-prior-mismatch case
+    // exercised here (allowed === collected).
+    expect(caught!.message).toMatch(/cannot exceed empties remaining to verify/i);
   });
 });

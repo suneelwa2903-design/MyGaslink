@@ -453,6 +453,15 @@ export async function confirmVehicleReconciliation(
   // DVA lookup inside the helper filters by isReconciled=false), and before any
   // events are written. Catches both the pre-fill carry-over bug (where trip 1
   // collections leaked into trip 2's pre-fill) and any supervisor typo.
+  //
+  // Option A guard (2026-05-29): the cap is `collected − alreadyVerifiedByMismatch`
+  // because a prior Report Mismatch (write_off) on this vehicle's active trip
+  // already credited `reconciliation_empties_return` events that landed on
+  // emptiesReturnedVerified. Without subtracting them, the user could file a
+  // mismatch for the whole gap (closing it on the books) AND THEN reconcile
+  // with another non-zero supervisor count for the same trip — producing
+  // `emptiesReturnedVerified = 2 × collected` and `emptiesOnVehicle = −collected`.
+  // We saw exactly that pattern on dist-002 / TS09-AB-1260 on 2026-05-29.
   const emptiesInput = (data.emptiesReturned ?? []).filter((e) => e.quantity > 0);
   if (emptiesInput.length > 0) {
     const vehicleForValidation = await prisma.vehicle.findUnique({
@@ -462,10 +471,37 @@ export async function confirmVehicleReconciliation(
     const { collectedByType } = await aggregateActiveTripCollections(
       vehicleId, distributorId, vehicleForValidation?.vehicleNumber ?? null,
     );
-    const overByType: Array<{ cylinderTypeId: string; verified: number; collected: number }> = [];
+
+    // Sum already-credited mismatch write-offs on this vehicle for today.
+    // Approximation: scope by (vehicleId, tripDate=today). stockMismatchRecord
+    // has no tripNumber column, so two trips on the same vehicle on the same
+    // day with mismatches on both would over-count — that's a rare edge case
+    // the operator can override by waiting out the next dispatch; meanwhile
+    // the alternative (no scope) under-counts and re-opens the bug.
+    const todayUtc = startOfUtcDay();
+    const tripMismatches = await prisma.stockMismatchRecord.findMany({
+      where: {
+        distributorId, vehicleId, tripDate: todayUtc,
+        mismatchType: { in: ['empties_short', 'both'] },
+      },
+      select: { cylinderTypeId: true, qtyUnaccounted: true },
+    });
+    const alreadyVerifiedByMismatch = new Map<string, number>();
+    for (const m of tripMismatches) {
+      alreadyVerifiedByMismatch.set(
+        m.cylinderTypeId,
+        (alreadyVerifiedByMismatch.get(m.cylinderTypeId) ?? 0) + m.qtyUnaccounted,
+      );
+    }
+
+    const overByType: Array<{ cylinderTypeId: string; verified: number; collected: number; alreadyVerified: number; allowed: number }> = [];
     for (const e of emptiesInput) {
       const collected = collectedByType.get(e.cylinderTypeId) ?? 0;
-      if (e.quantity > collected) overByType.push({ cylinderTypeId: e.cylinderTypeId, verified: e.quantity, collected });
+      const alreadyVerified = alreadyVerifiedByMismatch.get(e.cylinderTypeId) ?? 0;
+      const allowed = Math.max(0, collected - alreadyVerified);
+      if (e.quantity > allowed) {
+        overByType.push({ cylinderTypeId: e.cylinderTypeId, verified: e.quantity, collected, alreadyVerified, allowed });
+      }
     }
     if (overByType.length > 0) {
       const names = await prisma.cylinderType.findMany({
@@ -474,10 +510,15 @@ export async function confirmVehicleReconciliation(
       });
       const nameMap = new Map(names.map((n) => [n.id, n.typeName]));
       const detail = overByType
-        .map((o) => `${nameMap.get(o.cylinderTypeId) ?? o.cylinderTypeId}: verified ${o.verified} > collected ${o.collected}`)
+        .map((o) => {
+          const base = `${nameMap.get(o.cylinderTypeId) ?? o.cylinderTypeId}: verified ${o.verified} > allowed ${o.allowed} (collected ${o.collected}`;
+          return o.alreadyVerified > 0
+            ? `${base}, already credited by mismatch ${o.alreadyVerified})`
+            : `${base})`;
+        })
         .join('; ');
       const err = new Error(
-        `Empties verified cannot exceed empties collected on this trip. ${detail}.`,
+        `Empties verified cannot exceed empties remaining to verify on this trip. ${detail}.`,
       );
       (err as Error & { statusCode?: number }).statusCode = 400;
       throw err;

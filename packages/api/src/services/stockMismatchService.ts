@@ -28,7 +28,9 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { toNum } from '../utils/decimal.js';
 import { createInventoryEvent, recalculateSummariesFromDate } from './inventoryService.js';
-import { aggregateActiveTripCollections } from './deliveryWorkflowService.js';
+import { aggregateActiveTripCollections, confirmVehicleReconciliation } from './deliveryWorkflowService.js';
+import { startOfUtcDay } from '../utils/dateOnly.js';
+import { logger } from '../utils/logger.js';
 
 export class StockMismatchError extends Error {
   statusCode: number;
@@ -81,11 +83,18 @@ interface MismatchReportRow {
   createdAt: Date;
 }
 
+export interface AutoCloseResult {
+  closed: boolean;
+  reason?: 'gap_remaining' | 'no_active_trip' | 'close_failed';
+  remainingByType?: Array<{ cylinderTypeId: string; emptiesOnVehicle: number }>;
+  closeError?: string;
+}
+
 export async function createMismatchReport(
   distributorId: string,
   userId: string,
   data: CreateMismatchReportInput,
-): Promise<{ reportId: string; rows: MismatchReportRow[] }> {
+): Promise<{ reportId: string; rows: MismatchReportRow[]; autoClose: AutoCloseResult }> {
   // ── Validation ────────────────────────────────────────────────────────────
   if (!data.vehicleId) throw new StockMismatchError('vehicleId is required');
   if (!data.accountableParty) {
@@ -259,6 +268,28 @@ export async function createMismatchReport(
     await recalculateSummariesFromDate(distributorId, ctId, tripDate);
   }
 
+  // Option A (2026-05-29) — auto-close the trip when the mismatch covers
+  // the FULL remaining gap on this vehicle. Otherwise we leave the Vehicle
+  // Return card open for the operator to file additional reports.
+  //
+  // "Full gap" = every cylinder type active on this trip has
+  // emptiesOnVehicle = collectedEmpties − emptiesReturnedVerified ≤ 0
+  // AFTER the writes above (the recompute pass already reflects them).
+  // Fulls_short doesn't gate auto-close: confirmVehicleReconciliation
+  // sweeps any remaining on-vehicle cancelled stock back to depot as
+  // part of the close, which is the operator's intended outcome.
+  //
+  // We invoke confirmVehicleReconciliation with emptiesReturned=[] because
+  // the inventory event was ALREADY posted above; passing a non-empty list
+  // would re-credit emptiesReturnedVerified and reintroduce the very
+  // double-count bug Option A is meant to fix.
+  const autoCloseResult = await maybeAutoCloseAfterMismatch({
+    distributorId,
+    userId,
+    vehicleId: data.vehicleId,
+    vehicleNumber: vehicle.vehicleNumber,
+  });
+
   // Read back the inserted rows with the cylinder-type name hydrated so
   // the caller can render the log immediately.
   const rowsFromDb = await prisma.stockMismatchRecord.findMany({
@@ -290,7 +321,73 @@ export async function createMismatchReport(
     createdAt: r.createdAt,
   }));
 
-  return { reportId, rows };
+  return { reportId, rows, autoClose: autoCloseResult };
+}
+
+/**
+ * Inspect emptiesOnVehicle across the active trip; if every active cylinder
+ * type's gap is closed, call confirmVehicleReconciliation so the vehicle
+ * flips idle, the DVA stamps reconciled, and the Vehicle Return card
+ * disappears in the same request. Returns a structured summary either way.
+ *
+ * If the close call itself throws (e.g. force-cancel of undelivered orders
+ * fails), the mismatch records remain (they're independently valid). The
+ * caller surfaces the error in the response so the operator knows to retry
+ * the close manually.
+ */
+async function maybeAutoCloseAfterMismatch(opts: {
+  distributorId: string;
+  userId: string;
+  vehicleId: string;
+  vehicleNumber: string;
+}): Promise<AutoCloseResult> {
+  const { distributorId, userId, vehicleId, vehicleNumber } = opts;
+
+  const { activeTripNumber, activeTypeIds } = await aggregateActiveTripCollections(
+    vehicleId, distributorId, vehicleNumber,
+  );
+  if (activeTripNumber === null || activeTypeIds.size === 0) {
+    return { closed: false, reason: 'no_active_trip' };
+  }
+
+  const todayUtc = startOfUtcDay();
+  const summaries = await prisma.inventorySummary.findMany({
+    where: {
+      distributorId,
+      cylinderTypeId: { in: [...activeTypeIds] },
+      summaryDate: todayUtc,
+    },
+    select: { cylinderTypeId: true, collectedEmpties: true, emptiesReturnedVerified: true },
+  });
+  const summaryByType = new Map(summaries.map((s) => [s.cylinderTypeId, s]));
+
+  const remainingByType: Array<{ cylinderTypeId: string; emptiesOnVehicle: number }> = [];
+  for (const typeId of activeTypeIds) {
+    const s = summaryByType.get(typeId);
+    const collected = s?.collectedEmpties ?? 0;
+    const verified = s?.emptiesReturnedVerified ?? 0;
+    const eov = collected - verified;
+    if (eov > 0) remainingByType.push({ cylinderTypeId: typeId, emptiesOnVehicle: eov });
+  }
+
+  if (remainingByType.length > 0) {
+    return { closed: false, reason: 'gap_remaining', remainingByType };
+  }
+
+  try {
+    await confirmVehicleReconciliation(vehicleId, distributorId, userId, {
+      physicalStockConfirmed: true,
+      emptiesReturned: [],
+      notes: 'Auto-closed by mismatch write-off (Option A)',
+    });
+    return { closed: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error('Mismatch auto-close failed — vehicle remains in returned state', {
+      vehicleId, distributorId, error: message,
+    });
+    return { closed: false, reason: 'close_failed', closeError: message };
+  }
 }
 
 // ─── Mismatch Log query ──────────────────────────────────────────────────────
