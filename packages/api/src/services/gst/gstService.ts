@@ -337,6 +337,24 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
       const ackDt = irnResponse.data?.AckDt || irnResponse.AckDt;
       const signedQr = irnResponse.data?.SignedQRCode || irnResponse.SignedQRCode;
 
+      // Blank-IRN phantom-success guard. Mirrors the EWB equivalent at the
+      // post-delivery branch below (search "phantom-success guard"). NIC /
+      // WhiteBooks sandbox occasionally returns `{status_cd:'Sucess'}` with
+      // NO Irn — pre-guard the old code wrote `irnStatus='success'` with
+      // `irn=NULL`, then every downstream feature (PDF, EWB recovery, CN/DN
+      // linkage) that reads `invoice.irn` silently broke despite the green
+      // badge. Throw here so the outer catch (search "catch (irnErr") runs
+      // the `!irnPersisted` branch and (a) stamps `irnStatus='failed'`,
+      // (b) creates the IRN_GENERATION pending action, (c) pushes the
+      // error into `result.errors`. Dispatch is NOT blocked by this guard —
+      // the outer catch returns normally so the trip still proceeds.
+      if (!irn) {
+        throw new GstError(
+          'IRN generation returned status_cd=success but no Irn — retry from Billing',
+          'IRN_PHANTOM_SUCCESS',
+        );
+      }
+
       // WhiteBooks may return EWB data along with IRN (auto-generated).
       // The sandbox has been observed to use both naming conventions for
       // dates — the IRN-style keys (EwbDt / EwbValidTill) and the EWB-style

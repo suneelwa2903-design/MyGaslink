@@ -36,5 +36,10 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
     "typescript-eslint": "^8.60.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "qs": ">=6.15.2"
+    }
   }
 }

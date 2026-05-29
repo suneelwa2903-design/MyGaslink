@@ -109,6 +109,19 @@ const forgotPasswordLimiter = rateLimit({
   message: { success: false, data: null, error: 'Too many requests. Please try again later.', code: 'RATE_LIMITED' },
 });
 
+// Rate limit for reset password: same shape as forgotPasswordLimiter so an
+// attacker who burns through the OTP-request budget can't pivot to brute-
+// forcing valid reset tokens. The global 1000-req/15min cap (app.ts) is far
+// too loose for a credential-changing endpoint. Per-IP, 15-min window,
+// 5 attempts in production / 50 in non-prod for dev ergonomics.
+const resetPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 5 : 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, data: null, error: 'Too many requests. Please try again later.', code: 'RATE_LIMITED' },
+});
+
 /**
  * POST /api/auth/forgot-password
  * Public — request password reset OTP
@@ -155,7 +168,7 @@ router.post('/verify-reset-otp', forgotPasswordLimiter, validate(verifyResetOtpS
  * POST /api/auth/reset-password
  * Public — reset password using the short-lived token
  */
-router.post('/reset-password', validate(resetPasswordSchema), async (req, res) => {
+router.post('/reset-password', resetPasswordLimiter, validate(resetPasswordSchema), async (req, res) => {
   try {
     const { resetToken, newPassword } = req.body;
     await authService.resetPassword(resetToken, newPassword);
