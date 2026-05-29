@@ -198,13 +198,24 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
+            set -o pipefail
             cd /opt/gaslink
-            git pull origin main
+            # Auth inline (server's remote is tokenless; PAT lives only in
+            # this CI step's memory, never persisted on disk).
+            git pull https://x-access-token:${{ secrets.GH_PAT }}@github.com/suneelwa2903-design/MyGaslink.git main
             pnpm install --frozen-lockfile
+            # api build (tsc) consumes @gaslink/shared dist; rebuild on every
+            # deploy so stale source can't ship stale types.
+            pnpm --filter @gaslink/shared build
             pnpm --filter @gaslink/api run db:generate
             pnpm --filter @gaslink/api run db:migrate:prod
             pnpm --filter @gaslink/api run build
-            pm2 restart gaslink-api || pm2 start packages/api/dist/server.js --name gaslink-api
+            # PM2 --update-env replaces the process env with the current shell
+            # env, so we must source /etc/environment first or DATABASE_URL,
+            # JWT_*, CORS_ORIGINS would be wiped and the api would crash.
+            set -a; source /etc/environment; set +a
+            pm2 restart gaslink-api --update-env || pm2 start packages/api/dist/server.js --name gaslink-api
 
   backup:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
