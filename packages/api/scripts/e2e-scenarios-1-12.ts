@@ -123,6 +123,11 @@ async function block0() {
   await prisma.invoice.deleteMany({ where: { distributorId: DIST } });
   await prisma.cancelledStockEvent.deleteMany({ where: { distributorId: DIST } });
   await prisma.pendingAction.deleteMany({ where: { distributorId: DIST } });
+  // WI-4 (2026-05-29): stock_mismatch_records carry per-trip qtyUnaccounted
+  // that the Option A reconciliation guard sums into "already credited by
+  // mismatch". Leaving them across runs makes S8/S9 reconcile 400 with
+  // `verified > allowed (collected N, already credited by mismatch M)`.
+  await prisma.stockMismatchRecord.deleteMany({ where: { distributorId: DIST } });
   await prisma.orderStatusLog.deleteMany({ where: { orderId: { in: orderIds } } });
   // driver_assignments + payment_commitments rows reference orders
   await prisma.driverAssignment.deleteMany({ where: { orderId: { in: orderIds } } });
