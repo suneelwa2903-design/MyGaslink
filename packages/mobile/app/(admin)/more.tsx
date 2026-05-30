@@ -53,14 +53,41 @@ interface Vehicle {
   vehicleNumber: string;
   vehicleType: string;
   capacity?: number;
-  status: 'active' | 'inactive';
+  // Wire values come from shared VehicleStatus enum: idle | dispatched | returned | inactive.
+  // Older code in this file treated it as 'active' | 'inactive' — that's a display convenience;
+  // the only branch that matters operationally is 'inactive', which the API rejects for
+  // dispatch and the mapping picker must surface as a warning.
+  status: 'idle' | 'dispatched' | 'returned' | 'inactive' | 'active';
 }
 
-interface VehicleMapping {
-  id: string;
+// STEP-3D: shape returned by GET /assignments/vehicle-mappings?date=...
+// The endpoint returns an envelope; the rows are in `recommendations`.
+// Per-row `status` is the synthetic confirmed | recommended | unassigned string
+// from assignmentService.getRecommendedMappings — NOT the DVA AssignmentStatus.
+interface VehicleMappingRow {
+  driverId: string;
   driverName: string;
-  vehicleNumber: string;
-  assignedAt: string;
+  available: boolean;
+  vehicleId: string | null;
+  vehicleNumber: string | null;
+  assignmentId?: string;
+  status: 'confirmed' | 'recommended' | 'unassigned';
+  source: 'today' | 'previous_day' | 'none';
+}
+
+interface VehicleMappingsResponse {
+  date: string;
+  recommendations: VehicleMappingRow[];
+  allDrivers: { id: string; driverName: string; availableToday: boolean }[];
+  allVehicles: {
+    id: string;
+    vehicleNumber: string;
+    vehicleType: string | null;
+    capacity: number | null;
+  }[];
+  confirmedCount: number;
+  recommendedCount: number;
+  unassignedCount: number;
 }
 
 interface GstSettings {
@@ -849,12 +876,47 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
   );
   const vehicles: Vehicle[] = vehiclesResponse?.vehicles ?? [];
 
-  const { data: assignments, isLoading: assignmentsLoading, refetch: refetchAssignments } = useApiQuery<VehicleMapping[]>(
-    ['assignments'],
+  // STEP-3D: editable vehicle-mapping screen.
+  // Date drives both the GET and the Bulk Confirm POST. Default = today's ISO date.
+  const [mappingDate, setMappingDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [pickerForDriverId, setPickerForDriverId] = useState<string | null>(null);
+
+  const {
+    data: mappingsResponse,
+    isLoading: assignmentsLoading,
+    refetch: refetchAssignments,
+  } = useApiQuery<VehicleMappingsResponse>(
+    ['admin-vehicle-mappings', mappingDate],
     '/assignments/vehicle-mappings',
-    undefined,
+    { date: mappingDate },
     { enabled: visible },
   );
+
+  // STEP-3D: per-row single-row upsert. PUT /assignments/vehicle-mappings
+  // with { date, driverId, vehicleId } — idempotent, touches only that row.
+  const upsertMappingMutation = useApiMutation<
+    { assignmentId: string; driverId: string; vehicleId: string },
+    { date: string; driverId: string; vehicleId: string }
+  >('put', '/assignments/vehicle-mappings', {
+    invalidateKeys: [['admin-vehicle-mappings', mappingDate], ['assignments'], ['vehicles']],
+    onSuccess: () => setPickerForDriverId(null),
+  });
+
+  // STEP-3D: "Bulk Confirm — Use Previous Day". Single POST with body { date }
+  // (mappings omitted) — server copies yesterday's DVAs forward in one txn.
+  const bulkConfirmMutation = useApiMutation<
+    { confirmed: number; date: string; message: string },
+    { date: string }
+  >('post', '/assignments/vehicle-mappings/confirm', {
+    invalidateKeys: [['admin-vehicle-mappings', mappingDate], ['assignments'], ['vehicles']],
+    onSuccess: (data) => {
+      if (data?.confirmed && data.confirmed > 0) {
+        Alert.alert('Confirmed', `Confirmed ${data.confirmed} driver-vehicle mapping${data.confirmed === 1 ? '' : 's'}.`);
+      } else {
+        Alert.alert('Nothing to confirm', data?.message ?? 'No previous-day assignments were found to copy forward.');
+      }
+    },
+  });
 
   const createDriverMutation = useApiMutation<Driver, { driverName: string; phone: string; licenseNumber?: string }>('post', '/drivers', {
     invalidateKeys: [['drivers']],
@@ -1064,41 +1126,405 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
     );
   };
 
-  const renderAssignments = () => {
-    if (assignmentsLoading) return <Loading theme={theme} />;
+  // STEP-3D: Vehicle status helper. Wire value 'inactive' is the trigger for
+  // the warning treatment; legacy 'active' and the other VehicleStatus values
+  // (idle/dispatched/returned) are all considered valid pick targets.
+  const isVehicleInactive = (v: Vehicle | undefined): boolean => !!v && v.status === 'inactive';
 
+  // STEP-3D: lookup tables for the per-row picker. allVehicles is the
+  // full /vehicles list (so we can detect inactive AFTER the API stripped
+  // them from the recommendations envelope — see anti-pattern note in the
+  // contract about historical recommendations becoming inactive).
+  const vehicleById = new Map(vehicles.map((v) => [v.vehicleId, v]));
+
+  // STEP-3D: web-parity exclusion of vehicles already confirmed to other
+  // drivers (the dropdown should hide them, except for the row that owns
+  // that vehicle and the row currently being edited).
+  const recommendations = mappingsResponse?.recommendations ?? [];
+  const takenByOtherDriver = new Map<string, string>();
+  recommendations.forEach((r) => {
+    if (r.status === 'confirmed' && r.vehicleId) {
+      takenByOtherDriver.set(r.vehicleId, r.driverId);
+    }
+  });
+
+  const optionsForDriver = (driverId: string, currentVehicleId: string | null): Vehicle[] =>
+    vehicles
+      .filter((v) => !isVehicleInactive(v))
+      .filter((v) => {
+        const taker = takenByOtherDriver.get(v.vehicleId);
+        return !taker || taker === driverId || v.vehicleId === currentVehicleId;
+      });
+
+  const handleBulkConfirm = () => {
+    Alert.alert(
+      'Use Previous Day',
+      `Copy yesterday's driver-vehicle mappings forward to ${mappingDate}? Existing mappings for this date will be replaced.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: () => bulkConfirmMutation.mutate({ date: mappingDate }),
+        },
+      ],
+    );
+  };
+
+  const handlePickVehicle = (driverId: string, vehicleId: string) => {
+    upsertMappingMutation.mutate({ date: mappingDate, driverId, vehicleId });
+  };
+
+  const statusVariant = (status: VehicleMappingRow['status']): 'success' | 'info' | 'warning' => {
+    if (status === 'confirmed') return 'success';
+    if (status === 'recommended') return 'info';
+    return 'warning';
+  };
+
+  const renderAssignments = () => {
     return (
-      <FlatList
-        data={assignments || []}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
+      <View style={{ flex: 1 }}>
+        {/* Date + Bulk Confirm header. YYYY-MM-DD text input keeps parity
+            with the (admin)/orders.tsx date range pattern (STEP-3A) — no
+            native picker dependency. */}
+        <View
+          style={{
+            flexDirection: 'row',
+            gap: 10,
+            paddingHorizontal: 16,
+            paddingVertical: 12,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.divider,
+            alignItems: 'center',
+          }}
+        >
           <View
             style={{
-              flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
-              paddingVertical: 14, gap: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              flex: 1,
+              backgroundColor: theme.inputBg,
+              borderColor: theme.inputBorder,
+              borderWidth: 1,
+              borderRadius: 8,
+              paddingHorizontal: 10,
+              paddingVertical: 8,
+            }}
+          >
+            <Ionicons name="calendar-outline" size={14} color={theme.textMuted} />
+            <TextInput
+              style={{ flex: 1, color: theme.text, fontSize: 14, padding: 0 }}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={theme.textMuted}
+              value={mappingDate}
+              onChangeText={(t) => {
+                setMappingDate(t);
+                setPickerForDriverId(null);
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+          <TouchableOpacity
+            onPress={handleBulkConfirm}
+            disabled={bulkConfirmMutation.isPending}
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              borderRadius: 8,
+              backgroundColor: ACCENT,
+              opacity: bulkConfirmMutation.isPending ? 0.6 : 1,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            {bulkConfirmMutation.isPending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="checkmark-done" size={14} color="#fff" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Use Previous Day</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {assignmentsLoading ? (
+          <Loading theme={theme} />
+        ) : (
+          <FlatList
+            data={recommendations}
+            keyExtractor={(item) => item.driverId}
+            renderItem={({ item }) => {
+              const mappedVehicle = item.vehicleId ? vehicleById.get(item.vehicleId) : undefined;
+              const mappedVehicleInactive = isVehicleInactive(mappedVehicle);
+              const saving =
+                upsertMappingMutation.isPending &&
+                upsertMappingMutation.variables?.driverId === item.driverId;
+              const variant = statusVariant(item.status);
+              const badgeColor =
+                variant === 'success' ? '#10b981' : variant === 'info' ? '#3b82f6' : '#f59e0b';
+
+              return (
+                <View
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 14,
+                    gap: 8,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <View
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: '#8b5cf6' + '14',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Ionicons name="link" size={18} color="#8b5cf6" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>
+                        {item.driverName}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: theme.textMuted }}>
+                        Source: {item.source}
+                      </Text>
+                    </View>
+                    <StatusBadge label={item.status} color={badgeColor} />
+                  </View>
+
+                  {/* Vehicle picker trigger */}
+                  <TouchableOpacity
+                    onPress={() => setPickerForDriverId(item.driverId)}
+                    disabled={saving}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: mappedVehicleInactive ? '#ef4444' : theme.inputBorder,
+                      backgroundColor: theme.inputBg,
+                      opacity: saving ? 0.6 : 1,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <Ionicons name="car-outline" size={14} color={theme.textMuted} />
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          color: item.vehicleNumber ? theme.text : theme.textMuted,
+                          fontWeight: item.vehicleNumber ? '600' : '400',
+                        }}
+                        numberOfLines={1}
+                      >
+                        {item.vehicleNumber ?? 'Unassigned — tap to assign'}
+                      </Text>
+                    </View>
+                    {saving ? (
+                      <ActivityIndicator size="small" color={ACCENT} />
+                    ) : (
+                      <Ionicons name="chevron-down" size={16} color={theme.textMuted} />
+                    )}
+                  </TouchableOpacity>
+
+                  {/* Inline inactive-vehicle warning (mirrors web FleetPage). */}
+                  {mappedVehicleInactive && (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        backgroundColor: '#ef4444' + '14',
+                      }}
+                    >
+                      <Ionicons name="warning" size={14} color="#ef4444" />
+                      <Text style={{ fontSize: 12, color: '#ef4444', fontWeight: '600' }}>
+                        Vehicle inactive — please reassign
+                      </Text>
+                      {item.vehicleNumber ? (
+                        <Text style={{ fontSize: 12, color: theme.textMuted }}>
+                          (was {item.vehicleNumber})
+                        </Text>
+                      ) : null}
+                    </View>
+                  )}
+                </View>
+              );
+            }}
+            ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: theme.divider }} />}
+            ListEmptyComponent={
+              <EmptyList
+                message={`No mappings for ${mappingDate}. Try changing the date or pull to refresh.`}
+                theme={theme}
+              />
+            }
+            ListFooterComponent={
+              mappingsResponse ? (
+                <View
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    borderTopWidth: 1,
+                    borderTopColor: theme.divider,
+                    backgroundColor: theme.cardBg,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, color: theme.textSecondary, textAlign: 'center' }}>
+                    Confirmed: {mappingsResponse.confirmedCount} · Recommended: {mappingsResponse.recommendedCount} · Unassigned: {mappingsResponse.unassignedCount}
+                  </Text>
+                </View>
+              ) : null
+            }
+            refreshControl={
+              <RefreshControl refreshing={false} onRefresh={refetchAssignments} tintColor={ACCENT} />
+            }
+          />
+        )}
+
+        {/* STEP-3D: bottom-sheet vehicle picker, modeled on the
+            (admin)/orders.tsx assign-dispatch modal (lines 1287-1383). */}
+        <Modal
+          visible={pickerForDriverId !== null}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setPickerForDriverId(null)}
+        >
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(0,0,0,0.5)',
+              justifyContent: 'flex-end',
             }}
           >
             <View
               style={{
-                width: 40, height: 40, borderRadius: 20,
-                backgroundColor: '#8b5cf6' + '14', alignItems: 'center', justifyContent: 'center',
+                backgroundColor: theme.bg,
+                borderTopLeftRadius: 20,
+                borderTopRightRadius: 20,
+                maxHeight: '80%',
+                paddingBottom: 24,
               }}
             >
-              <Ionicons name="link" size={18} color="#8b5cf6" />
+              <View
+                style={{
+                  alignSelf: 'center',
+                  width: 40,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: theme.divider,
+                  marginVertical: 10,
+                }}
+              />
+              <Text
+                style={{
+                  fontSize: 16,
+                  fontWeight: '700',
+                  color: theme.text,
+                  paddingHorizontal: 20,
+                  paddingBottom: 12,
+                }}
+              >
+                Select vehicle
+              </Text>
+              {(() => {
+                if (pickerForDriverId === null) return null;
+                const row = recommendations.find((r) => r.driverId === pickerForDriverId);
+                if (!row) return null;
+                const options = optionsForDriver(row.driverId, row.vehicleId);
+                return (
+                  <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12 }}>
+                    {options.length === 0 ? (
+                      <Text style={{ fontSize: 14, color: theme.textMuted, paddingVertical: 16, textAlign: 'center' }}>
+                        No vehicles available. All vehicles are either inactive or already assigned.
+                      </Text>
+                    ) : (
+                      options.map((v) => {
+                        const isCurrent = row.vehicleId === v.vehicleId;
+                        const inactive = isVehicleInactive(v);
+                        return (
+                          <TouchableOpacity
+                            key={v.vehicleId}
+                            onPress={() => handlePickVehicle(row.driverId, v.vehicleId)}
+                            disabled={upsertMappingMutation.isPending}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 10,
+                              paddingVertical: 12,
+                              paddingHorizontal: 12,
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: isCurrent ? ACCENT : theme.cardBorder,
+                              backgroundColor: isCurrent ? ACCENT : theme.cardBg,
+                              marginBottom: 8,
+                              opacity: inactive ? 0.5 : 1,
+                            }}
+                          >
+                            <Ionicons
+                              name={isCurrent ? 'radio-button-on' : 'radio-button-off'}
+                              size={18}
+                              color={isCurrent ? '#fff' : theme.textSecondary}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text
+                                style={{
+                                  fontSize: 14,
+                                  fontWeight: '600',
+                                  color: isCurrent ? '#fff' : theme.text,
+                                }}
+                              >
+                                {v.vehicleNumber}
+                                {inactive ? ' (inactive)' : ''}
+                              </Text>
+                              {v.vehicleType ? (
+                                <Text
+                                  style={{
+                                    fontSize: 12,
+                                    color: isCurrent ? 'rgba(255,255,255,0.7)' : theme.textMuted,
+                                  }}
+                                >
+                                  {v.vehicleType}{v.capacity ? ` · ${v.capacity} cyl` : ''}
+                                </Text>
+                              ) : null}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </ScrollView>
+                );
+              })()}
+              <TouchableOpacity
+                onPress={() => setPickerForDriverId(null)}
+                style={{
+                  marginHorizontal: 20,
+                  marginTop: 4,
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '600', color: theme.textSecondary }}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>{item.driverName}</Text>
-              <Text style={{ fontSize: 12, color: theme.textMuted }}>{item.vehicleNumber}</Text>
-            </View>
-            <Text style={{ fontSize: 11, color: theme.textMuted }}>
-              {item.assignedAt ? new Date(item.assignedAt).toLocaleDateString('en-IN') : ''}
-            </Text>
           </View>
-        )}
-        ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: theme.divider }} />}
-        ListEmptyComponent={<EmptyList message="No active assignments" theme={theme} />}
-        refreshControl={<RefreshControl refreshing={false} onRefresh={refetchAssignments} tintColor={ACCENT} />}
-      />
+        </Modal>
+      </View>
     );
   };
 
