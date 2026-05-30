@@ -79,7 +79,7 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
 
   const resolveMutation = useMutation({
     mutationFn: ({ actionId, notes }: { actionId: string; notes: string }) =>
-      apiPut(`/pending-actions/${actionId}/resolve`, { resolutionNotes: notes }),
+      apiPut(`/pending-actions/${actionId}/resolve`, { notes }),
     onSuccess: () => {
       toast.success('Action resolved');
       queryClient.invalidateQueries({ queryKey: ['pending-actions'] });
