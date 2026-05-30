@@ -447,6 +447,260 @@ function Loading({ theme: _theme }: { theme: Theme }) {
 // CUSTOMERS MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
+// STEP-3E: minimal Customer shape for the Edit modal's lazy detail fetch.
+// The list view returns a trimmed Customer (no transportChargePerCylinder
+// etc.); the detail GET returns the full shape — we type that surface
+// inline rather than importing the heavy shared Customer type just for
+// these few fields.
+interface CustomerDetailShape {
+  customerId: string;
+  customerName: string;
+  businessName: string | null;
+  phone: string;
+  email: string | null;
+  gstin: string | null;
+  creditPeriodDays: number;
+  transportChargePerCylinder: number;
+}
+
+// STEP-3E: inline Edit modal for a single customer row in the CustomersModal.
+// Lazily fetches the full Customer (GET /customers/:id) on open so we have
+// transportChargePerCylinder, then submits PUT /customers/:id. This is
+// intentionally duplicated with the EditCustomerModal in customer-detail.tsx
+// (per the STEP-3E brief — extraction is out of scope).
+function EditCustomerInlineModal({
+  visible,
+  customer,
+  canEditTransport,
+  theme,
+  onClose,
+  onSaved,
+}: {
+  visible: boolean;
+  customer: Customer | null;
+  canEditTransport: boolean;
+  theme: Theme;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [formName, setFormName] = useState('');
+  const [formBusiness, setFormBusiness] = useState('');
+  const [formPhone, setFormPhone] = useState('');
+  const [formEmail, setFormEmail] = useState('');
+  const [formGstin, setFormGstin] = useState('');
+  const [formCredit, setFormCredit] = useState('30');
+  const [formTransport, setFormTransport] = useState('0');
+  const [initializedFor, setInitializedFor] = useState<string | null>(null);
+
+  const customerId = customer?.customerId ?? '';
+
+  // Lazy fetch of the full Customer so the transport field has the right
+  // initial value. The list payload doesn't carry transportChargePerCylinder.
+  const { data: detail } = useApiQuery<CustomerDetailShape>(
+    ['customer-detail-edit', customerId],
+    `/customers/${customerId}`,
+    undefined,
+    { enabled: visible && !!customerId },
+  );
+
+  // Sync form fields with detail on first arrival per customer; reset when
+  // modal closes. Render-time pattern (no extra effect render pass).
+  if (visible && detail && initializedFor !== detail.customerId) {
+    setInitializedFor(detail.customerId);
+    setFormName(detail.customerName);
+    setFormBusiness(detail.businessName ?? '');
+    setFormPhone(detail.phone);
+    setFormEmail(detail.email ?? '');
+    setFormGstin(detail.gstin ?? '');
+    setFormCredit(String(detail.creditPeriodDays ?? 30));
+    setFormTransport(String(detail.transportChargePerCylinder ?? 0));
+  }
+  if (!visible && initializedFor !== null) {
+    setInitializedFor(null);
+  }
+
+  const updateMutation = useApiMutation<
+    Customer,
+    {
+      customerName: string;
+      businessName?: string;
+      phone: string;
+      email?: string;
+      gstin?: string;
+      creditPeriodDays: number;
+      transportChargePerCylinder?: number;
+    }
+  >('put', () => `/customers/${customerId}`, {
+    invalidateKeys: [
+      ['customers'],
+      ['customer-detail', customerId],
+      ['customer-detail-edit', customerId],
+    ],
+    successMessage: 'Customer updated',
+    onSuccess: () => {
+      onSaved();
+    },
+  });
+
+  const handleSubmit = () => {
+    if (!customer) return;
+    if (!formName.trim() || !formPhone.trim()) {
+      Alert.alert('Validation', 'Name and phone are required.');
+      return;
+    }
+    const credit = parseInt(formCredit, 10);
+    if (Number.isNaN(credit) || credit < 0) {
+      Alert.alert('Validation', 'Credit period must be a non-negative number.');
+      return;
+    }
+    const transport = parseFloat(formTransport);
+    if (canEditTransport && Number.isNaN(transport)) {
+      Alert.alert('Validation', 'Transport charge must be a number.');
+      return;
+    }
+    updateMutation.mutate({
+      customerName: formName.trim(),
+      businessName: formBusiness.trim() || undefined,
+      phone: formPhone.trim(),
+      email: formEmail.trim() || undefined,
+      gstin: formGstin.trim() || undefined,
+      creditPeriodDays: credit,
+      transportChargePerCylinder: canEditTransport ? transport : undefined,
+    });
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+        <ModalHeader title="Edit Customer" onClose={onClose} theme={theme} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+        >
+          <ScrollView contentContainerStyle={{ padding: 20 }}>
+            <FormInput
+              label="Name *"
+              value={formName}
+              onChangeText={setFormName}
+              placeholder="Full name"
+              theme={theme}
+            />
+            <FormInput
+              label="Business Name"
+              value={formBusiness}
+              onChangeText={setFormBusiness}
+              placeholder="Business name (optional)"
+              theme={theme}
+            />
+            <FormInput
+              label="Phone *"
+              value={formPhone}
+              onChangeText={setFormPhone}
+              placeholder="10-digit mobile"
+              keyboardType="phone-pad"
+              theme={theme}
+            />
+            <FormInput
+              label="Email"
+              value={formEmail}
+              onChangeText={setFormEmail}
+              placeholder="Email (optional)"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              theme={theme}
+            />
+            <FormInput
+              label="GSTIN"
+              value={formGstin}
+              onChangeText={setFormGstin}
+              placeholder="22AAAAA0000A1Z5"
+              autoCapitalize="characters"
+              theme={theme}
+            />
+            <FormInput
+              label="Credit Period (days)"
+              value={formCredit}
+              onChangeText={setFormCredit}
+              placeholder="e.g. 30"
+              keyboardType="numeric"
+              theme={theme}
+            />
+            {canEditTransport && (
+              <FormInput
+                label="Transport Charge (per cylinder)"
+                value={formTransport}
+                onChangeText={setFormTransport}
+                placeholder="0"
+                keyboardType="numeric"
+                theme={theme}
+              />
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={onClose}
+                disabled={updateMutation.isPending}
+                style={{
+                  flex: 1,
+                  paddingVertical: 14,
+                  borderRadius: 10,
+                  backgroundColor: theme.cardBg,
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.textSecondary }}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSubmit}
+                disabled={updateMutation.isPending}
+                style={{
+                  flex: 1,
+                  paddingVertical: 14,
+                  borderRadius: 10,
+                  backgroundColor: ACCENT,
+                  alignItems: 'center',
+                  opacity: updateMutation.isPending ? 0.6 : 1,
+                }}
+              >
+                {updateMutation.isPending ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
+                    Save Changes
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+// STEP-3E: page size aligned with web CustomersPage (25/page) and the
+// canonical mobile pagination pattern from (admin)/pending-actions.tsx.
+const CUSTOMERS_PAGE_SIZE = 25;
+
+// STEP-3E: status filter options surfaced as a horizontal pill row above the
+// list — mirrors web CustomersPage Status select (CustomersPage.tsx:124-130).
+type CustomerStatusFilter = '' | 'active' | 'suspended' | 'inactive';
+const CUSTOMER_STATUS_FILTERS: { label: string; value: CustomerStatusFilter }[] = [
+  { label: 'All', value: '' },
+  { label: 'Active', value: 'active' },
+  { label: 'Suspended', value: 'suspended' },
+  { label: 'Inactive', value: 'inactive' },
+];
+
 function CustomersModal({
   visible,
   onClose,
@@ -454,10 +708,31 @@ function CustomersModal({
   visible: boolean;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const theme = useMoreTheme();
+  const auth = useAuthStore();
+  // STEP-3E: role gate for the per-row Edit button. API restricts
+  // PUT /customers/:id to super_admin / distributor_admin / inventory
+  // (customers.ts:175). Hide the button for finance to avoid 403s.
+  const role = auth.user?.role;
+  const canEditCustomer =
+    role === 'super_admin' || role === 'distributor_admin' || role === 'inventory';
+  // STEP-3E: web parity — transport-charge edit further restricted to admins
+  // (CustomersPage.tsx:286 canEditTransport). Inventory edits the rest of the
+  // customer but not transport.
+  const canEditTransport =
+    role === 'super_admin' || role === 'distributor_admin';
+
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // STEP-3E: status filter + page state.
+  const [statusFilter, setStatusFilter] = useState<CustomerStatusFilter>('');
+  const [customersPage, setCustomersPage] = useState(0);
+
+  // STEP-3E: inline edit modal for a single customer row.
+  const [editTarget, setEditTarget] = useState<Customer | null>(null);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -468,10 +743,20 @@ function CustomersModal({
   const [formType, setFormType] = useState<'B2B' | 'B2C'>('B2C');
   const [formCredit, setFormCredit] = useState('');
 
+  // STEP-3E: paginated list. customerFilterSchema (shared/schemas) requires
+  // `page` + `pageSize` (NOT `limit`) — the previous `?limit=200` quietly fell
+  // through Zod defaults and capped the response at pageSize=25 anyway.
+  const customerListParams: Record<string, unknown> = {
+    page: customersPage + 1,
+    pageSize: CUSTOMERS_PAGE_SIZE,
+  };
+  if (statusFilter) customerListParams.status = statusFilter;
+  if (search.trim()) customerListParams.search = search.trim();
+
   const { data: customersResponse, isLoading, refetch } = useApiQuery<{ customers: Customer[] }>(
-    ['customers'],
-    '/customers?limit=200',
-    undefined,
+    ['customers', statusFilter, String(customersPage), search.trim()],
+    '/customers',
+    customerListParams,
     { enabled: visible },
   );
   const customers: Customer[] = customersResponse?.customers ?? [];
@@ -560,24 +845,32 @@ function CustomersModal({
     ]);
   };
 
-  const filtered = useMemo(() => {
-    if (!customers) return [];
-    if (!search.trim()) return customers;
-    const q = search.toLowerCase();
-    return customers.filter(
-      (c) =>
-        c.customerName?.toLowerCase().includes(q) ||
-        c.phone?.includes(q) ||
-        c.businessName?.toLowerCase().includes(q),
-    );
-  }, [customers, search]);
+  // STEP-3E: search is now server-side (customerFilterSchema supports
+  // ?search=), so the in-memory filter just re-exposes the server-paged list
+  // as-is. Status filter is also server-side.
+  const filtered = customers;
+
+  // STEP-3E: route to the new customer-detail screen instead of the legacy
+  // inline expansion. We keep the chevron + long-press expansion as a
+  // secondary affordance for inventory-style use, but the primary tap goes
+  // to the detail screen.
+  const handleViewAccount = (customer: Customer) => {
+    router.push({
+      pathname: '/(admin)/customer-detail',
+      params: { customerId: customer.customerId },
+    });
+  };
 
   const renderCustomer = ({ item }: { item: Customer }) => {
     const expanded = expandedId === item.customerId;
     return (
       <View>
         <TouchableOpacity
-          onPress={() => setExpandedId(expanded ? null : item.customerId)}
+          // STEP-3E: primary tap routes to the full Customer Detail screen.
+          // Long-press still toggles the inline expansion for inventory who
+          // wants a quick glance without leaving the modal.
+          onPress={() => handleViewAccount(item)}
+          onLongPress={() => setExpandedId(expanded ? null : item.customerId)}
           activeOpacity={0.7}
           style={{
             flexDirection: 'row',
@@ -650,11 +943,46 @@ function CustomersModal({
               />
             ) : null}
 
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+              {/* STEP-3E: View Account routes to the full Customer Detail screen. */}
+              <TouchableOpacity
+                onPress={() => handleViewAccount(item)}
+                style={{
+                  flex: 1,
+                  minWidth: 120,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  backgroundColor: ACCENT + '14',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: ACCENT }}>
+                  View Account
+                </Text>
+              </TouchableOpacity>
+              {/* STEP-3E: Edit gated to roles whose API mutations succeed. */}
+              {canEditCustomer && (
+                <TouchableOpacity
+                  onPress={() => setEditTarget(item)}
+                  style={{
+                    flex: 1,
+                    minWidth: 120,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    backgroundColor: '#3b82f6' + '14',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#3b82f6' }}>
+                    Edit
+                  </Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 onPress={() => handleToggleStatus(item)}
                 style={{
                   flex: 1,
+                  minWidth: 120,
                   paddingVertical: 10,
                   borderRadius: 8,
                   backgroundColor:
@@ -787,18 +1115,64 @@ function CustomersModal({
                 <Ionicons name="search" size={18} color={theme.textMuted} />
                 <TextInput
                   value={search}
-                  onChangeText={setSearch}
+                  onChangeText={(t) => {
+                    setSearch(t);
+                    setCustomersPage(0);
+                  }}
                   placeholder="Search by name, phone, business..."
                   placeholderTextColor={theme.textMuted}
                   style={{ flex: 1, paddingVertical: 10, fontSize: 14, color: theme.text }}
                 />
                 {search.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearch('')}>
+                  <TouchableOpacity onPress={() => { setSearch(''); setCustomersPage(0); }}>
                     <Ionicons name="close-circle" size={18} color={theme.textMuted} />
                   </TouchableOpacity>
                 )}
               </View>
             </View>
+
+            {/* STEP-3E: status filter pill row — web parity with the
+                "All Statuses" Select on CustomersPage. */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{
+                paddingHorizontal: 16,
+                paddingBottom: 10,
+                gap: 6,
+              }}
+            >
+              {CUSTOMER_STATUS_FILTERS.map((opt) => {
+                const active = opt.value === statusFilter;
+                return (
+                  <TouchableOpacity
+                    key={opt.value || 'all'}
+                    onPress={() => {
+                      setStatusFilter(opt.value);
+                      setCustomersPage(0);
+                    }}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 16,
+                      backgroundColor: active ? ACCENT : theme.inputBg,
+                      borderWidth: 1,
+                      borderColor: active ? ACCENT : theme.inputBorder,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: '600',
+                        color: active ? '#ffffff' : theme.textSecondary,
+                      }}
+                    >
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
 
             {isLoading ? (
               <Loading theme={theme} />
@@ -810,10 +1184,82 @@ function CustomersModal({
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: theme.divider }} />}
                 ListEmptyComponent={<EmptyList message="No customers found" theme={theme} />}
                 refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={ACCENT} />}
+                ListFooterComponent={
+                  // STEP-3E: Previous / Next pagination — same shape as
+                  // (admin)/pending-actions.tsx. Show only when the current
+                  // page has the full PAGE_SIZE or we're past page 0.
+                  customersPage > 0 || filtered.length === CUSTOMERS_PAGE_SIZE ? (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingHorizontal: 16,
+                        paddingVertical: 16,
+                      }}
+                    >
+                      <TouchableOpacity
+                        onPress={() => setCustomersPage((p) => Math.max(0, p - 1))}
+                        disabled={customersPage === 0}
+                        style={{
+                          paddingHorizontal: 14,
+                          paddingVertical: 8,
+                          borderRadius: 8,
+                          backgroundColor: theme.inputBg,
+                          borderWidth: 1,
+                          borderColor: theme.inputBorder,
+                          opacity: customersPage === 0 ? 0.5 : 1,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: theme.text }}>
+                          Previous
+                        </Text>
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 12, color: theme.textMuted }}>
+                        Showing {customersPage * CUSTOMERS_PAGE_SIZE + 1}–
+                        {customersPage * CUSTOMERS_PAGE_SIZE + filtered.length}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setCustomersPage((p) => p + 1)}
+                        disabled={filtered.length < CUSTOMERS_PAGE_SIZE}
+                        style={{
+                          paddingHorizontal: 14,
+                          paddingVertical: 8,
+                          borderRadius: 8,
+                          backgroundColor: theme.inputBg,
+                          borderWidth: 1,
+                          borderColor: theme.inputBorder,
+                          opacity: filtered.length < CUSTOMERS_PAGE_SIZE ? 0.5 : 1,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: theme.text }}>
+                          Next
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null
+                }
               />
             )}
 
             <FAB onPress={() => setShowCreate(true)} />
+
+            {/* STEP-3E: per-row Edit modal. Mounted at the modal level so it
+                appears above the customer list. Initialized from the row but
+                the full Customer (including transportChargePerCylinder) is
+                lazily fetched inside the modal — the list payload only
+                includes the trimmed local Customer shape. */}
+            <EditCustomerInlineModal
+              visible={!!editTarget}
+              customer={editTarget}
+              canEditTransport={canEditTransport}
+              theme={theme}
+              onClose={() => setEditTarget(null)}
+              onSaved={() => {
+                refetch();
+                setEditTarget(null);
+              }}
+            />
           </View>
         )}
       </SafeAreaView>

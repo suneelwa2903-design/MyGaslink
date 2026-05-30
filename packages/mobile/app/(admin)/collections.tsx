@@ -241,13 +241,16 @@ export default function AdminCollectionsScreen() {
     );
   }, []);
 
-  const onViewAccount = useCallback(() => {
-    // Customer-detail screen ships in STEP-3E. Stub graceful for now.
-    Alert.alert(
-      'Customer detail',
-      'Customer detail will be available in Step 3E.',
-    );
-  }, []);
+  // STEP-3E: route to the new (admin)/customer-detail full screen.
+  const onViewAccount = useCallback(
+    (customerId: string) => {
+      router.push({
+        pathname: '/(admin)/customer-detail',
+        params: { customerId },
+      });
+    },
+    [router],
+  );
 
   // ─── Tab options ──────────────────────────────────────────────────────────
 
@@ -311,7 +314,7 @@ export default function AdminCollectionsScreen() {
                 borderColor: C.inputBorder,
               },
             ]}
-            onPress={onViewAccount}
+            onPress={() => onViewAccount(item.customerId)}
           >
             <Ionicons name="person-outline" size={14} color={C.text} />
             <Text style={[styles.actionBtnText, { color: C.text }]}>

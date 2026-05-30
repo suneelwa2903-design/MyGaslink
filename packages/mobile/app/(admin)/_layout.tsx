@@ -85,6 +85,9 @@ export default function AdminLayout() {
       {/* STEP-3C: Collections full screen. Hidden from tab bar —
           reached via More → Collections. */}
       <Tabs.Screen name="collections" options={{ href: null, title: 'Collections' }} />
+      {/* STEP-3E: Customer Detail full screen. Hidden — reached via More → Customers → row,
+          or Collections → View Account. */}
+      <Tabs.Screen name="customer-detail" options={{ href: null, title: 'Customer' }} />
     </Tabs>
   );
 }
