@@ -133,3 +133,10 @@
 - Mobile params wired correctly and will become live once server is fixed
 - Fix: update getDashboardStats() and getHeaderMetrics() signatures to accept + use date range
 - Added: 2026-05-31
+
+### Mismatch & Correction Log missing
+- Web shows collapsible log of past mismatch reports below Vehicle Return
+- Endpoint exists: GET /api/inventory/mismatch-reports
+- Mobile shows the create flow (3-step modal) but not the history log
+- Fix: add collapsible log section below Vehicle Return cards
+- Added: 2026-05-31
