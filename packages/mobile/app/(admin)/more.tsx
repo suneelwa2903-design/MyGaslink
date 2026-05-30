@@ -2422,6 +2422,327 @@ interface CylinderPriceRow {
   sellingPrice?: number;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CYLINDER TYPES MODAL  (STEP-3F)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Mirrors the web Settings → Cylinder Types tab: list / create / edit / delete.
+// API: GET /cylinder-types → { cylinderTypes: CylinderType[] }
+//      POST /cylinder-types { typeName, capacity, unit }
+//      PUT  /cylinder-types/:id { typeName?, capacity?, unit? }
+//      DELETE /cylinder-types/:id  (soft-delete; service marks isActive=false)
+//
+// Role gates were widened by STEP-1A: all four routes accept
+// super_admin | distributor_admin | finance | inventory.
+
+interface CylinderTypeRow {
+  cylinderTypeId: string;
+  typeName: string;
+  capacity: number;
+  unit: string;
+}
+
+function CylinderTypeFormModal({
+  visible,
+  mode,
+  initial,
+  theme,
+  onClose,
+  onSubmit,
+  submitting,
+}: {
+  visible: boolean;
+  mode: 'create' | 'edit';
+  initial: { typeName: string; capacity: string; unit: string };
+  theme: Theme;
+  onClose: () => void;
+  onSubmit: (values: { typeName: string; capacity: number; unit: string }) => void;
+  submitting: boolean;
+}) {
+  const [typeName, setTypeName] = useState(initial.typeName);
+  const [capacity, setCapacity] = useState(initial.capacity);
+  const [unit, setUnit] = useState(initial.unit);
+  const [initializedFor, setInitializedFor] = useState<string | null>(null);
+
+  // Re-sync form fields with `initial` each time the modal opens for a
+  // (potentially) different row. Keyed off a coarse "open snapshot" string.
+  const openKey = visible ? `${mode}:${initial.typeName}:${initial.capacity}:${initial.unit}` : null;
+  if (openKey && initializedFor !== openKey) {
+    setInitializedFor(openKey);
+    setTypeName(initial.typeName);
+    setCapacity(initial.capacity);
+    setUnit(initial.unit);
+  }
+  if (!visible && initializedFor !== null) {
+    setInitializedFor(null);
+  }
+
+  const handleSave = () => {
+    const trimmedName = typeName.trim();
+    const capacityNum = Number(capacity);
+    const trimmedUnit = unit.trim() || 'kg';
+    if (!trimmedName) {
+      Alert.alert('Validation', 'Type name is required.');
+      return;
+    }
+    if (!Number.isFinite(capacityNum) || capacityNum <= 0) {
+      Alert.alert('Validation', 'Capacity must be a positive number.');
+      return;
+    }
+    onSubmit({ typeName: trimmedName, capacity: capacityNum, unit: trimmedUnit });
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="formSheet">
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+        <ModalHeader title={mode === 'create' ? 'Add Cylinder Type' : 'Edit Cylinder Type'} onClose={onClose} theme={theme} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+        >
+          <ScrollView contentContainerStyle={{ padding: 20 }}>
+            <FormInput
+              label="Type Name *"
+              value={typeName}
+              onChangeText={setTypeName}
+              placeholder="e.g. 14.2 kg Domestic"
+              theme={theme}
+            />
+            <FormInput
+              label="Capacity *"
+              value={capacity}
+              onChangeText={setCapacity}
+              placeholder="e.g. 14.2"
+              keyboardType="numeric"
+              theme={theme}
+            />
+            <FormInput
+              label="Unit"
+              value={unit}
+              onChangeText={setUnit}
+              placeholder="kg"
+              autoCapitalize="none"
+              theme={theme}
+            />
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={onClose}
+                disabled={submitting}
+                style={{
+                  flex: 1, paddingVertical: 14, borderRadius: 10,
+                  backgroundColor: theme.cardBg, borderWidth: 1, borderColor: theme.cardBorder,
+                  alignItems: 'center',
+                  opacity: submitting ? 0.6 : 1,
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.textSecondary }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSave}
+                disabled={submitting}
+                style={{
+                  flex: 1, paddingVertical: 14, borderRadius: 10,
+                  backgroundColor: ACCENT, alignItems: 'center',
+                  opacity: submitting ? 0.6 : 1,
+                }}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
+                    {mode === 'create' ? 'Create' : 'Save'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function CylinderTypesModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const theme = useMoreTheme();
+  const [formMode, setFormMode] = useState<'create' | 'edit' | null>(null);
+  const [editing, setEditing] = useState<CylinderTypeRow | null>(null);
+
+  const { data, isLoading, refetch, isRefetching } = useApiQuery<{ cylinderTypes: CylinderTypeRow[] }>(
+    ['cylinder-types'],
+    '/cylinder-types',
+    undefined,
+    { enabled: visible },
+  );
+  const cylinderTypes: CylinderTypeRow[] = data?.cylinderTypes ?? [];
+
+  const createMutation = useApiMutation<
+    CylinderTypeRow,
+    { typeName: string; capacity: number; unit: string }
+  >('post', '/cylinder-types', {
+    invalidateKeys: [['cylinder-types']],
+    successMessage: 'Cylinder type created',
+    onSuccess: () => {
+      setFormMode(null);
+      setEditing(null);
+    },
+  });
+
+  const updateMutation = useApiMutation<
+    CylinderTypeRow,
+    { typeName: string; capacity: number; unit: string }
+  >('put', () => `/cylinder-types/${editing?.cylinderTypeId ?? ''}`, {
+    invalidateKeys: [['cylinder-types']],
+    successMessage: 'Cylinder type updated',
+    onSuccess: () => {
+      setFormMode(null);
+      setEditing(null);
+    },
+  });
+
+  const deleteMutation = useApiMutation<{ message: string }, void>(
+    'delete',
+    (_vars) => `/cylinder-types/${pendingDeleteId.current ?? ''}`,
+    {
+      invalidateKeys: [['cylinder-types']],
+      successMessage: 'Cylinder type deleted',
+    },
+  );
+  // Tiny ref-style holder so the delete URL can resolve at call time without
+  // making it part of the mutation variables.
+  const pendingDeleteId = React.useRef<string | null>(null);
+
+  const handleDelete = (row: CylinderTypeRow) => {
+    Alert.alert(
+      'Delete cylinder type',
+      `Delete "${row.typeName}"? This cannot be undone if it has no historical inventory.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            pendingDeleteId.current = row.cylinderTypeId;
+            deleteMutation.mutate(undefined);
+          },
+        },
+      ],
+    );
+  };
+
+  const handleSubmit = (values: { typeName: string; capacity: number; unit: string }) => {
+    if (formMode === 'create') {
+      createMutation.mutate(values);
+    } else if (formMode === 'edit' && editing) {
+      updateMutation.mutate(values);
+    }
+  };
+
+  const formInitial = useMemo(() => {
+    if (formMode === 'edit' && editing) {
+      return {
+        typeName: editing.typeName,
+        capacity: String(editing.capacity),
+        unit: editing.unit || 'kg',
+      };
+    }
+    return { typeName: '', capacity: '', unit: 'kg' };
+  }, [formMode, editing]);
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+        <ModalHeader title="Cylinder Types" onClose={onClose} theme={theme} />
+        {isLoading ? (
+          <Loading theme={theme} />
+        ) : (
+          <View style={{ flex: 1 }}>
+            <FlatList
+              data={cylinderTypes}
+              keyExtractor={(item) => item.cylinderTypeId}
+              contentContainerStyle={cylinderTypes.length === 0 ? { flex: 1 } : { paddingVertical: 8 }}
+              renderItem={({ item }) => (
+                <View
+                  style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingHorizontal: 16, paddingVertical: 14, gap: 12,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 40, height: 40, borderRadius: 10,
+                      backgroundColor: ACCENT + '14',
+                      alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <Ionicons name="cube" size={18} color={ACCENT} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>
+                      {item.typeName}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>
+                      {item.capacity} {item.unit || 'kg'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => { setEditing(item); setFormMode('edit'); }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{
+                      paddingHorizontal: 10, paddingVertical: 6,
+                      borderRadius: 8, backgroundColor: ACCENT + '14',
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: ACCENT }}>Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleDelete(item)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{
+                      paddingHorizontal: 10, paddingVertical: 6,
+                      borderRadius: 8, backgroundColor: '#dc262614',
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: theme.divider }} />}
+              ListEmptyComponent={
+                <EmptyList
+                  message="No cylinder types defined. Add one to get started."
+                  theme={theme}
+                />
+              }
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefetching}
+                  onRefresh={refetch}
+                  tintColor={ACCENT}
+                />
+              }
+            />
+            <FAB onPress={() => { setEditing(null); setFormMode('create'); }} />
+          </View>
+        )}
+
+        <CylinderTypeFormModal
+          visible={formMode !== null}
+          mode={formMode ?? 'create'}
+          initial={formInitial}
+          theme={theme}
+          onClose={() => { setFormMode(null); setEditing(null); }}
+          onSubmit={handleSubmit}
+          submitting={createMutation.isPending || updateMutation.isPending}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CYLINDER PRICES MODAL
+// ═══════════════════════════════════════════════════════════════════════════
+
 function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
@@ -2806,6 +3127,7 @@ export default function AdminMoreScreen() {
   const [showOverview, setShowOverview] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [showGst, setShowGst] = useState(false);
+  const [showCylinderTypes, setShowCylinderTypes] = useState(false);
   const [showPrices, setShowPrices] = useState(false);
   const [showThresholds, setShowThresholds] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
@@ -2845,13 +3167,15 @@ export default function AdminMoreScreen() {
 
         {/* ── Section 3: Settings ──────────────────────────────────── */}
         <SectionCard title="Settings" theme={theme}>
-          <MenuRow icon="document-text" label="GST Configuration" subtitle="Mode, credentials & GSP setup" onPress={() => setShowGst(true)} theme={theme} />
+          <MenuRow icon="document-text" label="GST" subtitle="Mode, credentials & GSP setup" onPress={() => setShowGst(true)} theme={theme} />
+          <Divider theme={theme} />
+          <MenuRow icon="cube" label="Cylinder Types" subtitle="Add, edit & remove cylinder types" onPress={() => setShowCylinderTypes(true)} theme={theme} />
           <Divider theme={theme} />
           <MenuRow icon="pricetag" label="Cylinder Prices" subtitle="Price list per cylinder type" onPress={() => setShowPrices(true)} theme={theme} />
           <Divider theme={theme} />
-          <MenuRow icon="alert-circle" label="Inventory Thresholds" subtitle="Warning & critical levels" onPress={() => setShowThresholds(true)} theme={theme} />
+          <MenuRow icon="alert-circle" label="Thresholds" subtitle="Warning & critical levels" onPress={() => setShowThresholds(true)} theme={theme} />
           <Divider theme={theme} />
-          <MenuRow icon="person-add" label="User Management" subtitle="Users, roles & access" onPress={() => setShowUsers(true)} theme={theme} />
+          <MenuRow icon="person-add" label="Users" subtitle="Users, roles & access" onPress={() => setShowUsers(true)} theme={theme} />
         </SectionCard>
 
         {/* ── Section 4: Account ───────────────────────────────────── */}
@@ -2934,6 +3258,7 @@ export default function AdminMoreScreen() {
       <AnalyticsOverviewModal visible={showOverview} onClose={() => setShowOverview(false)} />
       <ReportsModal visible={showReports} onClose={() => setShowReports(false)} />
       <GstConfigModal visible={showGst} onClose={() => setShowGst(false)} />
+      <CylinderTypesModal visible={showCylinderTypes} onClose={() => setShowCylinderTypes(false)} />
       <CylinderPricesModal visible={showPrices} onClose={() => setShowPrices(false)} />
       <InventoryThresholdsModal visible={showThresholds} onClose={() => setShowThresholds(false)} />
       <UserManagementModal visible={showUsers} onClose={() => setShowUsers(false)} />
