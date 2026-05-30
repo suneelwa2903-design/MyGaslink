@@ -2,8 +2,9 @@ import { View, Text, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { Card, MetricCard, EmptyState } from '../../src/components/ui';
+import { Card, Badge, MetricCard, EmptyState } from '../../src/components/ui';
 import { useTheme, formatINR } from '../../src/theme';
+import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 
 interface HeaderMetric {
   label: string;
@@ -147,9 +148,16 @@ export default function AnalyticsScreen() {
                   <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }}>#{order.orderNumber}</Text>
                   <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>{order.customerName}</Text>
                 </View>
-                <View style={{ alignItems: 'flex-end' }}>
+                <View style={{ alignItems: 'flex-end', gap: 4 }}>
                   <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }}>{formatINR(order.totalAmount)}</Text>
-                  <StatusPill status={order.status} dark={dark} />
+                  {/*
+                    Canonical labels from @gaslink/shared. "Pending Assignment"
+                    and "Pending Dispatch" are slightly longer than the
+                    previous "Pending" / "Dispatch" shorthand — if it ever
+                    overflows the metric card layout, prefer a narrower Badge
+                    width over re-introducing local labels.
+                  */}
+                  <Badge variant={orderStatusVariant(order.status)} label={orderStatusLabel(order.status)} />
                 </View>
               </View>
             </Card>
@@ -160,21 +168,3 @@ export default function AnalyticsScreen() {
   );
 }
 
-function StatusPill({ status, dark }: { status: string; dark: boolean }) {
-  const statusMap: Record<string, { label: string; bg: string; text: string }> = {
-    pending_driver_assignment: { label: 'Pending', bg: dark ? 'rgba(245,158,11,0.15)' : '#fffbeb', text: dark ? '#fbbf24' : '#d97706' },
-    pending_dispatch: { label: 'Dispatch', bg: dark ? 'rgba(59,130,246,0.15)' : '#eff6ff', text: dark ? '#60a5fa' : '#3b82f6' },
-    pending_delivery: { label: 'In Transit', bg: dark ? 'rgba(168,85,247,0.15)' : '#faf5ff', text: dark ? '#c084fc' : '#a855f7' },
-    delivered: { label: 'Delivered', bg: dark ? 'rgba(16,185,129,0.15)' : '#ecfdf5', text: dark ? '#34d399' : '#059669' },
-    cancelled: { label: 'Cancelled', bg: dark ? 'rgba(220,38,38,0.15)' : '#fef2f2', text: dark ? '#f87171' : '#dc2626' },
-  };
-  const s = statusMap[status] || { label: status.replace(/_/g, ' '), bg: dark ? 'rgba(100,116,139,0.15)' : '#f1f5f9', text: dark ? '#94a3b8' : '#475569' };
-
-  return (
-    <View style={{
-      backgroundColor: s.bg, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4,
-    }}>
-      <Text style={{ fontSize: 11, fontWeight: '700', color: s.text, textTransform: 'capitalize' }}>{s.label}</Text>
-    </View>
-  );
-}

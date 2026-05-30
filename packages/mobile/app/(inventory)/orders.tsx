@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, Badge, EmptyState } from '../../src/components/ui';
 import { useTheme, formatINR } from '../../src/theme';
+import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -31,28 +32,10 @@ interface Order {
 
 const STATUS_TABS = [
   { label: 'All', value: 'all' },
-  { label: 'Pending', value: 'pending_driver_assignment' },
-  { label: 'Dispatched', value: 'pending_delivery' },
-  { label: 'Delivered', value: 'delivered' },
+  { label: orderStatusLabel('pending_driver_assignment'), value: 'pending_driver_assignment' },
+  { label: orderStatusLabel('pending_delivery'), value: 'pending_delivery' },
+  { label: orderStatusLabel('delivered'), value: 'delivered' },
 ] as const;
-
-const STATUS_LABELS: Record<string, string> = {
-  pending_driver_assignment: 'Pending Assignment',
-  pending_dispatch: 'Pending Dispatch',
-  pending_delivery: 'In Transit',
-  delivered: 'Delivered',
-  modified_delivered: 'Modified',
-  cancelled: 'Cancelled',
-};
-
-const STATUS_BADGE_VARIANTS: Record<string, 'warning' | 'info' | 'success' | 'danger' | 'neutral'> = {
-  pending_driver_assignment: 'warning',
-  pending_dispatch: 'info',
-  pending_delivery: 'info',
-  delivered: 'success',
-  modified_delivered: 'success',
-  cancelled: 'danger',
-};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -110,8 +93,8 @@ export default function InventoryOrdersScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }}>#{item.orderNumber}</Text>
                 <Badge
-                  label={STATUS_LABELS[item.status] || item.status.replace(/_/g, ' ')}
-                  variant={STATUS_BADGE_VARIANTS[item.status] || 'neutral'}
+                  label={orderStatusLabel(item.status)}
+                  variant={orderStatusVariant(item.status)}
                 />
               </View>
               <Text style={{ fontSize: 14, color: colors.textSecondary }}>{item.customerName}</Text>

@@ -12,6 +12,7 @@ import { Button, Badge, EmptyState } from '../../src/components/ui';
 import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 
 interface CylinderType {
   id: string;
@@ -191,14 +192,6 @@ export default function CustomerOrdersScreen() {
     raiseDispute.mutate({ orderId: disputeOrder.orderId, reason: disputeReason.trim() });
   };
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'delivered': case 'modified_delivered': return 'success' as const;
-      case 'cancelled': return 'danger' as const;
-      case 'pending_delivery': return 'warning' as const;
-      default: return 'info' as const;
-    }
-  };
 
   // Modify/Cancel are allowed only BEFORE a driver is assigned — i.e. while
   // the order is still pending_driver_assignment. Once a driver is tagged the
@@ -474,8 +467,8 @@ export default function CustomerOrdersScreen() {
                   </Text>
                 </View>
                 <Badge
-                  label={(order.status || '').replace(/_/g, ' ')}
-                  variant={statusColor(order.status || '')}
+                  label={orderStatusLabel(order.status || '')}
+                  variant={orderStatusVariant(order.status || '')}
                 />
               </View>
 

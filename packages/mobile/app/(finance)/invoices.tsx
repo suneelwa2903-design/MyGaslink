@@ -6,26 +6,17 @@ import { useApiQuery } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
 import { Card, Badge, MetricCard, EmptyState } from '../../src/components/ui';
 import type { Invoice } from '@gaslink/shared';
+import { invoiceStatusLabel, invoiceStatusVariant } from '@gaslink/shared';
 
 type InvoiceFilter = 'all' | 'issued' | 'partially_paid' | 'paid' | 'overdue';
 
 const TABS: { label: string; value: InvoiceFilter }[] = [
   { label: 'All', value: 'all' },
-  { label: 'Issued', value: 'issued' },
-  { label: 'Partial', value: 'partially_paid' },
-  { label: 'Paid', value: 'paid' },
-  { label: 'Overdue', value: 'overdue' },
+  { label: invoiceStatusLabel('issued'), value: 'issued' },
+  { label: invoiceStatusLabel('partially_paid'), value: 'partially_paid' },
+  { label: invoiceStatusLabel('paid'), value: 'paid' },
+  { label: invoiceStatusLabel('overdue'), value: 'overdue' },
 ];
-
-const statusVariant = (s: string) => {
-  switch (s) {
-    case 'paid': return 'success' as const;
-    case 'overdue': case 'cancelled': return 'danger' as const;
-    case 'partially_paid': return 'warning' as const;
-    case 'issued': return 'info' as const;
-    default: return 'neutral' as const;
-  }
-};
 
 export default function FinanceInvoicesScreen() {
   const { dark, colors, accent } = useTheme();
@@ -61,7 +52,7 @@ export default function FinanceInvoicesScreen() {
               <Text style={{ fontSize: 14, color: accent.red, fontWeight: '500', marginTop: 2 }}>{inv.customerName}</Text>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 4 }}>
-              <Badge label={(inv.status || '').replace(/_/g, ' ')} variant={statusVariant(inv.status || '')} />
+              <Badge label={invoiceStatusLabel(inv.status || '')} variant={invoiceStatusVariant(inv.status || '')} />
               {daysOverdue > 0 && (
                 <Text style={{ fontSize: 11, color: '#ef4444', fontWeight: '600' }}>{daysOverdue}d overdue</Text>
               )}
@@ -221,7 +212,7 @@ function InvoiceDetailModal({
     `/invoices/${invoiceId}`,
   );
 
-  const badgeVariant = statusVariant(invoice?.status || '');
+  const badgeVariant = invoiceStatusVariant(invoice?.status || '');
   const sectionBg = dark ? colors.inputBg : '#f8fafc';
 
   return (
@@ -258,7 +249,7 @@ function InvoiceDetailModal({
                   <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{invoice.invoiceNumber}</Text>
                   <Text style={{ fontSize: 15, color: accent.red, fontWeight: '500', marginTop: 2 }}>{invoice.customerName}</Text>
                 </View>
-                <Badge label={(invoice.status || '').replace(/_/g, ' ')} variant={badgeVariant} />
+                <Badge label={invoiceStatusLabel(invoice.status || '')} variant={badgeVariant} />
               </View>
             </View>
 

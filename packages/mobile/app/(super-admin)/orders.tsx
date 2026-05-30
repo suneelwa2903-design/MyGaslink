@@ -7,6 +7,7 @@ import { Card, Badge, EmptyState } from '../../src/components/ui';
 import { useTheme, formatINR } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
 import type { Order, OrderItem, PaginationMeta } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 
 // The orders list endpoint can carry a couple of legacy/aliased numeric fields
 // the card renders defensively (e.g. `deliverQuantity`/`lineTotal`). Model them
@@ -25,30 +26,12 @@ type OrderRow = Order & {
 
 const STATUS_FILTERS = [
   { label: 'All', value: '' },
-  { label: 'Pending', value: 'pending_driver_assignment' },
-  { label: 'Dispatched', value: 'pending_dispatch' },
-  { label: 'In Transit', value: 'pending_delivery' },
-  { label: 'Delivered', value: 'delivered' },
-  { label: 'Cancelled', value: 'cancelled' },
+  { label: orderStatusLabel('pending_driver_assignment'), value: 'pending_driver_assignment' },
+  { label: orderStatusLabel('pending_dispatch'), value: 'pending_dispatch' },
+  { label: orderStatusLabel('pending_delivery'), value: 'pending_delivery' },
+  { label: orderStatusLabel('delivered'), value: 'delivered' },
+  { label: orderStatusLabel('cancelled'), value: 'cancelled' },
 ];
-
-const STATUS_VARIANTS: Record<string, 'info' | 'warning' | 'success' | 'danger' | 'neutral'> = {
-  pending_driver_assignment: 'warning',
-  pending_dispatch: 'info',
-  pending_delivery: 'info',
-  delivered: 'success',
-  modified_delivered: 'success',
-  cancelled: 'danger',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  pending_driver_assignment: 'Pending Assignment',
-  pending_dispatch: 'Pending Dispatch',
-  pending_delivery: 'In Transit',
-  delivered: 'Delivered',
-  modified_delivered: 'Modified Delivered',
-  cancelled: 'Cancelled',
-};
 
 // ── Pill component ───────────────────────────────────────────────────────────
 
@@ -166,8 +149,8 @@ export default function OrdersScreen() {
                     </Text>
                   </View>
                   <Badge
-                    label={STATUS_LABELS[order.status] ?? order.status.replace(/_/g, ' ')}
-                    variant={STATUS_VARIANTS[order.status] ?? 'neutral'}
+                    label={orderStatusLabel(order.status)}
+                    variant={orderStatusVariant(order.status)}
                   />
                 </View>
 

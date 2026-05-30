@@ -13,22 +13,14 @@ import {
   type Order,
   type CylinderType,
   type PaginationMeta,
-  OrderStatus,
   createOrderSchema,
   type CreateOrderInput,
+  orderStatusLabel,
+  orderStatusVariant,
 } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
-
-const STATUS_VARIANTS: Record<string, 'info' | 'warning' | 'success' | 'danger' | 'neutral'> = {
-  [OrderStatus.PENDING_DRIVER_ASSIGNMENT]: 'warning',
-  [OrderStatus.PENDING_DISPATCH]: 'info',
-  [OrderStatus.PENDING_DELIVERY]: 'info',
-  [OrderStatus.DELIVERED]: 'success',
-  [OrderStatus.MODIFIED_DELIVERED]: 'success',
-  [OrderStatus.CANCELLED]: 'danger',
-};
 
 function formatCurrency(n: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
@@ -100,7 +92,7 @@ export default function CustomerOrdersPage() {
                     <td>{new Date(order.deliveryDate).toLocaleDateString('en-IN')}</td>
                     <td>{t('customerPortal.orders.itemsCount', { count: order.items.length })}</td>
                     <td className="font-medium">{formatCurrency(order.totalAmount)}</td>
-                    <td><Badge variant={STATUS_VARIANTS[order.status] || 'neutral'}>{t(`enums.orderStatus.${order.status}`, order.status.replace(/_/g, ' '))}</Badge></td>
+                    <td><Badge variant={orderStatusVariant(order.status)}>{orderStatusLabel(order.status)}</Badge></td>
                     <td>
                       <button onClick={() => setViewOrder(order)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500">
                         <HiOutlineEye className="h-4 w-4" />
@@ -132,7 +124,7 @@ export default function CustomerOrdersPage() {
               <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.orderDate')}</p><p className="text-sm font-medium">{new Date(viewOrder.orderDate).toLocaleDateString('en-IN')}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.deliveryDate')}</p><p className="text-sm font-medium">{new Date(viewOrder.deliveryDate).toLocaleDateString('en-IN')}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.driver')}</p><p className="text-sm font-medium">{viewOrder.driverName || t('customerPortal.orders.viewModal.notAssigned')}</p></div>
-              <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.status')}</p><Badge variant={STATUS_VARIANTS[viewOrder.status] || 'neutral'}>{t(`enums.orderStatus.${viewOrder.status}`, viewOrder.status.replace(/_/g, ' '))}</Badge></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.status')}</p><Badge variant={orderStatusVariant(viewOrder.status)}>{orderStatusLabel(viewOrder.status)}</Badge></div>
               {viewOrder.driverPhone && (
                 <div className="col-span-2 sm:col-span-4 p-3 rounded-xl bg-brand-50 dark:bg-brand-500/10">
                   <p className="text-xs font-medium text-brand-700 dark:text-brand-300 mb-1">{t('customerPortal.orders.viewModal.yourDriver', 'Your delivery driver')}</p>

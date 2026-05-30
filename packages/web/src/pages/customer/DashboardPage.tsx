@@ -6,6 +6,7 @@ import {
   HiOutlineCurrencyRupee,
 } from 'react-icons/hi2';
 import type { Order, Invoice } from '@gaslink/shared';
+import { orderStatusLabel, invoiceStatusLabel } from '@gaslink/shared';
 import { apiGet } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Badge, Loader, EmptyState } from '@/components/ui';
@@ -83,7 +84,7 @@ export default function CustomerDashboardPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="font-medium text-sm">{formatCurrency(order.totalAmount)}</span>
-                      <Badge variant={order.status === 'delivered' ? 'success' : 'info'}>{t(`enums.orderStatus.${order.status}`, order.status.replace(/_/g, ' '))}</Badge>
+                      <Badge variant={order.status === 'delivered' ? 'success' : 'info'}>{orderStatusLabel(order.status)}</Badge>
                     </div>
                   </div>
                 ))}
@@ -108,7 +109,7 @@ export default function CustomerDashboardPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="font-medium text-sm">{formatCurrency(inv.totalAmount)}</span>
-                      <Badge variant={inv.status === 'paid' ? 'success' : inv.status === 'overdue' ? 'danger' : 'info'}>{t(`enums.invoiceStatus.${inv.status}`, inv.status)}</Badge>
+                      <Badge variant={inv.status === 'paid' ? 'success' : inv.status === 'overdue' ? 'danger' : 'info'}>{invoiceStatusLabel(inv.status)}</Badge>
                     </div>
                   </div>
                 ))}

@@ -3,19 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { HiOutlineEye } from 'react-icons/hi2';
 import type { Invoice, PaginationMeta } from '@gaslink/shared';
-import { InvoiceStatus } from '@gaslink/shared';
+import { InvoiceStatus, invoiceStatusLabel, invoiceStatusVariant } from '@gaslink/shared';
 import { apiGet } from '@/lib/api';
 import { Button, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
-
-const STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
-  [InvoiceStatus.DRAFT]: 'neutral',
-  [InvoiceStatus.ISSUED]: 'info',
-  [InvoiceStatus.PARTIALLY_PAID]: 'warning',
-  [InvoiceStatus.PAID]: 'success',
-  [InvoiceStatus.OVERDUE]: 'danger',
-  [InvoiceStatus.CANCELLED]: 'danger',
-};
 
 function formatCurrency(n: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n);
@@ -40,7 +31,7 @@ export default function CustomerInvoicesPage() {
 
   const statusOptions = Object.values(InvoiceStatus).map((s) => ({
     value: s,
-    label: t(`enums.invoiceStatus.${s}`, s.replace(/_/g, ' ')),
+    label: invoiceStatusLabel(s),
   }));
 
   return (
@@ -85,7 +76,7 @@ export default function CustomerInvoicesPage() {
                     <td className={cn('font-medium', inv.outstandingAmount > 0 && 'text-red-500')}>
                       {formatCurrency(inv.outstandingAmount)}
                     </td>
-                    <td><Badge variant={STATUS_VARIANTS[inv.status] || 'neutral'}>{t(`enums.invoiceStatus.${inv.status}`, inv.status.replace(/_/g, ' '))}</Badge></td>
+                    <td><Badge variant={invoiceStatusVariant(inv.status)}>{invoiceStatusLabel(inv.status)}</Badge></td>
                     <td>
                       <button onClick={() => setViewInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500">
                         <HiOutlineEye className="h-4 w-4" />
@@ -115,7 +106,7 @@ export default function CustomerInvoicesPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.issueDate')}</p><p className="text-sm font-medium">{new Date(viewInvoice.issueDate).toLocaleDateString('en-IN')}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.dueDate')}</p><p className="text-sm font-medium">{new Date(viewInvoice.dueDate).toLocaleDateString('en-IN')}</p></div>
-              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.status')}</p><Badge variant={STATUS_VARIANTS[viewInvoice.status] || 'neutral'}>{t(`enums.invoiceStatus.${viewInvoice.status}`, viewInvoice.status)}</Badge></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.status')}</p><Badge variant={invoiceStatusVariant(viewInvoice.status)}>{invoiceStatusLabel(viewInvoice.status)}</Badge></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.outstanding')}</p><p className="text-sm font-bold text-red-500">{formatCurrency(viewInvoice.outstandingAmount)}</p></div>
             </div>
 

@@ -21,6 +21,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
 import { api, apiPut, getErrorMessage } from '../../src/lib/api';
+import { Badge } from '../../src/components/ui';
+import {
+  invoiceStatusLabel,
+  invoiceStatusVariant,
+  noteStatusLabel,
+  noteStatusVariant,
+} from '@gaslink/shared';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -92,20 +99,12 @@ const ACCENT = '#dc2626';
 
 const INVOICE_STATUS_TABS = [
   { label: 'All', value: 'all' },
-  { label: 'Issued', value: 'issued' },
-  { label: 'Partially Paid', value: 'partially_paid' },
-  { label: 'Paid', value: 'paid' },
-  { label: 'Overdue', value: 'overdue' },
-  { label: 'Cancelled', value: 'cancelled' },
+  { label: invoiceStatusLabel('issued'), value: 'issued' },
+  { label: invoiceStatusLabel('partially_paid'), value: 'partially_paid' },
+  { label: invoiceStatusLabel('paid'), value: 'paid' },
+  { label: invoiceStatusLabel('overdue'), value: 'overdue' },
+  { label: invoiceStatusLabel('cancelled'), value: 'cancelled' },
 ] as const;
-
-const INVOICE_STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  issued: { bg: '#3b82f6', text: '#ffffff' },
-  partially_paid: { bg: '#f97316', text: '#ffffff' },
-  paid: { bg: '#22c55e', text: '#ffffff' },
-  overdue: { bg: '#ef4444', text: '#ffffff' },
-  cancelled: { bg: '#6b7280', text: '#ffffff' },
-};
 
 const PAYMENT_METHOD_COLORS: Record<string, { bg: string; text: string }> = {
   cash: { bg: '#22c55e', text: '#ffffff' },
@@ -127,14 +126,6 @@ const PAYMENT_METHODS = [
   { label: 'Bank Transfer', value: 'bank_transfer' },
   { label: 'Cheque', value: 'cheque' },
 ];
-
-const NOTE_STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  pending: { bg: '#f97316', text: '#ffffff' },
-  approved: { bg: '#22c55e', text: '#ffffff' },
-  issued: { bg: '#22c55e', text: '#ffffff' },
-  rejected: { bg: '#ef4444', text: '#ffffff' },
-  cancelled: { bg: '#6b7280', text: '#ffffff' },
-};
 
 function getColors(dark: boolean) {
   return {
@@ -469,7 +460,6 @@ function InvoicesTab({
   const renderInvoiceCard = useCallback(
     ({ item: inv }: { item: Invoice }) => {
       const expanded = expandedInvoiceId === inv.invoiceId;
-      const statusColor = INVOICE_STATUS_COLORS[inv.status] ?? { bg: '#6b7280', text: '#ffffff' };
       const hasCn = (inv.creditNotesCount ?? 0) > 0;
       const hasDn = (inv.debitNotesCount ?? 0) > 0;
       const showCnDnButtons = gstEnabled && inv.status === 'issued';
@@ -495,18 +485,7 @@ function InvoicesTab({
                 <Text style={{ fontSize: 15, fontWeight: '700', color: C.text }}>
                   {inv.invoiceNumber}
                 </Text>
-                <View
-                  style={{
-                    paddingHorizontal: 8,
-                    paddingVertical: 3,
-                    borderRadius: 6,
-                    backgroundColor: statusColor.bg,
-                  }}
-                >
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: statusColor.text }}>
-                    {capitalizeStatus(inv.status)}
-                  </Text>
-                </View>
+                <Badge label={invoiceStatusLabel(inv.status)} variant={invoiceStatusVariant(inv.status)} />
                 {/* Feature 2: CN/DN count chips */}
                 {hasCn && (
                   <View
@@ -761,7 +740,7 @@ function InvoicesTab({
         </Text>
         <Text style={{ fontSize: 13, color: C.textSecondary, marginTop: 4 }}>
           {invoiceStatus !== 'all'
-            ? `No ${capitalizeStatus(invoiceStatus).toLowerCase()} invoices`
+            ? `No ${invoiceStatusLabel(invoiceStatus).toLowerCase()} invoices`
             : 'Invoices will appear here'}
         </Text>
       </View>
@@ -903,7 +882,6 @@ function InvoiceNotesSection({ C, dark, invoiceId, enabled }: InvoiceNotesSectio
   if (total === 0) return null;
 
   const renderNoteRow = (kind: 'cn' | 'dn', id: string, number: string | null, amount: number, reason: string, status: string) => {
-    const sc = NOTE_STATUS_COLORS[status] ?? { bg: '#6b7280', text: '#ffffff' };
     const isPending = status === 'pending';
     const isDownloadable = status === 'approved' || status === 'issued';
     const isDownloading = downloadingNoteId === id;
@@ -930,11 +908,7 @@ function InvoiceNotesSection({ C, dark, invoiceId, enabled }: InvoiceNotesSectio
             </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: sc.bg }}>
-              <Text style={{ fontSize: 10, fontWeight: '700', color: sc.text }}>
-                {capitalizeStatus(status)}
-              </Text>
-            </View>
+            <Badge label={noteStatusLabel(status)} variant={noteStatusVariant(status)} />
           </View>
         </View>
         {reason ? (

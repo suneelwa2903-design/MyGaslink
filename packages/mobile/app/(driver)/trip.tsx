@@ -12,6 +12,13 @@ import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme, ACCENT, formatDate } from '../../src/theme';
 import { api, getErrorMessage } from '../../src/lib/api';
 import type { DriverVehicleAssignment, Order, OrderItem } from '@gaslink/shared';
+import {
+  ASSIGNMENT_STATUS_LABELS,
+  assignmentStatusLabel,
+  assignmentStatusVariant,
+  orderStatusLabel,
+  orderStatusVariant,
+} from '@gaslink/shared';
 
 // Trip orders carry a `deliveredAt` timestamp the driver screen sorts on; it's
 // not on the shared Order DTO yet, so model it as an optional extension.
@@ -210,10 +217,10 @@ export default function DriverTripScreen() {
   );
 
   const statusSteps = [
-    { status: 'dispatch_ready', label: 'Ready', color: ACCENT.blue },
-    { status: 'loaded_and_dispatched', label: 'Dispatched', color: ACCENT.orange },
-    { status: 'returned_inventory', label: 'Returned', color: ACCENT.green },
-    { status: 'reconciled', label: 'Reconciled', color: ACCENT.purple },
+    { status: 'dispatch_ready', label: ASSIGNMENT_STATUS_LABELS.dispatch_ready, color: ACCENT.blue },
+    { status: 'loaded_and_dispatched', label: ASSIGNMENT_STATUS_LABELS.loaded_and_dispatched, color: ACCENT.orange },
+    { status: 'returned_inventory', label: ASSIGNMENT_STATUS_LABELS.returned_inventory, color: ACCENT.green },
+    { status: 'reconciled', label: ASSIGNMENT_STATUS_LABELS.reconciled, color: ACCENT.purple },
   ];
 
   // WI-094c Change 6: the vehicle flips to 'returned' the moment the driver
@@ -314,8 +321,8 @@ export default function DriverTripScreen() {
                   <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>{formatDate(assignment.assignmentDate)}</Text>
                 </View>
                 <Badge
-                  label={(assignment.status || '').replace(/_/g, ' ')}
-                  variant={assignment.status === 'reconciled' ? 'success' : assignment.status === 'loaded_and_dispatched' ? 'warning' : 'info'}
+                  label={assignmentStatusLabel(assignment.status || '')}
+                  variant={assignmentStatusVariant(assignment.status || '')}
                 />
               </View>
             </Card>
@@ -436,12 +443,8 @@ export default function DriverTripScreen() {
                     <Text style={{ fontSize: 13, color: ACCENT.blue, marginTop: 2 }}>{order.customerName}</Text>
                   </View>
                   <Badge
-                    label={(order.status || '').replace(/_/g, ' ')}
-                    variant={
-                      order.status === 'delivered' || order.status === 'modified_delivered' ? 'success'
-                        : order.status === 'cancelled' ? 'danger'
-                        : 'warning'
-                    }
+                    label={orderStatusLabel(order.status || '')}
+                    variant={orderStatusVariant(order.status || '')}
                   />
                 </View>
                 <View style={{ marginTop: 8, gap: 2 }}>

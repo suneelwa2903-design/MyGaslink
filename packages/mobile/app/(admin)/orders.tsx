@@ -21,6 +21,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
 import { api, getErrorMessage } from '../../src/lib/api';
+import { Badge } from '../../src/components/ui';
+import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -119,30 +121,12 @@ interface ReadyToDispatchGroup {
 
 const STATUS_TABS = [
   { label: 'All', value: 'all' },
-  { label: 'Pending Assignment', value: 'pending_driver_assignment' },
-  { label: 'Pending Dispatch', value: 'pending_dispatch' },
-  { label: 'Pending Delivery', value: 'pending_delivery' },
-  { label: 'Delivered', value: 'delivered' },
-  { label: 'Cancelled', value: 'cancelled' },
+  { label: orderStatusLabel('pending_driver_assignment'), value: 'pending_driver_assignment' },
+  { label: orderStatusLabel('pending_dispatch'), value: 'pending_dispatch' },
+  { label: orderStatusLabel('pending_delivery'), value: 'pending_delivery' },
+  { label: orderStatusLabel('delivered'), value: 'delivered' },
+  { label: orderStatusLabel('cancelled'), value: 'cancelled' },
 ] as const;
-
-const STATUS_BADGE_COLORS: Record<string, { bg: string; text: string }> = {
-  pending_driver_assignment: { bg: '#f97316', text: '#ffffff' },
-  pending_dispatch: { bg: '#3b82f6', text: '#ffffff' },
-  pending_delivery: { bg: '#a855f7', text: '#ffffff' },
-  delivered: { bg: '#22c55e', text: '#ffffff' },
-  modified_delivered: { bg: '#14b8a6', text: '#ffffff' },
-  cancelled: { bg: '#ef4444', text: '#ffffff' },
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  pending_driver_assignment: 'Pending Assignment',
-  pending_dispatch: 'Pending Dispatch',
-  pending_delivery: 'Pending Delivery',
-  delivered: 'Delivered',
-  modified_delivered: 'Modified Delivered',
-  cancelled: 'Cancelled',
-};
 
 const ACCENT = '#dc2626';
 
@@ -404,16 +388,9 @@ export default function AdminOrdersScreen() {
 
   // ─── Render helpers ────────────────────────────────────────────────────
 
-  const renderStatusBadge = (status: string) => {
-    const colors = STATUS_BADGE_COLORS[status] ?? { bg: '#6b7280', text: '#ffffff' };
-    return (
-      <View style={[styles.badge, { backgroundColor: colors.bg }]}>
-        <Text style={[styles.badgeText, { color: colors.text }]}>
-          {STATUS_LABELS[status] ?? status.replace(/_/g, ' ')}
-        </Text>
-      </View>
-    );
-  };
+  const renderStatusBadge = (status: string) => (
+    <Badge variant={orderStatusVariant(status)} label={orderStatusLabel(status)} />
+  );
 
   const renderOrderCard = useCallback(
     ({ item: order }: { item: Order }) => {

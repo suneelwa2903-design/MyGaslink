@@ -33,31 +33,14 @@ import {
   type DeliveryConfirmationInput,
   returnsOnlyOrderSchema,
   type ReturnsOnlyOrderInput,
+  ORDER_STATUS_LABELS,
+  orderStatusLabel,
+  orderStatusVariant,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole, selectDistributorId } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
-
-const STATUS_VARIANTS: Record<string, 'info' | 'warning' | 'success' | 'danger' | 'neutral'> = {
-  [OrderStatus.PENDING_DRIVER_ASSIGNMENT]: 'warning',
-  [OrderStatus.PENDING_DISPATCH]: 'info',
-  [OrderStatus.PREFLIGHT_IN_PROGRESS]: 'info',
-  [OrderStatus.PENDING_DELIVERY]: 'warning',
-  [OrderStatus.DELIVERED]: 'success',
-  [OrderStatus.MODIFIED_DELIVERED]: 'success',
-  [OrderStatus.CANCELLED]: 'danger',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  [OrderStatus.PENDING_DRIVER_ASSIGNMENT]: 'Pending Assignment',
-  [OrderStatus.PENDING_DISPATCH]: 'Pending Dispatch',
-  [OrderStatus.PREFLIGHT_IN_PROGRESS]: 'Dispatching…',
-  [OrderStatus.PENDING_DELIVERY]: 'Out for Delivery',
-  [OrderStatus.DELIVERED]: 'Delivered',
-  [OrderStatus.MODIFIED_DELIVERED]: 'Modified Delivered',
-  [OrderStatus.CANCELLED]: 'Cancelled',
-};
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
@@ -151,7 +134,7 @@ export default function OrdersPage() {
 
   const statusOptions = Object.values(OrderStatus).map((s) => ({
     value: s,
-    label: STATUS_LABELS[s] || s,
+    label: ORDER_STATUS_LABELS[s] || s,
   }));
 
   return (
@@ -311,8 +294,8 @@ export default function OrdersPage() {
                     <td className="font-medium">{formatCurrency(order.totalAmount)}</td>
                     <td>{order.driverName || <span className="text-surface-400">Unassigned</span>}</td>
                     <td>
-                      <Badge variant={STATUS_VARIANTS[order.status] || 'neutral'}>
-                        {STATUS_LABELS[order.status] || order.status}
+                      <Badge variant={orderStatusVariant(order.status)}>
+                        {orderStatusLabel(order.status)}
                       </Badge>
                     </td>
                     <td>
@@ -626,8 +609,8 @@ function OrderDetailModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <p className="text-xs uppercase tracking-wide text-surface-500">Status</p>
-            <Badge variant={STATUS_VARIANTS[order.status] || 'neutral'}>
-              {STATUS_LABELS[order.status] || order.status}
+            <Badge variant={orderStatusVariant(order.status)}>
+              {orderStatusLabel(order.status)}
             </Badge>
           </div>
           <div>

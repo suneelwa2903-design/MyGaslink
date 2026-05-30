@@ -15,7 +15,8 @@ import {
   type DriverVehicleAssignment,
   DriverStatus,
   VehicleStatus,
-  AssignmentStatus,
+  ASSIGNMENT_STATUS_VARIANTS,
+  assignmentStatusLabel,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -30,14 +31,6 @@ const VEHICLE_STATUS_VARIANTS: Record<string, 'success' | 'info' | 'warning' | '
   [VehicleStatus.DISPATCHED]: 'info',
   [VehicleStatus.RETURNED]: 'warning',
   [VehicleStatus.INACTIVE]: 'neutral',
-};
-
-const ASSIGNMENT_STATUS_VARIANTS: Record<string, 'info' | 'success' | 'warning' | 'danger' | 'neutral'> = {
-  [AssignmentStatus.DISPATCH_READY]: 'info',
-  [AssignmentStatus.LOADED_AND_DISPATCHED]: 'warning',
-  [AssignmentStatus.RETURNED_INVENTORY]: 'success',
-  [AssignmentStatus.RECONCILED]: 'success',
-  [AssignmentStatus.CANCELLED]: 'danger',
 };
 
 export default function DriversVehiclesPage() {
@@ -210,7 +203,7 @@ export default function DriversVehiclesPage() {
                       <td>{new Date(a.assignmentDate).toLocaleDateString('en-IN')}</td>
                       <td>{a.tripNumber}</td>
                       <td>{a.orders.length}</td>
-                      <td><Badge variant={ASSIGNMENT_STATUS_VARIANTS[a.status] || 'neutral'}>{a.status.replace(/_/g, ' ')}</Badge></td>
+                      <td><Badge variant={ASSIGNMENT_STATUS_VARIANTS[a.status as keyof typeof ASSIGNMENT_STATUS_VARIANTS] || 'neutral'}>{assignmentStatusLabel(a.status)}</Badge></td>
                     </tr>
                   ))}
                 </tbody>

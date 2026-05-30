@@ -7,6 +7,7 @@ import { Button, Badge, EmptyState } from '../../src/components/ui';
 import { DeliveryProofCamera } from '../../src/components/DeliveryProofCamera';
 import { useTheme, ACCENT, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 import { apiPost, getErrorMessage } from '../../src/lib/api';
 import {
   enqueueDelivery,
@@ -123,14 +124,6 @@ export default function DriverOrdersScreen() {
     );
   };
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'pending_delivery': return 'warning' as const;
-      case 'pending_dispatch': return 'info' as const;
-      case 'delivered': return 'success' as const;
-      default: return 'neutral' as const;
-    }
-  };
 
   /**
    * Open the modal for an order. The inline "Deliver" button on the card
@@ -246,7 +239,7 @@ export default function DriverOrdersScreen() {
                 </View>
                 {pendingOrderIds.has(order.orderId)
                   ? <Badge label="pending sync" variant="warning" />
-                  : <Badge label={(order.status || '').replace(/_/g, ' ')} variant={statusColor(order.status || '')} />}
+                  : <Badge label={orderStatusLabel(order.status || '')} variant={orderStatusVariant(order.status || '')} />}
               </View>
 
               <View style={{ marginTop: 10, gap: 4 }}>

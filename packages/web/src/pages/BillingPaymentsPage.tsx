@@ -36,6 +36,11 @@ import {
   createPaymentSchema,
   type CreatePaymentInput,
   UserRole,
+  INVOICE_STATUS_VARIANTS,
+  NOTE_STATUS_VARIANTS,
+  invoiceStatusLabel,
+  noteStatusLabel,
+  type StatusVariant,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
@@ -45,16 +50,7 @@ import { cn } from '@/lib/cn';
 
 // ─── Shared constants ────────────────────────────────────────────────────────
 
-const INVOICE_STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
-  [InvoiceStatus.DRAFT]: 'neutral',
-  [InvoiceStatus.ISSUED]: 'info',
-  [InvoiceStatus.PARTIALLY_PAID]: 'warning',
-  [InvoiceStatus.PAID]: 'success',
-  [InvoiceStatus.OVERDUE]: 'danger',
-  [InvoiceStatus.CANCELLED]: 'danger',
-};
-
-const IRN_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
+const IRN_VARIANTS: Record<string, StatusVariant> = {
   [IrnStatus.NOT_ATTEMPTED]: 'neutral',
   [IrnStatus.PENDING]: 'warning',
   [IrnStatus.SUCCESS]: 'success',
@@ -62,7 +58,7 @@ const IRN_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | '
   [IrnStatus.CANCELLED]: 'danger',
 };
 
-const EWB_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
+const EWB_VARIANTS: Record<string, StatusVariant> = {
   [EwbStatus.NOT_ATTEMPTED]: 'neutral',
   [EwbStatus.PENDING]: 'warning',
   [EwbStatus.ACTIVE]: 'success',
@@ -310,7 +306,7 @@ function InvoicesTab() {
                     <td className={cn('font-medium', inv.outstandingAmount > 0 && 'text-red-500')}>
                       {formatCurrency(inv.outstandingAmount)}
                     </td>
-                    <td><Badge variant={INVOICE_STATUS_VARIANTS[inv.status] || 'neutral'}>{inv.status.replace(/_/g, ' ')}</Badge></td>
+                    <td><Badge variant={INVOICE_STATUS_VARIANTS[inv.status] || 'neutral'}>{invoiceStatusLabel(inv.status)}</Badge></td>
                     {gstEnabled && (
                       <td>
                         {/* WI-077: B2B shows IRN + EWB pills, B2C shows EWB
@@ -661,7 +657,7 @@ function InvoiceDetailModal({
           <div><p className="text-xs text-surface-400">Customer</p><p className="text-sm font-medium text-surface-900 dark:text-white">{invoice.customerName}</p></div>
           <div><p className="text-xs text-surface-400">Issue Date</p><p className="text-sm font-medium">{new Date(invoice.issueDate).toLocaleDateString('en-IN')}</p></div>
           <div><p className="text-xs text-surface-400">Due Date</p><p className="text-sm font-medium">{new Date(invoice.dueDate).toLocaleDateString('en-IN')}</p></div>
-          <div><p className="text-xs text-surface-400">Status</p><Badge variant={INVOICE_STATUS_VARIANTS[invoice.status] || 'neutral'}>{invoice.status}</Badge></div>
+          <div><p className="text-xs text-surface-400">Status</p><Badge variant={INVOICE_STATUS_VARIANTS[invoice.status] || 'neutral'}>{invoiceStatusLabel(invoice.status)}</Badge></div>
         </div>
 
         <div className="table-container">
@@ -871,14 +867,6 @@ type DebitNoteRow = {
   createdAt: string;
 };
 
-const NOTE_STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
-  pending: 'warning',
-  approved: 'success',
-  issued: 'success',
-  rejected: 'danger',
-  cancelled: 'danger',
-};
-
 function InvoiceNotesSection({ invoiceId }: { invoiceId: string }) {
   const queryClient = useQueryClient();
   const role = useAuthStore(selectRole);
@@ -1063,8 +1051,8 @@ function NoteList({
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant={NOTE_STATUS_VARIANTS[r.status] || 'neutral'}>
-                      {r.status.replace(/_/g, ' ')}
+                    <Badge variant={NOTE_STATUS_VARIANTS[r.status as keyof typeof NOTE_STATUS_VARIANTS] || 'neutral'}>
+                      {noteStatusLabel(r.status)}
                     </Badge>
                     {isApproved && (
                       <button

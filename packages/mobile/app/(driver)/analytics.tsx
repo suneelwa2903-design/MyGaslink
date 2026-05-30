@@ -6,6 +6,8 @@ import { useApiQuery } from '../../src/hooks/useApi';
 import { Card, MetricCard } from '../../src/components/ui';
 import { useTheme, ACCENT, formatINR } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
+import { Badge } from '../../src/components/ui';
+import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 
 interface DriverPerformanceRow {
   driverId: string;
@@ -24,7 +26,7 @@ function offsetDate(offsetDays: number): string {
 }
 
 export default function DriverAnalyticsScreen() {
-  const { dark, colors } = useTheme();
+  const { colors } = useTheme();
 
   const [dateFrom, setDateFrom] = useState<string>(() => offsetDate(-7));
   const [dateTo, setDateTo] = useState<string>(() => offsetDate(0));
@@ -79,14 +81,6 @@ export default function DriverAnalyticsScreen() {
     },
   ];
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'delivered': return ACCENT.green;
-      case 'pending_delivery': return ACCENT.orange;
-      case 'pending_dispatch': return ACCENT.blue;
-      default: return colors.textMuted;
-    }
-  };
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -226,27 +220,13 @@ export default function DriverAnalyticsScreen() {
                     </Text>
                   )}
                 </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <View style={{
-                    height: 24,
-                    borderRadius: 12,
-                    paddingHorizontal: 10,
-                    backgroundColor: dark
-                      ? `${statusColor(order.status || '')}22`
-                      : `${statusColor(order.status || '')}18`,
-                    justifyContent: 'center',
-                  }}>
-                    <Text style={{
-                      fontSize: 11,
-                      fontWeight: '600',
-                      color: statusColor(order.status || ''),
-                      textTransform: 'capitalize',
-                    }}>
-                      {(order.status || '').replace(/_/g, ' ')}
-                    </Text>
-                  </View>
+                <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                  <Badge
+                    label={orderStatusLabel(order.status || '')}
+                    variant={orderStatusVariant(order.status || '')}
+                  />
                   {order.totalAmount != null && (
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, marginTop: 4 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
                       {formatINR(order.totalAmount)}
                     </Text>
                   )}
