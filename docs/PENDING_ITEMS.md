@@ -73,3 +73,18 @@
 - GST API logs accumulate in DB
 - Add retention policy + cleanup job
 - Added: 2026-05-29
+
+### Collections Excel Export (broken)
+- /api/analytics/export/collections returns JSON not xlsx
+- Web button calls non-existent path AND bypasses shared axios client
+  (anti-pattern #5)
+- Mobile correctly omitted the button
+- Fix: proper server-side xlsx generation OR client-side CSV from reduce data
+- Added: 2026-05-31
+
+### Collections Metrics — No Server Endpoint
+- Total Due / Overdue / Missing Cylinders computed client-side via reduce()
+- No dedicated /analytics/collections/summary
+- Works but not scalable for large datasets
+- Fix: add server-side aggregation endpoint
+- Added: 2026-05-31
