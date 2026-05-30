@@ -88,3 +88,15 @@
 - Works but not scalable for large datasets
 - Fix: add server-side aggregation endpoint
 - Added: 2026-05-31
+
+### Customer interface too narrow in more.tsx
+- Local Customer interface declares status: 'active' | 'suspended' only
+- Shared CustomerStatus enum also has 'inactive'
+- Fix: delete local interface, import shared Customer type
+- Small follow-up commit
+- Added: 2026-05-31
+
+### EditCustomerModal duplicated
+- EditCustomerInlineModal (more.tsx) and EditCustomerModal (customer-detail.tsx) are duplicates calling same endpoint
+- Fix: extract to packages/mobile/src/components/EditCustomerModal.tsx
+- Added: 2026-05-31
