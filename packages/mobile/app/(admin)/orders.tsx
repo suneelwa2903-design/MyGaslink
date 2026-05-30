@@ -123,10 +123,20 @@ const STATUS_TABS = [
   { label: 'All', value: 'all' },
   { label: orderStatusLabel('pending_driver_assignment'), value: 'pending_driver_assignment' },
   { label: orderStatusLabel('pending_dispatch'), value: 'pending_dispatch' },
+  // STEP-3A: preflight_in_progress + modified_delivered tabs to match web parity.
+  { label: orderStatusLabel('preflight_in_progress'), value: 'preflight_in_progress' },
   { label: orderStatusLabel('pending_delivery'), value: 'pending_delivery' },
   { label: orderStatusLabel('delivered'), value: 'delivered' },
+  { label: orderStatusLabel('modified_delivered'), value: 'modified_delivered' },
   { label: orderStatusLabel('cancelled'), value: 'cancelled' },
 ] as const;
+
+// STEP-3A: default date range = last 30 days, matches web OrdersPage default.
+function getDateNDaysAgoISO(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().split('T')[0];
+}
 
 const ACCENT = '#dc2626';
 
@@ -181,11 +191,20 @@ export default function AdminOrdersScreen() {
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
 
+  // STEP-3A: date range filter (default last 30 days, matches web OrdersPage).
+  const [dateFrom, setDateFrom] = useState(getDateNDaysAgoISO(30));
+  const [dateTo, setDateTo] = useState(getTodayISO());
+
   // Modal state
   const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [returnsModalVisible, setReturnsModalVisible] = useState(false);
   const [assignOrder, setAssignOrder] = useState<Order | null>(null);
   const [bulkAssignVisible, setBulkAssignVisible] = useState(false);
   const [deliverOrder, setDeliverOrder] = useState<Order | null>(null);
+  // STEP-3A: edit / detail / cancel-with-reason modals.
+  const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+  const [cancelOrder, setCancelOrder] = useState<Order | null>(null);
 
   // GST dispatch state
   const [dispatchingDriverId, setDispatchingDriverId] = useState<string | null>(null);
@@ -199,6 +218,10 @@ export default function AdminOrdersScreen() {
 
   const queryParams: Record<string, unknown> = { pageSize: 50, page: 1 };
   if (statusFilter !== 'all') queryParams.status = statusFilter;
+  // STEP-3A: pipe date range into the query — server already supports
+  // dateFrom/dateTo params on /orders (mirrors web OrdersPage usage).
+  if (dateFrom) queryParams.dateFrom = dateFrom;
+  if (dateTo) queryParams.dateTo = dateTo;
 
   const {
     data: ordersData,
@@ -206,7 +229,7 @@ export default function AdminOrdersScreen() {
     refetch,
     isRefetching,
   } = useApiQuery<{ orders: Order[]; total: number }>(
-    ['admin-orders', statusFilter],
+    ['admin-orders', statusFilter, dateFrom, dateTo],
     '/orders',
     queryParams,
   );
@@ -247,12 +270,15 @@ export default function AdminOrdersScreen() {
 
   // ─── Mutations ──────────────────────────────────────────────────────────
 
-  const cancelMutation = useApiMutation<unknown, { orderId: string }>(
+  // STEP-3A: cancelMutation now carries a `reason` field. Server's cancel
+  // route accepts it as `cancellation_reason` (see web's CancelOrderModal).
+  const cancelMutation = useApiMutation<unknown, { orderId: string; reason: string }>(
     'post',
     (vars) => `/orders/${vars.orderId}/cancel`,
     {
       invalidateKeys: [['admin-orders']],
       successMessage: 'Order cancelled successfully',
+      onSuccess: () => setCancelOrder(null),
     },
   );
 
@@ -311,23 +337,10 @@ export default function AdminOrdersScreen() {
     );
   }, []);
 
-  const handleCancel = useCallback(
-    (order: Order) => {
-      Alert.alert(
-        'Cancel Order',
-        `Are you sure you want to cancel order ${order.orderNumber}?`,
-        [
-          { text: 'No', style: 'cancel' },
-          {
-            text: 'Yes, Cancel',
-            style: 'destructive',
-            onPress: () => cancelMutation.mutate({ orderId: order.orderId }),
-          },
-        ],
-      );
-    },
-    [cancelMutation],
-  );
+  // STEP-3A: open CancelOrderModal so user provides a required reason.
+  // Replaces the prior native Alert which had no reason field and gave a
+  // copy mismatch versus the web confirmation message.
+  const handleCancel = useCallback((order: Order) => setCancelOrder(order), []);
 
   const handleDispatch = useCallback(
     async (group: ReadyToDispatchGroup) => {
@@ -420,10 +433,18 @@ export default function AdminOrdersScreen() {
             },
           ]}
         >
-          {/* Header row */}
+          {/* Header row — tapping the order # opens the read-only Detail modal,
+              while tapping anywhere else on the card still expands. */}
           <View style={styles.cardHeader}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.orderNumber, { color: C.text }]}>{order.orderNumber}</Text>
+              <TouchableOpacity
+                onPress={() => setDetailOrder(order)}
+                hitSlop={{ top: 4, bottom: 4, left: 4, right: 8 }}
+              >
+                <Text style={[styles.orderNumber, { color: C.text, textDecorationLine: 'underline' }]}>
+                  {order.orderNumber}
+                </Text>
+              </TouchableOpacity>
               <Text style={[styles.customerName, { color: ACCENT }]}>{order.customerName}</Text>
             </View>
             {renderStatusBadge(order.status)}
@@ -492,6 +513,17 @@ export default function AdminOrdersScreen() {
                     <Text style={styles.actionBtnText}>Assign Driver</Text>
                   </TouchableOpacity>
                 )}
+                {/* STEP-3A: Edit only allowed while order is still in
+                    pending_driver_assignment — matches web OrdersPage rule. */}
+                {canAssign && (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: '#6366f1' }]}
+                    onPress={() => setEditOrder(order)}
+                  >
+                    <Ionicons name="pencil-outline" size={16} color="#fff" />
+                    <Text style={styles.actionBtnText}>Edit</Text>
+                  </TouchableOpacity>
+                )}
                 {canDeliver && (
                   <TouchableOpacity
                     style={[styles.actionBtn, { backgroundColor: '#22c55e' }]}
@@ -554,6 +586,45 @@ export default function AdminOrdersScreen() {
           );
         })}
       </ScrollView>
+
+      {/* STEP-3A: date range filter + Returns Order button.
+          Plain text inputs (YYYY-MM-DD) keep parity with the existing
+          deliveryDate input in CreateOrderModal and avoid pulling in a
+          platform-specific picker dependency. Pickers can come later if
+          users find the keyboard form too tedious. */}
+      <View style={styles.dateRangeRow}>
+        <View style={[styles.dateInputWrapper, { backgroundColor: C.card, borderColor: C.inputBorder }]}>
+          <Ionicons name="calendar-outline" size={14} color={C.textMuted} />
+          <TextInput
+            style={[styles.dateInput, { color: C.text }]}
+            placeholder="From YYYY-MM-DD"
+            placeholderTextColor={C.textMuted}
+            value={dateFrom}
+            onChangeText={setDateFrom}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <View style={[styles.dateInputWrapper, { backgroundColor: C.card, borderColor: C.inputBorder }]}>
+          <Ionicons name="calendar-outline" size={14} color={C.textMuted} />
+          <TextInput
+            style={[styles.dateInput, { color: C.text }]}
+            placeholder="To YYYY-MM-DD"
+            placeholderTextColor={C.textMuted}
+            value={dateTo}
+            onChangeText={setDateTo}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <TouchableOpacity
+          style={[styles.returnsBtn, { borderColor: ACCENT }]}
+          onPress={() => setReturnsModalVisible(true)}
+        >
+          <Ionicons name="arrow-undo-outline" size={14} color={ACCENT} />
+          <Text style={[styles.returnsBtnText, { color: ACCENT }]}>Returns</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Search bar */}
       <View style={[styles.searchContainer, { borderBottomColor: C.divider }]}>
@@ -789,6 +860,47 @@ export default function AdminOrdersScreen() {
             setDispatchResult(null);
             refetch();
           }}
+        />
+      )}
+
+      {/* STEP-3A: new modals — Returns / Edit / Detail / Cancel-with-reason */}
+      {returnsModalVisible && (
+        <ReturnsOrderModal
+          visible={returnsModalVisible}
+          onClose={() => setReturnsModalVisible(false)}
+          customers={customers}
+          cylinderTypes={cylinderTypes}
+          dark={dark}
+        />
+      )}
+
+      {editOrder && (
+        <EditOrderModal
+          visible={!!editOrder}
+          onClose={() => setEditOrder(null)}
+          order={editOrder}
+          cylinderTypes={cylinderTypes}
+          dark={dark}
+        />
+      )}
+
+      {detailOrder && (
+        <OrderDetailModal
+          visible={!!detailOrder}
+          onClose={() => setDetailOrder(null)}
+          order={detailOrder}
+          dark={dark}
+        />
+      )}
+
+      {cancelOrder && (
+        <CancelOrderModal
+          visible={!!cancelOrder}
+          onClose={() => setCancelOrder(null)}
+          order={cancelOrder}
+          isSubmitting={cancelMutation.isPending}
+          onSubmit={(reason) => cancelMutation.mutate({ orderId: cancelOrder.orderId, reason })}
+          dark={dark}
         />
       )}
     </SafeAreaView>
@@ -1727,6 +1839,500 @@ function DispatchResultModal({
   );
 }
 
+// ─── STEP-3A: Returns Order Modal ───────────────────────────────────────────
+// Returns-only orders carry no delivery items — just the empties the customer
+// is sending back. Server flow: POST /orders with orderType='returns_only',
+// items are cylinder types + quantities being returned.
+
+function ReturnsOrderModal({
+  visible,
+  onClose,
+  customers,
+  cylinderTypes,
+  dark,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  customers: Customer[];
+  cylinderTypes: CylinderType[];
+  dark: boolean;
+}) {
+  const C = getColors(dark);
+
+  const [customerId, setCustomerId] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+  const [deliveryDate, setDeliveryDate] = useState(getTodayISO());
+  const [items, setItems] = useState([{ cylinderTypeId: '', quantity: '1' }]);
+  const [specialInstructions, setSpecialInstructions] = useState('');
+
+  const mutation = useApiMutation<unknown, unknown>(
+    'post',
+    '/orders',
+    {
+      invalidateKeys: [['admin-orders']],
+      successMessage: 'Returns order created',
+      onSuccess: () => onClose(),
+    },
+  );
+
+  const selectedCustomer = customers.find((c) => c.customerId === customerId);
+  const filteredCustomers = useMemo(() => {
+    if (!customerSearch.trim()) return customers;
+    const q = customerSearch.toLowerCase();
+    return customers.filter((c) => c.customerName.toLowerCase().includes(q));
+  }, [customers, customerSearch]);
+
+  const addItem = () => setItems([...items, { cylinderTypeId: '', quantity: '1' }]);
+  const removeItem = (i: number) => items.length > 1 && setItems(items.filter((_, idx) => idx !== i));
+  const updateItem = (i: number, field: 'cylinderTypeId' | 'quantity', value: string) => {
+    const next = [...items];
+    next[i] = { ...next[i], [field]: value };
+    setItems(next);
+  };
+
+  const handleSubmit = () => {
+    if (!customerId) return Alert.alert('Validation', 'Please select a customer');
+    const validItems = items.filter((it) => it.cylinderTypeId && parseInt(it.quantity, 10) > 0);
+    if (validItems.length === 0) return Alert.alert('Validation', 'Add at least one cylinder being returned');
+    mutation.mutate({
+      customerId,
+      // OrderType enum value is `returns_only` (packages/shared enums).
+      orderType: 'returns_only',
+      deliveryDate,
+      specialInstructions: specialInstructions || undefined,
+      items: validItems.map((it) => ({
+        cylinderTypeId: it.cylinderTypeId,
+        quantity: parseInt(it.quantity, 10),
+      })),
+    });
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+      <SafeAreaView style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <View style={[styles.modalHeader, { borderBottomColor: C.divider }]}>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={C.text} /></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: C.text }]}>Returns Order</Text>
+            <TouchableOpacity onPress={handleSubmit} disabled={mutation.isPending}>
+              {mutation.isPending
+                ? <ActivityIndicator size="small" color={ACCENT} />
+                : <Text style={[styles.modalSaveText, { color: ACCENT }]}>Create</Text>}
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <Text style={[styles.fieldLabel, { color: C.text }]}>Customer *</Text>
+            <TouchableOpacity
+              style={[styles.pickerBtn, { backgroundColor: C.card, borderColor: C.inputBorder }]}
+              onPress={() => setShowCustomerPicker(true)}
+            >
+              <Text style={{ color: selectedCustomer ? C.text : C.textMuted, fontSize: 15 }}>
+                {selectedCustomer?.customerName ?? 'Select customer'}
+              </Text>
+              <Ionicons name="chevron-down" size={18} color={C.textMuted} />
+            </TouchableOpacity>
+
+            <Modal visible={showCustomerPicker} animationType="slide" transparent>
+              <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
+                <View style={[styles.pickerSheet, { backgroundColor: C.modalBg }]}>
+                  <View style={[styles.pickerSheetHeader, { borderBottomColor: C.divider }]}>
+                    <Text style={[styles.pickerSheetTitle, { color: C.text }]}>Select Customer</Text>
+                    <TouchableOpacity onPress={() => setShowCustomerPicker(false)}>
+                      <Ionicons name="close" size={24} color={C.text} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+                    <View style={[styles.searchInputWrapper, { backgroundColor: C.card, borderColor: C.inputBorder }]}>
+                      <Ionicons name="search-outline" size={16} color={C.textMuted} />
+                      <TextInput
+                        style={[styles.searchInput, { color: C.text }]}
+                        placeholder="Search customers..."
+                        placeholderTextColor={C.textMuted}
+                        value={customerSearch}
+                        onChangeText={setCustomerSearch}
+                        autoFocus
+                      />
+                    </View>
+                  </View>
+                  <FlatList
+                    data={filteredCustomers}
+                    keyExtractor={(c) => c.customerId}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={[styles.pickerRow, { borderBottomColor: C.divider }]}
+                        onPress={() => {
+                          setCustomerId(item.customerId);
+                          setShowCustomerPicker(false);
+                          setCustomerSearch('');
+                        }}
+                      >
+                        <Text style={[styles.pickerRowText, { color: C.text }]}>{item.customerName}</Text>
+                      </TouchableOpacity>
+                    )}
+                  />
+                </View>
+              </View>
+            </Modal>
+
+            <Text style={[styles.fieldLabel, { color: C.text }]}>Date *</Text>
+            <TextInput
+              style={[styles.inputField, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={C.textMuted}
+              value={deliveryDate}
+              onChangeText={setDeliveryDate}
+            />
+
+            <Text style={[styles.fieldLabel, { color: C.text }]}>Cylinders Being Returned *</Text>
+            {items.map((item, i) => (
+              <View key={i} style={styles.itemRow}>
+                <View style={{ flex: 2 }}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {cylinderTypes.map((ct) => {
+                      const active = item.cylinderTypeId === ct.cylinderTypeId;
+                      return (
+                        <TouchableOpacity
+                          key={ct.cylinderTypeId}
+                          style={[
+                            styles.cylinderChip,
+                            { backgroundColor: active ? ACCENT : C.tabBg, borderColor: active ? ACCENT : C.inputBorder },
+                          ]}
+                          onPress={() => updateItem(i, 'cylinderTypeId', ct.cylinderTypeId)}
+                        >
+                          <Text style={{ color: active ? '#fff' : C.text, fontSize: 12, fontWeight: '600' }}>
+                            {ct.typeName}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+                <TextInput
+                  style={[styles.qtyInput, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+                  keyboardType="numeric"
+                  value={item.quantity}
+                  onChangeText={(v) => updateItem(i, 'quantity', v.replace(/[^0-9]/g, ''))}
+                />
+                {items.length > 1 && (
+                  <TouchableOpacity onPress={() => removeItem(i)} style={{ padding: 6 }}>
+                    <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+            <TouchableOpacity style={[styles.addItemBtn, { borderColor: ACCENT }]} onPress={addItem}>
+              <Ionicons name="add" size={16} color={ACCENT} />
+              <Text style={{ color: ACCENT, fontWeight: '600', marginLeft: 4 }}>Add Cylinder Type</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.fieldLabel, { color: C.text }]}>Notes</Text>
+            <TextInput
+              style={[styles.textareaField, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+              placeholder="Optional notes about this return"
+              placeholderTextColor={C.textMuted}
+              value={specialInstructions}
+              onChangeText={setSpecialInstructions}
+              multiline
+              numberOfLines={3}
+            />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+// ─── STEP-3A: Edit Order Modal ──────────────────────────────────────────────
+// Reuses the same field structure as CreateOrderModal but pre-fills from the
+// passed order and PUTs to /orders/:id. Surface only items + special
+// instructions + delivery date; customer is not editable post-creation.
+
+function EditOrderModal({
+  visible,
+  onClose,
+  order,
+  cylinderTypes,
+  dark,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  order: Order;
+  cylinderTypes: CylinderType[];
+  dark: boolean;
+}) {
+  const C = getColors(dark);
+
+  const [deliveryDate, setDeliveryDate] = useState(String(order.deliveryDate).split('T')[0]);
+  const [specialInstructions, setSpecialInstructions] = useState(order.specialInstructions ?? '');
+  const [items, setItems] = useState(
+    (order.items ?? []).map((it) => ({
+      cylinderTypeId: it.cylinderTypeId,
+      quantity: String(it.quantity),
+    })),
+  );
+
+  const mutation = useApiMutation<unknown, unknown>(
+    'put',
+    `/orders/${order.orderId}`,
+    {
+      invalidateKeys: [['admin-orders']],
+      successMessage: 'Order updated',
+      onSuccess: () => onClose(),
+    },
+  );
+
+  const addItem = () => setItems([...items, { cylinderTypeId: '', quantity: '1' }]);
+  const removeItem = (i: number) => items.length > 1 && setItems(items.filter((_, idx) => idx !== i));
+  const updateItem = (i: number, field: 'cylinderTypeId' | 'quantity', value: string) => {
+    const next = [...items];
+    next[i] = { ...next[i], [field]: value };
+    setItems(next);
+  };
+
+  const handleSubmit = () => {
+    const validItems = items.filter((it) => it.cylinderTypeId && parseInt(it.quantity, 10) > 0);
+    if (validItems.length === 0) return Alert.alert('Validation', 'Order must have at least one item');
+    if (!deliveryDate) return Alert.alert('Validation', 'Please enter a delivery date');
+    mutation.mutate({
+      deliveryDate,
+      specialInstructions: specialInstructions || undefined,
+      items: validItems.map((it) => ({
+        cylinderTypeId: it.cylinderTypeId,
+        quantity: parseInt(it.quantity, 10),
+      })),
+    });
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+      <SafeAreaView style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <View style={[styles.modalHeader, { borderBottomColor: C.divider }]}>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={C.text} /></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: C.text }]}>Edit {order.orderNumber}</Text>
+            <TouchableOpacity onPress={handleSubmit} disabled={mutation.isPending}>
+              {mutation.isPending
+                ? <ActivityIndicator size="small" color={ACCENT} />
+                : <Text style={[styles.modalSaveText, { color: ACCENT }]}>Save</Text>}
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <Text style={[styles.fieldLabel, { color: C.text }]}>Customer</Text>
+            <View style={[styles.readOnlyField, { backgroundColor: C.card, borderColor: C.inputBorder }]}>
+              <Text style={{ color: C.text, fontSize: 15 }}>{order.customerName}</Text>
+            </View>
+
+            <Text style={[styles.fieldLabel, { color: C.text }]}>Delivery Date *</Text>
+            <TextInput
+              style={[styles.inputField, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={C.textMuted}
+              value={deliveryDate}
+              onChangeText={setDeliveryDate}
+            />
+
+            <Text style={[styles.fieldLabel, { color: C.text }]}>Items *</Text>
+            {items.map((item, i) => (
+              <View key={i} style={styles.itemRow}>
+                <View style={{ flex: 2 }}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {cylinderTypes.map((ct) => {
+                      const active = item.cylinderTypeId === ct.cylinderTypeId;
+                      return (
+                        <TouchableOpacity
+                          key={ct.cylinderTypeId}
+                          style={[
+                            styles.cylinderChip,
+                            { backgroundColor: active ? ACCENT : C.tabBg, borderColor: active ? ACCENT : C.inputBorder },
+                          ]}
+                          onPress={() => updateItem(i, 'cylinderTypeId', ct.cylinderTypeId)}
+                        >
+                          <Text style={{ color: active ? '#fff' : C.text, fontSize: 12, fontWeight: '600' }}>
+                            {ct.typeName}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+                <TextInput
+                  style={[styles.qtyInput, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+                  keyboardType="numeric"
+                  value={item.quantity}
+                  onChangeText={(v) => updateItem(i, 'quantity', v.replace(/[^0-9]/g, ''))}
+                />
+                {items.length > 1 && (
+                  <TouchableOpacity onPress={() => removeItem(i)} style={{ padding: 6 }}>
+                    <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+            <TouchableOpacity style={[styles.addItemBtn, { borderColor: ACCENT }]} onPress={addItem}>
+              <Ionicons name="add" size={16} color={ACCENT} />
+              <Text style={{ color: ACCENT, fontWeight: '600', marginLeft: 4 }}>Add Item</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.fieldLabel, { color: C.text }]}>Special Instructions</Text>
+            <TextInput
+              style={[styles.textareaField, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+              placeholder="Optional"
+              placeholderTextColor={C.textMuted}
+              value={specialInstructions}
+              onChangeText={setSpecialInstructions}
+              multiline
+              numberOfLines={3}
+            />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+// ─── STEP-3A: Order Detail Modal (read-only) ────────────────────────────────
+// Tapping the order number opens this view. No mutations — just everything
+// the card already has plus line items, special instructions, status badge,
+// and (if cancelled) the cancellation reason.
+
+function OrderDetailModal({
+  visible,
+  onClose,
+  order,
+  dark,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  order: Order;
+  dark: boolean;
+}) {
+  const C = getColors(dark);
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+      <SafeAreaView style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
+        <View style={[styles.modalHeader, { borderBottomColor: C.divider }]}>
+          <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={C.text} /></TouchableOpacity>
+          <Text style={[styles.modalTitle, { color: C.text }]}>{order.orderNumber}</Text>
+          <View style={{ width: 24 }} />
+        </View>
+
+        <ScrollView contentContainerStyle={styles.modalBody}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={[styles.customerName, { color: ACCENT, flex: 1 }]}>{order.customerName}</Text>
+            <Badge variant={orderStatusVariant(order.status)} label={orderStatusLabel(order.status)} />
+          </View>
+
+          <Text style={[styles.fieldLabel, { color: C.textSecondary, fontSize: 12 }]}>Delivery Date</Text>
+          <Text style={[{ color: C.text, fontSize: 15, marginBottom: 12 }]}>{formatDate(order.deliveryDate)}</Text>
+
+          <Text style={[styles.fieldLabel, { color: C.textSecondary, fontSize: 12 }]}>Driver</Text>
+          <Text style={[{ color: C.text, fontSize: 15, marginBottom: 12 }]}>{order.driverName || 'Unassigned'}</Text>
+
+          <Text style={[styles.fieldLabel, { color: C.textSecondary, fontSize: 12 }]}>Total Amount</Text>
+          <Text style={[{ color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16 }]}>
+            {formatCurrency(order.totalAmount)}
+          </Text>
+
+          <Text style={[styles.fieldLabel, { color: C.text }]}>Items</Text>
+          {order.items?.map((item, i) => (
+            <View key={i} style={[styles.itemDetailRow, { borderBottomColor: C.divider, borderBottomWidth: 1, paddingVertical: 8 }]}>
+              <Text style={[styles.itemDetailName, { color: C.text }]}>{item.cylinderTypeName}</Text>
+              <Text style={[styles.itemDetailQty, { color: C.textSecondary }]}>Qty: {item.quantity}</Text>
+              <Text style={[styles.itemDetailPrice, { color: C.text }]}>{formatCurrency(item.totalPrice)}</Text>
+            </View>
+          ))}
+
+          {order.specialInstructions ? (
+            <>
+              <Text style={[styles.fieldLabel, { color: C.text, marginTop: 16 }]}>Special Instructions</Text>
+              <Text style={[{ color: C.textSecondary, fontSize: 14 }]}>{order.specialInstructions}</Text>
+            </>
+          ) : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+// ─── STEP-3A: Cancel Order Modal (reason required) ──────────────────────────
+// Replaces the prior Alert.alert flow. Reason is required and is sent to the
+// server as `cancellation_reason` to match the web CancelOrderModal payload.
+
+function CancelOrderModal({
+  visible,
+  onClose,
+  order,
+  isSubmitting,
+  onSubmit,
+  dark,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  order: Order;
+  isSubmitting: boolean;
+  onSubmit: (reason: string) => void;
+  dark: boolean;
+}) {
+  const C = getColors(dark);
+  const [reason, setReason] = useState('');
+
+  const handleSubmit = () => {
+    if (!reason.trim()) {
+      Alert.alert('Reason required', 'Please enter a reason for cancellation.');
+      return;
+    }
+    onSubmit(reason.trim());
+  };
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent>
+      <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
+        <View style={[styles.cancelSheet, { backgroundColor: C.modalBg }]}>
+          <Text style={[styles.modalTitle, { color: C.text, textAlign: 'left', marginBottom: 6 }]}>
+            Cancel {order.orderNumber}
+          </Text>
+          <Text style={{ color: C.textSecondary, fontSize: 13, marginBottom: 12 }}>
+            This will cancel the order. No invoice has been generated yet. This cannot be undone.
+          </Text>
+          <Text style={[styles.fieldLabel, { color: C.text }]}>Reason *</Text>
+          <TextInput
+            style={[styles.textareaField, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+            placeholder="e.g. customer requested cancellation"
+            placeholderTextColor={C.textMuted}
+            value={reason}
+            onChangeText={setReason}
+            multiline
+            numberOfLines={3}
+            autoFocus
+          />
+
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+            <TouchableOpacity
+              style={[styles.cancelActionBtn, { backgroundColor: C.tabBg }]}
+              onPress={onClose}
+              disabled={isSubmitting}
+            >
+              <Text style={{ color: C.text, fontWeight: '600' }}>Go Back</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.cancelActionBtn, { backgroundColor: '#ef4444' }]}
+              onPress={handleSubmit}
+              disabled={isSubmitting}
+            >
+              {isSubmitting
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={{ color: '#fff', fontWeight: '700' }}>Cancel Order</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Styles ─────────────────────────────────────────────────────────────────
 
 
@@ -2295,5 +2901,97 @@ const styles = StyleSheet.create({
   resultOrderNum: {
     fontWeight: '700',
     fontSize: 14,
+  },
+
+  // STEP-3A — date-range filter row + Returns button
+  dateRangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 4,
+  },
+  dateInputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    gap: 4,
+  },
+  dateInput: {
+    flex: 1,
+    fontSize: 12,
+    padding: 0,
+  },
+  returnsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    gap: 4,
+  },
+  returnsBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  // STEP-3A — generic modal fields (Edit / Returns / Cancel)
+  inputField: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    marginBottom: 6,
+  },
+  textareaField: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    marginBottom: 6,
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+  readOnlyField: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 6,
+  },
+
+  // STEP-3A — Cancel Order modal (centered bottom sheet)
+  cancelSheet: {
+    margin: 16,
+    borderRadius: 16,
+    padding: 18,
+    alignSelf: 'center',
+    width: '90%',
+    maxWidth: 420,
+  },
+  cancelActionBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // STEP-3A — customer picker rows (reused by Returns + Edit + Detail flows)
+  pickerRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  pickerRowText: {
+    fontSize: 15,
   },
 });
