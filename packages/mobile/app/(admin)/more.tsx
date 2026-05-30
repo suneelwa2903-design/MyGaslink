@@ -1117,147 +1117,11 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// COLLECTIONS MODAL
-// ═══════════════════════════════════════════════════════════════════════════
+// STEP-3C: CollectionsModal removed. Collections is now a full screen at
+// app/(admin)/collections.tsx, reached via More → Collections → router.push.
 
-interface CollectionRecent {
-  id?: string;
-  customerName?: string;
-  date?: string;
-  amount?: number;
-}
-
-interface CollectionsData {
-  totalCollected?: number;
-  totalPending?: number;
-  collectionRate?: number;
-  overdue?: number;
-  recent?: CollectionRecent[];
-}
-
-function CollectionsModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const theme = useMoreTheme();
-
-  const { data: collections, isLoading, refetch } = useApiQuery<CollectionsData>(
-    ['collections'],
-    '/analytics/collections',
-    undefined,
-    { enabled: visible },
-  );
-
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-        <ModalHeader title="Collections" onClose={onClose} theme={theme} />
-        {isLoading ? (
-          <Loading theme={theme} />
-        ) : (
-          <ScrollView
-            contentContainerStyle={{ padding: 20, gap: 16 }}
-            refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={ACCENT} />}
-          >
-            {/* Summary Cards */}
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <MetricBox
-                label="Total Collected"
-                value={formatCurrency(collections?.totalCollected || 0)}
-                color="#10b981"
-                theme={theme}
-              />
-              <MetricBox
-                label="Pending"
-                value={formatCurrency(collections?.totalPending || 0)}
-                color="#f59e0b"
-                theme={theme}
-              />
-            </View>
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <MetricBox
-                label="Collection Rate"
-                value={`${collections?.collectionRate?.toFixed(1) || 0}%`}
-                color="#3b82f6"
-                theme={theme}
-              />
-              <MetricBox
-                label="Overdue"
-                value={formatCurrency(collections?.overdue || 0)}
-                color="#ef4444"
-                theme={theme}
-              />
-            </View>
-
-            {/* Recent collections list */}
-            {collections?.recent && collections.recent.length > 0 && (
-              <View>
-                <Text style={{ fontSize: 15, fontWeight: '700', color: theme.text, marginBottom: 10 }}>
-                  Recent Collections
-                </Text>
-                <View
-                  style={{
-                    backgroundColor: theme.cardBg, borderRadius: 12,
-                    borderWidth: 1, borderColor: theme.cardBorder, overflow: 'hidden',
-                  }}
-                >
-                  {collections.recent.map((c: CollectionRecent, i: number) => (
-                    <View key={c.id || i}>
-                      {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
-                      <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 12, alignItems: 'center' }}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }}>{c.customerName || 'Customer'}</Text>
-                          <Text style={{ fontSize: 11, color: theme.textMuted }}>
-                            {c.date ? new Date(c.date).toLocaleDateString('en-IN') : ''}
-                          </Text>
-                        </View>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#10b981' }}>
-                          {formatCurrency(c.amount || 0)}
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {!collections?.recent?.length && !isLoading && (
-              <EmptyList message="No collection data available" theme={theme} />
-            )}
-          </ScrollView>
-        )}
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
-// ─── Metric Box helper ──────────────────────────────────────────────────────
-
-function MetricBox({
-  label,
-  value,
-  color,
-  theme,
-}: {
-  label: string;
-  value: string;
-  color: string;
-  theme: Theme;
-}) {
-  return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: theme.cardBg,
-        borderRadius: 12,
-        padding: 16,
-        borderWidth: 1,
-        borderColor: theme.cardBorder,
-      }}
-    >
-      <Text style={{ fontSize: 12, color: theme.textMuted, marginBottom: 6 }}>{label}</Text>
-      <Text style={{ fontSize: 20, fontWeight: '800', color }}>{value}</Text>
-    </View>
-  );
-}
+// STEP-3C: MetricBox helper removed alongside CollectionsModal — it was its
+// only consumer. AnalyticsOverviewModal uses its own card layout.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ANALYTICS OVERVIEW MODAL
@@ -2067,7 +1931,6 @@ export default function AdminMoreScreen() {
   // Modal visibility state
   const [showCustomers, setShowCustomers] = useState(false);
   const [showFleet, setShowFleet] = useState(false);
-  const [showCollections, setShowCollections] = useState(false);
   const [showOverview, setShowOverview] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [showGst, setShowGst] = useState(false);
@@ -2098,7 +1961,7 @@ export default function AdminMoreScreen() {
           <Divider theme={theme} />
           <MenuRow icon="car-sport" label="Fleet" subtitle="Drivers, vehicles & assignments" onPress={() => setShowFleet(true)} theme={theme} />
           <Divider theme={theme} />
-          <MenuRow icon="wallet" label="Collections" subtitle="Payment collection dashboard" onPress={() => setShowCollections(true)} theme={theme} />
+          <MenuRow icon="wallet" label="Collections" subtitle="Payment collection dashboard" onPress={() => router.push('/(admin)/collections')} theme={theme} />
         </SectionCard>
 
         {/* ── Section 2: Analytics ─────────────────────────────────── */}
@@ -2196,7 +2059,6 @@ export default function AdminMoreScreen() {
       {/* ── All Modals ──────────────────────────────────────────── */}
       <CustomersModal visible={showCustomers} onClose={() => setShowCustomers(false)} />
       <FleetModal visible={showFleet} onClose={() => setShowFleet(false)} />
-      <CollectionsModal visible={showCollections} onClose={() => setShowCollections(false)} />
       <AnalyticsOverviewModal visible={showOverview} onClose={() => setShowOverview(false)} />
       <ReportsModal visible={showReports} onClose={() => setShowReports(false)} />
       <GstConfigModal visible={showGst} onClose={() => setShowGst(false)} />
