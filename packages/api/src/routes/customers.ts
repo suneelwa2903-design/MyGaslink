@@ -275,7 +275,7 @@ router.get('/:id/audit-trail',
 
 // POST /api/customers/:id/stop-supply
 router.post('/:id/stop-supply',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   auditLog('stop_supply', 'customer'),
   async (req, res) => {
     try {
@@ -289,7 +289,7 @@ router.post('/:id/stop-supply',
 
 // POST /api/customers/:id/resume-supply
 router.post('/:id/resume-supply',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'inventory'),
   auditLog('resume_supply', 'customer'),
   async (req, res) => {
     try {

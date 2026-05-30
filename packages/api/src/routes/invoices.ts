@@ -364,7 +364,7 @@ router.post('/credit-notes',
 );
 
 router.put('/credit-notes/:id/approve',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance'),
   auditLog('approve', 'credit_note'),
   async (req, res) => {
     try {
@@ -378,7 +378,7 @@ router.put('/credit-notes/:id/approve',
 );
 
 router.put('/credit-notes/:id/reject',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance'),
   // Optional `reason` — captured by auditLog middleware in the request body
   // for compliance trail. Not stored on the credit_note row (no column
   // for it; deferred until a separate audit column is added).
@@ -458,7 +458,7 @@ router.post('/debit-notes',
 );
 
 router.put('/debit-notes/:id/approve',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance'),
   auditLog('approve', 'debit_note'),
   async (req, res) => {
     try {
@@ -472,7 +472,7 @@ router.put('/debit-notes/:id/approve',
 );
 
 router.put('/debit-notes/:id/reject',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance'),
   validate(z.object({ reason: z.string().max(500).optional() })),
   auditLog('reject', 'debit_note'),
   async (req, res) => {

@@ -176,7 +176,7 @@ router.put('/:id',
 );
 
 router.delete('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   auditLog('delete', 'cylinder_type'),
   async (req, res) => {
     try {
