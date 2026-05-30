@@ -15,8 +15,11 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
+import { apiGet, apiPost, getErrorMessage } from '../../src/lib/api';
 import { useTheme, ACCENT } from '../../src/theme';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
@@ -102,13 +105,64 @@ interface ReconciliationVehicle {
   pendingUndeliveredOrders: number;
 }
 
+interface OnboardingStockRow {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  openingFulls: number;
+  openingEmpties: number;
+  dateSet: string;
+}
+
+interface AdjustmentHistoryRow {
+  eventId: string;
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  bucket: 'fulls' | 'empties';
+  quantity: number;
+  reason: string;
+  eventDate: string;
+  createdAt: string;
+  enteredByUserId: string;
+  enteredByName: string;
+}
+
+interface AdjustmentHistoryResponse {
+  data: AdjustmentHistoryRow[];
+  meta: { page: number; pageSize: number; total: number; totalPages: number };
+}
+
+interface CylinderTypeOption {
+  cylinderTypeId: string;
+  typeName: string;
+  emptyDepositPrice?: number | null;
+  latestPrice?: number | null;
+}
+
+interface DriverOption {
+  driverId: string;
+  driverName: string;
+}
+
+interface CustomerOption {
+  customerId: string;
+  customerName: string;
+}
+
 // ─── Tab Definitions ────────────────────────────────────────────────────────
 
-type TabKey = 'summary' | 'history' | 'cancelled' | 'forecast' | 'balances' | 'reconcile';
+type TabKey =
+  | 'summary'
+  | 'history'
+  | 'onboarding'
+  | 'cancelled'
+  | 'forecast'
+  | 'balances'
+  | 'reconcile';
 
 const TABS: { key: TabKey; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'summary', label: 'Summary', icon: 'cube-outline' },
   { key: 'history', label: 'History', icon: 'time-outline' },
+  { key: 'onboarding', label: 'Stock at Onboarding', icon: 'archive-outline' },
   { key: 'cancelled', label: 'Cancelled', icon: 'close-circle-outline' },
   { key: 'forecast', label: 'Forecast', icon: 'trending-up-outline' },
   { key: 'balances', label: 'Balances', icon: 'people-outline' },
@@ -243,6 +297,7 @@ export default function AdminInventoryScreen() {
           setDateTo={setHistoryDateTo}
         />
       )}
+      {activeTab === 'onboarding' && <OnboardingStockTab />}
       {activeTab === 'cancelled' && <CancelledTab selectedDate={selectedDate} />}
       {activeTab === 'forecast' && <ForecastTab />}
       {activeTab === 'balances' && <BalancesTab />}
@@ -330,6 +385,7 @@ function SummaryTab({
 
   // ── Modal state ────────────────────────────────────────────────────────────
   const [activeModal, setActiveModal] = useState<StockModalType>(null);
+  const [adjustTab, setAdjustTab] = useState<'new' | 'history'>('new');
   const [movementForm, setMovementForm] = useState<StockMovementForm>(() =>
     emptyMovementForm(selectedDate),
   );
@@ -412,7 +468,7 @@ function SummaryTab({
     } else {
       Alert.alert(
         'Lock Day',
-        `Lock inventory for ${formatDate(selectedDate)}? This prevents further edits.`,
+        `Lock inventory for ${selectedDate}? All summaries for this day will be frozen and can only be changed after an admin unlocks the day.`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -435,6 +491,7 @@ function SummaryTab({
     }
     if (type === 'adjust') {
       setAdjustForm(emptyAdjustForm(selectedDate));
+      setAdjustTab('new');
     } else {
       setMovementForm(emptyMovementForm(selectedDate));
     }
@@ -1074,7 +1131,7 @@ function SummaryTab({
                 flexDirection: 'row',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                marginBottom: 16,
+                marginBottom: 12,
               }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -1088,6 +1145,49 @@ function SummaryTab({
               </TouchableOpacity>
             </View>
 
+            {/* New / History sub-tabs */}
+            <View
+              style={{
+                flexDirection: 'row',
+                borderBottomWidth: 1,
+                borderBottomColor: t.divider,
+                marginBottom: 14,
+              }}
+            >
+              {(['new', 'history'] as const).map((key) => {
+                const isActive = adjustTab === key;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setAdjustTab(key)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderBottomWidth: 2,
+                      borderBottomColor: isActive ? t.blue : 'transparent',
+                      marginRight: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 13,
+                        fontWeight: isActive ? '700' : '500',
+                        color: isActive ? t.blue : t.textSecondary,
+                      }}
+                    >
+                      {key === 'new' ? 'New Adjustment' : 'Adjustment History'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {adjustTab === 'history' ? (
+              <AdjustmentHistoryPanel
+                cylinderOptions={cylinderOptions}
+                onClose={() => setActiveModal(null)}
+              />
+            ) : (
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {/* Cylinder Type Picker */}
               <Text style={[modalStyles.label, { color: t.textSecondary }]}>
@@ -1256,6 +1356,7 @@ function SummaryTab({
                 </Text>
               </TouchableOpacity>
             </ScrollView>
+            )}
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -1286,6 +1387,459 @@ const modalStyles = StyleSheet.create({
     textAlignVertical: 'top',
   },
 });
+
+// ─── ADJUSTMENT HISTORY PANEL (inside Adjust Stock modal) ───────────────────
+
+function AdjustmentHistoryPanel({
+  cylinderOptions,
+  onClose,
+}: {
+  cylinderOptions: { id: string; name: string }[];
+  onClose: () => void;
+}) {
+  const t = useInventoryTheme();
+  const [page, setPage] = useState(1);
+  const [bucketFilter, setBucketFilter] = useState<'all' | 'fulls' | 'empties'>('all');
+  const [cylinderTypeId, setCylinderTypeId] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [downloading, setDownloading] = useState(false);
+
+  const PAGE_SIZE = 50;
+
+  const queryParams: Record<string, unknown> = { page, pageSize: PAGE_SIZE };
+  if (bucketFilter !== 'all') queryParams.bucket = bucketFilter;
+  if (cylinderTypeId) queryParams.cylinderTypeId = cylinderTypeId;
+  if (dateFrom) queryParams.dateFrom = dateFrom;
+  if (dateTo) queryParams.dateTo = dateTo;
+
+  const { data, isLoading } = useApiQuery<AdjustmentHistoryResponse>(
+    ['manual-adjustments', String(page), bucketFilter, cylinderTypeId, dateFrom, dateTo],
+    '/inventory/manual-adjustments',
+    queryParams,
+  );
+
+  const rows = useMemo<AdjustmentHistoryRow[]>(() => data?.data ?? [], [data]);
+  const meta = data?.meta;
+
+  const handleDownloadCsv = useCallback(async () => {
+    if (rows.length === 0) return;
+    setDownloading(true);
+    try {
+      // Build CSV client-side from the in-memory rows — matches the web's
+      // downloadCsv intent (same field set, same export name pattern). On
+      // mobile we avoid a Blob round-trip by serialising what we already
+      // have in memory.
+      const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+      const header = ['Date', 'Cylinder Type', 'Bucket', 'Quantity', 'Reason', 'Entered By'];
+      const lines = rows.map((r) =>
+        [
+          r.eventDate.slice(0, 10),
+          r.cylinderTypeName,
+          r.bucket,
+          String(r.quantity),
+          r.reason ?? '',
+          r.enteredByName ?? '',
+        ]
+          .map(escape)
+          .join(','),
+      );
+      const csv = [header.join(','), ...lines].join('\n');
+      const fileName = `adjustment-history-${todayString()}.csv`;
+      const file = new File(Paths.cache, fileName);
+      try {
+        file.create();
+      } catch {
+        /* already exists */
+      }
+      file.write(csv);
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'text/csv',
+        dialogTitle: 'Adjustment History',
+        UTI: 'public.comma-separated-values-text',
+      });
+    } catch (err) {
+      Alert.alert('Could not export CSV', getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  }, [rows]);
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      {/* Filters */}
+      <Text style={[modalStyles.label, { color: t.textSecondary }]}>Bucket</Text>
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+        {(['all', 'fulls', 'empties'] as const).map((b) => {
+          const selected = bucketFilter === b;
+          return (
+            <TouchableOpacity
+              key={b}
+              onPress={() => {
+                setBucketFilter(b);
+                setPage(1);
+              }}
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                borderRadius: 8,
+                backgroundColor: selected ? t.blue : t.metricBg,
+                borderWidth: 1,
+                borderColor: selected ? t.blue : t.cardBorder,
+                alignItems: 'center',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: selected ? '#fff' : t.text,
+                  textTransform: 'capitalize',
+                }}
+              >
+                {b}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <Text style={[modalStyles.label, { color: t.textSecondary }]}>Cylinder Type</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ marginBottom: 14 }}
+        contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+      >
+        <TouchableOpacity
+          onPress={() => {
+            setCylinderTypeId('');
+            setPage(1);
+          }}
+          style={{
+            paddingHorizontal: 14,
+            paddingVertical: 8,
+            borderRadius: 20,
+            backgroundColor: cylinderTypeId === '' ? t.blue : t.metricBg,
+            borderWidth: 1,
+            borderColor: cylinderTypeId === '' ? t.blue : t.cardBorder,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: '600',
+              color: cylinderTypeId === '' ? '#fff' : t.text,
+            }}
+          >
+            All
+          </Text>
+        </TouchableOpacity>
+        {cylinderOptions.map((opt) => {
+          const selected = cylinderTypeId === opt.id;
+          return (
+            <TouchableOpacity
+              key={opt.id}
+              onPress={() => {
+                setCylinderTypeId(opt.id);
+                setPage(1);
+              }}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+                borderRadius: 20,
+                backgroundColor: selected ? t.blue : t.metricBg,
+                borderWidth: 1,
+                borderColor: selected ? t.blue : t.cardBorder,
+              }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '600', color: selected ? '#fff' : t.text }}>
+                {opt.name}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={[modalStyles.label, { color: t.textSecondary }]}>From (YYYY-MM-DD)</Text>
+          <TextInput
+            style={[
+              modalStyles.input,
+              { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder, marginBottom: 0 },
+            ]}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={t.textMuted}
+            value={dateFrom}
+            onChangeText={(v) => {
+              setDateFrom(v);
+              setPage(1);
+            }}
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[modalStyles.label, { color: t.textSecondary }]}>To (YYYY-MM-DD)</Text>
+          <TextInput
+            style={[
+              modalStyles.input,
+              { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder, marginBottom: 0 },
+            ]}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={t.textMuted}
+            value={dateTo}
+            onChangeText={(v) => {
+              setDateTo(v);
+              setPage(1);
+            }}
+          />
+        </View>
+      </View>
+
+      {/* Rows */}
+      {isLoading ? (
+        <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={t.accent} />
+        </View>
+      ) : rows.length === 0 ? (
+        <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+          <Text style={{ fontSize: 13, color: t.textMuted }}>
+            No adjustments match these filters.
+          </Text>
+        </View>
+      ) : (
+        <View style={{ gap: 8, marginBottom: 12 }}>
+          {rows.map((r) => {
+            const isAdd = r.quantity >= 0;
+            return (
+              <View
+                key={r.eventId}
+                style={{
+                  backgroundColor: t.metricBg,
+                  borderRadius: 10,
+                  padding: 12,
+                  borderWidth: 1,
+                  borderColor: t.cardBorder,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 6,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>
+                    {r.cylinderTypeName}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '700',
+                      color: isAdd ? t.green : t.red,
+                    }}
+                  >
+                    {isAdd ? `+${r.quantity}` : r.quantity}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 12, marginBottom: 4 }}>
+                  <Text style={{ fontSize: 11, color: t.textSecondary, textTransform: 'capitalize' }}>
+                    {r.bucket}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: t.textSecondary }}>
+                    {formatDate(r.eventDate)}
+                  </Text>
+                  {r.enteredByName ? (
+                    <Text style={{ fontSize: 11, color: t.textMuted }}>by {r.enteredByName}</Text>
+                  ) : null}
+                </View>
+                {r.reason ? (
+                  <Text style={{ fontSize: 12, color: t.text }}>{r.reason}</Text>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Pagination + CSV */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          marginTop: 4,
+          marginBottom: 12,
+        }}
+      >
+        <TouchableOpacity
+          onPress={handleDownloadCsv}
+          disabled={rows.length === 0 || downloading}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            borderRadius: 8,
+            backgroundColor: t.metricBg,
+            borderWidth: 1,
+            borderColor: t.cardBorder,
+            opacity: rows.length === 0 || downloading ? 0.5 : 1,
+          }}
+        >
+          {downloading ? (
+            <ActivityIndicator size="small" color={t.text} />
+          ) : (
+            <Ionicons name="download-outline" size={14} color={t.text} />
+          )}
+          <Text style={{ fontSize: 12, fontWeight: '700', color: t.text }}>Download CSV</Text>
+        </TouchableOpacity>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TouchableOpacity
+            onPress={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 8,
+              borderRadius: 8,
+              backgroundColor: t.metricBg,
+              borderWidth: 1,
+              borderColor: t.cardBorder,
+              opacity: page <= 1 ? 0.5 : 1,
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '600', color: t.text }}>Prev</Text>
+          </TouchableOpacity>
+          <Text style={{ fontSize: 12, color: t.textSecondary }}>
+            {meta?.page ?? 1} / {meta?.totalPages ?? 1}
+          </Text>
+          <TouchableOpacity
+            onPress={() => setPage((p) => p + 1)}
+            disabled={(meta?.totalPages ?? 1) <= page}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 8,
+              borderRadius: 8,
+              backgroundColor: t.metricBg,
+              borderWidth: 1,
+              borderColor: t.cardBorder,
+              opacity: (meta?.totalPages ?? 1) <= page ? 0.5 : 1,
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '600', color: t.text }}>Next</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <TouchableOpacity
+        onPress={onClose}
+        style={{
+          paddingVertical: 12,
+          borderRadius: 12,
+          backgroundColor: t.metricBg,
+          alignItems: 'center',
+          marginBottom: 8,
+        }}
+      >
+        <Text style={{ fontSize: 14, fontWeight: '700', color: t.text }}>Close</Text>
+      </TouchableOpacity>
+    </ScrollView>
+  );
+}
+
+// ─── STOCK AT ONBOARDING TAB ────────────────────────────────────────────────
+
+function OnboardingStockTab() {
+  const t = useInventoryTheme();
+  const {
+    data: rows,
+    isLoading,
+    refetch,
+  } = useApiQuery<OnboardingStockRow[]>(['onboarding-stock'], '/inventory/onboarding-stock');
+
+  return (
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 8 }}
+      refreshControl={
+        <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={t.accent} />
+      }
+    >
+      {isLoading && (
+        <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={t.accent} />
+        </View>
+      )}
+
+      {!isLoading && (!rows || rows.length === 0) && (
+        <EmptyCard
+          icon="archive-outline"
+          title="No opening stock recorded at onboarding."
+          subtitle="Opening balances entered during onboarding will appear here."
+        />
+      )}
+
+      {!isLoading &&
+        rows?.map((s) => (
+          <View
+            key={s.cylinderTypeId}
+            style={{
+              backgroundColor: t.card,
+              borderRadius: 12,
+              padding: 14,
+              borderWidth: 1,
+              borderColor: t.cardBorder,
+            }}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '700', color: t.text, marginBottom: 10 }}>
+              {s.cylinderTypeName}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View
+                style={{
+                  flex: 1,
+                  backgroundColor: t.greenBg,
+                  borderRadius: 8,
+                  padding: 10,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 11, color: t.textSecondary }}>Opening Fulls</Text>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: t.green }}>
+                  {s.openingFulls}
+                </Text>
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                  backgroundColor: t.orangeBg,
+                  borderRadius: 8,
+                  padding: 10,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 11, color: t.textSecondary }}>Opening Empties</Text>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: t.orange }}>
+                  {s.openingEmpties}
+                </Text>
+              </View>
+            </View>
+            <Text style={{ fontSize: 11, color: t.textMuted, marginTop: 8 }}>
+              Date Set: {formatDate(s.dateSet)}
+            </Text>
+          </View>
+        ))}
+    </ScrollView>
+  );
+}
 
 // ─── HISTORY TAB ────────────────────────────────────────────────────────────
 
@@ -1359,11 +1913,23 @@ function HistoryTab({
               {isIncoming ? '+' : '-'}{item.quantity}
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', gap: 16 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, rowGap: 6 }}>
             {item.vehicleNumber && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Ionicons name="car-outline" size={13} color={t.textMuted} />
                 <Text style={{ fontSize: 12, color: t.textSecondary }}>{item.vehicleNumber}</Text>
+              </View>
+            )}
+            {item.driverName && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Ionicons name="person-outline" size={13} color={t.textMuted} />
+                <Text style={{ fontSize: 12, color: t.textSecondary }}>{item.driverName}</Text>
+              </View>
+            )}
+            {item.documentType && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Ionicons name="pricetag-outline" size={13} color={t.textMuted} />
+                <Text style={{ fontSize: 12, color: t.textSecondary }}>{item.documentType}</Text>
               </View>
             )}
             {item.documentNumber && (
@@ -1374,7 +1940,28 @@ function HistoryTab({
                 </Text>
               </View>
             )}
+            {item.documentDate && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Ionicons name="calendar-outline" size={13} color={t.textMuted} />
+                <Text style={{ fontSize: 12, color: t.textSecondary }}>
+                  {formatDateShort(item.documentDate)}
+                </Text>
+              </View>
+            )}
           </View>
+          {item.notes ? (
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginTop: 6 }}>
+              <Ionicons
+                name="chatbubble-ellipses-outline"
+                size={13}
+                color={t.textMuted}
+                style={{ marginTop: 1 }}
+              />
+              <Text style={{ fontSize: 12, color: t.textSecondary, flex: 1 }} numberOfLines={2}>
+                {item.notes}
+              </Text>
+            </View>
+          ) : null}
         </View>
       );
     },
@@ -1904,6 +2491,17 @@ function ReconcileTab() {
     '/delivery/reconciliation/pending',
   );
 
+  // Cylinder types are needed by the Mismatch modal for the cylinder picker
+  // and for deposit-price-driven unit-amount calculation. Match the web's
+  // wire shape: { cylinderTypes: CylinderTypeOption[] }.
+  const { data: cylinderTypesData } = useApiQuery<{ cylinderTypes: CylinderTypeOption[] }>(
+    ['cylinder-types'],
+    '/cylinder-types',
+    {},
+    { staleTime: 5 * 60 * 1000 },
+  );
+  const cylinderTypes = cylinderTypesData?.cylinderTypes ?? [];
+
   const confirmMutation = useApiMutation<
     void,
     { vehicleId: string; data: { physicalStockConfirmed: boolean; notes: string } }
@@ -1911,6 +2509,8 @@ function ReconcileTab() {
     invalidateKeys: [['reconciliation-pending']],
     successMessage: 'Reconciliation completed',
   });
+
+  const [mismatchVehicle, setMismatchVehicle] = useState<ReconciliationVehicle | null>(null);
 
   const handleConfirm = (vehicle: ReconciliationVehicle) => {
     Alert.alert(
@@ -1931,25 +2531,11 @@ function ReconcileTab() {
   };
 
   const handleMismatch = (vehicle: ReconciliationVehicle) => {
-    Alert.alert(
-      'Report Mismatch',
-      `Report stock mismatch for ${vehicle.vehicleNumber}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Report',
-          style: 'destructive',
-          onPress: () =>
-            confirmMutation.mutate({
-              vehicleId: vehicle.vehicleId,
-              data: { physicalStockConfirmed: false, notes: 'Stock mismatch detected' },
-            }),
-        },
-      ],
-    );
+    setMismatchVehicle(vehicle);
   };
 
   return (
+    <>
     <ScrollView
       style={{ flex: 1 }}
       contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }}
@@ -2087,6 +2673,663 @@ function ReconcileTab() {
         </View>
       ))}
     </ScrollView>
+
+    {mismatchVehicle && (
+      <ReportMismatchModal
+        vehicle={mismatchVehicle}
+        cylinderTypes={cylinderTypes}
+        onClose={() => setMismatchVehicle(null)}
+      />
+    )}
+    </>
+  );
+}
+
+// ─── Report Mismatch Modal (3-step) ─────────────────────────────────────────
+
+type MismatchStep = 1 | 2 | 3;
+type MismatchTypeKey = 'empties_short' | 'fulls_short' | 'both';
+type AccountableParty = 'driver' | 'customer';
+type ResolutionAction = 'write_off' | 'settle_against_due';
+
+function ReportMismatchModal({
+  vehicle,
+  cylinderTypes,
+  onClose,
+}: {
+  vehicle: ReconciliationVehicle;
+  cylinderTypes: CylinderTypeOption[];
+  onClose: () => void;
+}) {
+  const t = useInventoryTheme();
+  const [step, setStep] = useState<MismatchStep>(1);
+  const [mismatchType, setMismatchType] = useState<MismatchTypeKey>('empties_short');
+  const [cylinderTypeId, setCylinderTypeId] = useState('');
+  const [qty, setQty] = useState('');
+  const [accountableParty, setAccountableParty] = useState<AccountableParty>('driver');
+  const [driverId, setDriverId] = useState('');
+  const [customerId, setCustomerId] = useState('');
+  const [resolutionAction, setResolutionAction] = useState<ResolutionAction>('write_off');
+  const [resolutionNotes, setResolutionNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Driver / customer pickers — lazy-load via apiGet so we don't pay the
+  // cost on step 1 if the user never opens step 2.
+  const [drivers, setDrivers] = useState<DriverOption[]>([]);
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
+  const [loadingParties, setLoadingParties] = useState(false);
+
+  const loadParties = useCallback(async () => {
+    setLoadingParties(true);
+    try {
+      if (accountableParty === 'driver' && drivers.length === 0) {
+        const res = await apiGet<{ drivers: DriverOption[] }>('/drivers');
+        setDrivers(res.drivers ?? []);
+      } else if (accountableParty === 'customer' && customers.length === 0) {
+        const res = await apiGet<{ customers: CustomerOption[] }>('/customers', { limit: 200 });
+        setCustomers(res.customers ?? []);
+      }
+    } catch (err) {
+      Alert.alert('Could not load options', getErrorMessage(err));
+    } finally {
+      setLoadingParties(false);
+    }
+  }, [accountableParty, drivers.length, customers.length]);
+
+  const selectedCt = cylinderTypes.find((c) => c.cylinderTypeId === cylinderTypeId);
+  const depositPrice = selectedCt?.emptyDepositPrice ?? 0;
+  const cylinderUnitPrice = selectedCt?.latestPrice ?? 0;
+  const qtyNum = Math.max(0, Math.floor(Number(qty) || 0));
+  const unitAmount =
+    mismatchType === 'empties_short'
+      ? depositPrice
+      : mismatchType === 'fulls_short'
+        ? cylinderUnitPrice + depositPrice
+        : cylinderUnitPrice + 2 * depositPrice;
+  const totalAmount = Math.round(qtyNum * unitAmount * 100) / 100;
+
+  const canSubmit =
+    qtyNum > 0 &&
+    !!cylinderTypeId &&
+    (accountableParty === 'driver' ? !!driverId : !!customerId) &&
+    !!resolutionNotes.trim();
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    try {
+      await apiPost('/inventory/mismatch-reports', {
+        vehicleId: vehicle.vehicleId,
+        tripDate: new Date().toISOString().slice(0, 10),
+        accountableParty,
+        driverId: accountableParty === 'driver' ? driverId : undefined,
+        customerId: accountableParty === 'customer' ? customerId : undefined,
+        resolutionAction,
+        resolutionNotes: resolutionNotes.trim(),
+        lines: [
+          {
+            mismatchType,
+            cylinderTypeId,
+            qtyUnaccounted: qtyNum,
+            unitAmount,
+            totalAmount,
+          },
+        ],
+      });
+      Alert.alert('Submitted', 'Mismatch report submitted.');
+      onClose();
+    } catch (err) {
+      Alert.alert('Submit failed', getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const goNext = () => {
+    if (step === 1) {
+      if (!cylinderTypeId || qtyNum <= 0) return;
+      setStep(2);
+      loadParties();
+    } else if (step === 2) {
+      if (accountableParty === 'driver' ? !driverId : !customerId) return;
+      setStep(3);
+    }
+  };
+
+  const goBack = () => {
+    if (step === 2) setStep(1);
+    else if (step === 3) setStep(2);
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1, justifyContent: 'flex-end' }}
+      >
+        <View
+          style={{
+            backgroundColor: t.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            padding: 20,
+            maxHeight: '90%',
+          }}
+        >
+          {/* Header */}
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 12,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+              <Ionicons name="alert-circle-outline" size={22} color={t.red} />
+              <Text style={{ fontSize: 16, fontWeight: '800', color: t.text }} numberOfLines={1}>
+                Report Mismatch — {vehicle.vehicleNumber}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+              <Ionicons name="close" size={22} color={t.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Stepper */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              marginBottom: 14,
+              flexWrap: 'wrap',
+            }}
+          >
+            {([1, 2, 3] as const).map((n, idx) => {
+              const label =
+                n === 1 ? '1. What is short' : n === 2 ? '2. Accountability' : '3. Resolution';
+              const isActive = step === n;
+              return (
+                <View key={n} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: isActive ? '800' : '500',
+                      color: isActive ? t.accent : t.textSecondary,
+                    }}
+                  >
+                    {label}
+                  </Text>
+                  {idx < 2 && (
+                    <Text style={{ fontSize: 11, color: t.textMuted, marginHorizontal: 4 }}>›</Text>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            {step === 1 && (
+              <View>
+                <Text style={[modalStyles.label, { color: t.textSecondary }]}>Mismatch Type</Text>
+                <View style={{ flexDirection: 'row', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+                  {(
+                    [
+                      { value: 'empties_short', label: 'Empties Short' },
+                      { value: 'fulls_short', label: 'Fulls Short' },
+                      { value: 'both', label: 'Both' },
+                    ] as const
+                  ).map((opt) => {
+                    const selected = mismatchType === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        onPress={() => setMismatchType(opt.value)}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: 8,
+                          backgroundColor: selected ? t.red : t.metricBg,
+                          borderWidth: 1,
+                          borderColor: selected ? t.red : t.cardBorder,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: '700',
+                            color: selected ? '#fff' : t.text,
+                          }}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                  Cylinder Type <Text style={{ color: t.red }}>*</Text>
+                </Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginBottom: 14 }}
+                  contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+                >
+                  {cylinderTypes.length === 0 ? (
+                    <Text style={{ fontSize: 13, color: t.textMuted, paddingVertical: 8 }}>
+                      No cylinder types available
+                    </Text>
+                  ) : (
+                    cylinderTypes.map((ct) => {
+                      const selected = cylinderTypeId === ct.cylinderTypeId;
+                      return (
+                        <TouchableOpacity
+                          key={ct.cylinderTypeId}
+                          onPress={() => setCylinderTypeId(ct.cylinderTypeId)}
+                          style={{
+                            paddingHorizontal: 14,
+                            paddingVertical: 8,
+                            borderRadius: 20,
+                            backgroundColor: selected ? t.red : t.metricBg,
+                            borderWidth: 1,
+                            borderColor: selected ? t.red : t.cardBorder,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 13,
+                              fontWeight: '600',
+                              color: selected ? '#fff' : t.text,
+                            }}
+                          >
+                            {ct.typeName}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+                </ScrollView>
+
+                <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                  Quantity Unaccounted <Text style={{ color: t.red }}>*</Text>
+                </Text>
+                <TextInput
+                  style={[
+                    modalStyles.input,
+                    { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                  ]}
+                  placeholder="e.g. 5"
+                  placeholderTextColor={t.textMuted}
+                  keyboardType="number-pad"
+                  value={qty}
+                  onChangeText={setQty}
+                />
+
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={onClose}
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 12,
+                      borderRadius: 10,
+                      backgroundColor: t.metricBg,
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={goNext}
+                    disabled={!cylinderTypeId || qtyNum <= 0}
+                    style={{
+                      paddingHorizontal: 18,
+                      paddingVertical: 12,
+                      borderRadius: 10,
+                      backgroundColor: t.accent,
+                      opacity: !cylinderTypeId || qtyNum <= 0 ? 0.5 : 1,
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Next</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {step === 2 && (
+              <View>
+                <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                  Accountable Party
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                  {(['driver', 'customer'] as const).map((p) => {
+                    const selected = accountableParty === p;
+                    return (
+                      <TouchableOpacity
+                        key={p}
+                        onPress={() => {
+                          setAccountableParty(p);
+                          // reset the OTHER side's selection so canSubmit is
+                          // never confused by stale values
+                          if (p === 'driver') setCustomerId('');
+                          else setDriverId('');
+                        }}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 10,
+                          borderRadius: 8,
+                          backgroundColor: selected ? t.blue : t.metricBg,
+                          borderWidth: 1,
+                          borderColor: selected ? t.blue : t.cardBorder,
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 13,
+                            fontWeight: '700',
+                            color: selected ? '#fff' : t.text,
+                            textTransform: 'capitalize',
+                          }}
+                        >
+                          {p}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {accountableParty === 'driver' ? (
+                  <>
+                    <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                      Driver <Text style={{ color: t.red }}>*</Text>
+                    </Text>
+                    {loadingParties ? (
+                      <ActivityIndicator size="small" color={t.accent} />
+                    ) : drivers.length === 0 ? (
+                      <Text style={{ fontSize: 12, color: t.textMuted, marginBottom: 14 }}>
+                        No drivers loaded.{' '}
+                        <Text onPress={loadParties} style={{ color: t.blue, fontWeight: '700' }}>
+                          Retry
+                        </Text>
+                      </Text>
+                    ) : (
+                      <ScrollView style={{ maxHeight: 180, marginBottom: 14 }}>
+                        {drivers.map((d) => {
+                          const selected = driverId === d.driverId;
+                          return (
+                            <TouchableOpacity
+                              key={d.driverId}
+                              onPress={() => setDriverId(d.driverId)}
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 10,
+                                borderRadius: 8,
+                                backgroundColor: selected ? t.blueBg : t.metricBg,
+                                borderWidth: 1,
+                                borderColor: selected ? t.blue : t.cardBorder,
+                                marginBottom: 6,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: selected ? '700' : '500',
+                                  color: t.text,
+                                }}
+                              >
+                                {d.driverName}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                      Customer <Text style={{ color: t.red }}>*</Text>
+                    </Text>
+                    {loadingParties ? (
+                      <ActivityIndicator size="small" color={t.accent} />
+                    ) : customers.length === 0 ? (
+                      <Text style={{ fontSize: 12, color: t.textMuted, marginBottom: 14 }}>
+                        No customers loaded.{' '}
+                        <Text onPress={loadParties} style={{ color: t.blue, fontWeight: '700' }}>
+                          Retry
+                        </Text>
+                      </Text>
+                    ) : (
+                      <ScrollView style={{ maxHeight: 180, marginBottom: 14 }}>
+                        {customers.map((c) => {
+                          const selected = customerId === c.customerId;
+                          return (
+                            <TouchableOpacity
+                              key={c.customerId}
+                              onPress={() => setCustomerId(c.customerId)}
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 10,
+                                borderRadius: 8,
+                                backgroundColor: selected ? t.blueBg : t.metricBg,
+                                borderWidth: 1,
+                                borderColor: selected ? t.blue : t.cardBorder,
+                                marginBottom: 6,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: selected ? '700' : '500',
+                                  color: t.text,
+                                }}
+                              >
+                                {c.customerName}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+                  </>
+                )}
+
+                {/* Computed amounts panel */}
+                <View
+                  style={{
+                    backgroundColor: t.metricBg,
+                    borderRadius: 10,
+                    padding: 12,
+                    marginBottom: 14,
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      marginBottom: 4,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, color: t.textSecondary }}>Unit Amount</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: t.text }}>
+                      ₹{unitAmount.toLocaleString('en-IN')}
+                    </Text>
+                  </View>
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>Total</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>
+                      ₹{totalAmount.toLocaleString('en-IN')}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 10, color: t.textMuted, marginTop: 6 }}>
+                    Empties Short: qty × empty deposit price. Fulls Short: qty × (cylinder unit +
+                    deposit). Set the deposit in Settings → Empty Deposit Prices.
+                  </Text>
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={goBack}
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 12,
+                      borderRadius: 10,
+                      backgroundColor: t.metricBg,
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>Back</Text>
+                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      onPress={onClose}
+                      style={{
+                        paddingHorizontal: 16,
+                        paddingVertical: 12,
+                        borderRadius: 10,
+                        backgroundColor: t.metricBg,
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>
+                        Cancel
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={goNext}
+                      disabled={accountableParty === 'driver' ? !driverId : !customerId}
+                      style={{
+                        paddingHorizontal: 18,
+                        paddingVertical: 12,
+                        borderRadius: 10,
+                        backgroundColor: t.accent,
+                        opacity:
+                          (accountableParty === 'driver' ? !driverId : !customerId) ? 0.5 : 1,
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Next</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {step === 3 && (
+              <View>
+                <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                  Resolution Action
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                  {(
+                    [
+                      { value: 'write_off', label: 'Write off' },
+                      { value: 'settle_against_due', label: 'Settle against due' },
+                    ] as const
+                  ).map((opt) => {
+                    const selected = resolutionAction === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        onPress={() => setResolutionAction(opt.value)}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 10,
+                          borderRadius: 8,
+                          backgroundColor: selected ? t.blue : t.metricBg,
+                          borderWidth: 1,
+                          borderColor: selected ? t.blue : t.cardBorder,
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: '700',
+                            color: selected ? '#fff' : t.text,
+                          }}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                  Resolution Notes <Text style={{ color: t.red }}>*</Text>
+                </Text>
+                <TextInput
+                  style={[
+                    modalStyles.input,
+                    modalStyles.textarea,
+                    { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                  ]}
+                  placeholder="Reason / investigation outcome (required)"
+                  placeholderTextColor={t.textMuted}
+                  multiline
+                  numberOfLines={4}
+                  value={resolutionNotes}
+                  onChangeText={setResolutionNotes}
+                />
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={goBack}
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 12,
+                      borderRadius: 10,
+                      backgroundColor: t.metricBg,
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>Back</Text>
+                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      onPress={onClose}
+                      style={{
+                        paddingHorizontal: 16,
+                        paddingVertical: 12,
+                        borderRadius: 10,
+                        backgroundColor: t.metricBg,
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>
+                        Cancel
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={submit}
+                      disabled={!canSubmit || submitting}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingHorizontal: 18,
+                        paddingVertical: 12,
+                        borderRadius: 10,
+                        backgroundColor: t.red,
+                        opacity: !canSubmit || submitting ? 0.5 : 1,
+                      }}
+                    >
+                      {submitting && <ActivityIndicator size="small" color="#fff" />}
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>
+                        {submitting ? 'Submitting...' : 'Submit'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
