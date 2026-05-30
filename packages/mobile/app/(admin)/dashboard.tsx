@@ -383,7 +383,9 @@ export default function AdminDashboardScreen() {
                 <TouchableOpacity
                   style={[styles.viewAllButton, { borderTopColor: theme.divider }]}
                   activeOpacity={0.7}
-                  onPress={() => router.push('/(admin)/more')}
+                  // STEP-3B: was '/(admin)/more' — a dead end. Routes to the
+                  // new full Pending Actions screen with filters + actions.
+                  onPress={() => router.push('/(admin)/pending-actions')}
                 >
                   <Text style={styles.viewAllText}>
                     View All ({pendingActions.length})

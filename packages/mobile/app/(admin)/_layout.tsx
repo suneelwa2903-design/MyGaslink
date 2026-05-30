@@ -79,6 +79,9 @@ export default function AdminLayout() {
           <Ionicons name={focused ? TAB_ICONS_FOCUSED.more : TAB_ICONS.more} size={22} color={focused ? activeColor : inactiveColor} />
         ),
       }} />
+      {/* STEP-3B: Pending Actions full screen. Hidden from the tab bar —
+          reached via the dashboard "View All" link and (future) the bell. */}
+      <Tabs.Screen name="pending-actions" options={{ href: null, title: 'Pending Actions' }} />
     </Tabs>
   );
 }
