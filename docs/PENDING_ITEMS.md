@@ -100,3 +100,29 @@
 - EditCustomerInlineModal (more.tsx) and EditCustomerModal (customer-detail.tsx) are duplicates calling same endpoint
 - Fix: extract to packages/mobile/src/components/EditCustomerModal.tsx
 - Added: 2026-05-31
+
+### hsnCode not in mobile Cylinder Types
+- Web exposes hsnCode field in create/edit
+- Mobile omits it — affects GST invoicing accuracy if HSN needs to change
+- Fix: add hsnCode field to CylinderTypesModal create/edit form
+- Priority: medium (GST-relevant)
+- Added: 2026-05-31
+
+### Cylinder Types delete copy mismatch
+- Mobile toast says "deleted"
+- Server actually soft-deactivates
+- Fix: change toast to "deactivated"
+- Priority: low
+- Added: 2026-05-31
+
+### pull-to-refresh spinner broken on 2 modals
+- CylinderPricesModal + InventoryThresholdsModal pass refreshing={false} to RefreshControl
+- Spinner never shows during pull-down
+- Fix: wire refreshing state correctly (CylinderTypesModal does this correctly)
+- Priority: low
+- Added: 2026-05-31
+
+### emptyDepositPrice unused on mobile
+- Mapper exposes field but mobile never displays it
+- Low priority, no user impact
+- Added: 2026-05-31
