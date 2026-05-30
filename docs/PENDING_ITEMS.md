@@ -126,3 +126,10 @@
 - Mapper exposes field but mobile never displays it
 - Low priority, no user impact
 - Added: 2026-05-31
+
+### Analytics dashboard date filter is server-side no-op
+- /analytics/dashboard and /analytics/header-metrics accept dateFrom/dateTo in route params but service functions only take distributorId — params silently dropped
+- Web date picker on dashboard is currently decorative
+- Mobile params wired correctly and will become live once server is fixed
+- Fix: update getDashboardStats() and getHeaderMetrics() signatures to accept + use date range
+- Added: 2026-05-31
