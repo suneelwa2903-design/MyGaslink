@@ -30,7 +30,10 @@ export default function Index() {
         router.replace('/(admin)/dashboard');
         break;
       case 'inventory':
-        router.replace('/(inventory)/summary');
+        // STEP-2B: `summary` is marked href:null in (inventory)/_layout.tsx and
+        // isn't reachable from the tab bar. Land on the first visible tab
+        // (`analytics`) instead so the user sees a real screen + active tab.
+        router.replace('/(inventory)/analytics');
         break;
       case 'finance':
         router.replace('/(finance)/dashboard');
