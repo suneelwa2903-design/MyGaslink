@@ -882,7 +882,11 @@ const NOTE_STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'i
 function InvoiceNotesSection({ invoiceId }: { invoiceId: string }) {
   const queryClient = useQueryClient();
   const role = useAuthStore(selectRole);
-  const canApprove = role === UserRole.SUPER_ADMIN || role === UserRole.DISTRIBUTOR_ADMIN;
+  // STEP-1B: finance can approve CN/DN per Step 1A policy (admin + finance only).
+  const canApprove =
+    role === UserRole.SUPER_ADMIN ||
+    role === UserRole.DISTRIBUTOR_ADMIN ||
+    role === UserRole.FINANCE;
   const [open, setOpen] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<{ kind: 'cn' | 'dn'; id: string; number: string | null } | null>(null);
 

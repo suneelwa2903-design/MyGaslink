@@ -11,9 +11,11 @@ import {
   PendingActionModule,
   PendingActionStatus,
   PendingActionSeverity,
+  UserRole,
 } from '@gaslink/shared';
-import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
+import { apiGet, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { useAuthStore, selectRole } from '@/stores/authStore';
 
 const SEVERITY_VARIANTS: Record<string, 'danger' | 'warning' | 'info' | 'neutral'> = {
   [PendingActionSeverity.CRITICAL]: 'danger',
@@ -32,6 +34,10 @@ const STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'info' | 'danger' 
 
 export default function PendingActionsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
+  const role = useAuthStore(selectRole);
+  // STEP-1B: approve/reject are admin-only at the API (pendingActions.ts:57,99).
+  // The button visibility must match — finance/inventory got silent 403s before.
+  const canApprove = role === UserRole.SUPER_ADMIN || role === UserRole.DISTRIBUTOR_ADMIN;
   const [moduleFilter, setModuleFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('open');
   const [offset, setOffset] = useState(0);
@@ -49,8 +55,12 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
     select: (data) => data.actions,
   });
 
+  // STEP-1B: API routes are PUT (pendingActions.ts:56,73,98). AnalyticsPage and
+  // CollectionsPage already use apiPut; this page incorrectly used apiPost,
+  // which Express returned 404 for — every Approve/Reject/Resolve click from
+  // this page was silently failing before.
   const approveMutation = useMutation({
-    mutationFn: (actionId: string) => apiPost(`/pending-actions/${actionId}/approve`),
+    mutationFn: (actionId: string) => apiPut(`/pending-actions/${actionId}/approve`),
     onSuccess: () => {
       toast.success('Action approved');
       queryClient.invalidateQueries({ queryKey: ['pending-actions'] });
@@ -59,7 +69,7 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
   });
 
   const rejectMutation = useMutation({
-    mutationFn: (actionId: string) => apiPost(`/pending-actions/${actionId}/reject`),
+    mutationFn: (actionId: string) => apiPut(`/pending-actions/${actionId}/reject`),
     onSuccess: () => {
       toast.success('Action rejected');
       queryClient.invalidateQueries({ queryKey: ['pending-actions'] });
@@ -69,7 +79,7 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
 
   const resolveMutation = useMutation({
     mutationFn: ({ actionId, notes }: { actionId: string; notes: string }) =>
-      apiPost(`/pending-actions/${actionId}/resolve`, { resolutionNotes: notes }),
+      apiPut(`/pending-actions/${actionId}/resolve`, { resolutionNotes: notes }),
     onSuccess: () => {
       toast.success('Action resolved');
       queryClient.invalidateQueries({ queryKey: ['pending-actions'] });
@@ -176,7 +186,8 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
 
                         {(action.status === PendingActionStatus.OPEN || action.status === PendingActionStatus.IN_PROGRESS) && (
                           <div className="flex items-center gap-1 shrink-0">
-                            {action.requiresApproval && (
+                            {/* STEP-1B: approve/reject hidden for finance + inventory (admin-only at API). */}
+                            {action.requiresApproval && canApprove && (
                               <>
                                 <Button
                                   variant="accent"
@@ -198,6 +209,7 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
                                 </Button>
                               </>
                             )}
+                            {/* Resolve stays open to all ops roles (pendingActions.ts:74). */}
                             <Button
                               variant="secondary"
                               size="sm"
