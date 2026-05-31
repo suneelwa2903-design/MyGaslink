@@ -80,7 +80,8 @@
           "color": "#338dff"
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-font"
     ],
     "scheme": "mygaslink",
     "extra": {
