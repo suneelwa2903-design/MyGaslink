@@ -22,7 +22,7 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
 import { api, apiPut, getErrorMessage } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores/authStore';
-import { Badge, DateInput } from '../../src/components/ui';
+import { Badge, DateInput, SelectField } from '../../src/components/ui';
 import {
   invoiceStatusLabel,
   invoiceStatusVariant,
@@ -623,94 +623,41 @@ function InvoicesTab({
     </View>
   );
 
-  const renderStatusFilter = () => (
-    <View style={{ paddingVertical: 10 }}>
-      {/* STAGE-A A1: `style={{ flexGrow: 0 }}` + fixed pill height to
-          prevent vertical inflation in the parent flex column. */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={{ flexGrow: 0 }}
-        contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: 'center' }}
-      >
-        {INVOICE_STATUS_TABS.map((tab) => {
-          const active = invoiceStatus === tab.value;
-          return (
-            <TouchableOpacity
-              key={tab.value}
-              onPress={() => setInvoiceStatus(tab.value)}
-              style={{
-                height: 36,
-                paddingHorizontal: 12,
-                borderRadius: 18,
-                flexShrink: 0,
-                justifyContent: 'center',
-                backgroundColor: active ? ACCENT : C.tabBg,
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 13,
-                  fontWeight: '600',
-                  color: active ? '#ffffff' : C.tabText,
-                }}
-              >
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+  // STAGE-D: replaced the double horizontal pill rows (status + IRN) with two
+  // chip-shaped <SelectField> dropdowns sitting on the SAME row above the
+  // FlatList. State + arrays stay the same — SelectField just calls the
+  // existing setters via onChange.
+  const renderFilters = () => (
+    <View
+      style={{
+        flexDirection: 'row',
+        gap: 8,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        <SelectField
+          label="Status"
+          value={invoiceStatus}
+          options={INVOICE_STATUS_TABS}
+          onChange={setInvoiceStatus}
+          accent={ACCENT}
+        />
+      </View>
+      {gstEnabled && (
+        <View style={{ flex: 1 }}>
+          <SelectField
+            label="IRN & EWB"
+            value={irnFilter}
+            options={IRN_STATUS_TABS}
+            onChange={setIrnFilter}
+            accent="#0369a1"
+          />
+        </View>
+      )}
     </View>
   );
-
-  // STEP-3I: IRN status filter row — only rendered when GST is enabled on
-  // the tenant. Mirrors the web `gstEnabled && <Select ...>` guard at
-  // BillingPaymentsPage.tsx line 229-236.
-  const renderIrnFilter = () => {
-    if (!gstEnabled) return null;
-    return (
-      <View style={{ paddingBottom: 8 }}>
-        {/* STAGE-A A1: same `flexGrow:0` + fixed pill height pattern. */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ flexGrow: 0 }}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: 'center' }}
-        >
-          {IRN_STATUS_TABS.map((tab) => {
-            const active = irnFilter === tab.value;
-            return (
-              <TouchableOpacity
-                key={tab.value}
-                onPress={() => setIrnFilter(tab.value)}
-                style={{
-                  height: 32,
-                  paddingHorizontal: 12,
-                  borderRadius: 16,
-                  flexShrink: 0,
-                  justifyContent: 'center',
-                  borderWidth: 1,
-                  backgroundColor: active ? '#0369a1' : 'transparent',
-                  borderColor: active ? '#0369a1' : C.cardBorder,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: '600',
-                    color: active ? '#ffffff' : C.tabText,
-                  }}
-                >
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-    );
-  };
 
   const renderInvoiceCard = useCallback(
     ({ item: inv }: { item: Invoice }) => {
@@ -1137,8 +1084,7 @@ function InvoicesTab({
   return (
     <View style={{ flex: 1 }}>
       {renderDateRange()}
-      {renderStatusFilter()}
-      {renderIrnFilter()}
+      {renderFilters()}
       <FlatList
         data={invoices}
         keyExtractor={(item) => item.invoiceId}

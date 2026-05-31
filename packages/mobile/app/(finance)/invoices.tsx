@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
-import { Card, Badge, MetricCard, EmptyState } from '../../src/components/ui';
+import { Card, Badge, MetricCard, EmptyState, SelectField } from '../../src/components/ui';
 import type { Invoice } from '@gaslink/shared';
 import { invoiceStatusLabel, invoiceStatusVariant } from '@gaslink/shared';
 
@@ -103,34 +103,17 @@ export default function FinanceInvoicesScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
-      {/* Tab Bar */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8, gap: 8 }}
-      >
-        {TABS.map((t) => (
-          <TouchableOpacity
-            key={t.value}
-            onPress={() => setTab(t.value)}
-            style={{
-              paddingHorizontal: 16,
-              height: 36,
-              borderRadius: 18,
-              justifyContent: 'center',
-              backgroundColor: tab === t.value ? accent.red : (dark ? colors.inputBg : '#f1f5f9'),
-            }}
-          >
-            <Text style={{
-              fontSize: 13,
-              fontWeight: '600',
-              color: tab === t.value ? '#fff' : colors.textSecondary,
-            }}>
-              {t.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* STAGE-D: horizontal pill-row replaced with a chip-shaped SelectField
+          dropdown for parity with the admin Billing screen UX. */}
+      <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+        <SelectField
+          label="Status"
+          value={tab}
+          options={TABS}
+          onChange={(v) => setTab(v as InvoiceFilter)}
+          accent={accent.red}
+        />
+      </View>
 
       {/* Summary */}
       <View style={{ paddingHorizontal: 16, paddingBottom: 8, gap: 12 }}>
