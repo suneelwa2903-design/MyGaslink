@@ -1,17 +1,14 @@
 /**
- * STAGE-E — Finance self-service profile.
+ * STAGE-E — Admin self-service profile.
  *
  * Thin wrapper around the shared ProfileScreen body
  * (src/screens/ProfileScreen.tsx). Only the role accent colour differs
  * between admin/finance/inventory — the body, form fields, save flow, and
  * change-password placeholder are identical.
- *
- * (Replaces the prior read-only profile card; Sign Out + Delete Account live
- * on the More tab now.)
  */
 import { ProfileScreen } from '../../src/screens/ProfileScreen';
 import { ACCENT } from '../../src/theme';
 
-export default function FinanceProfileScreen() {
-  return <ProfileScreen accent={ACCENT.orange} />;
+export default function AdminProfileScreen() {
+  return <ProfileScreen accent={ACCENT.red} />;
 }

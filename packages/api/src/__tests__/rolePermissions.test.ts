@@ -280,6 +280,25 @@ describe('GUARD: Pending Actions approve/reject — already admin-only', () => {
   }
 });
 
+// ─── STAGE-E: PUT /api/users/me — any authenticated user can self-edit ─────
+
+describe('STAGE-E: PUT /api/users/me — self-service profile edit', () => {
+  // No requireRole on this route — every authenticated user updates their own
+  // row. Empty body is a valid no-op (all fields optional in
+  // updateOwnProfileSchema), so the only signal we want here is "not 403",
+  // which proves the route exists and isn't gated by role. Positive-only test
+  // covering distributor_admin / finance / inventory in a single assertion
+  // per the STAGE-E brief.
+  it('distributor_admin, finance, and inventory all pass the auth gate', async () => {
+    const url = '/api/users/me';
+    for (const token of [adminToken, financeToken, inventoryToken]) {
+      const res = await request(app).put(url).set(auth(token)).send({});
+      expect(res.status).not.toBe(403);
+      expect(res.status).not.toBe(401);
+    }
+  });
+});
+
 // ─── ANCHOR — keep this assertion last so the file is never silently empty ──
 
 describe('STEP-1A: anchor', () => {

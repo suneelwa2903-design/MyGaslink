@@ -40,7 +40,10 @@ export default function MoreScreen() {
   const handleMenuPress = (action: MenuItem['action']) => {
     switch (action) {
       case 'profile':
-        // Show profile info inline (already visible above)
+        // STAGE-E: Profile is now an editable self-service screen at
+        // (inventory)/profile.tsx — route there instead of leaving the row
+        // as a no-op that displays the (already visible) user card.
+        router.push('/(inventory)/profile');
         break;
       case 'settings':
         // Settings - future implementation

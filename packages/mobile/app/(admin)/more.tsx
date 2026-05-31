@@ -3218,6 +3218,16 @@ export default function AdminMoreScreen() {
 
         {/* ── Section 4: Account ───────────────────────────────────── */}
         <SectionCard title="Account" theme={theme}>
+          {/* STAGE-E: Self-service profile edit (firstName/lastName/phone).
+              Placed at the top of the Account section above the user card. */}
+          <MenuRow
+            icon="person-outline"
+            label="My Profile"
+            subtitle="Edit name and phone"
+            onPress={() => router.push('/(admin)/profile')}
+            theme={theme}
+          />
+          <Divider theme={theme} />
           <View style={{ padding: 16 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
               <View

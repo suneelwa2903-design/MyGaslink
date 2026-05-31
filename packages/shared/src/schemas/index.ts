@@ -67,6 +67,18 @@ export const createUserSchema = z.object({
 
 export const updateUserSchema = createUserSchema.partial().omit({ password: true });
 
+// STAGE-E: self-edit schema for `PUT /api/users/me`. STRICT subset of
+// updateUserSchema — email, role, distributorId, customerId are intentionally
+// omitted so a user can never change their own identity, tenant, or privileges
+// via this endpoint (Zod's default strip silently drops any extras). All three
+// editable fields use the same min/max constraints as updateUserSchema's
+// underlying createUserSchema definitions above.
+export const updateOwnProfileSchema = z.object({
+  firstName: z.string().min(1, 'First name is required').max(100).optional(),
+  lastName: z.string().min(1, 'Last name is required').max(100).optional(),
+  phone: phone.optional(),
+});
+
 // ─── Customer Schemas ────────────────────────────────────────────────────────
 
 const customerContactSchema = z.object({
@@ -429,6 +441,7 @@ export type VerifyResetOtpInput = z.infer<typeof verifyResetOtpSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+export type UpdateOwnProfileInput = z.infer<typeof updateOwnProfileSchema>;
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export type UpdateCustomerInput = z.infer<typeof updateCustomerSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;

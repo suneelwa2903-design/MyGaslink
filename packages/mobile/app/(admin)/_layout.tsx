@@ -88,6 +88,8 @@ export default function AdminLayout() {
       {/* STEP-3E: Customer Detail full screen. Hidden — reached via More → Customers → row,
           or Collections → View Account. */}
       <Tabs.Screen name="customer-detail" options={{ href: null, title: 'Customer' }} />
+      {/* STAGE-E: My Profile full screen. Hidden — reached via More → Account → My Profile. */}
+      <Tabs.Screen name="profile" options={{ href: null, title: 'My Profile' }} />
     </Tabs>
   );
 }
