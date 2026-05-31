@@ -60,13 +60,18 @@ interface Driver {
   driverId: string;
   driverName: string;
   phone?: string;
+  // STAGE-B: vehicleNumber is the plate of the vehicle mapped to this
+  // driver for TODAY (set by the daily Vehicle Mapping flow). The server
+  // returns `null` for drivers without a mapping today. The Assign Driver
+  // modal filters on this — only drivers with a mapping are selectable
+  // because dispatch needs a vehicle, and the server resolves the
+  // vehicle from this mapping (mobile no longer sends vehicleId).
+  vehicleNumber?: string | null;
 }
 
-interface Vehicle {
-  vehicleId: string;
-  vehicleNumber: string;
-  vehicleType?: string;
-}
+// STAGE-B: the `Vehicle` interface was used only by the Assign Driver +
+// Bulk Assign vehicle pickers, both removed. Deleted to silence the
+// no-unused-vars rule.
 
 interface CylinderType {
   cylinderTypeId: string;
@@ -252,12 +257,10 @@ export default function AdminOrdersScreen() {
     { staleTime: 5 * 60 * 1000 },
   );
 
-  const { data: vehiclesData } = useApiQuery<{ vehicles: Vehicle[] }>(
-    ['vehicles-list'],
-    '/vehicles',
-    {},
-    { staleTime: 5 * 60 * 1000 },
-  );
+  // STAGE-B: /vehicles query removed — Assign / Bulk Assign modals no
+  // longer let the user pick a vehicle directly. The server resolves the
+  // vehicle from the driver's day-mapping (returned on /drivers as
+  // `vehicleNumber`). Cuts an unnecessary query on every Orders mount.
 
   const { data: cylinderTypesData } = useApiQuery<{ cylinderTypes: CylinderType[] }>(
     ['cylinder-types'],
@@ -291,7 +294,8 @@ export default function AdminOrdersScreen() {
   const orders = ordersData?.orders ?? [];
   const customers = customersData?.customers ?? [];
   const drivers = driversData?.drivers ?? [];
-  const vehicles = vehiclesData?.vehicles ?? [];
+  // STAGE-B: `vehicles` array dropped — the AssignDriver / BulkAssign
+  // modals no longer take a vehicles prop.
   const cylinderTypes = cylinderTypesData?.cylinderTypes ?? [];
 
   const filteredOrders = useMemo(() => {
@@ -831,7 +835,6 @@ export default function AdminOrdersScreen() {
           onClose={() => setAssignOrder(null)}
           order={assignOrder}
           drivers={drivers}
-          vehicles={vehicles}
           dark={dark}
         />
       )}
@@ -845,7 +848,6 @@ export default function AdminOrdersScreen() {
           }}
           orderIds={selectedOrderIds}
           drivers={drivers}
-          vehicles={vehicles}
           dark={dark}
         />
       )}
@@ -1259,21 +1261,31 @@ function AssignDriverModal({
   onClose,
   order,
   drivers,
-  vehicles,
   dark,
 }: {
   visible: boolean;
   onClose: () => void;
   order: Order;
   drivers: Driver[];
-  vehicles: Vehicle[];
   dark: boolean;
 }) {
   const C = getColors(dark);
   const [driverId, setDriverId] = useState(order.driverId ?? '');
-  const [vehicleId, setVehicleId] = useState(order.vehicleId ?? '');
 
-  const assignMutation = useApiMutation<unknown, { driverId: string; vehicleId?: string }>(
+  // STAGE-B: only drivers with TODAY's vehicle mapping are dispatchable.
+  // Server-side, dispatch resolves the vehicle from the daily DVA, not
+  // from the request body. Filtering client-side keeps the picker honest
+  // — an "Assign" against a driver with no mapping would either 400 or
+  // silently dispatch without a vehicle plate.
+  const mappedDrivers = useMemo(
+    () => drivers.filter((d) => !!d.vehicleNumber),
+    [drivers],
+  );
+
+  // STAGE-B: vehicleId removed from the mutation body — the server now
+  // resolves the vehicle from the driver's day-mapping. Sending an
+  // out-of-band vehicleId would have masked vehicle-mapping mistakes.
+  const assignMutation = useApiMutation<unknown, { driverId: string }>(
     'post',
     `/orders/${order.orderId}/assign-driver`,
     {
@@ -1288,7 +1300,7 @@ function AssignDriverModal({
       Alert.alert('Validation', 'Please select a driver');
       return;
     }
-    assignMutation.mutate({ driverId, vehicleId: vehicleId || undefined });
+    assignMutation.mutate({ driverId });
   };
 
   return (
@@ -1301,92 +1313,91 @@ function AssignDriverModal({
           </Text>
 
           <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}>
-            {/* Driver picker */}
+            {/* STAGE-B: Driver picker — list pre-filtered to drivers with
+                TODAY's vehicle mapping. Each row shows the driver name +
+                the mapped vehicle plate (single source of truth — the
+                phone sub-line was redundant). Standalone Vehicle picker
+                was removed because the server resolves the vehicle from
+                the driver's day-mapping. */}
             <Text style={[styles.fieldLabel, { color: C.text }]}>Driver *</Text>
-            {drivers.map((d) => (
-              <TouchableOpacity
-                key={d.driverId}
-                style={[
-                  styles.selectOption,
-                  {
-                    backgroundColor: driverId === d.driverId ? ACCENT : C.card,
-                    borderColor: driverId === d.driverId ? ACCENT : C.cardBorder,
-                  },
-                ]}
-                onPress={() => setDriverId(d.driverId)}
-              >
-                <Ionicons
-                  name={driverId === d.driverId ? 'radio-button-on' : 'radio-button-off'}
-                  size={18}
-                  color={driverId === d.driverId ? '#fff' : C.textSecondary}
-                />
-                <View style={{ marginLeft: 10, flex: 1 }}>
-                  <Text
-                    style={{
-                      color: driverId === d.driverId ? '#fff' : C.text,
-                      fontWeight: '600',
-                      fontSize: 14,
-                    }}
-                  >
-                    {d.driverName}
-                  </Text>
-                  {d.phone && (
-                    <Text
-                      style={{
-                        color: driverId === d.driverId ? 'rgba(255,255,255,0.7)' : C.textSecondary,
-                        fontSize: 12,
-                      }}
-                    >
-                      {d.phone}
-                    </Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))}
-
-            {/* Vehicle picker */}
-            <Text style={[styles.fieldLabel, { color: C.text, marginTop: 16 }]}>Vehicle</Text>
-            <TouchableOpacity
-              style={[
-                styles.selectOption,
-                {
-                  backgroundColor: vehicleId === '' ? (dark ? '#334155' : '#eff6ff') : C.card,
+            {mappedDrivers.length === 0 ? (
+              <View
+                style={{
+                  paddingVertical: 24,
+                  paddingHorizontal: 16,
+                  alignItems: 'center',
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderStyle: 'dashed',
                   borderColor: C.cardBorder,
-                },
-              ]}
-              onPress={() => setVehicleId('')}
-            >
-              <Text style={{ color: C.textSecondary, fontSize: 14 }}>None</Text>
-            </TouchableOpacity>
-            {vehicles.map((v) => (
-              <TouchableOpacity
-                key={v.vehicleId}
-                style={[
-                  styles.selectOption,
-                  {
-                    backgroundColor: vehicleId === v.vehicleId ? ACCENT : C.card,
-                    borderColor: vehicleId === v.vehicleId ? ACCENT : C.cardBorder,
-                  },
-                ]}
-                onPress={() => setVehicleId(v.vehicleId)}
+                  backgroundColor: C.card,
+                }}
               >
-                <Ionicons
-                  name={vehicleId === v.vehicleId ? 'radio-button-on' : 'radio-button-off'}
-                  size={18}
-                  color={vehicleId === v.vehicleId ? '#fff' : C.textSecondary}
-                />
+                <Ionicons name="car-outline" size={32} color={C.textMuted} />
                 <Text
                   style={{
-                    color: vehicleId === v.vehicleId ? '#fff' : C.text,
-                    fontWeight: '600',
+                    marginTop: 8,
                     fontSize: 14,
-                    marginLeft: 10,
+                    fontWeight: '600',
+                    color: C.text,
+                    textAlign: 'center',
                   }}
                 >
-                  {v.vehicleNumber} {v.vehicleType ? `(${v.vehicleType})` : ''}
+                  No drivers have a vehicle today
                 </Text>
-              </TouchableOpacity>
-            ))}
+                <Text
+                  style={{
+                    marginTop: 4,
+                    fontSize: 12,
+                    color: C.textSecondary,
+                    textAlign: 'center',
+                  }}
+                >
+                  Map drivers to vehicles in More → Fleet → Assignments
+                  before assigning orders.
+                </Text>
+              </View>
+            ) : (
+              mappedDrivers.map((d) => (
+                <TouchableOpacity
+                  key={d.driverId}
+                  style={[
+                    styles.selectOption,
+                    {
+                      backgroundColor: driverId === d.driverId ? ACCENT : C.card,
+                      borderColor: driverId === d.driverId ? ACCENT : C.cardBorder,
+                    },
+                  ]}
+                  onPress={() => setDriverId(d.driverId)}
+                >
+                  <Ionicons
+                    name={driverId === d.driverId ? 'radio-button-on' : 'radio-button-off'}
+                    size={18}
+                    color={driverId === d.driverId ? '#fff' : C.textSecondary}
+                  />
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text
+                      style={{
+                        color: driverId === d.driverId ? '#fff' : C.text,
+                        fontWeight: '600',
+                        fontSize: 14,
+                      }}
+                    >
+                      {d.driverName}
+                    </Text>
+                    <Text
+                      style={{
+                        color: driverId === d.driverId ? 'rgba(255,255,255,0.85)' : C.textSecondary,
+                        fontSize: 12,
+                        marginTop: 2,
+                      }}
+                    >
+                      {d.vehicleNumber}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
 
             {/* Buttons */}
             <View style={styles.bottomSheetButtons}>
@@ -1422,19 +1433,24 @@ function BulkAssignModal({
   onClose,
   orderIds,
   drivers,
-  vehicles,
   dark,
 }: {
   visible: boolean;
   onClose: () => void;
   orderIds: string[];
   drivers: Driver[];
-  vehicles: Vehicle[];
   dark: boolean;
 }) {
   const C = getColors(dark);
   const [driverId, setDriverId] = useState('');
-  const [vehicleId, setVehicleId] = useState('');
+
+  // STAGE-B: same rationale as AssignDriverModal — filter to drivers
+  // with today's vehicle mapping, drop the standalone vehicle picker,
+  // server resolves the vehicle from the day-mapping.
+  const mappedDrivers = useMemo(
+    () => drivers.filter((d) => !!d.vehicleNumber),
+    [drivers],
+  );
 
   const bulkMutation = useApiMutation<unknown, unknown>(
     'post',
@@ -1454,7 +1470,6 @@ function BulkAssignModal({
     bulkMutation.mutate({
       orderIds,
       driverId,
-      vehicleId: vehicleId || undefined,
     });
   };
 
@@ -1468,79 +1483,91 @@ function BulkAssignModal({
           </Text>
 
           <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}>
+            {/* STAGE-B: list filtered to drivers with TODAY's vehicle
+                mapping; row shows driver name + vehicle plate. Vehicle
+                picker removed — server resolves it from the day-mapping. */}
             <Text style={[styles.fieldLabel, { color: C.text }]}>Driver *</Text>
-            {drivers.map((d) => (
-              <TouchableOpacity
-                key={d.driverId}
-                style={[
-                  styles.selectOption,
-                  {
-                    backgroundColor: driverId === d.driverId ? ACCENT : C.card,
-                    borderColor: driverId === d.driverId ? ACCENT : C.cardBorder,
-                  },
-                ]}
-                onPress={() => setDriverId(d.driverId)}
-              >
-                <Ionicons
-                  name={driverId === d.driverId ? 'radio-button-on' : 'radio-button-off'}
-                  size={18}
-                  color={driverId === d.driverId ? '#fff' : C.textSecondary}
-                />
-                <Text
-                  style={{
-                    color: driverId === d.driverId ? '#fff' : C.text,
-                    fontWeight: '600',
-                    fontSize: 14,
-                    marginLeft: 10,
-                  }}
-                >
-                  {d.driverName}
-                </Text>
-              </TouchableOpacity>
-            ))}
-
-            <Text style={[styles.fieldLabel, { color: C.text, marginTop: 16 }]}>Vehicle</Text>
-            <TouchableOpacity
-              style={[
-                styles.selectOption,
-                {
-                  backgroundColor: vehicleId === '' ? (dark ? '#334155' : '#eff6ff') : C.card,
+            {mappedDrivers.length === 0 ? (
+              <View
+                style={{
+                  paddingVertical: 24,
+                  paddingHorizontal: 16,
+                  alignItems: 'center',
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderStyle: 'dashed',
                   borderColor: C.cardBorder,
-                },
-              ]}
-              onPress={() => setVehicleId('')}
-            >
-              <Text style={{ color: C.textSecondary, fontSize: 14 }}>None</Text>
-            </TouchableOpacity>
-            {vehicles.map((v) => (
-              <TouchableOpacity
-                key={v.vehicleId}
-                style={[
-                  styles.selectOption,
-                  {
-                    backgroundColor: vehicleId === v.vehicleId ? ACCENT : C.card,
-                    borderColor: vehicleId === v.vehicleId ? ACCENT : C.cardBorder,
-                  },
-                ]}
-                onPress={() => setVehicleId(v.vehicleId)}
+                  backgroundColor: C.card,
+                }}
               >
-                <Ionicons
-                  name={vehicleId === v.vehicleId ? 'radio-button-on' : 'radio-button-off'}
-                  size={18}
-                  color={vehicleId === v.vehicleId ? '#fff' : C.textSecondary}
-                />
+                <Ionicons name="car-outline" size={32} color={C.textMuted} />
                 <Text
                   style={{
-                    color: vehicleId === v.vehicleId ? '#fff' : C.text,
-                    fontWeight: '600',
+                    marginTop: 8,
                     fontSize: 14,
-                    marginLeft: 10,
+                    fontWeight: '600',
+                    color: C.text,
+                    textAlign: 'center',
                   }}
                 >
-                  {v.vehicleNumber}
+                  No drivers have a vehicle today
                 </Text>
-              </TouchableOpacity>
-            ))}
+                <Text
+                  style={{
+                    marginTop: 4,
+                    fontSize: 12,
+                    color: C.textSecondary,
+                    textAlign: 'center',
+                  }}
+                >
+                  Map drivers to vehicles in More → Fleet → Assignments
+                  before assigning orders.
+                </Text>
+              </View>
+            ) : (
+              mappedDrivers.map((d) => (
+                <TouchableOpacity
+                  key={d.driverId}
+                  style={[
+                    styles.selectOption,
+                    {
+                      backgroundColor: driverId === d.driverId ? ACCENT : C.card,
+                      borderColor: driverId === d.driverId ? ACCENT : C.cardBorder,
+                    },
+                  ]}
+                  onPress={() => setDriverId(d.driverId)}
+                >
+                  <Ionicons
+                    name={driverId === d.driverId ? 'radio-button-on' : 'radio-button-off'}
+                    size={18}
+                    color={driverId === d.driverId ? '#fff' : C.textSecondary}
+                  />
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text
+                      style={{
+                        color: driverId === d.driverId ? '#fff' : C.text,
+                        fontWeight: '600',
+                        fontSize: 14,
+                      }}
+                    >
+                      {d.driverName}
+                    </Text>
+                    <Text
+                      style={{
+                        color:
+                          driverId === d.driverId
+                            ? 'rgba(255,255,255,0.85)'
+                            : C.textSecondary,
+                        fontSize: 12,
+                        marginTop: 2,
+                      }}
+                    >
+                      {d.vehicleNumber}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
 
             <View style={styles.bottomSheetButtons}>
               <TouchableOpacity
