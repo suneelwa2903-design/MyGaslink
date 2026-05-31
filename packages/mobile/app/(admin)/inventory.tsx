@@ -48,6 +48,11 @@ interface InventorySummary {
   collectedEmpties: number;
   outgoingEmpties: number;
   closingEmpties: number;
+  // STAGE-G: web Daily Summary shows these "On Vehicle" derived fields
+  // (inventoryService.ts:707-714). Optional because dispatch-history and
+  // reconcile data isn't guaranteed for every row.
+  inFlightFulls?: number;
+  emptiesOnVehicle?: number;
   thresholdWarning: number | null;
   thresholdCritical: number | null;
   isLocked: boolean;
@@ -65,15 +70,6 @@ interface InventoryEvent {
   documentNumber?: string;
   documentDate?: string;
   notes?: string;
-}
-
-interface CancelledStock {
-  eventId: string;
-  cylinderTypeName: string;
-  quantity: number;
-  driverName: string;
-  vehicleNumber: string;
-  status: string;
 }
 
 interface InventoryForecast {
@@ -151,23 +147,27 @@ interface CustomerOption {
 
 // ─── Tab Definitions ────────────────────────────────────────────────────────
 
+// STAGE-G: tab visibility & rename pass.
+//   - 'cancelled' removed entirely (panel deleted below).
+//   - 'forecast' kept as type + panel function for future re-enablement
+//     but omitted from the visible TABS array.
+//   - 'history' / 'balances' / 'reconcile' get human-friendlier labels.
 type TabKey =
   | 'summary'
   | 'history'
   | 'onboarding'
-  | 'cancelled'
   | 'forecast'
   | 'balances'
   | 'reconcile';
 
 const TABS: { key: TabKey; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'summary', label: 'Summary', icon: 'cube-outline' },
-  { key: 'history', label: 'History', icon: 'time-outline' },
+  { key: 'summary', label: 'Daily Summary', icon: 'cube-outline' },
+  { key: 'history', label: 'Depot History', icon: 'time-outline' },
   { key: 'onboarding', label: 'Stock at Onboarding', icon: 'archive-outline' },
-  { key: 'cancelled', label: 'Cancelled', icon: 'close-circle-outline' },
-  { key: 'forecast', label: 'Forecast', icon: 'trending-up-outline' },
-  { key: 'balances', label: 'Balances', icon: 'people-outline' },
-  { key: 'reconcile', label: 'Reconcile', icon: 'checkmark-done-outline' },
+  // 'forecast' intentionally hidden — keep ForecastTab + InventoryForecast
+  // type wired so re-enabling is a one-line change.
+  { key: 'balances', label: 'Customer Balances', icon: 'people-outline' },
+  { key: 'reconcile', label: 'Vehicle Return', icon: 'checkmark-done-outline' },
 ];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -299,7 +299,6 @@ export default function AdminInventoryScreen() {
         />
       )}
       {activeTab === 'onboarding' && <OnboardingStockTab />}
-      {activeTab === 'cancelled' && <CancelledTab selectedDate={selectedDate} />}
       {activeTab === 'forecast' && <ForecastTab />}
       {activeTab === 'balances' && <BalancesTab />}
       {activeTab === 'reconcile' && <ReconcileTab />}
@@ -721,143 +720,18 @@ function SummaryTab({
           />
         )}
 
-        {/* Cylinder Cards */}
+        {/* STAGE-G: rebuilt per-cylinder card.
+            Collapsed = name + capacity + closing fulls/empties + chevron.
+            Expanded = the SAME 6 column groups the web Daily Summary uses
+            (CORPORATION / OPENING / ON VEHICLE / AT CUSTOMER / ADJUSTMENTS
+            / CLOSING — see web InventoryPage.tsx:662 + 710-727), each
+            rendered as a small section with label/value pairs.
+            Styling spec: black text, light grey backgrounds, accent (red)
+            only for critical closing-fulls. */}
         {!isLoading &&
-          inventory?.map((item) => {
-            const isWarning =
-              item.thresholdWarning !== null && item.closingFulls <= (item.thresholdWarning ?? 0);
-            const isCritical =
-              item.thresholdCritical !== null &&
-              item.closingFulls <= (item.thresholdCritical ?? 0);
-
-            return (
-              <View
-                key={item.cylinderTypeId}
-                style={{
-                  backgroundColor: t.card,
-                  borderRadius: 12,
-                  padding: 16,
-                  borderWidth: isCritical ? 2 : isWarning ? 2 : 1,
-                  borderColor: isCritical
-                    ? 'rgba(239, 68, 68, 0.5)'
-                    : isWarning
-                      ? 'rgba(249, 115, 22, 0.5)'
-                      : t.cardBorder,
-                }}
-              >
-                {/* Header */}
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 12,
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: t.text }}>
-                      {item.cylinderTypeName}
-                    </Text>
-                    {item.capacity && (
-                      <View
-                        style={{
-                          backgroundColor: t.blueBg,
-                          paddingHorizontal: 8,
-                          paddingVertical: 2,
-                          borderRadius: 10,
-                        }}
-                      >
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: t.blue }}>
-                          {item.capacity}kg
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={{ flexDirection: 'row', gap: 4 }}>
-                    {isCritical && <StatusBadge label="Critical" color={t.red} bg={t.redBg} />}
-                    {isWarning && !isCritical && (
-                      <StatusBadge label="Warning" color={t.orange} bg={t.orangeBg} />
-                    )}
-                    {item.isLocked && (
-                      <StatusBadge label="Locked" color={t.green} bg={t.greenBg} />
-                    )}
-                  </View>
-                </View>
-
-                {/* 2-Column Flow Metrics */}
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                  <MetricCell
-                    label="Opening Fulls"
-                    value={item.openingFulls}
-                    bg={t.metricBg}
-                    color={t.text}
-                  />
-                  <MetricCell
-                    label="Incoming"
-                    value={item.incomingFulls}
-                    prefix="+"
-                    bg={t.greenBg}
-                    color={t.green}
-                  />
-                  <MetricCell
-                    label="Delivered"
-                    value={item.deliveredQty}
-                    prefix="-"
-                    bg={t.blueBg}
-                    color={t.blue}
-                  />
-                  <MetricCell
-                    label="Cancelled"
-                    value={item.cancelledStockQty}
-                    bg={t.orangeBg}
-                    color={t.orange}
-                  />
-                  <MetricCell
-                    label="Outgoing Empties"
-                    value={item.outgoingEmpties}
-                    bg={t.metricBg}
-                    color={t.text}
-                  />
-                  <MetricCell
-                    label="Collected Empties"
-                    value={item.collectedEmpties}
-                    bg={t.metricBg}
-                    color={t.text}
-                  />
-                </View>
-
-                {/* Closing row */}
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    borderTopWidth: 1,
-                    borderTopColor: t.divider,
-                    paddingTop: 12,
-                  }}
-                >
-                  <View>
-                    <Text style={{ fontSize: 11, color: t.textSecondary }}>Closing Fulls</Text>
-                    <Text
-                      style={{
-                        fontSize: 22,
-                        fontWeight: '800',
-                        color: isCritical ? t.red : t.text,
-                      }}
-                    >
-                      {item.closingFulls}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 11, color: t.textSecondary }}>Closing Empties</Text>
-                    <Text style={{ fontSize: 22, fontWeight: '800', color: t.text }}>
-                      {item.closingEmpties}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            );
-          })}
+          inventory?.map((item) => (
+            <SummaryCylinderCard key={item.cylinderTypeId} item={item} />
+          ))}
       </ScrollView>
 
       {/* ── Incoming Fulls / Outgoing Empties Modal ───────────────────────── */}
@@ -1359,6 +1233,221 @@ function SummaryTab({
         </KeyboardAvoidingView>
       </Modal>
     </>
+  );
+}
+
+// ─── STAGE-G: Collapsible Cylinder Card for Daily Summary ──────────────────
+// Mirrors the six column groups that the web Daily Summary renders
+// (InventoryPage.tsx:710-727). Collapsed = headline only; expanded =
+// every group stacked with label/value pairs. Tap anywhere to toggle.
+//
+// Colour rule from the spec: "Simple colours — no excessive colour. Black
+// text, light grey backgrounds. Accent colour only for important values."
+//   - Card background: theme card surface (cardBg).
+//   - Group section background: theme metricBg (light grey).
+//   - Labels: textMuted; values: text (black-equivalent for the theme).
+//   - Accent red is reserved for negative/critical closing fulls only.
+
+interface SummaryGroupRow {
+  label: string;
+  value: number;
+  // STAGE-G: accent flag is opt-in (closing fulls under threshold).
+  accent?: boolean;
+}
+
+interface SummaryGroupDef {
+  name: string;
+  rows: SummaryGroupRow[];
+}
+
+function buildSummaryGroups(item: InventorySummary, isCritical: boolean): SummaryGroupDef[] {
+  return [
+    {
+      name: 'Corporation',
+      rows: [
+        { label: 'Incoming Fulls', value: item.incomingFulls ?? 0 },
+        { label: 'Outgoing Empties', value: item.outgoingEmpties ?? 0 },
+      ],
+    },
+    {
+      name: 'Opening',
+      rows: [
+        { label: 'Fulls', value: item.openingFulls ?? 0 },
+        { label: 'Empties', value: item.openingEmpties ?? 0 },
+      ],
+    },
+    {
+      name: 'On Vehicle',
+      rows: [
+        { label: 'Fulls', value: item.inFlightFulls ?? 0 },
+        { label: 'Empties', value: item.emptiesOnVehicle ?? 0 },
+      ],
+    },
+    {
+      name: 'At Customer',
+      rows: [
+        { label: 'Delivered Fulls', value: item.deliveredQty ?? 0 },
+        { label: 'Collected Empties', value: item.collectedEmpties ?? 0 },
+      ],
+    },
+    {
+      name: 'Adjustments',
+      rows: [
+        { label: 'Returned', value: item.cancelledStockQty ?? 0 },
+        { label: 'Manual', value: item.manualAdjustment ?? 0 },
+      ],
+    },
+    {
+      name: 'Closing',
+      rows: [
+        { label: 'Fulls', value: item.closingFulls ?? 0, accent: isCritical },
+        { label: 'Empties', value: item.closingEmpties ?? 0 },
+      ],
+    },
+  ];
+}
+
+function SummaryCylinderCard({ item }: { item: InventorySummary }) {
+  const t = useInventoryTheme();
+  const [expanded, setExpanded] = useState(false);
+
+  const isWarning =
+    item.thresholdWarning !== null && item.closingFulls <= (item.thresholdWarning ?? 0);
+  const isCritical =
+    item.thresholdCritical !== null &&
+    item.closingFulls <= (item.thresholdCritical ?? 0);
+
+  const groups = useMemo(() => buildSummaryGroups(item, isCritical), [item, isCritical]);
+
+  return (
+    <View
+      style={{
+        backgroundColor: t.card,
+        borderRadius: 12,
+        borderWidth: isCritical ? 2 : 1,
+        borderColor: isCritical ? 'rgba(239, 68, 68, 0.5)' : t.cardBorder,
+        overflow: 'hidden',
+      }}
+    >
+      {/* Collapsed header — tap to toggle */}
+      <TouchableOpacity
+        onPress={() => setExpanded((v) => !v)}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          padding: 14,
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: t.text }}>
+              {item.cylinderTypeName}
+            </Text>
+            {item.capacity ? (
+              <Text style={{ fontSize: 12, color: t.textMuted }}>
+                {item.capacity}kg
+              </Text>
+            ) : null}
+            {item.isLocked && (
+              <StatusBadge label="Locked" color={t.green} bg={t.greenBg} />
+            )}
+            {isCritical && <StatusBadge label="Critical" color={t.red} bg={t.redBg} />}
+            {isWarning && !isCritical && (
+              <StatusBadge label="Warning" color={t.orange} bg={t.orangeBg} />
+            )}
+          </View>
+          <View style={{ flexDirection: 'row', marginTop: 8, gap: 24 }}>
+            <View>
+              <Text style={{ fontSize: 11, color: t.textMuted }}>Closing Fulls</Text>
+              <Text
+                style={{
+                  fontSize: 20,
+                  fontWeight: '800',
+                  color: isCritical ? t.red : t.text,
+                }}
+              >
+                {item.closingFulls}
+              </Text>
+            </View>
+            <View>
+              <Text style={{ fontSize: 11, color: t.textMuted }}>Closing Empties</Text>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: t.text }}>
+                {item.closingEmpties}
+              </Text>
+            </View>
+          </View>
+        </View>
+        <Ionicons
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={20}
+          color={t.textMuted}
+        />
+      </TouchableOpacity>
+
+      {/* Expanded body — 6 group sections */}
+      {expanded && (
+        <View
+          style={{
+            paddingHorizontal: 12,
+            paddingBottom: 12,
+            gap: 8,
+            borderTopWidth: 1,
+            borderTopColor: t.divider,
+            paddingTop: 12,
+          }}
+        >
+          {groups.map((g) => (
+            <View
+              key={g.name}
+              style={{
+                backgroundColor: t.metricBg,
+                borderRadius: 8,
+                overflow: 'hidden',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: '700',
+                  color: t.textSecondary,
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.4,
+                  paddingHorizontal: 10,
+                  paddingTop: 8,
+                  paddingBottom: 4,
+                }}
+              >
+                {g.name}
+              </Text>
+              {g.rows.map((row) => (
+                <View
+                  key={row.label}
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, color: t.textMuted }}>{row.label}</Text>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '600',
+                      color: row.accent ? t.red : t.text,
+                    }}
+                  >
+                    {row.value}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -2061,160 +2150,10 @@ function HistoryTab({
 }
 
 // ─── CANCELLED TAB ──────────────────────────────────────────────────────────
-
-function CancelledTab({ selectedDate }: { selectedDate: string }) {
-  const t = useInventoryTheme();
-
-  const {
-    data: cancelledStock,
-    isLoading,
-    refetch,
-  } = useApiQuery<CancelledStock[]>(
-    ['cancelled-stock', selectedDate],
-    '/inventory/cancelled-stock',
-    { date: selectedDate },
-  );
-
-  const returnMutation = useApiMutation<unknown, { eventIds: string[]; returnDate: string }>(
-    'post',
-    '/inventory/cancelled-stock/return',
-    {
-      invalidateKeys: [['cancelled-stock'], ['inventory']],
-      successMessage: 'Stock returned to depot',
-    },
-  );
-
-  const handleReturn = (eventId: string) => {
-    Alert.alert('Return to Depot', 'Return this cancelled stock to the depot?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Return',
-        onPress: () =>
-          returnMutation.mutate({ eventIds: [eventId], returnDate: todayString() }),
-      },
-    ]);
-  };
-
-  const renderItem = useCallback(
-    ({ item }: { item: CancelledStock }) => {
-      const statusColor =
-        item.status === 'RETURNED_TO_DEPOT' || item.status === 'returned_to_depot'
-          ? t.green
-          : item.status === 'ON_VEHICLE' || item.status === 'on_vehicle'
-            ? t.orange
-            : t.textSecondary;
-      const statusBg =
-        item.status === 'RETURNED_TO_DEPOT' || item.status === 'returned_to_depot'
-          ? t.greenBg
-          : item.status === 'ON_VEHICLE' || item.status === 'on_vehicle'
-            ? t.orangeBg
-            : t.metricBg;
-      const canReturn =
-        item.status === 'ON_VEHICLE' ||
-        item.status === 'on_vehicle' ||
-        item.status === 'PENDING' ||
-        item.status === 'pending';
-
-      return (
-        <View
-          style={{
-            backgroundColor: t.card,
-            borderRadius: 10,
-            padding: 14,
-            marginBottom: 8,
-            borderWidth: 1,
-            borderColor: t.cardBorder,
-          }}
-        >
-          <View
-            style={{
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 8,
-            }}
-          >
-            <Text style={{ fontSize: 15, fontWeight: '700', color: t.text }}>
-              {item.cylinderTypeName}
-            </Text>
-            <StatusBadge
-              label={item.status.replace(/_/g, ' ')}
-              color={statusColor}
-              bg={statusBg}
-            />
-          </View>
-          <View style={{ flexDirection: 'row', gap: 20, marginBottom: canReturn ? 10 : 0 }}>
-            <View>
-              <Text style={{ fontSize: 11, color: t.textSecondary }}>Qty</Text>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: t.accent }}>
-                {item.quantity}
-              </Text>
-            </View>
-            <View>
-              <Text style={{ fontSize: 11, color: t.textSecondary }}>Driver</Text>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: t.text }}>
-                {item.driverName}
-              </Text>
-            </View>
-            <View>
-              <Text style={{ fontSize: 11, color: t.textSecondary }}>Vehicle</Text>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: t.text }}>
-                {item.vehicleNumber}
-              </Text>
-            </View>
-          </View>
-          {canReturn && (
-            <TouchableOpacity
-              onPress={() => handleReturn(item.eventId)}
-              disabled={returnMutation.isPending}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                backgroundColor: t.accentBg,
-                borderRadius: 8,
-                paddingVertical: 10,
-              }}
-            >
-              <Ionicons name="return-down-back-outline" size={16} color={t.accent} />
-              <Text style={{ fontSize: 13, fontWeight: '700', color: t.accent }}>
-                {returnMutation.isPending ? 'Returning...' : 'Return to Depot'}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      );
-    },
-    [t, returnMutation],
-  );
-
-  return (
-    <View style={{ flex: 1 }}>
-      {isLoading ? (
-        <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-          <ActivityIndicator size="large" color={t.accent} />
-        </View>
-      ) : !cancelledStock?.length ? (
-        <EmptyCard
-          icon="close-circle-outline"
-          title="No cancelled stock"
-          subtitle="No cancelled stock for this date"
-        />
-      ) : (
-        <FlatList
-          data={cancelledStock}
-          keyExtractor={(item) => item.eventId}
-          renderItem={renderItem}
-          contentContainerStyle={{ padding: 16 }}
-          refreshControl={
-            <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={t.accent} />
-          }
-        />
-      )}
-    </View>
-  );
-}
+// STAGE-G: tab + panel removed. Cancelled-stock visibility moves elsewhere
+// (it was already represented as a column in the Daily Summary). The
+// /inventory/cancelled-stock endpoint is still used by the driver/inventory
+// flows in other screens — only the admin-mobile entry point is gone.
 
 // ─── FORECAST TAB ───────────────────────────────────────────────────────────
 
@@ -2660,6 +2599,12 @@ function ReconcileTab() {
           </View>
         </View>
       ))}
+
+      {/* STAGE-G: Mismatch & Correction Log (read-only, collapsible).
+          Mirrors web MismatchLogSection (ReportMismatchModal.tsx:303).
+          Mobile keeps it filter-free + no CSV export — just a quick
+          last-25 audit trail below the create-side 3-step modal. */}
+      <MismatchCorrectionLog />
     </ScrollView>
 
     {mismatchVehicle && (
@@ -3318,6 +3263,196 @@ function ReportMismatchModal({
         </View>
       </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+// ─── STAGE-G: Mismatch & Correction Log (read-only) ────────────────────────
+// Lives inside the Vehicle Return tab, below the per-vehicle reconcile
+// cards. Renders the last 25 mismatch records from the same endpoint
+// the web log uses (GET /api/inventory/mismatch-reports, served by
+// listMismatchReports in stockMismatchService.ts:395). Wire shape is
+// { data: MismatchLogRow[], meta: { page, pageSize, total, totalPages } }
+// — see inventory.ts:419 + stockMismatchService.ts:439-461.
+
+interface MismatchLogRow {
+  recordId: string;
+  reportId: string;
+  vehicleNumber: string;
+  driverName: string | null;
+  customerName: string | null;
+  accountableParty: 'driver' | 'customer';
+  tripDate: string;
+  mismatchType: 'empties_short' | 'fulls_short' | 'both';
+  cylinderTypeName: string;
+  qtyUnaccounted: number;
+  unitAmount: number;
+  totalAmount: number;
+  resolutionAction: 'write_off' | 'settle_against_due';
+  resolutionNotes: string;
+  status: 'open' | 'resolved';
+  createdAt: string;
+}
+
+interface MismatchLogResponse {
+  data: MismatchLogRow[];
+  meta: { page: number; pageSize: number; total: number; totalPages: number };
+}
+
+function MismatchCorrectionLog() {
+  const t = useInventoryTheme();
+  const [expanded, setExpanded] = useState(false);
+
+  // useApiQuery's `enabled` flag prevents the request until the user
+  // expands the section — matches the web's `enabled: open` pattern.
+  const { data, isLoading } = useApiQuery<MismatchLogResponse>(
+    ['mismatch-log-mobile'],
+    '/inventory/mismatch-reports',
+    { page: 1, pageSize: 25 },
+    { enabled: expanded },
+  );
+
+  const rows = data?.data ?? [];
+
+  return (
+    <View
+      style={{
+        marginTop: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: t.cardBorder,
+        backgroundColor: t.card,
+        overflow: 'hidden',
+      }}
+    >
+      <TouchableOpacity
+        onPress={() => setExpanded((v) => !v)}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 14,
+          paddingVertical: 12,
+        }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Ionicons name="list-outline" size={18} color={t.textSecondary} />
+          <Text style={{ fontSize: 14, fontWeight: '700', color: t.text }}>
+            Mismatch & Correction Log
+          </Text>
+        </View>
+        <Ionicons
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={t.textMuted}
+        />
+      </TouchableOpacity>
+
+      {expanded && (
+        <View
+          style={{
+            paddingHorizontal: 12,
+            paddingBottom: 12,
+            gap: 8,
+            borderTopWidth: 1,
+            borderTopColor: t.divider,
+            paddingTop: 12,
+          }}
+        >
+          {isLoading ? (
+            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={t.accent} />
+            </View>
+          ) : rows.length === 0 ? (
+            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, color: t.textMuted }}>
+                No corrections recorded.
+              </Text>
+            </View>
+          ) : (
+            rows.map((r) => {
+              const party =
+                r.accountableParty === 'driver'
+                  ? (r.driverName ?? '—')
+                  : (r.customerName ?? '—');
+              const statusColor = r.status === 'resolved' ? t.green : t.orange;
+              const statusBg = r.status === 'resolved' ? t.greenBg : t.orangeBg;
+              return (
+                <View
+                  key={r.recordId}
+                  style={{
+                    backgroundColor: t.metricBg,
+                    borderRadius: 8,
+                    padding: 12,
+                    borderWidth: 1,
+                    borderColor: t.cardBorder,
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 6,
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>
+                      {r.vehicleNumber}
+                    </Text>
+                    <StatusBadge label={r.status} color={statusColor} bg={statusBg} />
+                  </View>
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      flexWrap: 'wrap',
+                      gap: 12,
+                      rowGap: 4,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <Text style={{ fontSize: 11, color: t.textMuted }}>{r.tripDate}</Text>
+                    <Text
+                      style={{ fontSize: 11, color: t.textSecondary, textTransform: 'capitalize' }}
+                    >
+                      {r.accountableParty}: {party}
+                    </Text>
+                    <Text
+                      style={{ fontSize: 11, color: t.textSecondary, textTransform: 'capitalize' }}
+                    >
+                      {r.mismatchType.replace(/_/g, ' ')}
+                    </Text>
+                  </View>
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 4,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, color: t.text }}>
+                      {r.cylinderTypeName} × {r.qtyUnaccounted}
+                    </Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: t.text }}>
+                      ₹{r.totalAmount.toLocaleString('en-IN')}
+                    </Text>
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: t.textMuted,
+                      textTransform: 'capitalize',
+                    }}
+                  >
+                    Resolution: {r.resolutionAction.replace(/_/g, ' ')}
+                  </Text>
+                </View>
+              );
+            })
+          )}
+        </View>
+      )}
+    </View>
   );
 }
 
