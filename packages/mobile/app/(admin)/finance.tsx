@@ -22,7 +22,7 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
 import { api, apiPut, getErrorMessage } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores/authStore';
-import { Badge } from '../../src/components/ui';
+import { Badge, DateInput } from '../../src/components/ui';
 import {
   invoiceStatusLabel,
   invoiceStatusVariant,
@@ -594,8 +594,7 @@ function InvoicesTab({
     }
   };
 
-  // STEP-3I: date range row mirrors STEP-3A orders.tsx pattern — plain
-  // text inputs (YYYY-MM-DD) to avoid pulling in a native date picker dep.
+  // STAGE-C: native DateInput replaces the YYYY-MM-DD text inputs.
   const renderDateRange = () => (
     <View
       style={{
@@ -607,54 +606,18 @@ function InvoicesTab({
         paddingBottom: 2,
       }}
     >
-      <View
-        style={{
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 4,
-          borderWidth: 1,
-          borderRadius: 8,
-          paddingHorizontal: 8,
-          paddingVertical: 6,
-          backgroundColor: C.card,
-          borderColor: C.inputBorder,
-        }}
-      >
-        <Ionicons name="calendar-outline" size={14} color={C.textMuted} />
-        <TextInput
-          style={{ flex: 1, fontSize: 12, padding: 0, color: C.text }}
-          placeholder="From YYYY-MM-DD"
-          placeholderTextColor={C.textMuted}
-          value={invoiceDateFrom}
-          onChangeText={setInvoiceDateFrom}
-          autoCapitalize="none"
-          autoCorrect={false}
+      <View style={{ flex: 1 }}>
+        <DateInput
+          value={invoiceDateFrom || null}
+          onChange={setInvoiceDateFrom}
+          placeholder="From"
         />
       </View>
-      <View
-        style={{
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 4,
-          borderWidth: 1,
-          borderRadius: 8,
-          paddingHorizontal: 8,
-          paddingVertical: 6,
-          backgroundColor: C.card,
-          borderColor: C.inputBorder,
-        }}
-      >
-        <Ionicons name="calendar-outline" size={14} color={C.textMuted} />
-        <TextInput
-          style={{ flex: 1, fontSize: 12, padding: 0, color: C.text }}
-          placeholder="To YYYY-MM-DD"
-          placeholderTextColor={C.textMuted}
-          value={invoiceDateTo}
-          onChangeText={setInvoiceDateTo}
-          autoCapitalize="none"
-          autoCorrect={false}
+      <View style={{ flex: 1 }}>
+        <DateInput
+          value={invoiceDateTo || null}
+          onChange={setInvoiceDateTo}
+          placeholder="To"
         />
       </View>
     </View>
@@ -2440,12 +2403,10 @@ function PayInvoiceModal({ C, dark, invoice, onClose }: PayInvoiceModalProps) {
               {/* Payment Date */}
               <View style={{ marginBottom: 24 }}>
                 <Text style={labelStyle}>Payment Date</Text>
-                <TextInput
-                  style={inputStyle}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={C.textMuted}
-                  value={paymentDate}
-                  onChangeText={setPaymentDate}
+                <DateInput
+                  value={paymentDate || null}
+                  onChange={setPaymentDate}
+                  placeholder="Select payment date"
                 />
               </View>
 
@@ -2786,12 +2747,10 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
             {/* Payment Date */}
             <View style={{ marginBottom: 16 }}>
               <Text style={labelStyle}>Payment Date</Text>
-              <TextInput
-                style={inputStyle}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={C.textMuted}
-                value={paymentDate}
-                onChangeText={setPaymentDate}
+              <DateInput
+                value={paymentDate || null}
+                onChange={setPaymentDate}
+                placeholder="Select payment date"
               />
             </View>
 

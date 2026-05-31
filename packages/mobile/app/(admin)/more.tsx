@@ -26,6 +26,7 @@ import { useThemeStore, useIsDark } from '../../src/stores/themeStore';
 import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import type { UserProfile } from '@gaslink/shared';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
+import { DateInput } from '../../src/components/ui';
 
 const ACCENT = ACCENT_COLORS.red;
 
@@ -1641,9 +1642,7 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
   const renderAssignments = () => {
     return (
       <View style={{ flex: 1 }}>
-        {/* Date + Bulk Confirm header. YYYY-MM-DD text input keeps parity
-            with the (admin)/orders.tsx date range pattern (STEP-3A) — no
-            native picker dependency. */}
+        {/* STAGE-C: native DateInput replaces the YYYY-MM-DD text input. */}
         <View
           style={{
             flexDirection: 'row',
@@ -1655,32 +1654,14 @@ function FleetModal({ visible, onClose }: { visible: boolean; onClose: () => voi
             alignItems: 'center',
           }}
         >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 6,
-              flex: 1,
-              backgroundColor: theme.inputBg,
-              borderColor: theme.inputBorder,
-              borderWidth: 1,
-              borderRadius: 8,
-              paddingHorizontal: 10,
-              paddingVertical: 8,
-            }}
-          >
-            <Ionicons name="calendar-outline" size={14} color={theme.textMuted} />
-            <TextInput
-              style={{ flex: 1, color: theme.text, fontSize: 14, padding: 0 }}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={theme.textMuted}
-              value={mappingDate}
-              onChangeText={(t) => {
-                setMappingDate(t);
+          <View style={{ flex: 1 }}>
+            <DateInput
+              value={mappingDate || null}
+              onChange={(v) => {
+                setMappingDate(v);
                 setPickerForDriverId(null);
               }}
-              autoCapitalize="none"
-              autoCorrect={false}
+              placeholder="Select date"
             />
           </View>
           <TouchableOpacity

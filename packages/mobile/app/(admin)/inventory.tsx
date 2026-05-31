@@ -21,6 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { apiGet, apiPost, getErrorMessage } from '../../src/lib/api';
 import { useTheme, ACCENT } from '../../src/theme';
+import { DateInput } from '../../src/components/ui';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -650,12 +651,15 @@ function SummaryTab({
             <Ionicons name="chevron-back" size={20} color={t.text} />
           </TouchableOpacity>
 
-          <View style={{ alignItems: 'center', flex: 1 }}>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: t.text }}>
-              {formatDate(selectedDate)}
-            </Text>
+          {/* STAGE-C: tap the center label to open the native date picker. */}
+          <View style={{ alignItems: 'center', flex: 1, paddingHorizontal: 6 }}>
+            <DateInput
+              value={selectedDate}
+              onChange={setSelectedDate}
+              placeholder="Select date"
+            />
             {isToday && (
-              <Text style={{ fontSize: 11, color: t.green, fontWeight: '600', marginTop: 1 }}>
+              <Text style={{ fontSize: 11, color: t.green, fontWeight: '600', marginTop: 2 }}>
                 Today
               </Text>
             )}
@@ -969,17 +973,14 @@ function SummaryTab({
               />
 
               {/* Date */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>Date (YYYY-MM-DD)</Text>
-              <TextInput
-                style={[
-                  modalStyles.input,
-                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                ]}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={t.textMuted}
-                value={movementForm.documentDate}
-                onChangeText={(v) => setMovementForm((f) => ({ ...f, documentDate: v }))}
-              />
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>Date</Text>
+              <View style={{ marginBottom: 12 }}>
+                <DateInput
+                  value={movementForm.documentDate || null}
+                  onChange={(v) => setMovementForm((f) => ({ ...f, documentDate: v }))}
+                  placeholder="Select date"
+                />
+              </View>
 
               {/* Document Type */}
               <Text style={[modalStyles.label, { color: t.textSecondary }]}>
@@ -1298,18 +1299,15 @@ function SummaryTab({
 
               {/* Adjustment Date */}
               <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Adjustment Date (YYYY-MM-DD)
+                Adjustment Date
               </Text>
-              <TextInput
-                style={[
-                  modalStyles.input,
-                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                ]}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={t.textMuted}
-                value={adjustForm.adjustmentDate}
-                onChangeText={(v) => setAdjustForm((f) => ({ ...f, adjustmentDate: v }))}
-              />
+              <View style={{ marginBottom: 12 }}>
+                <DateInput
+                  value={adjustForm.adjustmentDate || null}
+                  onChange={(v) => setAdjustForm((f) => ({ ...f, adjustmentDate: v }))}
+                  placeholder="Select date"
+                />
+              </View>
 
               {/* Reason */}
               <Text style={[modalStyles.label, { color: t.textSecondary }]}>
@@ -1567,35 +1565,25 @@ function AdjustmentHistoryPanel({
 
       <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
         <View style={{ flex: 1 }}>
-          <Text style={[modalStyles.label, { color: t.textSecondary }]}>From (YYYY-MM-DD)</Text>
-          <TextInput
-            style={[
-              modalStyles.input,
-              { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder, marginBottom: 0 },
-            ]}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={t.textMuted}
-            value={dateFrom}
-            onChangeText={(v) => {
+          <DateInput
+            value={dateFrom || null}
+            onChange={(v) => {
               setDateFrom(v);
               setPage(1);
             }}
+            label="From"
+            placeholder="From"
           />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[modalStyles.label, { color: t.textSecondary }]}>To (YYYY-MM-DD)</Text>
-          <TextInput
-            style={[
-              modalStyles.input,
-              { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder, marginBottom: 0 },
-            ]}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={t.textMuted}
-            value={dateTo}
-            onChangeText={(v) => {
+          <DateInput
+            value={dateTo || null}
+            onChange={(v) => {
               setDateTo(v);
               setPage(1);
             }}
+            label="To"
+            placeholder="To"
           />
         </View>
       </View>

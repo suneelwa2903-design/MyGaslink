@@ -21,7 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
 import { api, getErrorMessage } from '../../src/lib/api';
-import { Badge } from '../../src/components/ui';
+import { Badge, DateInput } from '../../src/components/ui';
 import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -600,35 +600,13 @@ export default function AdminOrdersScreen() {
         })}
       </ScrollView>
 
-      {/* STEP-3A: date range filter + Returns Order button.
-          Plain text inputs (YYYY-MM-DD) keep parity with the existing
-          deliveryDate input in CreateOrderModal and avoid pulling in a
-          platform-specific picker dependency. Pickers can come later if
-          users find the keyboard form too tedious. */}
+      {/* STAGE-C: native DateInput replaces the YYYY-MM-DD text inputs. */}
       <View style={styles.dateRangeRow}>
-        <View style={[styles.dateInputWrapper, { backgroundColor: C.card, borderColor: C.inputBorder }]}>
-          <Ionicons name="calendar-outline" size={14} color={C.textMuted} />
-          <TextInput
-            style={[styles.dateInput, { color: C.text }]}
-            placeholder="From YYYY-MM-DD"
-            placeholderTextColor={C.textMuted}
-            value={dateFrom}
-            onChangeText={setDateFrom}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+        <View style={{ flex: 1 }}>
+          <DateInput value={dateFrom || null} onChange={setDateFrom} placeholder="From" />
         </View>
-        <View style={[styles.dateInputWrapper, { backgroundColor: C.card, borderColor: C.inputBorder }]}>
-          <Ionicons name="calendar-outline" size={14} color={C.textMuted} />
-          <TextInput
-            style={[styles.dateInput, { color: C.text }]}
-            placeholder="To YYYY-MM-DD"
-            placeholderTextColor={C.textMuted}
-            value={dateTo}
-            onChangeText={setDateTo}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+        <View style={{ flex: 1 }}>
+          <DateInput value={dateTo || null} onChange={setDateTo} placeholder="To" />
         </View>
         <TouchableOpacity
           style={[styles.returnsBtn, { borderColor: ACCENT }]}
@@ -1111,12 +1089,10 @@ function CreateOrderModal({
             <Text style={[styles.fieldLabel, { color: C.text, marginTop: 16 }]}>
               Delivery Date *
             </Text>
-            <TextInput
-              style={[styles.textInput, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
-              value={deliveryDate}
-              onChangeText={setDeliveryDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={C.textMuted}
+            <DateInput
+              value={deliveryDate || null}
+              onChange={setDeliveryDate}
+              placeholder="Select delivery date"
             />
 
             {/* Order items */}
@@ -2013,12 +1989,10 @@ function ReturnsOrderModal({
             </Modal>
 
             <Text style={[styles.fieldLabel, { color: C.text }]}>Date *</Text>
-            <TextInput
-              style={[styles.inputField, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={C.textMuted}
-              value={deliveryDate}
-              onChangeText={setDeliveryDate}
+            <DateInput
+              value={deliveryDate || null}
+              onChange={setDeliveryDate}
+              placeholder="Select date"
             />
 
             <Text style={[styles.fieldLabel, { color: C.text }]}>Cylinders Being Returned *</Text>
@@ -2162,12 +2136,10 @@ function EditOrderModal({
             </View>
 
             <Text style={[styles.fieldLabel, { color: C.text }]}>Delivery Date *</Text>
-            <TextInput
-              style={[styles.inputField, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={C.textMuted}
-              value={deliveryDate}
-              onChangeText={setDeliveryDate}
+            <DateInput
+              value={deliveryDate || null}
+              onChange={setDeliveryDate}
+              placeholder="Select delivery date"
             />
 
             <Text style={[styles.fieldLabel, { color: C.text }]}>Items *</Text>

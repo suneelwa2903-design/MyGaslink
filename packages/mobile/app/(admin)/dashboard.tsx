@@ -8,13 +8,13 @@ import {
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
-  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme } from '../../src/theme';
+import { DateInput } from '../../src/components/ui';
 // STAGE-A A6: PendingAction type import dropped — the PA section/query were
 // both removed from the dashboard, so the type is no longer referenced.
 import type { DashboardStats, OverdueCallListEntry } from '@gaslink/shared';
@@ -369,44 +369,22 @@ export default function AdminDashboardScreen() {
           </Text>
         </View>
 
-        {/* ── STEP-3G: Date range pickers (plain YYYY-MM-DD inputs, STEP-3A pattern) ── */}
+        {/* ── STAGE-C: native DateInput replaces the YYYY-MM-DD text inputs. ── */}
         <View style={styles.dateRangeRow}>
           <View style={styles.dateInputWrap}>
-            <Text style={[styles.dateInputLabel, { color: theme.textMuted }]}>From</Text>
-            <TextInput
-              value={dateFrom}
-              onChangeText={setDateFrom}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={theme.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={[
-                styles.dateInput,
-                {
-                  color: theme.text,
-                  backgroundColor: theme.cardBg,
-                  borderColor: dateFromValid ? theme.cardBorder : ACCENT.red,
-                },
-              ]}
+            <DateInput
+              value={dateFrom || null}
+              onChange={setDateFrom}
+              label="From"
+              placeholder="From"
             />
           </View>
           <View style={styles.dateInputWrap}>
-            <Text style={[styles.dateInputLabel, { color: theme.textMuted }]}>To</Text>
-            <TextInput
-              value={dateTo}
-              onChangeText={setDateTo}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={theme.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={[
-                styles.dateInput,
-                {
-                  color: theme.text,
-                  backgroundColor: theme.cardBg,
-                  borderColor: dateToValid ? theme.cardBorder : ACCENT.red,
-                },
-              ]}
+            <DateInput
+              value={dateTo || null}
+              onChange={setDateTo}
+              label="To"
+              placeholder="To"
             />
           </View>
           <TouchableOpacity
