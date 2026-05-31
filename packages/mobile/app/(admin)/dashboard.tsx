@@ -15,7 +15,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme } from '../../src/theme';
-import type { DashboardStats, PendingAction, OverdueCallListEntry } from '@gaslink/shared';
+// STAGE-A A6: PendingAction type import dropped — the PA section/query were
+// both removed from the dashboard, so the type is no longer referenced.
+import type { DashboardStats, OverdueCallListEntry } from '@gaslink/shared';
 
 // ─── STEP-3G types ───────────────────────────────────────────────────────────
 
@@ -92,11 +94,21 @@ function formatCurrency(n: number): string {
   return currencyFormatter.format(n);
 }
 
+// STAGE-A A4: title-case the time-of-day word ("Good Evening" not
+// "Good evening") to match Suneel's preferred greeting style.
 function getGreeting(): string {
   const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 12) return 'Good Morning';
+  if (hour < 17) return 'Good Afternoon';
+  return 'Good Evening';
+}
+
+// STAGE-A A4: title-case a user's stored first-name on display. DB values
+// can be all-lowercase ("suneel") or mixed-case; the greeting reads better
+// when always rendered "Suneel".
+function titleCase(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
 function getFormattedDate(): string {
@@ -108,20 +120,8 @@ function getFormattedDate(): string {
   });
 }
 
-function timeAgo(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diffMs = now - then;
-  const diffMins = Math.floor(diffMs / 60_000);
-  if (diffMins < 1) return 'just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays === 1) return 'yesterday';
-  if (diffDays < 30) return `${diffDays}d ago`;
-  return `${Math.floor(diffDays / 30)}mo ago`;
-}
+// STAGE-A A6: timeAgo() helper deleted — its only consumer was the
+// Pending Actions section which was removed alongside the PA card.
 
 // ─── KPI card config ─────────────────────────────────────────────────────────
 
@@ -194,14 +194,9 @@ const KPI_CARDS: KpiCardConfig[] = [
     iconBgLight: '#fffbeb',
     iconBgDark: 'rgba(245, 158, 11, 0.15)',
   },
-  {
-    key: 'pendingActions',
-    label: 'Pending Actions',
-    icon: 'notifications-outline',
-    color: ACCENT.blue,
-    iconBgLight: '#eff6ff',
-    iconBgDark: 'rgba(59, 130, 246, 0.15)',
-  },
+  // STAGE-A A6: 'pendingActions' KPI card removed from the dashboard per
+  // Suneel's request. The Pending Actions screen at /(admin)/pending-actions
+  // is still in the app — just no longer linked from this dashboard.
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -265,14 +260,9 @@ export default function AdminDashboardScreen() {
     queryParams,
   );
 
-  const {
-    data: pendingActionsData,
-    isLoading: actionsLoading,
-    refetch: refetchActions,
-  } = useApiQuery<{ actions: PendingAction[] }>(
-    ['pending-actions'],
-    '/pending-actions?status=open',
-  );
+  // STAGE-A A6: PendingActions query removed — the dashboard no longer
+  // surfaces PA data (card + section deleted). The PA screen at
+  // /(admin)/pending-actions still works on its own.
 
   // ── STEP-3G: Overview + role-aware briefing queries ──
 
@@ -319,15 +309,13 @@ export default function AdminDashboardScreen() {
   );
   const gstFailures = gstFailuresData?.invoices ?? [];
 
-  const pendingActions = pendingActionsData?.actions ?? [];
-  const displayedActions = pendingActions.slice(0, 5);
-  const hasMoreActions = pendingActions.length > 5;
+  // STAGE-A A6: pendingActions / displayedActions / hasMoreActions removed
+  // alongside the PA query above and the PA section below.
 
   const isRefreshing = statsRefetching;
 
   const onRefresh = useCallback(() => {
     refetchStats();
-    refetchActions();
     refetchInsights();
     refetchStockSummary();
     refetchCallList();
@@ -335,7 +323,6 @@ export default function AdminDashboardScreen() {
     refetchGstFailures();
   }, [
     refetchStats,
-    refetchActions,
     refetchInsights,
     refetchStockSummary,
     refetchCallList,
@@ -347,7 +334,7 @@ export default function AdminDashboardScreen() {
 
   if (statsLoading && !stats) {
     return (
-      <SafeAreaView edges={['top', 'left', 'right']} style={[styles.container, { backgroundColor: theme.bg }]}>
+      <SafeAreaView edges={['left', 'right']} style={[styles.container, { backgroundColor: theme.bg }]}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={ACCENT.blue} />
           <Text style={[styles.loadingText, { color: theme.textSecondary }]}>
@@ -359,7 +346,7 @@ export default function AdminDashboardScreen() {
   }
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.container, { backgroundColor: theme.bg }]}>
+    <SafeAreaView edges={['left', 'right']} style={[styles.container, { backgroundColor: theme.bg }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -375,7 +362,7 @@ export default function AdminDashboardScreen() {
         {/* ── Header greeting ── */}
         <View style={styles.header}>
           <Text style={[styles.greeting, { color: theme.text }]}>
-            {getGreeting()}, {firstName}
+            {getGreeting()}, {titleCase(firstName)}
           </Text>
           <Text style={[styles.dateText, { color: theme.textSecondary }]}>
             {getFormattedDate()}
@@ -482,108 +469,9 @@ export default function AdminDashboardScreen() {
           })}
         </View>
 
-        {/* ── Pending Actions section ── */}
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>
-            Pending Actions
-          </Text>
-          {pendingActions.length > 0 && (
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>{pendingActions.length}</Text>
-            </View>
-          )}
-        </View>
-
-        <View
-          style={[
-            styles.actionsContainer,
-            {
-              backgroundColor: theme.cardBg,
-              borderColor: theme.cardBorder,
-            },
-          ]}
-        >
-          {actionsLoading ? (
-            <View style={styles.actionsLoading}>
-              <ActivityIndicator size="small" color={ACCENT.blue} />
-            </View>
-          ) : pendingActions.length === 0 ? (
-            <View style={styles.emptyActions}>
-              <Ionicons
-                name="checkmark-circle"
-                size={40}
-                color={ACCENT.green}
-              />
-              <Text style={[styles.emptyActionsText, { color: theme.textSecondary }]}>
-                All clear! No items require your attention.
-              </Text>
-            </View>
-          ) : (
-            <>
-              {displayedActions.map((action, index) => {
-                const severityColors = isDark
-                  ? SEVERITY_COLORS_DARK[action.severity] ?? SEVERITY_COLORS_DARK.low
-                  : SEVERITY_COLORS[action.severity] ?? SEVERITY_COLORS.low;
-
-                return (
-                  <View key={action.actionId}>
-                    {index > 0 && (
-                      <View style={[styles.actionDivider, { backgroundColor: theme.divider }]} />
-                    )}
-                    <View style={styles.actionCard}>
-                      <View style={styles.actionTopRow}>
-                        <View
-                          style={[
-                            styles.severityBadge,
-                            { backgroundColor: severityColors.bg },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.severityBadgeText,
-                              { color: severityColors.text },
-                            ]}
-                          >
-                            {action.severity.toUpperCase()}
-                          </Text>
-                        </View>
-                        <Text style={[styles.actionTime, { color: theme.textMuted }]}>
-                          {timeAgo(action.createdAt)}
-                        </Text>
-                      </View>
-                      <Text
-                        style={[styles.actionDescription, { color: theme.text }]}
-                        numberOfLines={2}
-                      >
-                        {action.description}
-                      </Text>
-                      <Text style={[styles.actionMeta, { color: theme.textMuted }]}>
-                        {action.actionType.replace(/_/g, ' ')} {'\u00B7'}{' '}
-                        {action.module.replace(/_/g, ' ')}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })}
-
-              {hasMoreActions && (
-                <TouchableOpacity
-                  style={[styles.viewAllButton, { borderTopColor: theme.divider }]}
-                  activeOpacity={0.7}
-                  // STEP-3B: was '/(admin)/more' — a dead end. Routes to the
-                  // new full Pending Actions screen with filters + actions.
-                  onPress={() => router.push('/(admin)/pending-actions')}
-                >
-                  <Text style={styles.viewAllText}>
-                    View All ({pendingActions.length})
-                  </Text>
-                  <Ionicons name="chevron-forward" size={16} color={ACCENT.blue} />
-                </TouchableOpacity>
-              )}
-            </>
-          )}
-        </View>
-
+        {/* STAGE-A A6: Pending Actions section removed entirely from the
+            dashboard per Suneel. The PA screen at /(admin)/pending-actions
+            is still reachable from elsewhere in the app. */}
         {/* ── STEP-3G: Stock Summary section (admin) ── */}
         {stockSummary && stockSummary.length > 0 && (
           <>
@@ -770,16 +658,11 @@ export default function AdminDashboardScreen() {
         {/* ── STEP-3G: GST Failures (admin/finance) ── */}
         {gstFailures.length > 0 && (
           <>
+            {/* STAGE-A A6: "View all" link to /(admin)/pending-actions
+                removed — Suneel asked for all dashboard→PA navigation to
+                go away. Inline GST Failures list remains. */}
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>GST Failures</Text>
-              <TouchableOpacity
-                onPress={() => router.push('/(admin)/pending-actions')}
-                activeOpacity={0.7}
-                style={styles.sectionHeaderLink}
-              >
-                <Text style={styles.viewAllText}>View all</Text>
-                <Ionicons name="chevron-forward" size={14} color={ACCENT.blue} />
-              </TouchableOpacity>
             </View>
             <View
               style={[

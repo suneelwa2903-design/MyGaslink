@@ -123,8 +123,10 @@ const STATUS_TABS = [
   { label: 'All', value: 'all' },
   { label: orderStatusLabel('pending_driver_assignment'), value: 'pending_driver_assignment' },
   { label: orderStatusLabel('pending_dispatch'), value: 'pending_dispatch' },
-  // STEP-3A: preflight_in_progress + modified_delivered tabs to match web parity.
-  { label: orderStatusLabel('preflight_in_progress'), value: 'preflight_in_progress' },
+  // STAGE-A A5: 'preflight_in_progress' tab removed — Suneel found the
+  // "Dispatching…" status confusing because it's a brief (~10-30s) NIC
+  // preflight window, not a state operators need to filter by. Orders in
+  // that state still appear under the "All" tab.
   { label: orderStatusLabel('pending_delivery'), value: 'pending_delivery' },
   { label: orderStatusLabel('delivered'), value: 'delivered' },
   { label: orderStatusLabel('modified_delivered'), value: 'modified_delivered' },
@@ -153,7 +155,9 @@ function getColors(dark: boolean) {
     tabBg: dark ? '#334155' : '#f1f5f9',
     tabText: dark ? '#cbd5e1' : '#475569',
     modalBg: dark ? '#0f172a' : '#ffffff',
-    overlay: 'rgba(0,0,0,0.6)',
+    // STAGE-A A2: bumped from 0.6 → 0.85 so bottom-sheet backdrop fully
+    // obscures the tab bar (was visible at ~40% through the dim layer).
+    overlay: 'rgba(0,0,0,0.85)',
     itemBg: dark ? '#334155' : '#f1f5f9',
     divider: dark ? '#334155' : '#e2e8f0',
   };
@@ -557,10 +561,15 @@ export default function AdminOrdersScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={[styles.container, { backgroundColor: C.bg }]}>
-      {/* Status Filter Tabs */}
+      {/* Status Filter Tabs.
+          STAGE-A A1: `style={{ flexGrow: 0 }}` pins the ScrollView's height
+          to its content. Without it, a horizontal ScrollView placed inside
+          a flex column parent (SafeAreaView with flex:1) stretched its
+          main-axis (height) and inflated the pills vertically. */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0 }}
         contentContainerStyle={styles.tabBar}
       >
         {STATUS_TABS.map((tab) => {
@@ -2341,16 +2350,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // Tab bar
+  // Tab bar — STAGE-A A1: pinned height + alignItems:'center' so pills
+  // can't be vertically inflated by the parent flex column.
   tabBar: {
     paddingHorizontal: 16,
     paddingVertical: 10,
     gap: 8,
+    alignItems: 'center',
   },
   tab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 99,
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    flexShrink: 0,
+    justifyContent: 'center',
   },
   tabText: {
     fontSize: 13,

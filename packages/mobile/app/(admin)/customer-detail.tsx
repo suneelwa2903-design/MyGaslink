@@ -86,7 +86,9 @@ function getColors(dark: boolean) {
     inputBg: dark ? '#0f172a' : '#ffffff',
     inputBorder: dark ? '#475569' : '#cbd5e1',
     modalBg: dark ? '#0f172a' : '#ffffff',
-    overlay: 'rgba(0,0,0,0.6)',
+    // STAGE-A A2: bumped from 0.6 → 0.85 so bottom-sheet backdrop fully
+    // obscures the tab bar (was visible at ~40% through the dim layer).
+    overlay: 'rgba(0,0,0,0.85)',
   };
 }
 
@@ -115,6 +117,7 @@ function PillRow({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={{ flexGrow: 0 }}
       contentContainerStyle={styles.pillRow}
     >
       {options.map((opt) => {
@@ -1017,8 +1020,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
   },
-  pillRow: { gap: 6, paddingVertical: 2 },
-  pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
+  // STAGE-A A1: pinned pill height + alignItems on container so the
+  // horizontal ScrollView can't be vertically inflated by the parent flex.
+  pillRow: { gap: 8, paddingVertical: 4, alignItems: 'center' },
+  pill: { height: 36, paddingHorizontal: 12, borderRadius: 18, flexShrink: 0, justifyContent: 'center' },
   pillText: { fontSize: 12, fontWeight: '600' },
 
   centered: {

@@ -170,7 +170,9 @@ function getColors(dark: boolean) {
     tabBg: dark ? '#334155' : '#f1f5f9',
     tabText: dark ? '#cbd5e1' : '#475569',
     modalBg: dark ? '#0f172a' : '#ffffff',
-    overlay: 'rgba(0,0,0,0.6)',
+    // STAGE-A A2: bumped from 0.6 → 0.85 so bottom-sheet backdrop fully
+    // obscures the tab bar (was visible at ~40% through the dim layer).
+    overlay: 'rgba(0,0,0,0.85)',
     divider: dark ? '#334155' : '#e2e8f0',
   };
 }
@@ -660,10 +662,13 @@ function InvoicesTab({
 
   const renderStatusFilter = () => (
     <View style={{ paddingVertical: 10 }}>
+      {/* STAGE-A A1: `style={{ flexGrow: 0 }}` + fixed pill height to
+          prevent vertical inflation in the parent flex column. */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+        style={{ flexGrow: 0 }}
+        contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: 'center' }}
       >
         {INVOICE_STATUS_TABS.map((tab) => {
           const active = invoiceStatus === tab.value;
@@ -672,9 +677,11 @@ function InvoicesTab({
               key={tab.value}
               onPress={() => setInvoiceStatus(tab.value)}
               style={{
-                paddingHorizontal: 14,
-                paddingVertical: 7,
-                borderRadius: 99,
+                height: 36,
+                paddingHorizontal: 12,
+                borderRadius: 18,
+                flexShrink: 0,
+                justifyContent: 'center',
                 backgroundColor: active ? ACCENT : C.tabBg,
               }}
             >
@@ -701,10 +708,12 @@ function InvoicesTab({
     if (!gstEnabled) return null;
     return (
       <View style={{ paddingBottom: 8 }}>
+        {/* STAGE-A A1: same `flexGrow:0` + fixed pill height pattern. */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+          style={{ flexGrow: 0 }}
+          contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: 'center' }}
         >
           {IRN_STATUS_TABS.map((tab) => {
             const active = irnFilter === tab.value;
@@ -713,9 +722,11 @@ function InvoicesTab({
                 key={tab.value}
                 onPress={() => setIrnFilter(tab.value)}
                 style={{
+                  height: 32,
                   paddingHorizontal: 12,
-                  paddingVertical: 5,
-                  borderRadius: 99,
+                  borderRadius: 16,
+                  flexShrink: 0,
+                  justifyContent: 'center',
                   borderWidth: 1,
                   backgroundColor: active ? '#0369a1' : 'transparent',
                   borderColor: active ? '#0369a1' : C.cardBorder,

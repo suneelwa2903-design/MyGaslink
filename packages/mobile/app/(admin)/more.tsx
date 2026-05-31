@@ -12,12 +12,17 @@ import {
   RefreshControl,
   KeyboardAvoidingView,
   Platform,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useAuthStore } from '../../src/stores/authStore';
+// STAGE-A A7: dark-mode toggle parity with (driver)/more.tsx — themeStore
+// already exists end-to-end (Zustand + SecureStore persistence). Admin
+// just lacked the toggle UI.
+import { useThemeStore, useIsDark } from '../../src/stores/themeStore';
 import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import type { UserProfile } from '@gaslink/shared';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
@@ -1132,14 +1137,19 @@ function CustomersModal({
             </View>
 
             {/* STEP-3E: status filter pill row — web parity with the
-                "All Statuses" Select on CustomersPage. */}
+                "All Statuses" Select on CustomersPage.
+                STAGE-A A1: `style={{ flexGrow: 0 }}` + fixed pill `height`
+                so the ScrollView's main-axis can't be inflated by the
+                parent flex layout (was rendering as massive vertical ovals). */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
+              style={{ flexGrow: 0 }}
               contentContainerStyle={{
                 paddingHorizontal: 16,
                 paddingBottom: 10,
-                gap: 6,
+                gap: 8,
+                alignItems: 'center',
               }}
             >
               {CUSTOMER_STATUS_FILTERS.map((opt) => {
@@ -1152,9 +1162,11 @@ function CustomersModal({
                       setCustomersPage(0);
                     }}
                     style={{
+                      height: 36,
                       paddingHorizontal: 12,
-                      paddingVertical: 6,
-                      borderRadius: 16,
+                      borderRadius: 18,
+                      flexShrink: 0,
+                      justifyContent: 'center',
                       backgroundColor: active ? ACCENT : theme.inputBg,
                       borderWidth: 1,
                       borderColor: active ? ACCENT : theme.inputBorder,
@@ -3117,6 +3129,9 @@ export default function AdminMoreScreen() {
   const router = useRouter();
   const theme = useMoreTheme();
   const { user: authUser, logout } = useAuthStore();
+  // STAGE-A A7: dark-mode toggle wiring (matches driver/more.tsx pattern).
+  const dark = useIsDark();
+  const toggleMode = useThemeStore((s) => s.toggleMode);
   // The auth profile may carry a `distributorName` the backend attaches but the
   // shared UserProfile type doesn't declare; model it as an optional extension.
   const user: AuthUserWithDistributor | null = authUser;
@@ -3163,6 +3178,48 @@ export default function AdminMoreScreen() {
           <MenuRow icon="stats-chart" label="Overview" subtitle="Key business metrics" onPress={() => setShowOverview(true)} theme={theme} />
           <Divider theme={theme} />
           <MenuRow icon="bar-chart" label="Reports" subtitle="Revenue, customers & driver performance" onPress={() => setShowReports(true)} theme={theme} />
+        </SectionCard>
+
+        {/* ── STAGE-A A7: Appearance ──────────────────────────────── */}
+        {/* Dark-mode toggle parity with (driver)/more.tsx. The themeStore
+            handles persistence via SecureStore so the choice survives
+            cold launches without showing a flash of the wrong theme. */}
+        <SectionCard title="Appearance" theme={theme}>
+          <View
+            style={{
+              padding: 16,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 14,
+            }}
+          >
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                backgroundColor: dark ? `${ACCENT_COLORS.purple}22` : `${ACCENT_COLORS.purple}15`,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name={dark ? 'moon' : 'sunny'} size={20} color={ACCENT_COLORS.purple} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>
+                Dark Mode
+              </Text>
+              <Text style={{ fontSize: 12, color: theme.textSecondary, marginTop: 2 }}>
+                {dark ? 'Dark mode' : 'Light mode'}
+              </Text>
+            </View>
+            <Switch
+              value={dark}
+              onValueChange={toggleMode}
+              trackColor={{ false: '#cbd5e1', true: ACCENT_COLORS.purple }}
+              thumbColor="#ffffff"
+            />
+          </View>
         </SectionCard>
 
         {/* ── Section 3: Settings ──────────────────────────────────── */}

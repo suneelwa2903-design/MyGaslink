@@ -138,7 +138,9 @@ function getColors(dark: boolean) {
     tabBg: dark ? '#334155' : '#f1f5f9',
     tabText: dark ? '#cbd5e1' : '#475569',
     modalBg: dark ? '#0f172a' : '#ffffff',
-    overlay: 'rgba(0,0,0,0.6)',
+    // STAGE-A A2: bumped from 0.6 → 0.85 so bottom-sheet backdrop fully
+    // obscures the tab bar (was visible at ~40% through the dim layer).
+    overlay: 'rgba(0,0,0,0.85)',
     divider: dark ? '#334155' : '#e2e8f0',
     inputBorder: dark ? '#475569' : '#cbd5e1',
   };
@@ -171,6 +173,7 @@ function PillRow({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={{ flexGrow: 0 }}
       contentContainerStyle={styles.pillRow}
     >
       {options.map((opt) => {
@@ -569,8 +572,10 @@ const styles = StyleSheet.create({
   filterSection: { paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1 },
   filterLabel: { fontSize: 11, fontWeight: '600', textTransform: 'uppercase', marginBottom: 4 },
 
-  pillRow: { gap: 6, paddingVertical: 2 },
-  pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
+  // STAGE-A A1: pinned pill height + alignItems on container so the
+  // horizontal ScrollView can't be vertically inflated by the parent flex.
+  pillRow: { gap: 8, paddingVertical: 4, alignItems: 'center' },
+  pill: { height: 36, paddingHorizontal: 12, borderRadius: 18, flexShrink: 0, justifyContent: 'center' },
   pillText: { fontSize: 12, fontWeight: '600' },
 
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
