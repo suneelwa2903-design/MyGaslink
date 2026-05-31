@@ -24,9 +24,17 @@ import { useAuthStore } from '../../src/stores/authStore';
 // just lacked the toggle UI.
 import { useThemeStore, useIsDark } from '../../src/stores/themeStore';
 import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
-import type { UserProfile } from '@gaslink/shared';
+import type { UserProfile, Customer as SharedCustomer } from '@gaslink/shared';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
 import { DateInput } from '../../src/components/ui';
+// STAGE-F: shared CustomerForm body — used by EditCustomerInlineModal here and
+// by EditCustomerModal in (admin)/customer-detail.tsx + the Create route at
+// (admin)/customer-create.tsx. Keeps the three usages in sync.
+import {
+  CustomerFormModal,
+  customerToFormInitial,
+  type CustomerFormSubmit,
+} from '../../src/screens/CustomerForm';
 
 const ACCENT = ACCENT_COLORS.red;
 
@@ -453,243 +461,78 @@ function Loading({ theme: _theme }: { theme: Theme }) {
 // CUSTOMERS MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
-// STEP-3E: minimal Customer shape for the Edit modal's lazy detail fetch.
-// The list view returns a trimmed Customer (no transportChargePerCylinder
-// etc.); the detail GET returns the full shape — we type that surface
-// inline rather than importing the heavy shared Customer type just for
-// these few fields.
-interface CustomerDetailShape {
-  customerId: string;
-  customerName: string;
-  businessName: string | null;
-  phone: string;
-  email: string | null;
-  gstin: string | null;
-  creditPeriodDays: number;
-  transportChargePerCylinder: number;
-}
-
-// STEP-3E: inline Edit modal for a single customer row in the CustomersModal.
-// Lazily fetches the full Customer (GET /customers/:id) on open so we have
-// transportChargePerCylinder, then submits PUT /customers/:id. This is
-// intentionally duplicated with the EditCustomerModal in customer-detail.tsx
-// (per the STEP-3E brief — extraction is out of scope).
+// STAGE-F: inline Edit modal — thin wrapper around the shared CustomerForm
+// body (src/screens/CustomerForm.tsx). Lazily fetches the full Customer from
+// GET /customers/:id so the form has every field (contacts, discounts, both
+// addresses, transport). Submits via PUT /customers/:id. The body is shared
+// with (admin)/customer-detail.tsx EditCustomerModal — STAGE-F retired the
+// duplicate inline forms.
 function EditCustomerInlineModal({
   visible,
   customer,
   canEditTransport,
-  theme,
   onClose,
   onSaved,
 }: {
   visible: boolean;
   customer: Customer | null;
   canEditTransport: boolean;
-  theme: Theme;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [formName, setFormName] = useState('');
-  const [formBusiness, setFormBusiness] = useState('');
-  const [formPhone, setFormPhone] = useState('');
-  const [formEmail, setFormEmail] = useState('');
-  const [formGstin, setFormGstin] = useState('');
-  const [formCredit, setFormCredit] = useState('30');
-  const [formTransport, setFormTransport] = useState('0');
-  const [initializedFor, setInitializedFor] = useState<string | null>(null);
-
   const customerId = customer?.customerId ?? '';
 
-  // Lazy fetch of the full Customer so the transport field has the right
-  // initial value. The list payload doesn't carry transportChargePerCylinder.
-  const { data: detail } = useApiQuery<CustomerDetailShape>(
+  // Lazy fetch of the full Customer so the transport/address/contacts fields
+  // have the right initial values. The list payload only carries the trimmed
+  // local Customer shape.
+  const { data: detail } = useApiQuery<SharedCustomer>(
     ['customer-detail-edit', customerId],
     `/customers/${customerId}`,
     undefined,
     { enabled: visible && !!customerId },
   );
 
-  // Sync form fields with detail on first arrival per customer; reset when
-  // modal closes. Render-time pattern (no extra effect render pass).
-  if (visible && detail && initializedFor !== detail.customerId) {
-    setInitializedFor(detail.customerId);
-    setFormName(detail.customerName);
-    setFormBusiness(detail.businessName ?? '');
-    setFormPhone(detail.phone);
-    setFormEmail(detail.email ?? '');
-    setFormGstin(detail.gstin ?? '');
-    setFormCredit(String(detail.creditPeriodDays ?? 30));
-    setFormTransport(String(detail.transportChargePerCylinder ?? 0));
-  }
-  if (!visible && initializedFor !== null) {
-    setInitializedFor(null);
-  }
-
-  const updateMutation = useApiMutation<
-    Customer,
+  const updateMutation = useApiMutation<SharedCustomer, CustomerFormSubmit>(
+    'put',
+    () => `/customers/${customerId}`,
     {
-      customerName: string;
-      businessName?: string;
-      phone: string;
-      email?: string;
-      gstin?: string;
-      creditPeriodDays: number;
-      transportChargePerCylinder?: number;
-    }
-  >('put', () => `/customers/${customerId}`, {
-    invalidateKeys: [
-      ['customers'],
-      ['customer-detail', customerId],
-      ['customer-detail-edit', customerId],
-    ],
-    successMessage: 'Customer updated',
-    onSuccess: () => {
-      onSaved();
+      invalidateKeys: [
+        ['customers'],
+        ['customer-detail', customerId],
+        ['customer-detail-edit', customerId],
+      ],
+      successMessage: 'Customer updated',
+      onSuccess: () => {
+        onSaved();
+      },
     },
-  });
+  );
 
-  const handleSubmit = () => {
-    if (!customer) return;
-    if (!formName.trim() || !formPhone.trim()) {
-      Alert.alert('Validation', 'Name and phone are required.');
-      return;
-    }
-    const credit = parseInt(formCredit, 10);
-    if (Number.isNaN(credit) || credit < 0) {
-      Alert.alert('Validation', 'Credit period must be a non-negative number.');
-      return;
-    }
-    const transport = parseFloat(formTransport);
-    if (canEditTransport && Number.isNaN(transport)) {
-      Alert.alert('Validation', 'Transport charge must be a number.');
-      return;
-    }
-    updateMutation.mutate({
-      customerName: formName.trim(),
-      businessName: formBusiness.trim() || undefined,
-      phone: formPhone.trim(),
-      email: formEmail.trim() || undefined,
-      gstin: formGstin.trim() || undefined,
-      creditPeriodDays: credit,
-      transportChargePerCylinder: canEditTransport ? transport : undefined,
-    });
-  };
+  const initial = detail ? customerToFormInitial(detail) : undefined;
 
   return (
-    <Modal
+    <CustomerFormModal
       visible={visible}
-      animationType="slide"
-      presentationStyle="fullScreen"
-      onRequestClose={onClose}
-    >
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-        <ModalHeader title="Edit Customer" onClose={onClose} theme={theme} />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1 }}
-        >
-          <ScrollView contentContainerStyle={{ padding: 20 }}>
-            <FormInput
-              label="Name *"
-              value={formName}
-              onChangeText={setFormName}
-              placeholder="Full name"
-              theme={theme}
-            />
-            <FormInput
-              label="Business Name"
-              value={formBusiness}
-              onChangeText={setFormBusiness}
-              placeholder="Business name (optional)"
-              theme={theme}
-            />
-            <FormInput
-              label="Phone *"
-              value={formPhone}
-              onChangeText={setFormPhone}
-              placeholder="10-digit mobile"
-              keyboardType="phone-pad"
-              theme={theme}
-            />
-            <FormInput
-              label="Email"
-              value={formEmail}
-              onChangeText={setFormEmail}
-              placeholder="Email (optional)"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              theme={theme}
-            />
-            <FormInput
-              label="GSTIN"
-              value={formGstin}
-              onChangeText={setFormGstin}
-              placeholder="22AAAAA0000A1Z5"
-              autoCapitalize="characters"
-              theme={theme}
-            />
-            <FormInput
-              label="Credit Period (days)"
-              value={formCredit}
-              onChangeText={setFormCredit}
-              placeholder="e.g. 30"
-              keyboardType="numeric"
-              theme={theme}
-            />
-            {canEditTransport && (
-              <FormInput
-                label="Transport Charge (per cylinder)"
-                value={formTransport}
-                onChangeText={setFormTransport}
-                placeholder="0"
-                keyboardType="numeric"
-                theme={theme}
-              />
-            )}
-
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-              <TouchableOpacity
-                onPress={onClose}
-                disabled={updateMutation.isPending}
-                style={{
-                  flex: 1,
-                  paddingVertical: 14,
-                  borderRadius: 10,
-                  backgroundColor: theme.cardBg,
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                  alignItems: 'center',
-                }}
-              >
-                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.textSecondary }}>
-                  Cancel
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleSubmit}
-                disabled={updateMutation.isPending}
-                style={{
-                  flex: 1,
-                  paddingVertical: 14,
-                  borderRadius: 10,
-                  backgroundColor: ACCENT,
-                  alignItems: 'center',
-                  opacity: updateMutation.isPending ? 0.6 : 1,
-                }}
-              >
-                {updateMutation.isPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
-                    Save Changes
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
+      mode="edit"
+      title="Edit Customer"
+      accent={ACCENT}
+      canEditTransport={canEditTransport}
+      // Re-mount the form once the detail arrives so its useState picks up the
+      // populated initial values. While loading we render the form with empty
+      // defaults (matches the existing behaviour — the lazy fetch is fast).
+      key={detail ? `loaded-${detail.customerId}` : `loading-${customerId}`}
+      initial={initial}
+      submitting={updateMutation.isPending}
+      onClose={onClose}
+      onSubmit={async (data) => {
+        if (!customer) return;
+        try {
+          await updateMutation.mutateAsync(data);
+        } catch {
+          // handled by hook
+        }
+      }}
+    />
   );
 }
 
@@ -730,7 +573,6 @@ function CustomersModal({
     role === 'super_admin' || role === 'distributor_admin';
 
   const [search, setSearch] = useState('');
-  const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // STEP-3E: status filter + page state.
@@ -739,15 +581,6 @@ function CustomersModal({
 
   // STEP-3E: inline edit modal for a single customer row.
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
-
-  // Form state
-  const [formName, setFormName] = useState('');
-  const [formBusiness, setFormBusiness] = useState('');
-  const [formPhone, setFormPhone] = useState('');
-  const [formEmail, setFormEmail] = useState('');
-  const [formGstin, setFormGstin] = useState('');
-  const [formType, setFormType] = useState<'B2B' | 'B2C'>('B2C');
-  const [formCredit, setFormCredit] = useState('');
 
   // STEP-3E: paginated list. customerFilterSchema (shared/schemas) requires
   // `page` + `pageSize` (NOT `limit`) — the previous `?limit=200` quietly fell
@@ -767,27 +600,6 @@ function CustomersModal({
   );
   const customers: Customer[] = customersResponse?.customers ?? [];
 
-  const createMutation = useApiMutation<Customer, {
-    customerName: string;
-    businessName?: string;
-    phone: string;
-    email?: string;
-    gstin?: string;
-    customerType: 'B2B' | 'B2C';
-    creditPeriodDays?: number;
-  }>(
-    'post',
-    '/customers',
-    {
-      invalidateKeys: [['customers']],
-      successMessage: 'Customer created successfully',
-      onSuccess: () => {
-        resetForm();
-        setShowCreate(false);
-      },
-    },
-  );
-
   const stopSupplyMutation = useApiMutation<Customer, { id: string }>(
     'post',
     (vars) => `/customers/${vars.id}/stop-supply`,
@@ -805,32 +617,6 @@ function CustomersModal({
       successMessage: 'Supply resumed',
     },
   );
-
-  const resetForm = () => {
-    setFormName('');
-    setFormBusiness('');
-    setFormPhone('');
-    setFormEmail('');
-    setFormGstin('');
-    setFormType('B2C');
-    setFormCredit('');
-  };
-
-  const handleCreate = () => {
-    if (!formName.trim() || !formPhone.trim()) {
-      Alert.alert('Validation', 'Name and phone are required.');
-      return;
-    }
-    createMutation.mutate({
-      customerName: formName.trim(),
-      businessName: formBusiness.trim() || undefined,
-      phone: formPhone.trim(),
-      email: formEmail.trim() || undefined,
-      gstin: formGstin.trim() || undefined,
-      customerType: formType,
-      creditPeriodDays: formCredit ? parseInt(formCredit, 10) : undefined,
-    });
-  };
 
   const handleToggleStatus = (customer: Customer) => {
     const isSuspending = customer.status === 'active';
@@ -1018,91 +804,10 @@ function CustomersModal({
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
         <ModalHeader title="Customers" onClose={onClose} theme={theme} />
 
-        {showCreate ? (
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1 }}
-          >
-            <ScrollView contentContainerStyle={{ padding: 20 }}>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: theme.text, marginBottom: 16 }}>
-                New Customer
-              </Text>
-              <FormInput label="Name *" value={formName} onChangeText={setFormName} placeholder="Full name" theme={theme} />
-              <FormInput label="Business Name" value={formBusiness} onChangeText={setFormBusiness} placeholder="Business name (optional)" theme={theme} />
-              <FormInput label="Phone *" value={formPhone} onChangeText={setFormPhone} placeholder="10-digit mobile" keyboardType="phone-pad" theme={theme} />
-              <FormInput label="Email" value={formEmail} onChangeText={setFormEmail} placeholder="Email (optional)" keyboardType="email-address" autoCapitalize="none" theme={theme} />
-              <FormInput label="GSTIN" value={formGstin} onChangeText={setFormGstin} placeholder="GSTIN (optional)" autoCapitalize="characters" theme={theme} />
-
-              <Text style={{ fontSize: 13, fontWeight: '600', color: theme.textSecondary, marginBottom: 8 }}>
-                Customer Type
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-                {(['B2C', 'B2B'] as const).map((t) => (
-                  <TouchableOpacity
-                    key={t}
-                    onPress={() => setFormType(t)}
-                    style={{
-                      flex: 1,
-                      paddingVertical: 10,
-                      borderRadius: 8,
-                      borderWidth: 2,
-                      borderColor: formType === t ? ACCENT : theme.inputBorder,
-                      backgroundColor: formType === t ? ACCENT + '10' : theme.inputBg,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: '700',
-                        color: formType === t ? ACCENT : theme.textSecondary,
-                      }}
-                    >
-                      {t}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <FormInput label="Credit Period (days)" value={formCredit} onChangeText={setFormCredit} placeholder="e.g. 30" keyboardType="numeric" theme={theme} />
-
-              <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-                <TouchableOpacity
-                  onPress={() => { resetForm(); setShowCreate(false); }}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 14,
-                    borderRadius: 10,
-                    backgroundColor: theme.cardBg,
-                    borderWidth: 1,
-                    borderColor: theme.cardBorder,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: theme.textSecondary }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={handleCreate}
-                  disabled={createMutation.isPending}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 14,
-                    borderRadius: 10,
-                    backgroundColor: ACCENT,
-                    alignItems: 'center',
-                    opacity: createMutation.isPending ? 0.6 : 1,
-                  }}
-                >
-                  {createMutation.isPending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Create Customer</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </KeyboardAvoidingView>
-        ) : (
+        {/* STAGE-F: the inline B2B/B2C-toggle Create form has been removed.
+            Create now routes to (admin)/customer-create.tsx which renders the
+            shared CustomerForm body (src/screens/CustomerForm.tsx). */}
+        {(
           <View style={{ flex: 1 }}>
             {/* Search Bar */}
             <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
@@ -1255,7 +960,9 @@ function CustomersModal({
               />
             )}
 
-            <FAB onPress={() => setShowCreate(true)} />
+            {/* STAGE-F: FAB routes to the shared CustomerForm screen at
+                (admin)/customer-create.tsx. */}
+            <FAB onPress={() => router.push('/(admin)/customer-create')} />
 
             {/* STEP-3E: per-row Edit modal. Mounted at the modal level so it
                 appears above the customer list. Initialized from the row but
@@ -1266,7 +973,6 @@ function CustomersModal({
               visible={!!editTarget}
               customer={editTarget}
               canEditTransport={canEditTransport}
-              theme={theme}
               onClose={() => setEditTarget(null)}
               onSaved={() => {
                 refetch();

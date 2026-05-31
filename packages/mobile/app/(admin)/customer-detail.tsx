@@ -39,13 +39,8 @@ import {
   ScrollView,
   TouchableOpacity,
   FlatList,
-  TextInput,
   ActivityIndicator,
   RefreshControl,
-  Modal,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -66,6 +61,14 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Badge, EmptyState } from '../../src/components/ui';
+// STAGE-F: shared CustomerForm body — replaces the duplicate EditCustomerModal
+// that previously lived inline in this file (and in (admin)/more.tsx). The
+// duplicate was flagged in the STEP-3E header as a known cleanup target.
+import {
+  CustomerFormModal,
+  customerToFormInitial,
+  type CustomerFormSubmit,
+} from '../../src/screens/CustomerForm';
 
 const ACCENT = '#dc2626';
 const PAGE_SIZE = 25;
@@ -155,17 +158,9 @@ function customerStatusVariant(status: string): StatusVariant {
   }
 }
 
-// ─── Edit Customer Modal (duplicated from more.tsx — see file header) ──────
-
-interface EditCustomerFormState {
-  customerName: string;
-  businessName: string;
-  phone: string;
-  email: string;
-  gstin: string;
-  creditPeriodDays: string;
-  transportChargePerCylinder: string;
-}
+// ─── Edit Customer Modal — STAGE-F shared body ──────────────────────────────
+// Thin wrapper around the shared CustomerForm (src/screens/CustomerForm.tsx).
+// Same submit shape used by the create route + the more.tsx inline edit.
 
 function EditCustomerModal({
   visible,
@@ -180,250 +175,44 @@ function EditCustomerModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const { dark } = useTheme();
-  const C = getColors(dark);
-
-  const [form, setForm] = useState<EditCustomerFormState>({
-    customerName: '',
-    businessName: '',
-    phone: '',
-    email: '',
-    gstin: '',
-    creditPeriodDays: '30',
-    transportChargePerCylinder: '0',
-  });
-  const [initializedFor, setInitializedFor] = useState<string | null>(null);
-
-  // Sync form fields with the customer when the modal opens for a (new)
-  // customer, and reset the guard when it closes. Done in render to avoid an
-  // extra effect render pass — same pattern as more.tsx GstConfigModal.
-  if (visible && customer && initializedFor !== customer.customerId) {
-    setInitializedFor(customer.customerId);
-    setForm({
-      customerName: customer.customerName,
-      businessName: customer.businessName ?? '',
-      phone: customer.phone,
-      email: customer.email ?? '',
-      gstin: customer.gstin ?? '',
-      creditPeriodDays: String(customer.creditPeriodDays ?? 30),
-      transportChargePerCylinder: String(customer.transportChargePerCylinder ?? 0),
-    });
-  }
-  if (!visible && initializedFor !== null) {
-    setInitializedFor(null);
-  }
-
-  const updateMutation = useApiMutation<
-    Customer,
+  const updateMutation = useApiMutation<Customer, CustomerFormSubmit>(
+    'put',
+    () => `/customers/${customer?.customerId}`,
     {
-      customerName: string;
-      businessName?: string;
-      phone: string;
-      email?: string;
-      gstin?: string;
-      creditPeriodDays: number;
-      transportChargePerCylinder?: number;
-    }
-  >('put', () => `/customers/${customer?.customerId}`, {
-    invalidateKeys: [
-      ['customers'],
-      ['customer-detail', customer?.customerId ?? ''],
-    ],
-    successMessage: 'Customer updated',
-    onSuccess: () => {
-      onSaved();
-      onClose();
+      invalidateKeys: [
+        ['customers'],
+        ['customer-detail', customer?.customerId ?? ''],
+      ],
+      successMessage: 'Customer updated',
+      onSuccess: () => {
+        onSaved();
+        onClose();
+      },
     },
-  });
-
-  const handleSubmit = () => {
-    if (!customer) return;
-    if (!form.customerName.trim() || !form.phone.trim()) {
-      Alert.alert('Validation', 'Name and phone are required.');
-      return;
-    }
-    const credit = parseInt(form.creditPeriodDays, 10);
-    if (Number.isNaN(credit) || credit < 0) {
-      Alert.alert('Validation', 'Credit period must be a non-negative number.');
-      return;
-    }
-    const transport = parseFloat(form.transportChargePerCylinder);
-    if (canEditTransport && Number.isNaN(transport)) {
-      Alert.alert('Validation', 'Transport charge must be a number.');
-      return;
-    }
-    updateMutation.mutate({
-      customerName: form.customerName.trim(),
-      businessName: form.businessName.trim() || undefined,
-      phone: form.phone.trim(),
-      email: form.email.trim() || undefined,
-      gstin: form.gstin.trim() || undefined,
-      creditPeriodDays: credit,
-      transportChargePerCylinder: canEditTransport ? transport : undefined,
-    });
-  };
-
-  const setField = (key: keyof EditCustomerFormState) => (value: string) =>
-    setForm((f) => ({ ...f, [key]: value }));
-
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-        <View style={[styles.editHeader, { borderBottomColor: C.divider }]}>
-          <Text style={[styles.headerTitle, { color: C.text }]}>Edit Customer</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="close" size={24} color={C.textSecondary} />
-          </TouchableOpacity>
-        </View>
-
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1 }}
-        >
-          <ScrollView contentContainerStyle={{ padding: 20 }}>
-            <EditField
-              label="Customer Name *"
-              value={form.customerName}
-              onChangeText={setField('customerName')}
-              C={C}
-              placeholder="Full name"
-            />
-            <EditField
-              label="Business Name"
-              value={form.businessName}
-              onChangeText={setField('businessName')}
-              C={C}
-              placeholder="Business name (optional)"
-            />
-            <EditField
-              label="Phone *"
-              value={form.phone}
-              onChangeText={setField('phone')}
-              C={C}
-              placeholder="10-digit mobile"
-              keyboardType="phone-pad"
-            />
-            <EditField
-              label="Email"
-              value={form.email}
-              onChangeText={setField('email')}
-              C={C}
-              placeholder="Email (optional)"
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <EditField
-              label="GSTIN"
-              value={form.gstin}
-              onChangeText={setField('gstin')}
-              C={C}
-              placeholder="22AAAAA0000A1Z5"
-              autoCapitalize="characters"
-            />
-            <EditField
-              label="Credit Period (days)"
-              value={form.creditPeriodDays}
-              onChangeText={setField('creditPeriodDays')}
-              C={C}
-              placeholder="e.g. 30"
-              keyboardType="numeric"
-            />
-            {canEditTransport && (
-              <EditField
-                label="Transport Charge (per cylinder, GST incl.)"
-                value={form.transportChargePerCylinder}
-                onChangeText={setField('transportChargePerCylinder')}
-                C={C}
-                placeholder="0"
-                keyboardType="numeric"
-              />
-            )}
-
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-              <TouchableOpacity
-                onPress={onClose}
-                disabled={updateMutation.isPending}
-                style={[
-                  styles.modalBtn,
-                  {
-                    backgroundColor: C.card,
-                    borderWidth: 1,
-                    borderColor: C.cardBorder,
-                  },
-                ]}
-              >
-                <Text style={{ fontSize: 15, fontWeight: '600', color: C.textSecondary }}>
-                  Cancel
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleSubmit}
-                disabled={updateMutation.isPending}
-                style={[
-                  styles.modalBtn,
-                  {
-                    backgroundColor: ACCENT,
-                    opacity: updateMutation.isPending ? 0.6 : 1,
-                  },
-                ]}
-              >
-                {updateMutation.isPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
-                    Save Changes
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
   );
-}
 
-function EditField({
-  label,
-  value,
-  onChangeText,
-  C,
-  placeholder,
-  keyboardType,
-  autoCapitalize,
-}: {
-  label: string;
-  value: string;
-  onChangeText: (t: string) => void;
-  C: ReturnType<typeof getColors>;
-  placeholder?: string;
-  keyboardType?: 'default' | 'phone-pad' | 'email-address' | 'numeric';
-  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
-}) {
+  const initial = customer ? customerToFormInitial(customer) : undefined;
+
   return (
-    <View style={{ marginBottom: 14 }}>
-      <Text style={{ fontSize: 13, fontWeight: '600', color: C.textSecondary, marginBottom: 6 }}>
-        {label}
-      </Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={C.textMuted}
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize ?? 'sentences'}
-        style={{
-          backgroundColor: C.inputBg,
-          borderWidth: 1,
-          borderColor: C.inputBorder,
-          borderRadius: 10,
-          paddingHorizontal: 14,
-          paddingVertical: 12,
-          fontSize: 15,
-          color: C.text,
-        }}
-      />
-    </View>
+    <CustomerFormModal
+      visible={visible}
+      mode="edit"
+      title="Edit Customer"
+      accent={ACCENT}
+      canEditTransport={canEditTransport}
+      key={customer ? `edit-${customer.customerId}` : 'edit-empty'}
+      initial={initial}
+      submitting={updateMutation.isPending}
+      onClose={onClose}
+      onSubmit={async (data) => {
+        if (!customer) return;
+        try {
+          await updateMutation.mutateAsync(data);
+        } catch {
+          // handled by hook
+        }
+      }}
+    />
   );
 }
 
