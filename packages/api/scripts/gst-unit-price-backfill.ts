@@ -67,8 +67,15 @@ async function processTenant(distributorId: string, before: Date, apply: boolean
       invoice: {
         distributorId,
         createdAt: { lt: before },
-        // Skip already-marked invoices.
-        NOT: { notes: { contains: ANTI_PATTERN_16_MARKER } },
+        // Skip already-marked invoices. Must allow `notes IS NULL` —
+        // Prisma's `NOT: { contains }` on a nullable field treats NULL
+        // rows as "neither match nor not-match" and silently excludes
+        // them, which would make the backfill a no-op on a clean DB
+        // (every invoice has notes=NULL until we stamp it).
+        OR: [
+          { notes: null },
+          { NOT: { notes: { contains: ANTI_PATTERN_16_MARKER } } },
+        ],
       },
       gstRate: { gt: 0 },
     },

@@ -897,30 +897,23 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
 export type GstCancelReasonCode = '1' | '2' | '3' | '4';
 
 /**
- * Persist cancellation context on the `gst_documents` row. Uses
- * $executeRawUnsafe because the new columns (cancel_reason,
- * cancel_reason_code, cancelled_by_user_id) were added in migration
- * 20260601000000_gst_document_cancel_fields and the typed Prisma
- * client may not have been regenerated yet on a long-running dev
- * server (the engine .dll is held open by `dev:api`). Raw SQL keeps
- * tsc green without forcing a `prisma generate` restart. After the
- * next clean restart this can be swapped to a typed update.
+ * Persist cancellation context on the `gst_documents` row. Typed
+ * Prisma update — the three new columns (cancelReason,
+ * cancelReasonCode, cancelledByUserId) are part of the GstDocument
+ * model as of migration 20260601000000_gst_document_cancel_fields.
  */
 async function persistCancellation(
   invoiceId: string,
   fields: { reason: string; reasonCode: GstCancelReasonCode; userId: string | null },
 ) {
-  await prisma.$executeRawUnsafe(
-    `UPDATE "gst_documents"
-       SET "cancel_reason" = $1,
-           "cancel_reason_code" = $2,
-           "cancelled_by_user_id" = $3
-     WHERE "invoice_id" = $4 AND "is_latest" = true`,
-    fields.reason,
-    fields.reasonCode,
-    fields.userId,
-    invoiceId,
-  );
+  await prisma.gstDocument.updateMany({
+    where: { invoiceId, isLatest: true },
+    data: {
+      cancelReason: fields.reason,
+      cancelReasonCode: fields.reasonCode,
+      cancelledByUserId: fields.userId,
+    },
+  });
 }
 
 /**

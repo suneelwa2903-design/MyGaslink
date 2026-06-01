@@ -44,23 +44,28 @@
  * Reason text: "AP16 backfill — correct GST under-reporting".
  */
 import { prisma } from '../src/lib/prisma.js';
+import { reissueForDeliveryMismatch } from '../src/services/gst/gstReissueService.js';
 
-function parseArgs(): { distributorId?: string; before: Date } {
+function parseArgs(): { distributorId?: string; before: Date; apply: boolean; userId?: string } {
   const args = process.argv.slice(2);
   let distributorId: string | undefined;
   let before = new Date();
+  let apply = false;
+  let userId: string | undefined;
   for (const a of args) {
-    if (a.startsWith('--distributor=')) distributorId = a.slice('--distributor='.length);
+    if (a === '--apply') apply = true;
+    else if (a.startsWith('--distributor=')) distributorId = a.slice('--distributor='.length);
     else if (a.startsWith('--before=')) before = new Date(a.slice('--before='.length));
+    else if (a.startsWith('--user=')) userId = a.slice('--user='.length);
     else {
       console.error(`Unknown arg: ${a}`);
       process.exit(1);
     }
   }
-  return { distributorId, before };
+  return { distributorId, before, apply, userId };
 }
 
-async function processTenant(distributorId: string, before: Date) {
+async function processTenant(distributorId: string, before: Date, apply: boolean, operatorUserId?: string) {
   const tenant = await prisma.distributor.findUnique({
     where: { id: distributorId },
     select: { id: true, businessName: true, gstMode: true },
@@ -109,14 +114,49 @@ async function processTenant(distributorId: string, before: Date) {
     );
   }
   console.log(`[${distributorId}] total: ${candidates.length} invoices.`);
-  return candidates.length;
+
+  if (!apply) return { total: candidates.length, success: 0, failed: 0 };
+
+  // --apply: actually call gstReissueService for each invoice. This
+  // CANCELS the existing IRN at NIC and REGENERATES a fresh one with
+  // the corrected amounts. ONLY safe on sandbox / test tenants.
+  console.log(`\n[${distributorId}] APPLYING re-issue — calling NIC for ${candidates.length} invoices…`);
+  let success = 0;
+  let failed = 0;
+  for (const inv of candidates) {
+    const tag = `${inv.invoiceNumber} (${inv.id})`;
+    try {
+      const result = await reissueForDeliveryMismatch({
+        invoiceId: inv.id,
+        distributorId,
+        userId: operatorUserId ?? 'ap16-backfill-script',
+        mismatchContext: { source: 'AP16-rebackfill' },
+      });
+      if (result.ok) {
+        success++;
+        console.log(`  ✅ ${tag}`);
+      } else {
+        failed++;
+        console.log(`  ⚠  ${tag} — ${result.reason ?? 'unknown'}`);
+      }
+    } catch (err) {
+      failed++;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`  ❌ ${tag} — ${msg}`);
+    }
+  }
+  console.log(`[${distributorId}] re-issue complete: ${success} success, ${failed} failed.`);
+  return { total: candidates.length, success, failed };
 }
 
 async function main() {
-  const { distributorId, before } = parseArgs();
-  console.log(`READ-ONLY listing — invoices that need NIC re-issue after AP16 backfill`);
+  const { distributorId, before, apply, userId } = parseArgs();
+  console.log(apply
+    ? `APPLY mode — invoices needing NIC re-issue WILL be cancelled and regenerated`
+    : `READ-ONLY listing — invoices that need NIC re-issue after AP16 backfill`);
   console.log(`Cutoff: invoices created before ${before.toISOString()}`);
   if (distributorId) console.log(`Scope: distributor ${distributorId}`);
+  if (userId) console.log(`Operator userId: ${userId}`);
 
   const tenants = distributorId
     ? [{ id: distributorId }]
@@ -125,11 +165,22 @@ async function main() {
         select: { id: true },
       });
 
-  let grand = 0;
-  for (const t of tenants) grand += await processTenant(t.id, before);
+  let grandTotal = 0;
+  let grandSuccess = 0;
+  let grandFailed = 0;
+  for (const t of tenants) {
+    const r = await processTenant(t.id, before, apply, userId);
+    grandTotal += r.total;
+    grandSuccess += r.success;
+    grandFailed += r.failed;
+  }
 
-  console.log(`\nGrand total: ${grand} invoices to re-issue.`);
-  console.log(`\nNext step: run gst-unit-price-backfill.ts --apply FIRST, then re-issue each invoice via gstReissueService.`);
+  console.log(`\nGrand total: ${grandTotal} invoices to re-issue.`);
+  if (apply) {
+    console.log(`Re-issue results: ${grandSuccess} success, ${grandFailed} failed.`);
+  } else {
+    console.log(`\nNext step: run gst-unit-price-backfill.ts --apply FIRST, then re-run this with --apply to actually call NIC.`);
+  }
 }
 
 main()
