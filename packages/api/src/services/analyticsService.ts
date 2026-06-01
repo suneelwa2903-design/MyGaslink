@@ -16,7 +16,7 @@ export async function getDashboardStats(distributorId: string) {
   const [
     ordersToday, deliveredToday, revenueTodayResult,
     pendingDispatch, inFlight, overdueInvoices, outstandingResult,
-    inventoryAlerts, pendingActions,
+    inventoryAlerts, pendingActions, totalCustomers,
   ] = await Promise.all([
     prisma.order.count({
       where: { distributorId, deletedAt: null, orderDate: { gte: today, lt: tomorrow } },
@@ -63,6 +63,10 @@ export async function getDashboardStats(distributorId: string) {
     prisma.pendingAction.count({
       where: { distributorId, status: { in: ['open', 'in_progress'] } },
     }),
+    // Total active customers — surfaced on the mobile admin Customers KPI card.
+    prisma.customer.count({
+      where: { distributorId, deletedAt: null },
+    }),
   ]);
 
   return {
@@ -75,6 +79,7 @@ export async function getDashboardStats(distributorId: string) {
     totalOutstanding: toNum(outstandingResult._sum.outstandingAmount),
     inventoryAlerts,
     pendingActions,
+    totalCustomers,
   };
 }
 

@@ -587,6 +587,8 @@ export interface DashboardStats {
   totalOutstanding: number;
   inventoryAlerts: number;
   pendingActions: number;
+  /** Total active (non-deleted) customers for the distributor. */
+  totalCustomers: number;
 }
 
 export interface AnalyticsMetrics {

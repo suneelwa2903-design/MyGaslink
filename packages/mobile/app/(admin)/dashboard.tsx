@@ -19,14 +19,7 @@ import { DateInput } from '../../src/components/ui';
 // both removed from the dashboard, so the type is no longer referenced.
 import type { DashboardStats, OverdueCallListEntry } from '@gaslink/shared';
 
-// ─── STEP-3G types ───────────────────────────────────────────────────────────
-
-interface Insight {
-  icon: string;
-  text: string;
-  severity: 'critical' | 'warning' | 'info';
-  link?: string;
-}
+// ─── Briefing row types ──────────────────────────────────────────────────────
 
 interface InventorySummaryRow {
   summaryId?: string;
@@ -42,17 +35,6 @@ interface ThresholdAlertRow {
   currentStock: number;
   level: 'warning' | 'critical';
   threshold: number;
-}
-
-interface GstFailureInvoice {
-  invoiceId: string;
-  invoiceNumber: string;
-  totalAmount: number;
-  irnStatus: string;
-}
-
-interface InvoicesListResponse {
-  invoices: GstFailureInvoice[];
 }
 
 // ─── Theme colors ────────────────────────────────────────────────────────────
@@ -135,14 +117,22 @@ interface KpiCardConfig {
   isCurrency?: boolean;
 }
 
-const KPI_CARDS: KpiCardConfig[] = [
+// Each card is tappable and routes to its drill-down screen via
+// expo-router. The icon sits inline (left) with the label and value
+// stacked beside it — denser than the old icon-above-value layout.
+interface KpiCardDest {
+  href: Parameters<ReturnType<typeof useRouter>['push']>[0];
+}
+
+const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
   {
-    key: 'ordersToday',
-    label: 'Orders Today',
-    icon: 'clipboard-outline',
+    key: 'totalCustomers',
+    label: 'Customers',
+    icon: 'people-outline',
     color: ACCENT.blue,
     iconBgLight: '#eff6ff',
     iconBgDark: 'rgba(59, 130, 246, 0.15)',
+    href: '/(admin)/customers',
   },
   {
     key: 'deliveredToday',
@@ -151,6 +141,7 @@ const KPI_CARDS: KpiCardConfig[] = [
     color: ACCENT.green,
     iconBgLight: '#ecfdf5',
     iconBgDark: 'rgba(16, 185, 129, 0.15)',
+    href: '/(admin)/orders',
   },
   {
     key: 'revenueToday',
@@ -160,22 +151,7 @@ const KPI_CARDS: KpiCardConfig[] = [
     iconBgLight: '#ecfdf5',
     iconBgDark: 'rgba(16, 185, 129, 0.15)',
     isCurrency: true,
-  },
-  {
-    key: 'pendingDispatch',
-    label: 'Pending Orders',
-    icon: 'time-outline',
-    color: ACCENT.orange,
-    iconBgLight: '#fffbeb',
-    iconBgDark: 'rgba(245, 158, 11, 0.15)',
-  },
-  {
-    key: 'overdueInvoices',
-    label: 'Overdue Invoices',
-    icon: 'warning-outline',
-    color: ACCENT.red,
-    iconBgLight: '#fef2f2',
-    iconBgDark: 'rgba(220, 38, 38, 0.15)',
+    href: '/(admin)/reports',
   },
   {
     key: 'totalOutstanding',
@@ -185,6 +161,16 @@ const KPI_CARDS: KpiCardConfig[] = [
     iconBgLight: '#fffbeb',
     iconBgDark: 'rgba(245, 158, 11, 0.15)',
     isCurrency: true,
+    href: '/(admin)/collections',
+  },
+  {
+    key: 'overdueInvoices',
+    label: 'Overdue Invoices',
+    icon: 'warning-outline',
+    color: ACCENT.red,
+    iconBgLight: '#fef2f2',
+    iconBgDark: 'rgba(220, 38, 38, 0.15)',
+    href: '/(admin)/finance',
   },
   {
     key: 'inventoryAlerts',
@@ -193,10 +179,8 @@ const KPI_CARDS: KpiCardConfig[] = [
     color: ACCENT.orange,
     iconBgLight: '#fffbeb',
     iconBgDark: 'rgba(245, 158, 11, 0.15)',
+    href: '/(admin)/inventory',
   },
-  // STAGE-A A6: 'pendingActions' KPI card removed from the dashboard per
-  // Suneel's request. The Pending Actions screen at /(admin)/pending-actions
-  // is still in the app — just no longer linked from this dashboard.
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -264,16 +248,9 @@ export default function AdminDashboardScreen() {
   // surfaces PA data (card + section deleted). The PA screen at
   // /(admin)/pending-actions still works on its own.
 
-  // ── STEP-3G: Overview + role-aware briefing queries ──
-
-  const {
-    data: insights,
-    refetch: refetchInsights,
-  } = useApiQuery<Insight[]>(
-    ['analytics-insights', dateFrom, dateTo],
-    '/analytics/insights',
-    queryParams,
-  );
+  // ── Briefing queries (Stock Position, Overdue Calls, Threshold Alerts).
+  //   GST Failures + Overview Insights queries dropped 2026-06-01 with
+  //   their sections (the dashboard now stops after threshold alerts). ──
 
   const {
     data: stockSummary,
@@ -299,35 +276,18 @@ export default function AdminDashboardScreen() {
     '/inventory/threshold-alerts',
   );
 
-  const {
-    data: gstFailuresData,
-    refetch: refetchGstFailures,
-  } = useApiQuery<InvoicesListResponse>(
-    ['invoices-irn-failed'],
-    '/invoices',
-    { irnStatus: 'failed', pageSize: 5 },
-  );
-  const gstFailures = gstFailuresData?.invoices ?? [];
-
-  // STAGE-A A6: pendingActions / displayedActions / hasMoreActions removed
-  // alongside the PA query above and the PA section below.
-
   const isRefreshing = statsRefetching;
 
   const onRefresh = useCallback(() => {
     refetchStats();
-    refetchInsights();
     refetchStockSummary();
     refetchCallList();
     refetchThresholdAlerts();
-    refetchGstFailures();
   }, [
     refetchStats,
-    refetchInsights,
     refetchStockSummary,
     refetchCallList,
     refetchThresholdAlerts,
-    refetchGstFailures,
   ]);
 
   // ── Loading state ──
@@ -396,7 +356,8 @@ export default function AdminDashboardScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ── KPI cards grid ── */}
+        {/* KPI cards grid (6 cards, 2 per row, tappable to drill-down).
+            Icon sits inline (left) with label + value stacked beside it. */}
         <View style={styles.kpiGrid}>
           {KPI_CARDS.map((card, index) => {
             const rawValue = stats?.[card.key] ?? 0;
@@ -405,8 +366,10 @@ export default function AdminDashboardScreen() {
               : String(rawValue);
 
             return (
-              <View
+              <TouchableOpacity
                 key={card.key}
+                activeOpacity={0.7}
+                onPress={() => router.push(card.href)}
                 style={[
                   styles.kpiCard,
                   index % 2 === 0 ? styles.kpiCardLeft : styles.kpiCardRight,
@@ -418,6 +381,9 @@ export default function AdminDashboardScreen() {
                     {
                       backgroundColor: theme.cardBg,
                       borderColor: theme.cardBorder,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 12,
                     },
                   ]}
                 >
@@ -426,23 +392,26 @@ export default function AdminDashboardScreen() {
                       styles.kpiIconContainer,
                       {
                         backgroundColor: isDark ? card.iconBgDark : card.iconBgLight,
+                        marginBottom: 0,
                       },
                     ]}
                   >
                     <Ionicons name={card.icon} size={22} color={card.color} />
                   </View>
-                  <Text
-                    style={[styles.kpiValue, { color: theme.text }]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                  >
-                    {displayValue}
-                  </Text>
-                  <Text style={[styles.kpiLabel, { color: theme.textSecondary }]}>
-                    {card.label}
-                  </Text>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[styles.kpiLabel, { color: theme.textSecondary, marginBottom: 2 }]} numberOfLines={1}>
+                      {card.label}
+                    </Text>
+                    <Text
+                      style={[styles.kpiValue, { color: theme.text }]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {displayValue}
+                    </Text>
+                  </View>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })}
         </View>
@@ -633,78 +602,9 @@ export default function AdminDashboardScreen() {
           </>
         )}
 
-        {/* ── STEP-3G: GST Failures (admin/finance) ── */}
-        {gstFailures.length > 0 && (
-          <>
-            {/* STAGE-A A6: "View all" link to /(admin)/pending-actions
-                removed — Suneel asked for all dashboard→PA navigation to
-                go away. Inline GST Failures list remains. */}
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: theme.text }]}>GST Failures</Text>
-            </View>
-            <View
-              style={[
-                styles.sectionContainer,
-                { backgroundColor: theme.cardBg, borderColor: theme.cardBorder },
-              ]}
-            >
-              {gstFailures.map((inv, index) => (
-                <View key={inv.invoiceId}>
-                  {index > 0 && (
-                    <View style={[styles.actionDivider, { backgroundColor: theme.divider }]} />
-                  )}
-                  <View style={styles.briefingRow}>
-                    <Text
-                      style={[styles.briefingPrimary, { color: theme.text }]}
-                      numberOfLines={1}
-                    >
-                      {inv.invoiceNumber}
-                    </Text>
-                    <Text style={[styles.briefingAmount, { color: ACCENT.red }]}>
-                      {formatCurrency(inv.totalAmount)}
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          </>
-        )}
-
-        {/* ── STEP-3G: Overview insights (inline list of cards) ── */}
-        {insights && insights.length > 0 && (
-          <>
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: theme.text }]}>Overview</Text>
-            </View>
-            <View style={styles.insightsList}>
-              {insights.map((ins, i) => {
-                const sevKey =
-                  ins.severity === 'critical'
-                    ? 'critical'
-                    : ins.severity === 'warning'
-                      ? 'medium'
-                      : 'low';
-                const sevColors = isDark
-                  ? SEVERITY_COLORS_DARK[sevKey] ?? SEVERITY_COLORS_DARK.low
-                  : SEVERITY_COLORS[sevKey] ?? SEVERITY_COLORS.low;
-                return (
-                  <View
-                    key={`insight-${i}`}
-                    style={[
-                      styles.insightCard,
-                      { backgroundColor: sevColors.bg, borderColor: theme.cardBorder },
-                    ]}
-                  >
-                    <Text style={styles.insightIcon}>{ins.icon}</Text>
-                    <Text style={[styles.insightText, { color: sevColors.text }]}>
-                      {ins.text}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-          </>
-        )}
+        {/* GST Failures + Overview insights sections removed 2026-06-01.
+            The 6-card KPI grid + Stock Position + Call These Customers +
+            Threshold Alerts are the only sections that survive. */}
 
         {/* Bottom spacing */}
         <View style={styles.bottomSpacer} />
