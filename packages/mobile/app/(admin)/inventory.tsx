@@ -734,15 +734,21 @@ function SummaryTab({
           </TouchableOpacity>
 
           {/* Tap the center label to open the native date picker.
-              When viewing today, render "Today · <date>" inline so the
-              user sees the absolute date next to the relative label
-              instead of stacked below it. */}
+              Render the absolute date OURSELVES — the embedded DateInput
+              collapses to icon-only width inside this `flex:1, justify:center`
+              row because its outer <View> has no flex (every other caller of
+              DateInput sits inside a form column that gives it width).
+              When viewing today, prefix "Today · " so the user sees both the
+              relative anchor and the absolute date. On other days, the date
+              still renders — previously it was invisible.
+              2026-06-01 fix. */}
           <View style={{ flex: 1, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-            {isToday && (
-              <Text style={{ fontSize: 13, color: t.green, fontWeight: '700', marginRight: 6 }}>
-                Today ·
-              </Text>
-            )}
+            <Text
+              style={{ fontSize: 13, fontWeight: '700', color: isToday ? t.green : t.text, marginRight: 6 }}
+              numberOfLines={1}
+            >
+              {isToday ? `Today · ${formatDate(selectedDate)}` : formatDate(selectedDate)}
+            </Text>
             <DateInput
               value={selectedDate}
               onChange={setSelectedDate}

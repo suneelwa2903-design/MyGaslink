@@ -419,9 +419,18 @@ driverRouter.get('/me/trip-stock',
       const currentDva = await prisma.driverVehicleAssignment.findFirst({
         where: { driverId: driver.id, distributorId, assignmentDate: today, status: { not: 'cancelled' } },
         orderBy: { tripNumber: 'desc' },
-        select: { tripNumber: true, updatedAt: true },
+        select: { tripNumber: true, updatedAt: true, isReconciled: true },
       });
       if (!currentDva) return sendSuccess(res, { items: [] });
+      // 2026-06-01: once the supervisor runs Confirm & Reconcile (or a
+      // Report-Mismatch write-off that fully closes the gap, which calls
+      // confirmVehicleReconciliation under the hood), the DVA is flipped
+      // isReconciled=true. The trip is over for the driver — the truck has
+      // been physically swept back to the depot. Without this short-circuit
+      // the loop below would keep summing every delivered order's
+      // `emptiesCollected` forever, leaving stale "remaining cargo" on the
+      // driver screen even though the vehicle has been idle for hours.
+      if (currentDva.isReconciled) return sendSuccess(res, { items: [] });
 
       // WI-096: if the latest DVA rolled to a new empty trip, report cargo for
       // the most recent trip that has orders (else stock resets to 0 — BUG C).
@@ -478,8 +487,18 @@ driverRouter.get('/me/trip-stock',
             emptyQuantity: 0,
           };
           if (isDelivered) {
-            existing.deliveredQuantity += item.deliveredQuantity ?? 0;
+            const delivered = item.deliveredQuantity ?? 0;
+            const ordered = item.quantity ?? 0;
+            existing.deliveredQuantity += delivered;
             existing.emptyQuantity += item.emptiesCollected ?? 0;
+            // 2026-06-01: a `modified_delivered` (or partial `delivered`)
+            // order has `deliveredQuantity < quantity` — the customer
+            // rejected some cylinders and they are STILL ON THE TRUCK
+            // until reconciliation. Previously this branch added nothing
+            // to fullQuantity, silently zeroing out the leftover cargo on
+            // the driver screen. The driver would arrive at the depot
+            // showing 0 fulls when the truck actually still held N.
+            existing.fullQuantity += Math.max(0, ordered - delivered);
           } else {
             existing.fullQuantity += item.quantity ?? 0;
           }
