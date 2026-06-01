@@ -338,15 +338,21 @@ export default function DriverOrdersScreen() {
                     </Text>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>Delivered Qty</Text>
+                        <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>Delivered Qty (max {item.quantity})</Text>
                         <TextInput
                           value={entry.delivered}
-                          onChangeText={(v) =>
+                          onChangeText={(v) => {
+                            // Clamp to the ordered quantity on the client so a
+                            // driver tap-fumble can't submit an over-delivery
+                            // (the server also rejects it). Strip non-digits.
+                            const digits = v.replace(/[^0-9]/g, '');
+                            const max = item.quantity ?? 0;
+                            const n = digits === '' ? '' : String(Math.min(Number(digits), max));
                             setDeliveryItems((prev) => ({
                               ...prev,
-                              [item.cylinderTypeId]: { ...prev[item.cylinderTypeId], delivered: v.replace(/[^0-9]/g, '') },
-                            }))
-                          }
+                              [item.cylinderTypeId]: { ...prev[item.cylinderTypeId], delivered: n },
+                            }));
+                          }}
                           keyboardType="number-pad"
                           selectionColor={ACCENT.red}
                           style={{

@@ -838,9 +838,40 @@ export async function confirmDelivery(
     }
   }
 
+  // Per-item bounds check: the delivery payload must not claim a delivered
+  // qty greater than what was on the order, must reference items that exist
+  // on the order, and emptiesCollected must be non-negative. The Zod schema
+  // (deliveryConfirmationSchema) only guarantees min(0) — the upper bound
+  // requires the order context, so it lives here. Without this, a driver
+  // tap-fumble (or buggy modal) could write delivered=2 against an order
+  // of 1, producing physically impossible inventory math (on-vehicle = -1)
+  // and leaving inventory_summaries inconsistent. Real incident:
+  // OSHD2627000403 on 2026-06-01 (dist-002, 425KG).
+  for (const di of data.items) {
+    const oi = order.items.find(i => i.cylinderTypeId === di.cylinderTypeId);
+    if (!oi) {
+      throw new OrderError(
+        `Cylinder type ${di.cylinderTypeId} is not on this order`,
+        400,
+      );
+    }
+    if (di.deliveredQuantity > oi.quantity) {
+      throw new OrderError(
+        `Delivered quantity (${di.deliveredQuantity}) cannot exceed ordered quantity (${oi.quantity})`,
+        400,
+      );
+    }
+    if (di.emptiesCollected < 0) {
+      throw new OrderError('emptiesCollected must be greater than or equal to 0', 400);
+    }
+  }
+
+  // `<` (not `!==`) — defence in depth. After the bounds check above,
+  // deliveredQuantity > ordered can no longer happen, but the `<`
+  // wording makes the intent explicit.
   const isModified = data.items.some(di => {
     const oi = order.items.find(i => i.cylinderTypeId === di.cylinderTypeId);
-    return oi && di.deliveredQuantity !== oi.quantity;
+    return oi && di.deliveredQuantity < oi.quantity;
   });
   const newStatus = isModified ? 'modified_delivered' : 'delivered';
 

@@ -1058,6 +1058,7 @@ function DeliveryConfirmationModal({
                   label={isReturn ? 'Return Qty' : 'Delivered Qty'}
                   type="number"
                   min={0}
+                  max={item.quantity}
                   required
                   error={errors.items?.[index]?.deliveredQuantity?.message}
                   {...register(`items.${index}.deliveredQuantity`, { valueAsNumber: true })}
