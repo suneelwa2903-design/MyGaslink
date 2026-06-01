@@ -152,7 +152,9 @@ interface ComputedItem {
   totalPrice: number;
 }
 
-function computeItems(
+// Exported for test access only — see __tests__/invoice-pdf-rate-reconciles.test.ts.
+// Production code path is the local call at drawItemsTable().
+export function computeItems(
   items: InvoiceForPdf['items'],
 ): { computed: ComputedItem[]; totalTaxable: number; totalGst: number; totalInclusive: number } {
   let totalTaxable = 0;
@@ -169,7 +171,18 @@ function computeItems(
     const afterDiscount = round2(grossInclusive - discountAmt);
     const taxable = round2(afterDiscount / (1 + gstRate / 100));
     const gstAmt = round2(afterDiscount - taxable);
-    const baseRate = round2(up / (1 + gstRate / 100));
+    // 2026-06-01: Rate column must reflect the customer's effective taxable
+    // rate (post-discount, GST-exclusive), matching the post-discount
+    // `taxable` and `gstAmt` on the same row. Using the raw inclusive `up`
+    // here ignored discount_per_unit and made per-line math fail
+    // (Rate × Qty + GST ≠ Amount) on every discounted line — Bangalore 425 KG:
+    // 35,593.22 + 5,720.34 = 41,313.56 vs Amount 37,500. The subtotal row's
+    // `totalRate = Σ baseRate × qty` and `totalGst = grandTotal − totalRate`
+    // inherit the fix and now show the real CGST+SGST.
+    // IRN payload is unaffected — that path computes its own UnitPrice and
+    // Discount fields independently in payloadBuilders.buildIrnPayload.
+    const effectiveUnitInclusive = Math.max(up - discount, 0);
+    const baseRate = round2(effectiveUnitInclusive / (1 + gstRate / 100));
 
     totalTaxable = round2(totalTaxable + taxable);
     totalGst = round2(totalGst + gstAmt);
@@ -343,7 +356,12 @@ function drawItemsTable(
   for (let idx = 0; idx < items.length; idx++) {
     const item = items[idx];
     const needsBreakdown = item.gstAmount > 0;
-    const rowH = needsBreakdown ? LAYOUT.TABLE_ROW_HEIGHT + 16 : LAYOUT.TABLE_ROW_HEIGHT;
+    // 2026-06-01: render a "Discount: ₹X/unit" sub-line under the item name
+    // when the customer has a negotiated per-unit discount. Adds 10pt of
+    // vertical space below the HSN/GST% caption so the row stays balanced.
+    const showDiscount = (item.discount || 0) > 0;
+    const rowH = (needsBreakdown ? LAYOUT.TABLE_ROW_HEIGHT + 16 : LAYOUT.TABLE_ROW_HEIGHT)
+      + (showDiscount ? 10 : 0);
 
     // Zebra stripe
     if (idx % 2 === 0) {
@@ -368,6 +386,13 @@ function drawItemsTable(
     doc.text(item.name, cx + 5, cursorY + 5, { width: COL_DEFS[1].width - 10 });
     doc.font('Helvetica').fontSize(F.CAPTION).fillColor(T.MUTED);
     doc.text(`HSN: ${item.hsn} | GST: ${item.gstRate}%`, cx + 5, cursorY + 14, { width: COL_DEFS[1].width - 10 });
+    if (showDiscount) {
+      // Sub-line below HSN/GST%, same muted caption style. 2026-06-01: makes
+      // the customer's negotiated discount visible on the PDF (the Rate
+      // column now shows the post-discount taxable rate, so without this the
+      // discount would be silently absorbed into Rate with no audit trail).
+      doc.text(`Discount: ${formatMoney(item.discount)}/unit`, cx + 5, cursorY + 24, { width: COL_DEFS[1].width - 10 });
+    }
     cx += COL_DEFS[1].width;
     // Qty
     doc.fontSize(F.BODY).fillColor(T.TEXT);
