@@ -300,7 +300,9 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
       hsnCode: item.hsnCode || '27111900',
       quantity: item.quantity,
       unit: 'NOS',
-      unitPrice: toNum(item.unitPrice) + toNum(item.discountPerUnit), // Original price before discount (GST-inclusive)
+      // CLAUDE.md anti-pattern #16: InvoiceItem.unitPrice is GST-inclusive,
+      // BEFORE discount. payloadBuilders applies the single /1.18 itself.
+      unitPrice: toNum(item.unitPrice),
       discountPerUnit: toNum(item.discountPerUnit),
       gstRate: item.gstRate || 18,
     })),
@@ -1026,6 +1028,7 @@ export async function processCreditNoteGst(creditNoteId: string, distributorId: 
   const isInterState = sellerStateCode !== buyerStateCode;
 
   // Build CRN payload - use proportional allocation of credit against invoice items
+  // CLAUDE.md anti-pattern #16: InvoiceItem.unitPrice is GST-inclusive, before discount.
   const proportion = toNum(cn.totalAmount) / toNum(cn.invoice.totalAmount);
   const items = cn.invoice.items.map((item, idx) => ({
     slNo: idx + 1,
@@ -1033,7 +1036,7 @@ export async function processCreditNoteGst(creditNoteId: string, distributorId: 
     hsnCode: item.hsnCode || '27111900',
     quantity: Math.max(1, Math.round(item.quantity * proportion)),
     unit: 'NOS',
-    unitPrice: toNum(item.unitPrice) + toNum(item.discountPerUnit),
+    unitPrice: toNum(item.unitPrice),
     discountPerUnit: toNum(item.discountPerUnit),
     gstRate: item.gstRate || 18,
   }));
@@ -1125,6 +1128,7 @@ export async function processDebitNoteGst(debitNoteId: string, distributorId: st
   const buyerStateCode = extractStateCode(dn.invoice.customer.gstin);
   const isInterState = sellerStateCode !== buyerStateCode;
 
+  // CLAUDE.md anti-pattern #16: InvoiceItem.unitPrice is GST-inclusive, before discount.
   const proportion = toNum(dn.totalAmount) / toNum(dn.invoice.totalAmount);
   const items = dn.invoice.items.map((item, idx) => ({
     slNo: idx + 1,
@@ -1132,7 +1136,7 @@ export async function processDebitNoteGst(debitNoteId: string, distributorId: st
     hsnCode: item.hsnCode || '27111900',
     quantity: Math.max(1, Math.round(item.quantity * proportion)),
     unit: 'NOS',
-    unitPrice: toNum(item.unitPrice) + toNum(item.discountPerUnit),
+    unitPrice: toNum(item.unitPrice),
     discountPerUnit: toNum(item.discountPerUnit),
     gstRate: item.gstRate || 18,
   }));

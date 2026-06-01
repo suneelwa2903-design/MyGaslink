@@ -810,7 +810,8 @@ async function buildInvoiceDataForIrn(
       hsnCode: item.hsnCode || '27111900',
       quantity: item.quantity,
       unit: 'NOS',
-      unitPrice: toNum(item.unitPrice) + toNum(item.discountPerUnit),
+      // CLAUDE.md anti-pattern #16: InvoiceItem.unitPrice is GST-inclusive, before discount.
+      unitPrice: toNum(item.unitPrice),
       discountPerUnit: toNum(item.discountPerUnit),
       gstRate: item.gstRate || 18,
     })),

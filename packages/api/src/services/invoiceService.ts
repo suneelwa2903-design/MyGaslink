@@ -150,7 +150,13 @@ export async function createInvoiceFromOrder(
     totalAmount += lineTotal;
 
     if (gstEnabled) {
-      // Reverse-calculate base price from GST-inclusive price
+      // CLAUDE.md anti-pattern #16/#17: InvoiceItem.unitPrice is GST-INCLUSIVE
+      // end to end (matches OrderItem.unitPrice and CylinderPrice.price). The
+      // base is computed ONCE here, only for the Invoice.cgstValue/sgstValue/
+      // igstValue aggregates. Downstream readers (invoicePdfService.computeItems
+      // and gst/payloadBuilders.buildIrnPayload) assume inclusive and apply a
+      // single /1.18 of their own. Storing base here was the historical bug
+      // that produced ₹42,000 → ₹30,163.75 (= /1.18²) in IRN AssAmt.
       const basePrice = effectivePrice / (1 + GST_RATES.IGST);
       totalBaseAmount += basePrice * qty;
 
@@ -159,10 +165,10 @@ export async function createInvoiceFromOrder(
         description: oi.cylinderType.typeName,
         hsnCode: oi.cylinderType.hsnCode,
         quantity: qty,
-        unitPrice: Math.round(basePrice * 100) / 100,
-        discountPerUnit: oi.discountPerUnit,
+        unitPrice: toNum(oi.unitPrice), // GST-inclusive, BEFORE discount
+        discountPerUnit: oi.discountPerUnit, // GST-inclusive
         gstRate: 18,
-        totalPrice: lineTotal,
+        totalPrice: lineTotal, // GST-inclusive, AFTER discount = (unitPrice − discountPerUnit) × qty
       });
     } else {
       // GST disabled - no GST breakup, price is the full price
@@ -195,7 +201,7 @@ export async function createInvoiceFromOrder(
         description: 'Inward Transportation Charges',
         hsnCode: '996511',
         quantity: totalDeliveredQty,
-        unitPrice: Math.round(transportBase * 100) / 100,
+        unitPrice: transportRate, // GST-inclusive — see anti-pattern #16
         discountPerUnit: 0,
         gstRate: 18,
         totalPrice: transportTotal,
@@ -302,22 +308,33 @@ export async function createManualInvoice(
     ? distributor.state !== customer.billingState
     : false;
 
+  // createManualInvoice accepts EXCLUSIVE input prices at the API boundary
+  // (caller specifies pre-tax unit price + gstRate). To keep the storage
+  // convention identical to createInvoiceFromOrder (CLAUDE.md anti-pattern
+  // #16: InvoiceItem.unitPrice is GST-INCLUSIVE), we convert per-item to
+  // inclusive units before persisting. Total math (base → cgst/sgst/igst →
+  // total) stays exactly as before.
   let totalBeforeGst = 0;
 
   const invoiceItems = data.items.map(item => {
     const discount = item.discountPerUnit ?? 0;
     const effectivePrice = Math.max(item.unitPrice - discount, 0);
-    const lineTotal = effectivePrice * item.quantity;
-    totalBeforeGst += lineTotal;
+    const exclLineTotal = effectivePrice * item.quantity;
+    totalBeforeGst += exclLineTotal;
+    const rate = item.gstRate ?? 18;
+    const mult = 1 + rate / 100;
+    const inclUnitPrice = Math.round(item.unitPrice * mult * 100) / 100;
+    const inclDiscount = Math.round(discount * mult * 100) / 100;
+    const inclLineTotal = Math.round(exclLineTotal * mult * 100) / 100;
     return {
       cylinderTypeId: item.cylinderTypeId || null,
       description: item.description,
       hsnCode: item.hsnCode || '27111900',
       quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      discountPerUnit: discount,
-      gstRate: item.gstRate ?? 18,
-      totalPrice: lineTotal,
+      unitPrice: inclUnitPrice, // GST-inclusive (storage invariant)
+      discountPerUnit: inclDiscount, // GST-inclusive
+      gstRate: rate,
+      totalPrice: inclLineTotal, // GST-inclusive line total
     };
   });
 
@@ -725,7 +742,12 @@ export async function generateRetroactiveGstInvoices(
     let totalBaseAmount = 0;
 
     await prisma.$transaction(async (tx) => {
-      // Update each item with GST breakup
+      // Update each item with GST breakup.
+      // CLAUDE.md anti-pattern #16: unitPrice is GST-INCLUSIVE in storage.
+      // A gstRate=0 item already has its inclusive price stored in unitPrice
+      // (the non-GST branch in createInvoiceFromOrder stores raw inclusive).
+      // Retroactive activation only computes the base for tax aggregation
+      // and flips gstRate to 18 — unitPrice MUST NOT be re-divided here.
       for (const item of invoice.items) {
         if (item.gstRate === 0) {
           const effectivePrice = Math.max(toNum(item.unitPrice) - toNum(item.discountPerUnit), 0);
@@ -735,9 +757,8 @@ export async function generateRetroactiveGstInvoices(
           await tx.invoiceItem.update({
             where: { id: item.id },
             data: {
-              unitPrice: Math.round(basePrice * 100) / 100,
               gstRate: 18,
-              // totalPrice stays the same - it was already inclusive
+              // unitPrice and totalPrice stay as stored (both inclusive)
             },
           });
         }

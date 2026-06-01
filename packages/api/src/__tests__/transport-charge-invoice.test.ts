@@ -92,8 +92,10 @@ describe('Feature 1 — transport charge on invoice', () => {
     expect(transport!.quantity).toBe(5);
     expect(Number(transport!.gstRate)).toBe(18);
     expect(Number(transport!.totalPrice)).toBeCloseTo(590, 2);
-    // base unitPrice = 118 / 1.18 = 100
-    expect(Number(transport!.unitPrice)).toBeCloseTo(100, 2);
+    // CLAUDE.md anti-pattern #16: InvoiceItem.unitPrice is GST-INCLUSIVE
+    // (the customer-facing per-cylinder transport rate). Base = 100 is
+    // derived by readers via a single /1.18, not stored.
+    expect(Number(transport!.unitPrice)).toBeCloseTo(118, 2);
 
     // totals: inclusive 5900 + 590 = 6490
     expect(Number(invoice.totalAmount)).toBeCloseTo(6490, 2);
