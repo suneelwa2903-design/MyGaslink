@@ -51,8 +51,23 @@ const TOMORROW = (() => {
   d.setUTCDate(d.getUTCDate() + 1);
   return fmt.format(d);
 })();
+// START/END are *timestamps* — only safe to use on real-timestamp columns
+// (createdAt, updatedAt).
 const START = new Date(`${TODAY}T00:00:00+05:30`);
 const END = new Date(`${TOMORROW}T00:00:00+05:30`);
+
+// For @db.Date columns (Postgres DATE), filtering with the IST-offset
+// timestamps above produced the wrong window: Prisma serialises a JS Date
+// to a DATE parameter by taking the UTC date portion, so
+// `new Date('2026-06-01T00:00:00+05:30')` (= 2026-05-31T18:30:00Z) hit PG
+// as the SQL date '2026-05-31' — wiping YESTERDAY instead of today. The
+// fix is to pass JS Dates whose UTC date portion already IS the day we
+// want. `new Date('2026-06-01')` is parsed as `2026-06-01T00:00:00Z`, so
+// Prisma sends the SQL date '2026-06-01'. Use these two constants for
+// every @db.Date filter (deliveryDate, assignmentDate, summaryDate,
+// eventDate, cancellationDate).
+const TODAY_DATE = new Date(TODAY);
+const TOMORROW_DATE = new Date(TOMORROW);
 
 interface WipeReport {
   paymentAllocations: number;
@@ -77,6 +92,7 @@ interface WipeReport {
   orderItems: number;
   orders: number;
   pendingActions: number;
+  customerBalances: number;       // update-to-zero, not delete
 }
 
 async function main() {
@@ -88,8 +104,10 @@ async function main() {
   // ── Pre-snapshot ──────────────────────────────────────────────────────────
   // Historical orders for dist-002 (deliveryDate strictly BEFORE today).
   // Used post-transaction to prove we didn't touch history.
+  // deliveryDate is @db.Date — use TODAY_DATE so Prisma serialises to
+  // the SQL date 'YYYY-MM-DD' that PG can compare to a DATE column.
   const histOrdersDist002Pre = await prisma.order.count({
-    where: { distributorId: DIST, deliveryDate: { lt: START } },
+    where: { distributorId: DIST, deliveryDate: { lt: TODAY_DATE } },
   });
   // Order counts on every OTHER distributor before the wipe.
   const otherDistOrdersPre = await prisma.order.groupBy({
@@ -111,11 +129,13 @@ async function main() {
   const counts = await prisma.$transaction(
     async (tx): Promise<WipeReport> => {
       // Resolve today's order/invoice/payment IDs first.
+      // deliveryDate is @db.Date → use TODAY_DATE/TOMORROW_DATE.
+      // createdAt is a real timestamp → use START/END (IST-offset window).
       const todayOrders = await tx.order.findMany({
         where: {
           distributorId: DIST,
           OR: [
-            { deliveryDate: { gte: START, lt: END } },
+            { deliveryDate: { gte: TODAY_DATE, lt: TOMORROW_DATE } },
             { createdAt: { gte: START, lt: END } },
           ],
         },
@@ -141,8 +161,9 @@ async function main() {
       });
       const paymentIds = todayPayments.map((p) => p.id);
 
+      // assignmentDate is @db.Date — use the date-aligned constants.
       const todayDvas = await tx.driverVehicleAssignment.findMany({
-        where: { distributorId: DIST, assignmentDate: { gte: START, lt: END } },
+        where: { distributorId: DIST, assignmentDate: { gte: TODAY_DATE, lt: TOMORROW_DATE } },
         select: { id: true },
       });
       const dvaIds = todayDvas.map((d) => d.id);
@@ -251,7 +272,13 @@ async function main() {
           .deleteMany({
             where: {
               distributorId: DIST,
-              OR: [{ orderId: { in: orderIds } }, { createdAt: { gte: START, lt: END } }],
+              // orderId is fine. createdAt is timestamp (START/END ok).
+              // cancellationDate is @db.Date — use date-aligned constants.
+              OR: [
+                { orderId: { in: orderIds } },
+                { createdAt: { gte: START, lt: END } },
+                { cancellationDate: { gte: TODAY_DATE, lt: TOMORROW_DATE } },
+              ],
             },
           })
           .catch(() => ({ count: 0 }))
@@ -270,13 +297,14 @@ async function main() {
       ).count;
 
       // ── 6. InventoryEvents created today on dist-002 ─────────────────────
+      // eventDate is @db.Date → date-aligned constants. createdAt is timestamp.
       const inventoryEvents = (
         await tx.inventoryEvent.deleteMany({
           where: {
             distributorId: DIST,
             OR: [
               { createdAt: { gte: START, lt: END } },
-              { eventDate: { gte: START, lt: END } },
+              { eventDate: { gte: TODAY_DATE, lt: TOMORROW_DATE } },
               { referenceId: { in: orderIds } },
             ],
           },
@@ -284,9 +312,10 @@ async function main() {
       ).count;
 
       // ── 7. InventorySummary for today on dist-002 ────────────────────────
+      // summaryDate is @db.Date → date-aligned constants.
       const inventorySummaries = (
         await tx.inventorySummary.deleteMany({
-          where: { distributorId: DIST, summaryDate: { gte: START, lt: END } },
+          where: { distributorId: DIST, summaryDate: { gte: TODAY_DATE, lt: TOMORROW_DATE } },
         })
       ).count;
 
@@ -318,6 +347,19 @@ async function main() {
           .catch(() => ({ count: 0 }))
       ).count;
 
+      // ── 12. CustomerInventoryBalances → zero (per user spec) ─────────────
+      // These are stateful per (customer, cylinderType) rows that accumulate
+      // from deliveries. They live OUTSIDE the "today" window but become
+      // ghost state once we've wiped the deliveries that fed them. Zero them
+      // for every customer belonging to this distributor — fresh slate for
+      // testing.
+      const customerBalances = (
+        await tx.customerInventoryBalance.updateMany({
+          where: { customer: { distributorId: DIST } },
+          data: { withCustomerQty: 0, pendingReturns: 0, missingQty: 0 },
+        })
+      ).count;
+
       return {
         paymentAllocations,
         payments,
@@ -341,14 +383,16 @@ async function main() {
         orderItems,
         orders,
         pendingActions,
+        customerBalances,
       };
     },
     { timeout: 60_000 },
   );
 
   // ── Post-snapshot verification ───────────────────────────────────────────
+  // deliveryDate @db.Date → use TODAY_DATE (see top-of-file comment).
   const histOrdersDist002Post = await prisma.order.count({
-    where: { distributorId: DIST, deliveryDate: { lt: START } },
+    where: { distributorId: DIST, deliveryDate: { lt: TODAY_DATE } },
   });
   const otherDistOrdersPost = await prisma.order.groupBy({
     by: ['distributorId'],
@@ -387,6 +431,7 @@ async function main() {
   console.log(`   9. Orders                       ${counts.orders}`);
   console.log(`  10. DriverVehicleAssignments     ${counts.driverVehicleAssignments}`);
   console.log(`  11. PendingActions               ${counts.pendingActions}`);
+  console.log(`  12. CustomerInventoryBalances    ${counts.customerBalances} (zeroed, not deleted)`);
   console.log('');
   console.log('FK-safety auxiliary deletions (required to avoid FK violations):');
   console.log(`     GstApiLog                     ${counts.gstApiLogs}`);

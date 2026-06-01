@@ -540,14 +540,23 @@ export async function confirmVehicleReconciliation(
         data: { status: 'returned_to_depot', returnedDate: new Date(), reconciledBy: userId, notes: 'Vehicle reconciliation' },
       });
 
-      // Create inventory event - cylinders back in depot
+      // Create inventory event — cylinders back in depot.
+      // CRITICAL: eventDate MUST match the trip's dispatch day, not the
+      // wall-clock moment reconciliation runs. The matching `dispatch`
+      // event was written on `order.deliveryDate` (= CSE.cancellationDate).
+      // If we used `new Date()` here and the trip ran across midnight,
+      // dispatched−delivered−returned never zeros out on either day:
+      // Day D₀ would read 2−1−0 = +1 forever, Day D₁ would read
+      // 0−0−1 = −1. Pinning the return to cs.cancellationDate keeps
+      // both legs of the trip on the same day, so the math closes
+      // even when reconciliation lands after midnight.
       await createInventoryEvent(tx, {
         distributorId,
         cylinderTypeId: cs.cylinderTypeId,
         eventType: 'cancellation_return',
         fullsChange: cs.quantity,
         emptiesChange: 0,
-        eventDate: new Date(),
+        eventDate: cs.cancellationDate,
         referenceId: cs.id,
         referenceType: 'cancelled_stock',
         createdBy: userId,
@@ -555,8 +564,8 @@ export async function confirmVehicleReconciliation(
       });
     });
 
-    // Recalculate after transaction
-    await recalculateSummariesFromDate(distributorId, cs.cylinderTypeId, new Date());
+    // Recalculate from the trip's day, not wall-clock today.
+    await recalculateSummariesFromDate(distributorId, cs.cylinderTypeId, cs.cancellationDate);
 
     results.cancelledStockReturned++;
     results.inventoryRestored[cs.cylinderTypeId] = (results.inventoryRestored[cs.cylinderTypeId] || 0) + cs.quantity;
@@ -622,13 +631,18 @@ export async function confirmVehicleReconciliation(
           data: { status: 'returned_to_depot', returnedDate: new Date(), reconciledBy: userId, notes: `Vehicle reconciliation — order ${order.orderNumber}` },
         });
 
+        // Pin the return event to the order's deliveryDate so it lands
+        // on the same daily-summary row as the dispatch event. Falling
+        // back to `new Date()` only when deliveryDate is somehow null
+        // (defensive — orderService always sets it).
+        const tripDate = order.deliveryDate ?? new Date();
         await createInventoryEvent(tx, {
           distributorId,
           cylinderTypeId: item.cylinderTypeId,
           eventType: 'cancellation_return',
           fullsChange: item.quantity,
           emptiesChange: 0,
-          eventDate: new Date(),
+          eventDate: tripDate,
           referenceId: order.id,
           referenceType: 'order',
           createdBy: userId,
@@ -639,9 +653,10 @@ export async function confirmVehicleReconciliation(
       }
     });
 
-    // Recalculate after each order
+    // Recalculate from the order's deliveryDate, not wall-clock today.
+    const tripDate = order.deliveryDate ?? new Date();
     for (const item of order.items) {
-      await recalculateSummariesFromDate(distributorId, item.cylinderTypeId, new Date());
+      await recalculateSummariesFromDate(distributorId, item.cylinderTypeId, tripDate);
     }
 
     // Cancel GST invoice if it exists

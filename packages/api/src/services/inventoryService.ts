@@ -625,21 +625,29 @@ export async function returnCancelledStock(
         data: { status: 'returned_to_depot', returnedDate: returnDate },
       });
 
-      // Create inventory event for the return
+      // Create inventory event for the return.
+      // CRITICAL: pin eventDate to cse.cancellationDate (= the trip's
+      // deliveryDate when the CSE was created). The matching dispatch
+      // event lives on that date; writing the return on `returnDate`
+      // (operator-supplied, almost always "today") splits the trip
+      // across two daily-summary rows when the admin clicks "Return
+      // Cancelled Stock" on a day later than the trip. Both rows then
+      // never zero out: dispatch-day shows on-vehicle=+qty forever,
+      // return-day shows on-vehicle=−qty forever. Pin to source date.
       await createInventoryEvent(tx, {
         distributorId,
         cylinderTypeId: cse.cylinderTypeId,
         eventType: 'cancellation_return',
         fullsChange: cse.quantity,
         emptiesChange: 0,
-        eventDate: returnDate,
+        eventDate: cse.cancellationDate,
         referenceId: eventId,
         referenceType: 'cancelled_stock',
         createdBy: userId,
         notes: data.notes || 'Cancelled stock returned to depot',
       });
 
-      affected.push({ cylinderTypeId: cse.cylinderTypeId, eventDate: returnDate });
+      affected.push({ cylinderTypeId: cse.cylinderTypeId, eventDate: cse.cancellationDate });
       inner.push({ eventId, status: 'returned_to_depot' });
     }
     return inner;
