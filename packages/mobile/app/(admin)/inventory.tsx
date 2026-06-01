@@ -93,6 +93,12 @@ interface CustomerBalance {
   pendingReturns: number;
   missingQty: number;
   lastUpdated: string;
+  // WI-080 wire fields (already returned by /inventory/customer-balances;
+  // mobile interface previously omitted them so the Outstanding Cost
+  // figure couldn't be computed). Added 2026-06-01.
+  cylinderPrice?: number | null;
+  emptyCylinderPrice?: number | null;
+  lastDeliveryDate?: string | null;
 }
 
 interface ReconciliationVehicle {
@@ -2455,6 +2461,8 @@ function ForecastTab() {
 
 // ─── BALANCES TAB ───────────────────────────────────────────────────────────
 
+type BalanceSortKey = 'customer' | 'type' | 'qty' | 'cost' | 'days';
+
 function BalancesTab() {
   const t = useInventoryTheme();
 
@@ -2463,6 +2471,78 @@ function BalancesTab() {
     isLoading,
     refetch,
   } = useApiQuery<CustomerBalance[]>(['customer-balances'], '/inventory/customer-balances');
+
+  // Filter + sort state. Defaults match web (outstanding-only ON, sort
+  // by cost desc).
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<string>(''); // empty = all types
+  const [onlyOutstanding, setOnlyOutstanding] = useState(true);
+  const [sortKey, setSortKey] = useState<BalanceSortKey>('cost');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const distinctTypes = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const b of balances ?? []) {
+      if (!seen.has(b.cylinderTypeId)) seen.set(b.cylinderTypeId, b.cylinderTypeName);
+    }
+    return Array.from(seen, ([id, name]) => ({ id, name }));
+  }, [balances]);
+
+  // Snapshot "now" once at mount via useState initializer — React Compiler
+  // forbids Date.now() inside useMemo and forbids ref access during render,
+  // so this is the only place we can call it cleanly without an effect.
+  const [nowMs] = useState(() => new Date().getTime());
+
+  const filtered = useMemo(() => {
+    const now = nowMs;
+    const rows = (balances ?? []).filter((b) => {
+      if (onlyOutstanding && b.withCustomerQty <= 0) return false;
+      if (typeFilter && b.cylinderTypeId !== typeFilter) return false;
+      if (search.trim() && !b.customerName.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+    const dirMul = sortDir === 'asc' ? 1 : -1;
+    const daysSince = (iso?: string | null) => {
+      if (!iso) return Number.POSITIVE_INFINITY;
+      const ms = now - new Date(iso).getTime();
+      return Math.max(0, Math.floor(ms / 86_400_000));
+    };
+    const cost = (b: CustomerBalance) => (b.emptyCylinderPrice ?? 0) * b.withCustomerQty;
+    rows.sort((a, b) => {
+      switch (sortKey) {
+        case 'customer': return dirMul * a.customerName.localeCompare(b.customerName);
+        case 'type': return dirMul * a.cylinderTypeName.localeCompare(b.cylinderTypeName);
+        case 'qty': return dirMul * (a.withCustomerQty - b.withCustomerQty);
+        case 'cost': return dirMul * (cost(a) - cost(b));
+        case 'days': return dirMul * (daysSince(a.lastDeliveryDate) - daysSince(b.lastDeliveryDate));
+      }
+    });
+    return rows;
+  }, [balances, search, typeFilter, onlyOutstanding, sortKey, sortDir]);
+
+  const totals = useMemo(() => {
+    let qty = 0;
+    let cost = 0;
+    let missing = 0;
+    for (const b of filtered) {
+      qty += b.withCustomerQty;
+      cost += (b.emptyCylinderPrice ?? 0) * b.withCustomerQty;
+      missing += b.missingQty;
+    }
+    return { qty, cost, missing };
+  }, [filtered]);
+
+  const toggleSort = useCallback((key: BalanceSortKey) => {
+    setSortKey((prev) => {
+      if (prev === key) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return prev;
+      }
+      // Default direction per key matches web: text asc, numeric desc.
+      setSortDir(key === 'customer' || key === 'type' ? 'asc' : 'desc');
+      return key;
+    });
+  }, []);
 
   const renderItem = useCallback(
     ({ item }: { item: CustomerBalance }) => {
@@ -2537,28 +2617,160 @@ function BalancesTab() {
     [t],
   );
 
+  const filterBar = (
+    <View style={{ padding: 12, gap: 8, borderBottomWidth: 1, borderBottomColor: t.divider, backgroundColor: t.card }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{
+          flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: t.inputBg,
+          borderRadius: 8, borderWidth: 1, borderColor: t.cardBorder, paddingHorizontal: 10,
+        }}>
+          <Ionicons name="search-outline" size={16} color={t.textMuted} />
+          <TextInput
+            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 6, fontSize: 13, color: t.text }}
+            placeholder="Search customer…"
+            placeholderTextColor={t.textMuted}
+            value={search}
+            onChangeText={setSearch}
+            autoCapitalize="none"
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch('')}>
+              <Ionicons name="close-circle" size={16} color={t.textMuted} />
+            </TouchableOpacity>
+          )}
+        </View>
+        <TouchableOpacity
+          onPress={() => setOnlyOutstanding((v) => !v)}
+          style={{
+            paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
+            backgroundColor: onlyOutstanding ? t.accentBg : t.metricBg,
+            borderWidth: 1, borderColor: onlyOutstanding ? t.accent : t.cardBorder,
+            flexDirection: 'row', alignItems: 'center', gap: 4,
+          }}
+        >
+          <Ionicons name={onlyOutstanding ? 'checkbox' : 'square-outline'} size={14} color={onlyOutstanding ? t.accent : t.textSecondary} />
+          <Text style={{ fontSize: 11, fontWeight: '600', color: onlyOutstanding ? t.accent : t.textSecondary }}>Outstanding</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Type filter chips */}
+      {distinctTypes.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+          <TouchableOpacity
+            onPress={() => setTypeFilter('')}
+            style={{
+              paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
+              backgroundColor: typeFilter === '' ? t.accent : t.metricBg,
+              borderWidth: 1, borderColor: typeFilter === '' ? t.accent : t.cardBorder,
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: '600', color: typeFilter === '' ? '#fff' : t.textSecondary }}>All types</Text>
+          </TouchableOpacity>
+          {distinctTypes.map((tt) => {
+            const selected = typeFilter === tt.id;
+            return (
+              <TouchableOpacity
+                key={tt.id}
+                onPress={() => setTypeFilter(selected ? '' : tt.id)}
+                style={{
+                  paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
+                  backgroundColor: selected ? t.accent : t.metricBg,
+                  borderWidth: 1, borderColor: selected ? t.accent : t.cardBorder,
+                }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: '600', color: selected ? '#fff' : t.textSecondary }}>{tt.name}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+
+      {/* Sort row */}
+      <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+        <Text style={{ fontSize: 11, color: t.textMuted, marginRight: 2 }}>Sort:</Text>
+        {(['customer', 'type', 'qty', 'cost', 'days'] as const).map((key) => {
+          const selected = sortKey === key;
+          const arrow = selected ? (sortDir === 'asc' ? '↑' : '↓') : '';
+          const label = ({ customer: 'Name', type: 'Type', qty: 'Qty', cost: 'Cost', days: 'Days' } as const)[key];
+          return (
+            <TouchableOpacity
+              key={key}
+              onPress={() => toggleSort(key)}
+              style={{
+                paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+                backgroundColor: selected ? t.accentBg : 'transparent',
+                borderWidth: 1, borderColor: selected ? t.accent : t.cardBorder,
+              }}
+            >
+              <Text style={{ fontSize: 11, fontWeight: '600', color: selected ? t.accent : t.textSecondary }}>
+                {label} {arrow}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  const footer = (
+    <View
+      style={{
+        flexDirection: 'row', justifyContent: 'space-between', padding: 12,
+        backgroundColor: t.card, borderTopWidth: 1, borderTopColor: t.divider,
+      }}
+    >
+      <View>
+        <Text style={{ fontSize: 10, color: t.textMuted }}>TOTAL QTY</Text>
+        <Text style={{ fontSize: 15, fontWeight: '700', color: t.text }}>{totals.qty}</Text>
+      </View>
+      <View>
+        <Text style={{ fontSize: 10, color: t.textMuted }}>EMPTY-CYL COST</Text>
+        <Text style={{ fontSize: 15, fontWeight: '700', color: t.text }}>
+          ₹{Math.round(totals.cost).toLocaleString('en-IN')}
+        </Text>
+      </View>
+      <View>
+        <Text style={{ fontSize: 10, color: t.textMuted }}>MISSING</Text>
+        <Text style={{ fontSize: 15, fontWeight: '700', color: totals.missing > 0 ? t.red : t.text }}>
+          {totals.missing}
+        </Text>
+      </View>
+    </View>
+  );
+
   return (
     <View style={{ flex: 1 }}>
+      {filterBar}
       {isLoading ? (
         <View style={{ paddingVertical: 40, alignItems: 'center' }}>
           <ActivityIndicator size="large" color={t.accent} />
         </View>
-      ) : !balances?.length ? (
-        <EmptyCard
-          icon="people-outline"
-          title="No customer balances"
-          subtitle="Customer cylinder balances will appear here"
-        />
+      ) : filtered.length === 0 ? (
+        <View style={{ flex: 1 }}>
+          <EmptyCard
+            icon="people-outline"
+            title={(balances?.length ?? 0) === 0 ? 'No customer balances' : 'No matches'}
+            subtitle={
+              (balances?.length ?? 0) === 0
+                ? 'Customer cylinder balances will appear here'
+                : 'Try adjusting search or filters.'
+            }
+          />
+          {(balances?.length ?? 0) > 0 && footer}
+        </View>
       ) : (
-        <FlatList
-          data={balances}
-          keyExtractor={(item, idx) => `${item.customerId}-${item.cylinderTypeId}-${idx}`}
-          renderItem={renderItem}
-          contentContainerStyle={{ padding: 16 }}
-          refreshControl={
-            <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={t.accent} />
-          }
-        />
+        <>
+          <FlatList
+            data={filtered}
+            keyExtractor={(item, idx) => `${item.customerId}-${item.cylinderTypeId}-${idx}`}
+            renderItem={renderItem}
+            contentContainerStyle={{ padding: 16 }}
+            refreshControl={
+              <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={t.accent} />
+            }
+          />
+          {footer}
+        </>
       )}
     </View>
   );

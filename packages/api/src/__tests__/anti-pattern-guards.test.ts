@@ -380,6 +380,28 @@ describe('Guard 5 — API responses match the shape the web types', () => {
     expect(past.body.data.length).toBe(0);
   });
 
+  it('GET /api/inventory/customer-balances rows carry cylinderPrice / emptyCylinderPrice / lastDeliveryDate', async () => {
+    // GROUP-5B + WI-080 wire contract: the mobile admin Customer Balances
+    // tab needs these three fields to compute the empty-cyl cost total
+    // and the "Days since last delivery" sort. The mobile interface was
+    // missing them, so this guard pins the wire shape to prevent future
+    // refactors from dropping them.
+    const res = await request(app)
+      .get('/api/inventory/customer-balances')
+      .set(auth(dist1AdminToken));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    if (res.body.data.length > 0) {
+      const row = res.body.data[0];
+      expect(row).toHaveProperty('customerId');
+      expect(row).toHaveProperty('cylinderTypeId');
+      expect(row).toHaveProperty('withCustomerQty');
+      expect(row).toHaveProperty('cylinderPrice');
+      expect(row).toHaveProperty('emptyCylinderPrice');
+      expect(row).toHaveProperty('lastDeliveryDate');
+    }
+  });
+
   it('GET /api/cylinder-types/prices/list returns rows with cylinderType.typeName nested object', async () => {
     // Anti-pattern #9 + 2026-06-01 regression: mobile typed each row as
     // { cylinderType?: string } and rendered `p.cylinderType || ...`.
