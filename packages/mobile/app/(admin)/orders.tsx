@@ -634,6 +634,32 @@ export default function AdminOrdersScreen() {
           <Ionicons name="arrow-undo-outline" size={14} color={ACCENT} />
           <Text style={[styles.returnsBtnText, { color: ACCENT }]}>Returns</Text>
         </TouchableOpacity>
+        {/* Bulk Assign discoverability: surface a visible button when any
+            orders are in pending_driver_assignment. Long-press still works
+            as the row-level multi-select trigger. Tapping this button
+            arms the bulk-assign mode by auto-selecting all pending rows. */}
+        {orders.some((o) => o.status === 'pending_driver_assignment') && (
+          <TouchableOpacity
+            style={[styles.returnsBtn, { borderColor: ACCENT, marginLeft: 6 }]}
+            onPress={() => {
+              const pendingIds = orders
+                .filter((o) => o.status === 'pending_driver_assignment')
+                .map((o) => o.orderId);
+              if (selectedOrderIds.length === 0) {
+                setSelectedOrderIds(pendingIds);
+              } else {
+                setBulkAssignVisible(true);
+              }
+            }}
+          >
+            <Ionicons name="car-outline" size={14} color={ACCENT} />
+            <Text style={[styles.returnsBtnText, { color: ACCENT }]}>
+              {selectedOrderIds.length > 0
+                ? `Assign (${selectedOrderIds.length})`
+                : 'Bulk Assign'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Search bar */}

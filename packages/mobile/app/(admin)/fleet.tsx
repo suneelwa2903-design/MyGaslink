@@ -222,10 +222,14 @@ export default function AdminFleetScreen() {
   const [driverName, setDriverName] = useState('');
   const [driverPhone, setDriverPhone] = useState('');
   const [driverLicense, setDriverLicense] = useState('');
+  // Edit-mode: when set, the driver form is reusing PUT /drivers/:id
+  // and pre-filled with the existing row's values.
+  const [editingDriverId, setEditingDriverId] = useState<string | null>(null);
 
   const [vehNumber, setVehNumber] = useState('');
   const [vehType, setVehType] = useState('');
   const [vehCapacity, setVehCapacity] = useState('');
+  const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
 
   const {
     data: driversResponse,
@@ -303,6 +307,22 @@ export default function AdminFleetScreen() {
       setDriverPhone('');
       setDriverLicense('');
       setShowDriverForm(false);
+      setEditingDriverId(null);
+    },
+  });
+
+  const updateDriverMutation = useApiMutation<
+    Driver,
+    { driverName?: string; phone?: string; licenseNumber?: string | null }
+  >('put', () => `/drivers/${editingDriverId}`, {
+    invalidateKeys: [['drivers']],
+    successMessage: 'Driver updated',
+    onSuccess: () => {
+      setDriverName('');
+      setDriverPhone('');
+      setDriverLicense('');
+      setShowDriverForm(false);
+      setEditingDriverId(null);
     },
   });
 
@@ -317,12 +337,52 @@ export default function AdminFleetScreen() {
       setVehType('');
       setVehCapacity('');
       setShowVehicleForm(false);
+      setEditingVehicleId(null);
     },
   });
+
+  const updateVehicleMutation = useApiMutation<
+    Vehicle,
+    { vehicleNumber?: string; vehicleType?: string; capacity?: number }
+  >('put', () => `/vehicles/${editingVehicleId}`, {
+    invalidateKeys: [['vehicles']],
+    successMessage: 'Vehicle updated',
+    onSuccess: () => {
+      setVehNumber('');
+      setVehType('');
+      setVehCapacity('');
+      setShowVehicleForm(false);
+      setEditingVehicleId(null);
+    },
+  });
+
+  const startEditDriver = (d: Driver) => {
+    setEditingDriverId(d.driverId);
+    setDriverName(d.driverName || '');
+    setDriverPhone(d.phone || '');
+    setDriverLicense(d.licenseNumber || '');
+    setShowDriverForm(true);
+  };
+
+  const startEditVehicle = (v: Vehicle) => {
+    setEditingVehicleId(v.vehicleId);
+    setVehNumber(v.vehicleNumber || '');
+    setVehType(v.vehicleType || '');
+    setVehCapacity(v.capacity != null ? String(v.capacity) : '');
+    setShowVehicleForm(true);
+  };
 
   const handleAddDriver = () => {
     if (!driverName.trim() || !driverPhone.trim()) {
       Alert.alert('Validation', 'Name and phone are required.');
+      return;
+    }
+    if (editingDriverId) {
+      updateDriverMutation.mutate({
+        driverName: driverName.trim(),
+        phone: driverPhone.trim(),
+        licenseNumber: driverLicense.trim() || null,
+      });
       return;
     }
     createDriverMutation.mutate({
@@ -335,6 +395,14 @@ export default function AdminFleetScreen() {
   const handleAddVehicle = () => {
     if (!vehNumber.trim() || !vehType.trim()) {
       Alert.alert('Validation', 'Vehicle number and type are required.');
+      return;
+    }
+    if (editingVehicleId) {
+      updateVehicleMutation.mutate({
+        vehicleNumber: vehNumber.trim(),
+        vehicleType: vehType.trim(),
+        capacity: vehCapacity ? parseInt(vehCapacity, 10) : undefined,
+      });
       return;
     }
     createVehicleMutation.mutate({
@@ -395,7 +463,7 @@ export default function AdminFleetScreen() {
       return (
         <ScrollView contentContainerStyle={{ padding: 20 }}>
           <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 16 }}>
-            Add Driver
+            {editingDriverId ? 'Edit Driver' : 'Add Driver'}
           </Text>
           <FormInput
             label="Name *"
@@ -435,7 +503,7 @@ export default function AdminFleetScreen() {
 
           <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
             <TouchableOpacity
-              onPress={() => setShowDriverForm(false)}
+              onPress={() => { setShowDriverForm(false); setEditingDriverId(null); }}
               style={{
                 flex: 1,
                 paddingVertical: 14,
@@ -459,13 +527,13 @@ export default function AdminFleetScreen() {
                 borderRadius: 10,
                 backgroundColor: ACCENT,
                 alignItems: 'center',
-                opacity: createDriverMutation.isPending ? 0.6 : 1,
+                opacity: (createDriverMutation.isPending || updateDriverMutation.isPending) ? 0.6 : 1,
               }}
             >
-              {createDriverMutation.isPending ? (
+              {(createDriverMutation.isPending || updateDriverMutation.isPending) ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Add Driver</Text>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>{editingDriverId ? 'Save' : 'Add Driver'}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -518,6 +586,13 @@ export default function AdminFleetScreen() {
                 label={item.status}
                 color={item.status === 'active' ? '#10b981' : '#94a3b8'}
               />
+              <TouchableOpacity
+                onPress={() => startEditDriver(item)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{ marginLeft: 8, padding: 4 }}
+              >
+                <Ionicons name="create-outline" size={20} color={ACCENT} />
+              </TouchableOpacity>
             </View>
           )}
           ItemSeparatorComponent={() => (
@@ -528,7 +603,7 @@ export default function AdminFleetScreen() {
             <RefreshControl refreshing={false} onRefresh={refetchDrivers} tintColor={ACCENT} />
           }
         />
-        <FAB onPress={() => setShowDriverForm(true)} />
+        <FAB onPress={() => { setEditingDriverId(null); setDriverName(''); setDriverPhone(''); setDriverLicense(''); setShowDriverForm(true); }} />
       </View>
     );
   };
@@ -538,7 +613,7 @@ export default function AdminFleetScreen() {
       return (
         <ScrollView contentContainerStyle={{ padding: 20 }}>
           <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 16 }}>
-            Add Vehicle
+            {editingVehicleId ? 'Edit Vehicle' : 'Add Vehicle'}
           </Text>
           <FormInput
             label="Vehicle Number *"
@@ -578,7 +653,7 @@ export default function AdminFleetScreen() {
 
           <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
             <TouchableOpacity
-              onPress={() => setShowVehicleForm(false)}
+              onPress={() => { setShowVehicleForm(false); setEditingVehicleId(null); }}
               style={{
                 flex: 1,
                 paddingVertical: 14,
@@ -602,13 +677,13 @@ export default function AdminFleetScreen() {
                 borderRadius: 10,
                 backgroundColor: ACCENT,
                 alignItems: 'center',
-                opacity: createVehicleMutation.isPending ? 0.6 : 1,
+                opacity: (createVehicleMutation.isPending || updateVehicleMutation.isPending) ? 0.6 : 1,
               }}
             >
-              {createVehicleMutation.isPending ? (
+              {(createVehicleMutation.isPending || updateVehicleMutation.isPending) ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Add Vehicle</Text>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>{editingVehicleId ? 'Save' : 'Add Vehicle'}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -664,6 +739,13 @@ export default function AdminFleetScreen() {
                 label={item.status}
                 color={item.status === 'active' ? '#10b981' : '#94a3b8'}
               />
+              <TouchableOpacity
+                onPress={() => startEditVehicle(item)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{ marginLeft: 8, padding: 4 }}
+              >
+                <Ionicons name="create-outline" size={20} color={ACCENT} />
+              </TouchableOpacity>
             </View>
           )}
           ItemSeparatorComponent={() => (
@@ -674,7 +756,7 @@ export default function AdminFleetScreen() {
             <RefreshControl refreshing={false} onRefresh={refetchVehicles} tintColor={ACCENT} />
           }
         />
-        <FAB onPress={() => setShowVehicleForm(true)} />
+        <FAB onPress={() => { setEditingVehicleId(null); setVehNumber(''); setVehType(''); setVehCapacity(''); setShowVehicleForm(true); }} />
       </View>
     );
   };

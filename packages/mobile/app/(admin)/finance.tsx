@@ -290,6 +290,10 @@ export default function AdminFinanceScreen() {
   // Feature 3: Allocate payment modal state
   const [allocatePayment, setAllocatePayment] = useState<Payment | null>(null);
 
+  // Tap-payment-row → read-only detail modal. Reuses pmt.allocations data
+  // already on the list response — no extra fetch.
+  const [paymentDetail, setPaymentDetail] = useState<Payment | null>(null);
+
   // ─── Settings Query (for gstEnabled) ───────────────────────────────────
 
   const { data: settingsData } = useApiQuery<{ gstMode: string | null }>(
@@ -413,6 +417,18 @@ export default function AdminFinanceScreen() {
           refetchPayments={refetchPayments}
           setCreatePaymentVisible={setCreatePaymentVisible}
           setAllocatePayment={setAllocatePayment}
+          setPaymentDetail={setPaymentDetail}
+        />
+      )}
+
+      {/* Payment detail (read-only). Shows method, reference, date,
+          amount + the list of allocated invoices from pmt.allocations
+          (already on the list response — no extra API call). */}
+      {paymentDetail && (
+        <PaymentDetailModal
+          C={C}
+          payment={paymentDetail}
+          onClose={() => setPaymentDetail(null)}
         />
       )}
 
@@ -1662,6 +1678,7 @@ interface PaymentsTabProps {
   refetchPayments: () => void;
   setCreatePaymentVisible: (v: boolean) => void;
   setAllocatePayment: (p: Payment) => void;
+  setPaymentDetail: (p: Payment) => void;
 }
 
 function PaymentsTab({
@@ -1673,6 +1690,7 @@ function PaymentsTab({
   refetchPayments,
   setCreatePaymentVisible,
   setAllocatePayment,
+  setPaymentDetail,
 }: PaymentsTabProps) {
   const payments = paymentsData?.payments ?? [];
 
@@ -1698,7 +1716,9 @@ function PaymentsTab({
       const unallocated = pmt.unallocatedAmount ?? 0;
 
       return (
-        <View
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => setPaymentDetail(pmt)}
           style={{
             backgroundColor: C.card,
             borderRadius: 12,
@@ -1813,10 +1833,10 @@ function PaymentsTab({
               </TouchableOpacity>
             </View>
           )}
-        </View>
+        </TouchableOpacity>
       );
     },
-    [C, dark, setAllocatePayment],
+    [C, dark, setAllocatePayment, setPaymentDetail],
   );
 
   const renderEmpty = () => {
@@ -3079,5 +3099,127 @@ function RegenerateInvoiceModal({ C, dark, invoice, onClose }: RegenerateInvoice
         </View>
       </View>
     </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYMENT DETAIL MODAL (read-only)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Tap a payment row → this opens. Shows customer, amount, method,
+// reference, date, notes, allocated invoices — all from the existing
+// list response (no extra fetch).
+
+function PaymentDetailModal({
+  C,
+  payment,
+  onClose,
+}: {
+  C: ReturnType<typeof getColors>;
+  payment: Payment;
+  onClose: () => void;
+}) {
+  const methodKey = payment.paymentMethod?.toLowerCase().replace(/\s+/g, '_') ?? 'cash';
+  const methodColor = PAYMENT_METHOD_COLORS[methodKey] ?? { bg: '#6b7280', text: '#ffffff' };
+  const methodLabel = PAYMENT_METHOD_LABELS[methodKey] ?? payment.paymentMethod ?? 'Unknown';
+  const allocs = payment.allocations ?? [];
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: C.divider }}>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: C.text }}>Payment Details</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={24} color={C.text} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+            <Text style={{ fontSize: 11, color: C.textMuted, fontWeight: '600' }}>AMOUNT</Text>
+            <Text style={{ fontSize: 28, fontWeight: '800', color: '#22c55e', marginBottom: 16 }}>
+              {formatCurrency(payment.amount)}
+            </Text>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+              <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: methodColor.bg }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: methodColor.text }}>{methodLabel}</Text>
+              </View>
+              {payment.allocationStatus && (
+                <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: C.card }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: C.text }}>{capitalizeStatus(payment.allocationStatus)}</Text>
+                </View>
+              )}
+            </View>
+
+            <PaymentDetailRow C={C} label="Customer" value={payment.customerName} />
+            <PaymentDetailRow C={C} label="Date" value={formatDate(payment.transactionDate)} />
+            <PaymentDetailRow C={C} label="Reference #" value={payment.referenceNumber || '—'} />
+            <PaymentDetailRow C={C} label="Notes" value={payment.notes || '—'} />
+            {payment.unallocatedAmount != null && payment.unallocatedAmount > 0 && (
+              <PaymentDetailRow
+                C={C}
+                label="Unallocated"
+                value={formatCurrency(payment.unallocatedAmount)}
+                valueColor="#f59e0b"
+              />
+            )}
+
+            <Text style={{ fontSize: 11, color: C.textMuted, fontWeight: '700', marginTop: 20, marginBottom: 8 }}>
+              ALLOCATIONS ({allocs.length})
+            </Text>
+            {allocs.length === 0 ? (
+              <Text style={{ fontSize: 13, color: C.textMuted, fontStyle: 'italic' }}>
+                This payment has not been allocated to any invoice yet.
+              </Text>
+            ) : (
+              allocs.map((a, i) => (
+                <View
+                  key={`${a.invoiceId}-${i}`}
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    paddingVertical: 10,
+                    borderBottomWidth: i === allocs.length - 1 ? 0 : 1,
+                    borderBottomColor: C.divider,
+                  }}
+                >
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }} numberOfLines={1}>
+                      {a.invoiceNumber ?? a.invoiceId}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: C.text }}>
+                    {formatCurrency(a.allocatedAmount ?? 0)}
+                  </Text>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function PaymentDetailRow({
+  C,
+  label,
+  value,
+  valueColor,
+}: {
+  C: ReturnType<typeof getColors>;
+  label: string;
+  value: string | number | null | undefined;
+  valueColor?: string;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+      <Text style={{ fontSize: 13, color: C.textSecondary }}>{label}</Text>
+      <Text style={{ fontSize: 13, fontWeight: '600', color: valueColor ?? C.text, flexShrink: 1, textAlign: 'right' }}>
+        {value ?? '—'}
+      </Text>
+    </View>
   );
 }
