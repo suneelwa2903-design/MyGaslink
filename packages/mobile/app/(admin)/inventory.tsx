@@ -2823,15 +2823,21 @@ function ReconcileTab() {
   );
   const cylinderTypes = cylinderTypesData?.cylinderTypes ?? [];
 
+  // The body Zod schema lives on the route as a flat object — see
+  // packages/api/src/routes/deliveryWorkflow.ts:118-124. Earlier this
+  // mutation wrapped the body in `{ vehicleId, data: { … } }`, so the
+  // server received `physicalStockConfirmed` nested inside `data` and
+  // every confirm returned 400 "Validation failed" (the required
+  // top-level fields were genuinely absent). Flat layout: vehicleId is
+  // the URL param (Zod strips it via default object behaviour); the
+  // remaining keys are the body the schema validates.
   const confirmMutation = useApiMutation<
     void,
     {
       vehicleId: string;
-      data: {
-        physicalStockConfirmed: boolean;
-        notes: string;
-        emptiesReturned?: Array<{ cylinderTypeId: string; quantity: number }>;
-      };
+      physicalStockConfirmed: boolean;
+      notes: string;
+      emptiesReturned?: Array<{ cylinderTypeId: string; quantity: number }>;
     }
   >('post', (vars) => `/delivery/reconciliation/confirm/${vars.vehicleId}`, {
     invalidateKeys: [['reconciliation-pending']],
@@ -2868,11 +2874,9 @@ function ReconcileTab() {
     const proceed = () =>
       confirmMutation.mutate({
         vehicleId: vehicle.vehicleId,
-        data: {
-          physicalStockConfirmed: true,
-          notes: 'Physical stock matches system',
-          ...(emptiesReturned.length > 0 ? { emptiesReturned } : {}),
-        },
+        physicalStockConfirmed: true,
+        notes: 'Physical stock matches system',
+        ...(emptiesReturned.length > 0 ? { emptiesReturned } : {}),
       });
     const message = pendingOrderCount > 0
       ? `Vehicle ${vehicle.vehicleNumber}: ${pendingOrderCount} undelivered order${pendingOrderCount === 1 ? '' : 's'} will be force-cancelled. Confirm?`

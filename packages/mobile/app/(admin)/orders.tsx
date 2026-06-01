@@ -14,7 +14,7 @@ import {
   Platform,
   StyleSheet,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -1828,6 +1828,11 @@ function DispatchResultModal({
   onClose: () => void;
 }) {
   const C = getColors(dark);
+  // Bottom inset must cover the gesture-bar / home indicator on devices
+  // that have one. The literal `paddingBottom: 20` previously used here
+  // was too small on phones with a tall safe-area inset, leaving the
+  // Close button half-hidden behind the navigation bar.
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
@@ -1892,7 +1897,7 @@ function DispatchResultModal({
             ))}
           </ScrollView>
 
-          <View style={{ paddingHorizontal: 16, paddingBottom: 20 }}>
+          <View style={{ paddingHorizontal: 16, paddingBottom: Math.max(20, insets.bottom + 12) }}>
             <TouchableOpacity style={styles.primaryBtn} onPress={onClose}>
               <Text style={styles.primaryBtnText}>Close</Text>
             </TouchableOpacity>

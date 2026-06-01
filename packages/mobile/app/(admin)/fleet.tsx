@@ -229,6 +229,10 @@ export default function AdminFleetScreen() {
   const [vehNumber, setVehNumber] = useState('');
   const [vehType, setVehType] = useState('');
   const [vehCapacity, setVehCapacity] = useState('');
+  // Only the user-editable statuses are exposed. `dispatched` and
+  // `returned` are system-set (driver dispatch → reconcile flow) and
+  // must not be reachable from a manual edit form.
+  const [vehStatus, setVehStatus] = useState<'idle' | 'inactive'>('idle');
   const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
 
   const {
@@ -343,7 +347,12 @@ export default function AdminFleetScreen() {
 
   const updateVehicleMutation = useApiMutation<
     Vehicle,
-    { vehicleNumber?: string; vehicleType?: string; capacity?: number }
+    {
+      vehicleNumber?: string;
+      vehicleType?: string;
+      capacity?: number;
+      status?: 'idle' | 'inactive';
+    }
   >('put', () => `/vehicles/${editingVehicleId}`, {
     invalidateKeys: [['vehicles']],
     successMessage: 'Vehicle updated',
@@ -351,10 +360,37 @@ export default function AdminFleetScreen() {
       setVehNumber('');
       setVehType('');
       setVehCapacity('');
+      setVehStatus('idle');
       setShowVehicleForm(false);
       setEditingVehicleId(null);
     },
   });
+
+  // Mark-as-returned for a dispatched vehicle. Hits the same endpoint
+  // the driver app uses (POST /delivery/driver/vehicle-returned) so the
+  // existing pending_delivery + reconciliation guards run consistently
+  // (WI-087 / WI-100 Gap C). Invalidating both vehicles and the
+  // reconciliation queue keeps the Inventory → Vehicle Return tab in
+  // sync the moment a vehicle flips from dispatched → returned.
+  const markReturnedMutation = useApiMutation<unknown, { vehicleId: string }>(
+    'post',
+    '/delivery/driver/vehicle-returned',
+    {
+      invalidateKeys: [['vehicles'], ['reconciliation-pending']],
+      successMessage: 'Vehicle marked as returned',
+    },
+  );
+
+  const handleMarkReturned = (v: Vehicle) => {
+    Alert.alert(
+      'Mark Returned',
+      `Mark ${v.vehicleNumber} as returned to depot?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Mark Returned', onPress: () => markReturnedMutation.mutate({ vehicleId: v.vehicleId }) },
+      ],
+    );
+  };
 
   const startEditDriver = (d: Driver) => {
     setEditingDriverId(d.driverId);
@@ -369,6 +405,10 @@ export default function AdminFleetScreen() {
     setVehNumber(v.vehicleNumber || '');
     setVehType(v.vehicleType || '');
     setVehCapacity(v.capacity != null ? String(v.capacity) : '');
+    // System-set statuses (dispatched, returned) fall back to 'idle' in
+    // the picker so a save without changing the dropdown can't accidentally
+    // POST a system-only value the API would also reject.
+    setVehStatus(v.status === 'inactive' ? 'inactive' : 'idle');
     setShowVehicleForm(true);
   };
 
@@ -402,6 +442,7 @@ export default function AdminFleetScreen() {
         vehicleNumber: vehNumber.trim(),
         vehicleType: vehType.trim(),
         capacity: vehCapacity ? parseInt(vehCapacity, 10) : undefined,
+        status: vehStatus,
       });
       return;
     }
@@ -651,6 +692,44 @@ export default function AdminFleetScreen() {
             inputBorder={colors.inputBorder}
           />
 
+          {/* Status — only exposed on Edit (Create defaults server-side
+              to 'idle'). The two system-set statuses 'dispatched' and
+              'returned' are deliberately NOT in this picker; they flip
+              via the dispatch/reconcile flow. */}
+          {editingVehicleId && (
+            <View style={{ marginTop: 8, marginBottom: 14 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 8 }}>
+                Status
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {(['idle', 'inactive'] as const).map((s) => {
+                  const selected = vehStatus === s;
+                  const color = s === 'idle' ? '#10b981' : '#94a3b8';
+                  return (
+                    <TouchableOpacity
+                      key={s}
+                      onPress={() => setVehStatus(s)}
+                      style={{
+                        flex: 1, paddingVertical: 10, borderRadius: 8,
+                        borderWidth: 1.5,
+                        borderColor: selected ? color : colors.inputBorder,
+                        backgroundColor: selected ? color + '14' : colors.inputBg,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{
+                        fontSize: 13, fontWeight: '700',
+                        color: selected ? color : colors.textSecondary,
+                      }}>
+                        {s === 'idle' ? 'Active' : 'Inactive'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
           <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
             <TouchableOpacity
               onPress={() => { setShowVehicleForm(false); setEditingVehicleId(null); }}
@@ -737,8 +816,37 @@ export default function AdminFleetScreen() {
               </View>
               <StatusBadge
                 label={item.status}
-                color={item.status === 'active' ? '#10b981' : '#94a3b8'}
+                color={
+                  item.status === 'idle' ? '#10b981'
+                  : item.status === 'dispatched' ? '#3b82f6'
+                  : item.status === 'returned' ? '#f59e0b'
+                  : '#94a3b8'
+                }
               />
+              {/* Mark Returned — visible only when the vehicle is on a
+                  trip. Mirrors the web FleetPage button; hits the same
+                  driver-app endpoint so WI-087/WI-100 guards run too. */}
+              {item.status === 'dispatched' && (
+                <TouchableOpacity
+                  onPress={() => handleMarkReturned(item)}
+                  disabled={markReturnedMutation.isPending}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={{
+                    marginLeft: 6,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    backgroundColor: '#3b82f6' + '14',
+                    borderWidth: 1,
+                    borderColor: '#3b82f6',
+                    opacity: markReturnedMutation.isPending ? 0.6 : 1,
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#3b82f6' }}>
+                    Mark Returned
+                  </Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 onPress={() => startEditVehicle(item)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -756,7 +864,7 @@ export default function AdminFleetScreen() {
             <RefreshControl refreshing={false} onRefresh={refetchVehicles} tintColor={ACCENT} />
           }
         />
-        <FAB onPress={() => { setEditingVehicleId(null); setVehNumber(''); setVehType(''); setVehCapacity(''); setShowVehicleForm(true); }} />
+        <FAB onPress={() => { setEditingVehicleId(null); setVehNumber(''); setVehType(''); setVehCapacity(''); setVehStatus('idle'); setShowVehicleForm(true); }} />
       </View>
     );
   };

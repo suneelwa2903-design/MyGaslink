@@ -131,7 +131,26 @@ export async function apiDelete<T>(url: string): Promise<T> {
 
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const data = error.response?.data as ApiResponse<null> | undefined;
+    const data = error.response?.data as
+      | (ApiResponse<null> & { code?: string; details?: Record<string, string[] | undefined> })
+      | undefined;
+    // Validation failures from the server's sendValidationError() expose
+    // a `details` map of field → array-of-messages (Zod's
+    // flatten().fieldErrors shape). The top-level error is a generic
+    // "Validation failed" string; alone, that tells the user nothing.
+    // Expand the field-level messages into a readable one-liner so the
+    // user actually sees which field rejected the payload.
+    if (data?.code === 'VALIDATION_ERROR' && data?.details) {
+      const parts: string[] = [];
+      for (const [field, messages] of Object.entries(data.details)) {
+        if (Array.isArray(messages) && messages.length > 0) {
+          parts.push(`${field}: ${messages.join(', ')}`);
+        }
+      }
+      if (parts.length > 0) {
+        return `${data.error ?? 'Validation failed'} — ${parts.join('; ')}`;
+      }
+    }
     return data?.error || error.message || 'Something went wrong';
   }
   if (error instanceof Error) return error.message;
