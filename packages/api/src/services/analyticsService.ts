@@ -57,9 +57,14 @@ export async function getDashboardStats(distributorId: string) {
       where: { distributorId, outstandingAmount: { gt: 0 }, deletedAt: null },
       _sum: { outstandingAmount: true },
     }),
-    prisma.cylinderThreshold.count({
-      where: { distributorId, alertEnabled: true },
-    }),
+    // Live count of cylinder types CURRENTLY below their warning level.
+    // The previous query counted *configured* alert-enabled threshold rows
+    // — a constant per tenant, not a stock-state metric. It made the
+    // dashboard say "Inventory Alerts: 4" forever even after stock was
+    // replenished above the warning threshold. Delegate to checkThresholds
+    // (already the source of truth for the Threshold Alerts list shown
+    // lower on the dashboard) and just count the resulting array.
+    checkThresholds(distributorId).then((alerts) => alerts.length),
     prisma.pendingAction.count({
       where: { distributorId, status: { in: ['open', 'in_progress'] } },
     }),

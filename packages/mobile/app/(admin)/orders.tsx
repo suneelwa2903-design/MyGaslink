@@ -255,11 +255,18 @@ export default function AdminOrdersScreen() {
     { staleTime: 5 * 60 * 1000 },
   );
 
+  // `vehicleNumber` here is "today's confirmed vehicle for this driver" —
+  // recomputed server-side per request from the driver's DVA. The old
+  // 5-min staleTime cached the empty pre-mapping response: open Orders
+  // BEFORE confirming a mapping in Fleet, then map, then come back to
+  // Orders within 5 min and the Assign Driver modal still shows
+  // "No drivers have a vehicle today" until the cache expires.
+  // refetchOnMount keeps the list fresh whenever the user lands on Orders.
   const { data: driversData } = useApiQuery<{ drivers: Driver[] }>(
     ['drivers-list'],
     '/drivers',
     {},
-    { staleTime: 5 * 60 * 1000 },
+    { staleTime: 30 * 1000, refetchOnMount: 'always' },
   );
 
   // STAGE-B: /vehicles query removed — Assign / Bulk Assign modals no

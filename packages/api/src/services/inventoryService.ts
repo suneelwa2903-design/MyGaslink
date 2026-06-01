@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient, $Enums } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
+import { startOfUtcDay } from '../utils/dateOnly.js';
 
 type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
@@ -758,8 +759,13 @@ export async function getCancelledStock(
  * Check thresholds and return alerts.
  */
 export async function checkThresholds(distributorId: string) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // summaryDate is @db.Date — must compare against UTC-midnight, not
+  // local-midnight (the old `setHours(0,0,0,0)` produced IST midnight,
+  // which is the PREVIOUS UTC day; rows with summary_date=today were
+  // excluded by `lte: today`, leaving the alert pinned to yesterday's
+  // closing stock. Same family as the wipe-script + driver-list bugs,
+  // see dateOnly.ts header comment.) — fixed 2026-06-01.
+  const today = startOfUtcDay();
 
   const thresholds = await prisma.cylinderThreshold.findMany({
     where: { distributorId, alertEnabled: true },

@@ -16,7 +16,6 @@ export default function FinanceCollectionsScreen() {
   const sorted = [...(collections ?? [])].sort((a, b) => (b.totalDue ?? 0) - (a.totalDue ?? 0));
   const totalDue = sorted.reduce((s, c) => s + (c.totalDue ?? 0), 0);
   const totalOverdue = sorted.reduce((s, c) => s + (c.overdueDue ?? 0), 0);
-  const totalMissing = sorted.reduce((s, c) => s + (c.missingCylinderValue ?? 0), 0);
   const customersWithDues = sorted.filter((c) => (c.totalDue ?? 0) > 0).length;
 
   const renderHeader = () => (
@@ -33,10 +32,10 @@ export default function FinanceCollectionsScreen() {
         </View>
       </View>
 
+      {/* Missing Cylinder Value card removed 2026-06-01 (parity with admin
+          Collections) — figure is still visible per-customer below. Keep
+          the Customers metric as a full-width row 2. */}
       <View style={{ flexDirection: 'row', gap: 12 }}>
-        <View style={{ flex: 1 }}>
-          <MetricCard title="Missing Cylinder Value" value={formatINR(totalMissing)} color={accent.red} />
-        </View>
         <View style={{ flex: 1 }}>
           <MetricCard title="Customers" value={customersWithDues} color={accent.blue} subtitle="with outstanding dues" />
         </View>

@@ -554,7 +554,12 @@ export default function AdminCollectionsScreen() {
         <View style={{ width: 26 }} />
       </View>
 
-      {/* Summary metrics (from /analytics/collections, regardless of tab) */}
+      {/* Summary metrics (from /analytics/collections, regardless of tab).
+          Missing Cylinders was the third card here until 2026-06-01; it
+          was hard to size consistently against the two currency cards
+          and the per-customer view already surfaces it. Stripped to two
+          equal-width cards — flex:1 in styles.metricCell already covers
+          the layout. */}
       <View style={styles.metricRow}>
         <View style={styles.metricCell}>
           <MetricCard
@@ -569,14 +574,6 @@ export default function AdminCollectionsScreen() {
             title="Total Overdue"
             value={formatINR(summary.totalOverdue)}
             color="#dc2626"
-            minHeight={88}
-          />
-        </View>
-        <View style={styles.metricCell}>
-          <MetricCard
-            title="Missing Cylinders"
-            value={summary.missingCylinders}
-            color="#f59e0b"
             minHeight={88}
           />
         </View>
