@@ -41,13 +41,14 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
 
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { loginAsDistAdmin, loginAsFinance, generateToken } from './helpers.js';
+import { loginAsDistAdmin, loginAsFinance, loginAsInventory, generateToken } from './helpers.js';
 import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
 
 let app: Express;
 let dist1AdminToken: string;
 let dist1FinanceToken: string;
+let dist1InventoryToken: string;
 let dist2AdminToken: string;
 
 function auth(token: string) {
@@ -58,6 +59,7 @@ beforeAll(async () => {
   app = createApp();
   dist1AdminToken = (await loginAsDistAdmin()).token;
   dist1FinanceToken = (await loginAsFinance()).token;
+  dist1InventoryToken = (await loginAsInventory()).token;
 
   // Sharma (dist-002) admin token — generated directly because
   // loginAsDistAdmin only knows about dist-001's seeded admin.
@@ -217,19 +219,18 @@ describe('Guard 3 — CN raised on invoice A is not retrievable via invoice B', 
     const item = invA.items?.[0];
     if (!item) return;
 
-    // Raise a CN on invoice A.
+    // Raise a CN on invoice A. WI-055 (c6849c2) replaced the items-array
+    // body with a single `amount` number — the previous shape silently
+    // 400'd Zod validation, which was masked locally because dist-001 had
+    // no invoices and the test early-returned. 2026-06-01: aligned with
+    // current schema after CI exposed the stale payload.
     const createRes = await request(app)
       .post('/api/invoices/credit-notes')
       .set(auth(dist1FinanceToken))
       .send({
         invoiceId: invA.id,
         reason: 'Guard 3 scoping test',
-        items: [{
-          cylinderTypeId: item.cylinderTypeId,
-          quantity: 1,
-          unitPrice: 100,
-          gstRate: 18,
-        }],
+        amount: 100,
       });
     expect(createRes.status).toBe(201);
     const creditNoteId = createRes.body.data?.creditNoteId;
@@ -255,15 +256,26 @@ describe('Guard 3 — CN raised on invoice A is not retrievable via invoice B', 
 });
 
 // ─── Guard 4 — Role escalation prevention ───────────────────────────────────
-describe('Guard 4 — finance cannot approve a credit note (admin-only gate)', () => {
-  it('finance can create, but the approve call returns 403', async () => {
+//
+// Step-1A/1B (commits bae6fe7 + a63aad7) opened CN/DN approve/reject to
+// `finance` deliberately — the parity audit decision was that finance
+// owns the approval workflow, not just distributor_admin. So the guard's
+// original assertion ("finance returns 403") was made obsolete by Step-1B.
+//
+// Recast as: a role that has NO write authority over CN/DN (inventory)
+// must still be denied. Same anti-escalation guarantee, applied to a role
+// the route correctly rejects. Routes/invoices.ts:384-414 + 478-504 list
+// the allowed roles — inventory is excluded, so 403 is the contract.
+//
+// 2026-06-01: this was masked locally because dist-001 had zero seeded
+// invoices and the test early-returned. CI's full seed exposed the stale
+// expectation.
+describe('Guard 4 — non-authorized roles cannot approve/reject a credit note', () => {
+  it('inventory role cannot approve a CN (returns 403)', async () => {
     const dist1Inv = await getDist1Invoice();
     if (!dist1Inv) return;
 
-    // WI-055 (c6849c2) replaced the items-array body with a single
-    // `amount` number. The old test sent `items: [...]` which silently
-    // 400'd zod validation — only visible when a seeded invoice existed
-    // (otherwise the early-return on `!dist1Inv` hid the broken assert).
+    // Finance creates a CN legitimately (allowed by Step-1B gate).
     const createRes = await request(app)
       .post('/api/invoices/credit-notes')
       .set(auth(dist1FinanceToken))
@@ -277,10 +289,10 @@ describe('Guard 4 — finance cannot approve a credit note (admin-only gate)', (
     expect(creditNoteId).toBeTruthy();
 
     try {
-      // Finance tries to approve their own note → must be 403.
+      // Inventory tries to approve → must be 403.
       const approveRes = await request(app)
         .put(`/api/invoices/credit-notes/${creditNoteId}/approve`)
-        .set(auth(dist1FinanceToken));
+        .set(auth(dist1InventoryToken));
       expect(approveRes.status).toBe(403);
 
       // The CN should still be pending — the failed approve must not
@@ -292,7 +304,7 @@ describe('Guard 4 — finance cannot approve a credit note (admin-only gate)', (
     }
   });
 
-  it('finance cannot reject either — same admin gate covers reject', async () => {
+  it('inventory role cannot reject a CN either — same gate covers reject', async () => {
     const dist1Inv = await getDist1Invoice();
     if (!dist1Inv) return;
 
@@ -310,8 +322,8 @@ describe('Guard 4 — finance cannot approve a credit note (admin-only gate)', (
     try {
       const rejectRes = await request(app)
         .put(`/api/invoices/credit-notes/${creditNoteId}/reject`)
-        .set(auth(dist1FinanceToken))
-        .send({ reason: 'attempting self-reject' });
+        .set(auth(dist1InventoryToken))
+        .send({ reason: 'attempting unauthorized reject' });
       expect(rejectRes.status).toBe(403);
     } finally {
       await prisma.creditNote.deleteMany({ where: { id: creditNoteId } });

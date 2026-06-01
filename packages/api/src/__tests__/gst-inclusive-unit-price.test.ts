@@ -27,7 +27,7 @@
  * the wire are correct.
  */
 
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { prisma } from '../lib/prisma.js';
 import { createInvoiceFromOrder } from '../services/invoiceService.js';
 import { buildIrnPayload } from '../services/gst/payloadBuilders.js';
@@ -35,6 +35,19 @@ import { buildIrnPayload } from '../services/gst/payloadBuilders.js';
 const DIST = 'dist-002'; // Sharma — GST sandbox
 const TEST_DATE = new Date('2099-12-31T00:00:00Z'); // anti-pattern #7 — far-future
 const TEST_TAG = 'GST_INCL_AP16';
+
+// 2026-06-01: pin dist-002.gstMode='sandbox' before this file runs.
+// CI exposed a flake where another test mutated dist-002's gstMode and
+// didn't restore it; gstSum then came back as 0 (gstEnabled=false →
+// cgst/sgst skipped). The seed sets sandbox originally; we re-assert it
+// here so this file is order-independent regardless of upstream test
+// hygiene. Idempotent — no-op when already sandbox.
+beforeAll(async () => {
+  await prisma.distributor.update({
+    where: { id: DIST },
+    data: { gstMode: 'sandbox' },
+  });
+});
 
 async function teardown(orderId?: string, invoiceId?: string) {
   if (invoiceId) {
