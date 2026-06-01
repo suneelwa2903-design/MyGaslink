@@ -31,6 +31,11 @@ interface OrderItem {
   cylinderTypeId: string;
   cylinderTypeName: string;
   quantity: number;
+  // API returns both deliveredQuantity and emptiesCollected when the
+  // driver has confirmed delivery. Missing fields here previously hid
+  // the modified-delivery numbers and the empties collected per stop.
+  deliveredQuantity?: number | null;
+  emptiesCollected?: number | null;
   unitPrice: number;
   totalPrice: number;
 }
@@ -475,34 +480,48 @@ export default function AdminOrdersScreen() {
             </Text>
           </View>
 
-          {/* Items summary chips */}
+          {/* Items summary chips. When the order is delivered show the
+              actually-delivered qty (matches web OrdersPage `showDelivered`
+              rule), with a parenthetical reminder of the ordered qty if
+              it differs (partial / modified delivery). */}
           <View style={styles.chipRow}>
-            {order.items?.map((item, i) => (
-              <View key={i} style={[styles.chip, { backgroundColor: C.itemBg }]}>
-                <Text style={[styles.chipText, { color: C.textSecondary }]}>
-                  {item.cylinderTypeName} x{item.quantity}
-                </Text>
-              </View>
-            ))}
+            {order.items?.map((item, i) => {
+              const showDelivered = order.status === 'delivered' || order.status === 'modified_delivered';
+              const displayedQty = showDelivered ? (item.deliveredQuantity ?? item.quantity) : item.quantity;
+              return (
+                <View key={i} style={[styles.chip, { backgroundColor: C.itemBg }]}>
+                  <Text style={[styles.chipText, { color: C.textSecondary }]}>
+                    {item.cylinderTypeName} x{displayedQty}
+                    {showDelivered && displayedQty !== item.quantity ? ` (of ${item.quantity})` : ''}
+                  </Text>
+                </View>
+              );
+            })}
           </View>
 
           {/* Expanded section */}
           {isExpanded && (
             <View style={[styles.expandedSection, { borderTopColor: C.divider }]}>
               {/* Detailed items */}
-              {order.items?.map((item, i) => (
-                <View key={i} style={styles.itemDetailRow}>
-                  <Text style={[styles.itemDetailName, { color: C.text }]}>
-                    {item.cylinderTypeName}
-                  </Text>
-                  <Text style={[styles.itemDetailQty, { color: C.textSecondary }]}>
-                    Qty: {item.quantity}
-                  </Text>
-                  <Text style={[styles.itemDetailPrice, { color: C.text }]}>
-                    {formatCurrency(item.totalPrice)}
-                  </Text>
-                </View>
-              ))}
+              {order.items?.map((item, i) => {
+                const showDelivered = order.status === 'delivered' || order.status === 'modified_delivered';
+                const displayedQty = showDelivered ? (item.deliveredQuantity ?? item.quantity) : item.quantity;
+                return (
+                  <View key={i} style={styles.itemDetailRow}>
+                    <Text style={[styles.itemDetailName, { color: C.text }]}>
+                      {item.cylinderTypeName}
+                    </Text>
+                    <Text style={[styles.itemDetailQty, { color: C.textSecondary }]}>
+                      {showDelivered
+                        ? `Delivered: ${displayedQty} / ${item.quantity}${item.emptiesCollected != null ? `  Empties: ${item.emptiesCollected}` : ''}`
+                        : `Qty: ${item.quantity}`}
+                    </Text>
+                    <Text style={[styles.itemDetailPrice, { color: C.text }]}>
+                      {formatCurrency(item.totalPrice)}
+                    </Text>
+                  </View>
+                );
+              })}
 
               {order.specialInstructions ? (
                 <Text style={[styles.specialInstructions, { color: C.textSecondary }]}>
@@ -2245,13 +2264,21 @@ function OrderDetailModal({
           </Text>
 
           <Text style={[styles.fieldLabel, { color: C.text }]}>Items</Text>
-          {order.items?.map((item, i) => (
-            <View key={i} style={[styles.itemDetailRow, { borderBottomColor: C.divider, borderBottomWidth: 1, paddingVertical: 8 }]}>
-              <Text style={[styles.itemDetailName, { color: C.text }]}>{item.cylinderTypeName}</Text>
-              <Text style={[styles.itemDetailQty, { color: C.textSecondary }]}>Qty: {item.quantity}</Text>
-              <Text style={[styles.itemDetailPrice, { color: C.text }]}>{formatCurrency(item.totalPrice)}</Text>
-            </View>
-          ))}
+          {order.items?.map((item, i) => {
+            const showDelivered = order.status === 'delivered' || order.status === 'modified_delivered';
+            const displayedQty = showDelivered ? (item.deliveredQuantity ?? item.quantity) : item.quantity;
+            return (
+              <View key={i} style={[styles.itemDetailRow, { borderBottomColor: C.divider, borderBottomWidth: 1, paddingVertical: 8 }]}>
+                <Text style={[styles.itemDetailName, { color: C.text }]}>{item.cylinderTypeName}</Text>
+                <Text style={[styles.itemDetailQty, { color: C.textSecondary }]}>
+                  {showDelivered
+                    ? `Delivered: ${displayedQty} / ${item.quantity}${item.emptiesCollected != null ? `  Empties: ${item.emptiesCollected}` : ''}`
+                    : `Qty: ${item.quantity}`}
+                </Text>
+                <Text style={[styles.itemDetailPrice, { color: C.text }]}>{formatCurrency(item.totalPrice)}</Text>
+              </View>
+            );
+          })}
 
           {order.specialInstructions ? (
             <>

@@ -561,6 +561,7 @@ export default function AdminCollectionsScreen() {
             title="Total Due"
             value={formatINR(summary.totalDue)}
             color="#3b82f6"
+            minHeight={88}
           />
         </View>
         <View style={styles.metricCell}>
@@ -568,6 +569,7 @@ export default function AdminCollectionsScreen() {
             title="Total Overdue"
             value={formatINR(summary.totalOverdue)}
             color="#dc2626"
+            minHeight={88}
           />
         </View>
         <View style={styles.metricCell}>
@@ -575,6 +577,7 @@ export default function AdminCollectionsScreen() {
             title="Missing Cylinders"
             value={summary.missingCylinders}
             color="#f59e0b"
+            minHeight={88}
           />
         </View>
       </View>

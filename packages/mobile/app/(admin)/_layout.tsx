@@ -197,17 +197,18 @@ export default function AdminLayout() {
           ),
         }}
       />
-      {/* STEP-3B: Pending Actions full screen. Hidden from the tab bar —
-          reached via the dashboard "View All" link and (future) the bell. */}
-      <Tabs.Screen name="pending-actions" options={{ href: null, title: 'Pending Actions' }} />
-      {/* STEP-3E: Customer Detail full screen. Hidden — reached via Customers
-          → row, or Collections → View Account. */}
-      <Tabs.Screen name="customer-detail" options={{ href: null, title: 'Customer' }} />
-      {/* STAGE-F: Customer Create full screen. Hidden — reached via
-          Customers → FAB. */}
-      <Tabs.Screen name="customer-create" options={{ href: null, title: 'New Customer' }} />
-      {/* STAGE-E: My Profile full screen. Hidden — reached via More → Account → My Profile. */}
-      <Tabs.Screen name="profile" options={{ href: null, title: 'My Profile' }} />
+      {/* Hidden screens (still routable via router.push). The `href: null`
+          expo-router option stops the tab bar from receiving the route as
+          a link target, but our custom ScrollableTabBar still saw them
+          because expo-router strips `href` from the descriptor options
+          before passing them to a custom bar — so `opts.href !== null`
+          evaluated to `undefined !== null === true` and the screens
+          leaked into the bar. Adding `tabBarItemStyle: { display: 'none' }`
+          gives the custom bar a property it can actually filter on. */}
+      <Tabs.Screen name="pending-actions" options={{ href: null, title: 'Pending Actions', tabBarItemStyle: { display: 'none' } }} />
+      <Tabs.Screen name="customer-detail" options={{ href: null, title: 'Customer', tabBarItemStyle: { display: 'none' } }} />
+      <Tabs.Screen name="customer-create" options={{ href: null, title: 'New Customer', tabBarItemStyle: { display: 'none' } }} />
+      <Tabs.Screen name="profile" options={{ href: null, title: 'My Profile', tabBarItemStyle: { display: 'none' } }} />
     </Tabs>
   );
 }

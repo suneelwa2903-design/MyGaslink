@@ -746,7 +746,7 @@ function InvoicesTab({
                     }}
                   >
                     <Text style={{ fontSize: 10, fontWeight: '700', color: gstPillFg(inv.irnStatus) }}>
-                      IRN: {capitalizeStatus(inv.irnStatus)}
+                      {inv.irnStatus === 'success' ? 'IRN' : `IRN: ${capitalizeStatus(inv.irnStatus)}`}
                     </Text>
                   </View>
                 )}
@@ -760,7 +760,7 @@ function InvoicesTab({
                     }}
                   >
                     <Text style={{ fontSize: 10, fontWeight: '700', color: gstPillFg(inv.ewbStatus) }}>
-                      EWB: {capitalizeStatus(inv.ewbStatus)}
+                      {inv.ewbStatus === 'active' ? 'EWB' : `EWB: ${capitalizeStatus(inv.ewbStatus)}`}
                     </Text>
                   </View>
                 )}
@@ -2056,6 +2056,9 @@ function AllocatePaymentModal({ C, dark, payment, onClose }: AllocatePaymentModa
                   </TouchableOpacity>
                 )}
                 {invoicePickerVisible && openInvoices.length > 0 && (
+                  // Avoid VirtualizedList-nested-in-ScrollView warning by
+                  // mapping inline. List is bounded by the modal data set
+                  // (open invoices for one customer) — typically <50 rows.
                   <View
                     style={{
                       backgroundColor: C.card,
@@ -2067,33 +2070,29 @@ function AllocatePaymentModal({ C, dark, payment, onClose }: AllocatePaymentModa
                       overflow: 'hidden',
                     }}
                   >
-                    <FlatList
-                      data={openInvoices}
-                      keyExtractor={(inv) => inv.invoiceId}
-                      keyboardShouldPersistTaps="handled"
-                      renderItem={({ item: inv }) => (
-                        <TouchableOpacity
-                          onPress={() => handleSelectInvoice(inv)}
-                          style={{
-                            paddingHorizontal: 14,
-                            paddingVertical: 12,
-                            borderBottomWidth: 1,
-                            borderBottomColor: C.divider,
-                            backgroundColor:
-                              selectedInvoiceId === inv.invoiceId
-                                ? (dark ? '#334155' : '#f1f5f9')
-                                : 'transparent',
-                          }}
-                        >
-                          <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>
-                            {inv.invoiceNumber}
-                          </Text>
-                          <Text style={{ fontSize: 12, color: C.textSecondary, marginTop: 2 }}>
-                            Due: {formatCurrency(inv.outstandingAmount)} · {inv.customerName}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    />
+                    {openInvoices.map((inv) => (
+                      <TouchableOpacity
+                        key={inv.invoiceId}
+                        onPress={() => handleSelectInvoice(inv)}
+                        style={{
+                          paddingHorizontal: 14,
+                          paddingVertical: 12,
+                          borderBottomWidth: 1,
+                          borderBottomColor: C.divider,
+                          backgroundColor:
+                            selectedInvoiceId === inv.invoiceId
+                              ? (dark ? '#334155' : '#f1f5f9')
+                              : 'transparent',
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>
+                          {inv.invoiceNumber}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: C.textSecondary, marginTop: 2 }}>
+                          Due: {formatCurrency(inv.outstandingAmount)} · {inv.customerName}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
                 )}
               </View>
@@ -2570,45 +2569,46 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
                     />
                   </View>
 
-                  <FlatList
-                    data={filteredCustomers}
-                    keyExtractor={(item) => item.customerId}
-                    keyboardShouldPersistTaps="handled"
-                    style={{ maxHeight: 190 }}
-                    renderItem={({ item: cust }) => (
-                      <TouchableOpacity
-                        onPress={() => {
-                          setSelectedCustomer(cust);
-                          setShowCustomerPicker(false);
-                          setCustomerSearch('');
-                        }}
-                        style={{
-                          paddingHorizontal: 14,
-                          paddingVertical: 12,
-                          borderBottomWidth: 1,
-                          borderBottomColor: C.divider,
-                          backgroundColor:
-                            selectedCustomer?.customerId === cust.customerId
-                              ? (dark ? '#334155' : '#f1f5f9')
-                              : 'transparent',
-                        }}
-                      >
-                        <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
-                          {cust.customerName}
-                        </Text>
-                        {cust.phone && (
-                          <Text style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
-                            {cust.phone}
-                          </Text>
-                        )}
-                      </TouchableOpacity>
-                    )}
-                    ListEmptyComponent={
+                  {/* Avoid VirtualizedList-nested-in-ScrollView warning
+                      by mapping inline. Customer list is bounded by the
+                      distributor (typically <500 customers, search-filtered). */}
+                  <View style={{ maxHeight: 190 }}>
+                    {filteredCustomers.length === 0 ? (
                       <View style={{ padding: 20, alignItems: 'center' }}>
                         <Text style={{ color: C.textMuted, fontSize: 13 }}>No customers found</Text>
                       </View>
-                    }
-                  />
+                    ) : (
+                      filteredCustomers.map((cust) => (
+                        <TouchableOpacity
+                          key={cust.customerId}
+                          onPress={() => {
+                            setSelectedCustomer(cust);
+                            setShowCustomerPicker(false);
+                            setCustomerSearch('');
+                          }}
+                          style={{
+                            paddingHorizontal: 14,
+                            paddingVertical: 12,
+                            borderBottomWidth: 1,
+                            borderBottomColor: C.divider,
+                            backgroundColor:
+                              selectedCustomer?.customerId === cust.customerId
+                                ? (dark ? '#334155' : '#f1f5f9')
+                                : 'transparent',
+                          }}
+                        >
+                          <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
+                            {cust.customerName}
+                          </Text>
+                          {cust.phone && (
+                            <Text style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
+                              {cust.phone}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      ))
+                    )}
+                  </View>
                 </View>
               )}
             </View>

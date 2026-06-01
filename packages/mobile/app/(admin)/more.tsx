@@ -57,15 +57,22 @@ interface UserRecord {
   status?: string;
 }
 
+// Wire shape ACTUALLY returned by GET /analytics/header-metrics
+// (analyticsService.getHeaderMetrics + getAdvancedMetrics). The
+// historical HeaderMetrics interface here described fields the route
+// never returned — every card in the Overview modal resolved to 0
+// (CLAUDE.md anti-pattern #9). Aligned 2026-06-01.
 interface HeaderMetrics {
-  totalRevenue?: number;
-  totalOrders?: number;
-  activeCustomers?: number;
-  activeDrivers?: number;
-  pendingDeliveries?: number;
-  completedToday?: number;
-  collectionRate?: number;
-  avgOrderValue?: number;
+  amountInMarket?: number;
+  collectedAmount?: number;
+  dueAmount?: number;
+  overdueAmount?: number;
+  totalCapital?: number;
+  unrecoveredAmount?: number;
+  cylinderUtilizationRate?: number;
+  averageTurnaroundDays?: number;
+  inventoryShrinkage?: number;
+  deliveryEfficiency?: number;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -374,14 +381,16 @@ function AnalyticsOverviewModal({ visible, onClose }: { visible: boolean; onClos
   );
 
   const metricItems = [
-    { label: 'Total Revenue', value: formatCurrency(metrics?.totalRevenue || 0), icon: 'cash-outline' as const, color: '#10b981' },
-    { label: 'Total Orders', value: `${metrics?.totalOrders || 0}`, icon: 'receipt-outline' as const, color: '#3b82f6' },
-    { label: 'Active Customers', value: `${metrics?.activeCustomers || 0}`, icon: 'people-outline' as const, color: '#8b5cf6' },
-    { label: 'Active Drivers', value: `${metrics?.activeDrivers || 0}`, icon: 'car-outline' as const, color: '#f59e0b' },
-    { label: 'Pending Deliveries', value: `${metrics?.pendingDeliveries || 0}`, icon: 'time-outline' as const, color: '#ef4444' },
-    { label: 'Completed Today', value: `${metrics?.completedToday || 0}`, icon: 'checkmark-circle-outline' as const, color: '#10b981' },
-    { label: 'Collection Rate', value: `${(metrics?.collectionRate || 0).toFixed(1)}%`, icon: 'trending-up-outline' as const, color: '#3b82f6' },
-    { label: 'Avg Order Value', value: formatCurrency(metrics?.avgOrderValue || 0), icon: 'stats-chart-outline' as const, color: '#8b5cf6' },
+    { label: 'Amount in Market', value: formatCurrency(metrics?.amountInMarket || 0), icon: 'cash-outline' as const, color: '#10b981' },
+    { label: 'Collected', value: formatCurrency(metrics?.collectedAmount || 0), icon: 'checkmark-circle-outline' as const, color: '#10b981' },
+    { label: 'Due', value: formatCurrency(metrics?.dueAmount || 0), icon: 'time-outline' as const, color: '#f59e0b' },
+    { label: 'Overdue', value: formatCurrency(metrics?.overdueAmount || 0), icon: 'warning-outline' as const, color: '#ef4444' },
+    { label: 'Total Capital', value: formatCurrency(metrics?.totalCapital || 0), icon: 'wallet-outline' as const, color: '#3b82f6' },
+    { label: 'Unrecovered', value: formatCurrency(metrics?.unrecoveredAmount || 0), icon: 'alert-circle-outline' as const, color: '#ef4444' },
+    { label: 'Cylinder Utilization', value: `${(metrics?.cylinderUtilizationRate || 0).toFixed(1)}%`, icon: 'cube-outline' as const, color: '#8b5cf6' },
+    { label: 'Avg Turnaround', value: `${(metrics?.averageTurnaroundDays || 0).toFixed(1)} d`, icon: 'sync-outline' as const, color: '#3b82f6' },
+    { label: 'Delivery Efficiency', value: `${(metrics?.deliveryEfficiency || 0).toFixed(1)}%`, icon: 'trending-up-outline' as const, color: '#10b981' },
+    { label: 'Inventory Shrinkage', value: `${(metrics?.inventoryShrinkage || 0).toFixed(1)}%`, icon: 'stats-chart-outline' as const, color: '#f59e0b' },
   ];
 
   return (
@@ -614,13 +623,20 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
 // CYLINDER PRICES MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Wire shape returned by GET /cylinder-types/prices/list. Originally typed
+// as { cylinderType?: string } — but the API returns the nested object
+// { cylinderType: { typeName } } (Prisma include), which made the
+// fallback render `{p.cylinderType || ...}` resolve to a non-null object
+// and crash with "Objects are not valid as a React child". Combined with
+// the missing onError on useApiQuery, real failures silently showed the
+// "No prices configured" empty state on seeded distributors. Fixed
+// 2026-06-01 (CLAUDE.md anti-pattern #9).
 interface CylinderPriceRow {
-  id?: string;
-  cylinderType?: string;
-  name?: string;
-  weight?: number;
-  price?: number;
-  sellingPrice?: number;
+  id: string;
+  cylinderTypeId: string;
+  cylinderType?: { typeName: string };
+  price?: number | string;
+  effectiveDate?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -947,7 +963,7 @@ function CylinderTypesModal({ visible, onClose }: { visible: boolean; onClose: (
 function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  const { data: prices, isLoading, refetch } = useApiQuery<CylinderPriceRow[]>(
+  const { data: prices, isLoading, refetch, error } = useApiQuery<CylinderPriceRow[]>(
     ['cylinder-prices'],
     '/cylinder-types/prices/list',
     undefined,
@@ -985,25 +1001,32 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
                   Price
                 </Text>
               </View>
-              {(!prices || prices.length === 0) && (
+              {error && (
+                <View style={{ padding: 20, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 13, color: '#ef4444', textAlign: 'center' }}>
+                    Failed to load prices. Pull to retry.
+                  </Text>
+                  <Text style={{ fontSize: 11, color: theme.textMuted, marginTop: 4, textAlign: 'center' }}>
+                    {(error as Error).message}
+                  </Text>
+                </View>
+              )}
+              {!error && (!prices || prices.length === 0) && (
                 <View style={{ padding: 20, alignItems: 'center' }}>
                   <Text style={{ fontSize: 13, color: theme.textMuted }}>No prices configured</Text>
                 </View>
               )}
               {prices?.map((p: CylinderPriceRow, i: number) => (
-                <View key={p.id || i}>
+                <View key={p.id}>
                   {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
                   <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 14, alignItems: 'center' }}>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }}>
-                        {p.cylinderType || p.name || `Type ${i + 1}`}
+                        {p.cylinderType?.typeName ?? `Type ${i + 1}`}
                       </Text>
-                      {p.weight && (
-                        <Text style={{ fontSize: 11, color: theme.textMuted }}>{p.weight} kg</Text>
-                      )}
                     </View>
                     <Text style={{ width: 80, fontSize: 15, fontWeight: '700', color: theme.text, textAlign: 'right' }}>
-                      {formatCurrency(p.price || p.sellingPrice || 0)}
+                      {formatCurrency(Number(p.price ?? 0))}
                     </Text>
                   </View>
                 </View>

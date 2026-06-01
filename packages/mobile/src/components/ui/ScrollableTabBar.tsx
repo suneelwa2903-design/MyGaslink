@@ -77,10 +77,19 @@ export function ScrollableTabBar({
   const activeColor = ACCENT.red;
   const inactiveColor = dark ? '#94a3b8' : '#94a3b8';
 
-  // Filter routes that opt out of the visible bar via `href: null`.
+  // Filter routes that opt out of the visible bar. expo-router strips
+  // `href` from the descriptor options before passing them to a custom
+  // tabBar, so `opts.href !== null` is always true here — useless. The
+  // robust signal is `tabBarItemStyle: { display: 'none' }`, which the
+  // (admin) _layout sets on every screen that should not render a tab.
   const visibleRoutes = state.routes.filter((route) => {
-    const opts = descriptors[route.key]?.options;
-    return opts?.href !== null;
+    const opts = descriptors[route.key]?.options as {
+      href?: string | null;
+      tabBarItemStyle?: { display?: string };
+    } | undefined;
+    if (opts?.href === null) return false;
+    if (opts?.tabBarItemStyle?.display === 'none') return false;
+    return true;
   });
 
   return (

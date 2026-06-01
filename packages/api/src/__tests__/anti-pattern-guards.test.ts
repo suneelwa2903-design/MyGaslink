@@ -336,6 +336,31 @@ describe('Guard 5 — API responses match the shape the web types', () => {
     expect(Array.isArray(res.body.data.rawSettings)).toBe(true);
   });
 
+  it('GET /api/cylinder-types/prices/list returns rows with cylinderType.typeName nested object', async () => {
+    // Anti-pattern #9 + 2026-06-01 regression: mobile typed each row as
+    // { cylinderType?: string } and rendered `p.cylinderType || ...`.
+    // The API actually returns Prisma's nested include
+    // ({ cylinderType: { typeName } }) → mobile crashed with "Objects
+    // are not valid as a React child". Pin the wire shape so future
+    // route refactors (e.g. moving to a mapper) don't silently flatten
+    // or rename it.
+    const res = await request(app)
+      .get('/api/cylinder-types/prices/list')
+      .set(auth(dist1AdminToken));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    if (res.body.data.length > 0) {
+      const row = res.body.data[0];
+      expect(row).toHaveProperty('id');
+      expect(row).toHaveProperty('cylinderTypeId');
+      expect(row).toHaveProperty('price');
+      expect(row).toHaveProperty('cylinderType');
+      expect(typeof row.cylinderType).toBe('object');
+      expect(row.cylinderType).toHaveProperty('typeName');
+      expect(typeof row.cylinderType.typeName).toBe('string');
+    }
+  });
+
   it('CreditNote.status on the wire matches the shared enum (no `_cn` suffix leak)', async () => {
     // Anti-pattern #9 + WI-039 mapper fix: Prisma surfaces the TS-side
     // enum name (`pending_cn`); the mapper must strip `_cn` so the web's

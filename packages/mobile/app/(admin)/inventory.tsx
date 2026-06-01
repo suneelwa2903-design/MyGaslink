@@ -650,18 +650,21 @@ function SummaryTab({
             <Ionicons name="chevron-back" size={20} color={t.text} />
           </TouchableOpacity>
 
-          {/* STAGE-C: tap the center label to open the native date picker. */}
-          <View style={{ alignItems: 'center', flex: 1, paddingHorizontal: 6 }}>
+          {/* Tap the center label to open the native date picker.
+              When viewing today, render "Today · <date>" inline so the
+              user sees the absolute date next to the relative label
+              instead of stacked below it. */}
+          <View style={{ flex: 1, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+            {isToday && (
+              <Text style={{ fontSize: 13, color: t.green, fontWeight: '700', marginRight: 6 }}>
+                Today ·
+              </Text>
+            )}
             <DateInput
               value={selectedDate}
               onChange={setSelectedDate}
               placeholder="Select date"
             />
-            {isToday && (
-              <Text style={{ fontSize: 11, color: t.green, fontWeight: '600', marginTop: 2 }}>
-                Today
-              </Text>
-            )}
           </View>
 
           <TouchableOpacity
@@ -2064,33 +2067,13 @@ function HistoryTab({
           <Text style={{ fontSize: 11, fontWeight: '600', color: t.textSecondary, marginBottom: 4 }}>
             From
           </Text>
-          <TouchableOpacity
-            style={{
-              backgroundColor: t.inputBg,
-              borderRadius: 8,
-              padding: 8,
-              borderWidth: 1,
-              borderColor: t.cardBorder,
-            }}
-          >
-            <Text style={{ fontSize: 13, color: t.text }}>{formatDateShort(dateFrom)}</Text>
-          </TouchableOpacity>
+          <DateInput value={dateFrom || null} onChange={setDateFrom} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 11, fontWeight: '600', color: t.textSecondary, marginBottom: 4 }}>
             To
           </Text>
-          <TouchableOpacity
-            style={{
-              backgroundColor: t.inputBg,
-              borderRadius: 8,
-              padding: 8,
-              borderWidth: 1,
-              borderColor: t.cardBorder,
-            }}
-          >
-            <Text style={{ fontSize: 13, color: t.text }}>{formatDateShort(dateTo)}</Text>
-          </TouchableOpacity>
+          <DateInput value={dateTo || null} onChange={setDateTo} />
         </View>
         <TouchableOpacity
           onPress={() => {
