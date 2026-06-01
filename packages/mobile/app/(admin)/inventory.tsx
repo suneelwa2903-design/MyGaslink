@@ -316,8 +316,17 @@ interface StockMovementForm {
   documentType: string;
   documentNumber: string;
   documentDate: string;
+  // Picker-bound: vehicleId is the source of truth; vehicleNumber + driverName
+  // are derived from the selected mapping and persisted on submit so the
+  // server-side legacy free-text columns stay populated for audit. Amount
+  // is now an explicit money field (matches web). Outgoing-only:
+  // authorizationRef + condition.
+  vehicleId: string;
   vehicleNumber: string;
   driverName: string;
+  amount: string;
+  authorizationRef: string;
+  condition: 'good' | 'defective' | '';
   notes: string;
 }
 
@@ -336,8 +345,12 @@ function emptyMovementForm(defaultDate: string): StockMovementForm {
     documentType: '',
     documentNumber: '',
     documentDate: defaultDate,
+    vehicleId: '',
     vehicleNumber: '',
     driverName: '',
+    amount: '',
+    authorizationRef: '',
+    condition: '',
     notes: '',
   };
 }
@@ -406,8 +419,10 @@ function SummaryTab({
       documentType: string;
       documentNumber: string;
       documentDate: string;
+      vehicleId?: string;
       vehicleNumber?: string;
       driverName?: string;
+      amount?: number;
       notes?: string;
     }
   >('post', '/inventory/incoming-fulls', {
@@ -427,8 +442,12 @@ function SummaryTab({
       documentType: string;
       documentNumber: string;
       documentDate: string;
+      vehicleId?: string;
       vehicleNumber?: string;
       driverName?: string;
+      amount?: number;
+      authorizationRef?: string;
+      condition?: 'good' | 'defective';
       notes?: string;
     }
   >('post', '/inventory/outgoing-empties', {
@@ -439,6 +458,30 @@ function SummaryTab({
       setMovementForm(emptyMovementForm(selectedDate));
     },
   });
+
+  // Today's vehicle mappings — drives the vehicle+driver picker shown in
+  // the Incoming/Outgoing modals. Empty `recommendations` ⇒ show the
+  // empty-state CTA ("Map vehicles first in Fleet").
+  const { data: vehicleMappingsToday } = useApiQuery<{
+    date: string;
+    recommendations: Array<{
+      driverId: string;
+      driverName: string;
+      vehicleId: string | null;
+      vehicleNumber: string | null;
+      status: 'confirmed' | 'recommended' | 'unassigned';
+    }>;
+  }>(
+    ['admin-vehicle-mappings', todayString()],
+    '/assignments/vehicle-mappings',
+    { date: todayString() },
+  );
+  const availableMappings = useMemo(
+    () => (vehicleMappingsToday?.recommendations ?? []).filter(
+      (m) => m.vehicleId && m.vehicleNumber && m.status !== 'unassigned',
+    ),
+    [vehicleMappingsToday],
+  );
 
   const adjustMutation = useApiMutation<
     unknown,
@@ -517,21 +560,33 @@ function SummaryTab({
       return;
     }
 
-    const payload = {
+    const amt = movementForm.amount.trim() ? Number(movementForm.amount) : undefined;
+    if (amt !== undefined && (Number.isNaN(amt) || amt < 0)) {
+      Alert.alert('Required', 'Amount must be 0 or greater.');
+      return;
+    }
+
+    const base = {
       cylinderTypeId: movementForm.cylinderTypeId,
       quantity: qty,
       documentType: movementForm.documentType.trim(),
       documentNumber: movementForm.documentNumber.trim(),
       documentDate: movementForm.documentDate,
+      ...(movementForm.vehicleId ? { vehicleId: movementForm.vehicleId } : {}),
       ...(movementForm.vehicleNumber.trim() ? { vehicleNumber: movementForm.vehicleNumber.trim() } : {}),
       ...(movementForm.driverName.trim() ? { driverName: movementForm.driverName.trim() } : {}),
+      ...(amt !== undefined ? { amount: amt } : {}),
       ...(movementForm.notes.trim() ? { notes: movementForm.notes.trim() } : {}),
     };
 
     if (activeModal === 'incoming') {
-      incomingMutation.mutate(payload);
+      incomingMutation.mutate(base);
     } else {
-      outgoingMutation.mutate(payload);
+      outgoingMutation.mutate({
+        ...base,
+        ...(movementForm.authorizationRef.trim() ? { authorizationRef: movementForm.authorizationRef.trim() } : {}),
+        ...(movementForm.condition ? { condition: movementForm.condition } : {}),
+      });
     }
   };
 
@@ -889,9 +944,94 @@ function SummaryTab({
                 onChangeText={(v) => setMovementForm((f) => ({ ...f, documentNumber: v }))}
               />
 
-              {/* Vehicle Number (optional) */}
+              {/* Vehicle picker — bound to today's confirmed/recommended
+                  driver-vehicle mappings. Selecting a chip auto-fills both
+                  the vehicleId and the driver name. Empty-state directs
+                  the user to Fleet → Vehicle Mappings if none are set. */}
               <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Vehicle Number{' '}
+                Vehicle &amp; Driver{' '}
+                <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
+              </Text>
+              {availableMappings.length === 0 ? (
+                <View
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: t.cardBorder,
+                    backgroundColor: t.inputBg,
+                    marginBottom: 14,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, color: t.textMuted }}>
+                    No vehicle mappings for today. Set one up in Fleet → Vehicle Mappings, or leave this blank.
+                  </Text>
+                </View>
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginBottom: 14 }}
+                  contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+                >
+                  {availableMappings.map((m) => {
+                    const selected = movementForm.vehicleId === m.vehicleId;
+                    return (
+                      <TouchableOpacity
+                        key={m.driverId}
+                        onPress={() => setMovementForm((f) => ({
+                          ...f,
+                          vehicleId: m.vehicleId!,
+                          vehicleNumber: m.vehicleNumber ?? '',
+                          driverName: m.driverName,
+                        }))}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: 12,
+                          backgroundColor: selected ? (activeModal === 'incoming' ? t.green : t.orange) : t.metricBg,
+                          borderWidth: 1,
+                          borderColor: selected ? (activeModal === 'incoming' ? t.green : t.orange) : t.cardBorder,
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>
+                          {m.vehicleNumber}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: selected ? '#fff' : t.textSecondary, marginTop: 2 }}>
+                          {m.driverName}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {movementForm.vehicleId !== '' && (
+                    <TouchableOpacity
+                      onPress={() => setMovementForm((f) => ({
+                        ...f,
+                        vehicleId: '',
+                        vehicleNumber: '',
+                        driverName: '',
+                      }))}
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: t.cardBorder,
+                        backgroundColor: 'transparent',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Ionicons name="close" size={14} color={t.textSecondary} />
+                      <Text style={{ fontSize: 11, color: t.textSecondary, marginTop: 2 }}>Clear</Text>
+                    </TouchableOpacity>
+                  )}
+                </ScrollView>
+              )}
+
+              {/* Amount (optional money value) */}
+              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                Amount{' '}
                 <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
               </Text>
               <TextInput
@@ -899,27 +1039,64 @@ function SummaryTab({
                   modalStyles.input,
                   { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
                 ]}
-                placeholder="e.g. AP09AB1234"
+                placeholder="e.g. 12000"
                 placeholderTextColor={t.textMuted}
-                value={movementForm.vehicleNumber}
-                onChangeText={(v) => setMovementForm((f) => ({ ...f, vehicleNumber: v }))}
+                keyboardType="decimal-pad"
+                value={movementForm.amount}
+                onChangeText={(v) => setMovementForm((f) => ({ ...f, amount: v.replace(/[^0-9.]/g, '') }))}
               />
 
-              {/* Driver Name (optional) */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Driver Name{' '}
-                <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
-              </Text>
-              <TextInput
-                style={[
-                  modalStyles.input,
-                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                ]}
-                placeholder="Driver name"
-                placeholderTextColor={t.textMuted}
-                value={movementForm.driverName}
-                onChangeText={(v) => setMovementForm((f) => ({ ...f, driverName: v }))}
-              />
+              {/* Outgoing-only: Authorization Ref + Condition */}
+              {activeModal === 'outgoing' && (
+                <>
+                  <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                    Authorization Ref{' '}
+                    <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
+                  </Text>
+                  <TextInput
+                    style={[
+                      modalStyles.input,
+                      { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
+                    ]}
+                    placeholder="e.g. AUTH-2026-001"
+                    placeholderTextColor={t.textMuted}
+                    value={movementForm.authorizationRef}
+                    onChangeText={(v) => setMovementForm((f) => ({ ...f, authorizationRef: v }))}
+                  />
+
+                  <Text style={[modalStyles.label, { color: t.textSecondary }]}>
+                    Condition{' '}
+                    <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    {(['good', 'defective'] as const).map((c) => {
+                      const selected = movementForm.condition === c;
+                      return (
+                        <TouchableOpacity
+                          key={c}
+                          onPress={() => setMovementForm((f) => ({
+                            ...f,
+                            condition: f.condition === c ? '' : c,
+                          }))}
+                          style={{
+                            flex: 1,
+                            paddingVertical: 10,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: selected ? t.orange : t.cardBorder,
+                            backgroundColor: selected ? t.orange : t.metricBg,
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>
+                            {c === 'good' ? 'Good' : 'Defective'}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
 
               {/* Notes (optional) */}
               <Text style={[modalStyles.label, { color: t.textSecondary }]}>

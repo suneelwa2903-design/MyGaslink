@@ -85,6 +85,78 @@ describe('Inventory - Outgoing Empties', () => {
   });
 });
 
+describe('Inventory - Incoming/Outgoing accept picker fields (vehicleId + amount + authorizationRef + condition)', () => {
+  // GROUP-5A guard: the mobile admin modals now bind to today's
+  // driver-vehicle mappings and surface Authorization Ref + Condition
+  // (outgoing-only) and Amount (both). These must round-trip through the
+  // Zod schemas without 400s — otherwise the mobile screen would silently
+  // fail submit. Vehicle is referenced only by id from the picker;
+  // vehicleNumber + driverName are still sent for legacy audit columns.
+  it('incoming-fulls accepts vehicleId + amount + numeric fields', async () => {
+    const cyl19 = seedData.cylinderTypes.find(ct => ct.typeName === '19 KG')!;
+    const vehicle = seedData.vehicles[0];
+    const driver = seedData.drivers[0];
+    const res = await request(app)
+      .post('/api/inventory/incoming-fulls')
+      .set(auth(inventoryToken))
+      .send({
+        cylinderTypeId: cyl19.id,
+        quantity: 5,
+        documentType: 'Delivery Challan',
+        documentNumber: 'DC-PICK-IN-1',
+        documentDate: today(),
+        vehicleId: vehicle.id,
+        vehicleNumber: vehicle.vehicleNumber,
+        driverName: driver.driverName,
+        amount: 12345.50,
+      });
+    if (res.status !== 201) console.log('incoming with picker fields error:', res.body);
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('outgoing-empties accepts vehicleId + amount + authorizationRef + condition=good', async () => {
+    const cyl19 = seedData.cylinderTypes.find(ct => ct.typeName === '19 KG')!;
+    const vehicle = seedData.vehicles[0];
+    const driver = seedData.drivers[0];
+    const res = await request(app)
+      .post('/api/inventory/outgoing-empties')
+      .set(auth(inventoryToken))
+      .send({
+        cylinderTypeId: cyl19.id,
+        quantity: 3,
+        documentType: 'Return Challan',
+        documentNumber: 'RC-PICK-OUT-1',
+        documentDate: today(),
+        vehicleId: vehicle.id,
+        vehicleNumber: vehicle.vehicleNumber,
+        driverName: driver.driverName,
+        amount: 4500,
+        authorizationRef: 'AUTH-TEST-1',
+        condition: 'good',
+      });
+    if (res.status !== 201) console.log('outgoing with picker fields error:', res.body);
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('outgoing-empties rejects invalid condition with 400', async () => {
+    const cyl19 = seedData.cylinderTypes.find(ct => ct.typeName === '19 KG')!;
+    const res = await request(app)
+      .post('/api/inventory/outgoing-empties')
+      .set(auth(inventoryToken))
+      .send({
+        cylinderTypeId: cyl19.id,
+        quantity: 1,
+        documentType: 'Return Challan',
+        documentNumber: 'RC-PICK-OUT-BAD',
+        documentDate: today(),
+        condition: 'mangled', // not in the enum
+      });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('Inventory - Manual Adjustment', () => {
   it('should record manual adjustment', async () => {
     const cyl19 = seedData.cylinderTypes.find(ct => ct.typeName === '19 KG')!;
