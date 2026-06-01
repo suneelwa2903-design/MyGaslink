@@ -224,12 +224,22 @@ router.post('/:id/generate-gst',
   }
 );
 
+// GROUP-7S: cancel routes now require a structured reasonCode in addition
+// to the free-text reason. NIC documents these codes as: 1=Duplicate,
+// 2=Data Entry Mistake, 3=Order Cancelled, 4=Others. The web modal
+// surfaces them as a dropdown so the operator's intent is captured
+// explicitly instead of being guessed by keyword-matching the free text.
+const cancelGstBodySchema = z.object({
+  reason: z.string().min(1).max(100),
+  reasonCode: z.enum(['1', '2', '3', '4']),
+});
+
 // POST /api/invoices/:id/cancel-irn - Cancel IRN
 // WI-039: finance can also cancel IRN — they're the team raising CN/DN
 // and need to clean up the upstream IRN before reissuing.
 router.post('/:id/cancel-irn',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
-  validate(z.object({ reason: z.string().min(1).max(100) })),
+  validate(cancelGstBodySchema),
   auditLog('cancel_irn', 'invoice'),
   async (req, res) => {
     try {
@@ -239,7 +249,11 @@ router.post('/:id/cancel-irn',
       const { clearTokenCache } = await import('../services/gst/whitebooksClient.js');
       clearTokenCache(req.user!.distributorId!);
       const result = await gstService.cancelIrn(
-        param(req.params.id), req.user!.distributorId!, req.body.reason
+        param(req.params.id),
+        req.user!.distributorId!,
+        req.body.reason,
+        req.body.reasonCode,
+        req.user!.userId ?? null,
       );
       return sendSuccess(res, result);
     } catch (err: unknown) {
@@ -253,7 +267,7 @@ router.post('/:id/cancel-irn',
 // WI-039: finance can also cancel EWB (companion to cancel-irn above).
 router.post('/:id/cancel-ewb',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
-  validate(z.object({ reason: z.string().min(1).max(100) })),
+  validate(cancelGstBodySchema),
   auditLog('cancel_ewb', 'invoice'),
   async (req, res) => {
     try {
@@ -261,7 +275,11 @@ router.post('/:id/cancel-ewb',
       const { clearTokenCache } = await import('../services/gst/whitebooksClient.js');
       clearTokenCache(req.user!.distributorId!);
       const result = await gstService.cancelEwb(
-        param(req.params.id), req.user!.distributorId!, req.body.reason
+        param(req.params.id),
+        req.user!.distributorId!,
+        req.body.reason,
+        req.body.reasonCode,
+        req.user!.userId ?? null,
       );
       return sendSuccess(res, result);
     } catch (err: unknown) {

@@ -127,7 +127,7 @@ enum AdjustmentStatus {
 }
 
 enum CancelledStockStatus {
-  pending_return     @map("pending")
+  pending_return    @map("pending")
   on_vehicle
   returned_to_depot
   reconciled
@@ -150,7 +150,7 @@ enum InventoryEventType {
 }
 
 enum ReplenishmentStatus {
-  pending_replenishment  @map("pending")
+  pending_replenishment @map("pending")
   in_transit
   completed
   rejected
@@ -172,18 +172,18 @@ enum PaymentAllocationStatus {
 }
 
 enum CreditNoteStatus {
-  pending_cn  @map("pending")
-  approved_cn @map("approved")
+  pending_cn   @map("pending")
+  approved_cn  @map("approved")
   issued
-  rejected_cn @map("rejected")
+  rejected_cn  @map("rejected")
   cancelled_cn @map("cancelled")
 }
 
 enum DebitNoteStatus {
-  pending_dn  @map("pending")
-  approved_dn @map("approved")
-  issued_dn   @map("issued")
-  rejected_dn @map("rejected")
+  pending_dn   @map("pending")
+  approved_dn  @map("approved")
+  issued_dn    @map("issued")
+  rejected_dn  @map("rejected")
   cancelled_dn @map("cancelled")
 }
 
@@ -198,9 +198,9 @@ enum BillingStatus {
   pending_generation
   invoice_generated
   pending_payment
-  paid_billing @map("paid")
-  overdue_billing @map("overdue")
-  suspended_billing @map("suspended")
+  paid_billing       @map("paid")
+  overdue_billing    @map("overdue")
+  suspended_billing  @map("suspended")
 }
 
 enum BillingTier {
@@ -260,7 +260,7 @@ enum AccountabilityType {
 }
 
 enum AccountabilityStatus {
-  open_accountability @map("open")
+  open_accountability  @map("open")
   investigating
   resolved_recovered
   resolved_written_off
@@ -269,10 +269,10 @@ enum AccountabilityStatus {
 }
 
 enum LedgerEntryType {
-  invoice_entry  @map("invoice")
+  invoice_entry @map("invoice")
   credit_note
   debit_note
-  payment_entry  @map("payment")
+  payment_entry @map("payment")
   adjustment
 }
 
@@ -302,7 +302,7 @@ enum SeatRequestStatus {
 
 enum LicenseType {
   peso
-  gst_license @map("gst")
+  gst_license           @map("gst")
   date_of_incorporation
   partnership_deed
   pan
@@ -318,76 +318,76 @@ enum LicenseType {
 // ─── Organization & Users ────────────────────────────────────────────────────
 
 model Distributor {
-  id              String            @id @default(uuid()) @map("distributor_id")
-  businessName    String            @map("business_name")
-  legalName       String            @map("legal_name")
-  gstin           String?
-  address         String?
-  city            String?
-  state           String?
-  pincode         String?
-  phone           String?
-  email           String?
-  status          DistributorStatus @default(active)
-  gstMode         GstMode           @default(disabled) @map("gst_mode")
+  id                      String            @id @default(uuid()) @map("distributor_id")
+  businessName            String            @map("business_name")
+  legalName               String            @map("legal_name")
+  gstin                   String?
+  address                 String?
+  city                    String?
+  state                   String?
+  pincode                 String?
+  phone                   String?
+  email                   String?
+  status                  DistributorStatus @default(active)
+  gstMode                 GstMode           @default(disabled) @map("gst_mode")
   // WI-108: 3-letter tenant code embedded in structured invoice/order
   // numbers (e.g. "SHD" → ISHD2526000123). Nullable: when unset the legacy
   // random INV-/ORD- format is used. Globally unique so codes never clash
   // across tenants (which keeps the per-tenant sequence globally unique too).
-  docCode         String?           @unique @map("doc_code")
-  providerCodes   String[]          @default([]) @map("provider_codes")
-  subscriptionPlan SubscriptionPlan? @map("subscription_plan")
-  billingTier     BillingTier?      @map("billing_tier")
-  billingSuspended Boolean          @default(false) @map("billing_suspended")
-  gaslinkBillingEnabled Boolean     @default(false) @map("gaslink_billing_enabled")
-  gaslinkBillingStartDate DateTime? @map("gaslink_billing_start_date") @db.Date
-  latitude        Float?            @map("latitude")
-  longitude       Float?            @map("longitude")
+  docCode                 String?           @unique @map("doc_code")
+  providerCodes           String[]          @default([]) @map("provider_codes")
+  subscriptionPlan        SubscriptionPlan? @map("subscription_plan")
+  billingTier             BillingTier?      @map("billing_tier")
+  billingSuspended        Boolean           @default(false) @map("billing_suspended")
+  gaslinkBillingEnabled   Boolean           @default(false) @map("gaslink_billing_enabled")
+  gaslinkBillingStartDate DateTime?         @map("gaslink_billing_start_date") @db.Date
+  latitude                Float?            @map("latitude")
+  longitude               Float?            @map("longitude")
 
   // Godown / Warehouse address
-  godownAddress   String?           @map("godown_address")
-  godownCity      String?           @map("godown_city")
-  godownState     String?           @map("godown_state")
-  godownPincode   String?           @map("godown_pincode")
-  godownLatitude  Float?            @map("godown_latitude")
-  godownLongitude Float?            @map("godown_longitude")
+  godownAddress   String? @map("godown_address")
+  godownCity      String? @map("godown_city")
+  godownState     String? @map("godown_state")
+  godownPincode   String? @map("godown_pincode")
+  godownLatitude  Float?  @map("godown_latitude")
+  godownLongitude Float?  @map("godown_longitude")
 
   // Office address (if different from GST registered address)
-  officeAddress   String?           @map("office_address")
-  officeCity      String?           @map("office_city")
-  officeState     String?           @map("office_state")
-  officePincode   String?           @map("office_pincode")
+  officeAddress String? @map("office_address")
+  officeCity    String? @map("office_city")
+  officeState   String? @map("office_state")
+  officePincode String? @map("office_pincode")
 
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
-  deletedAt       DateTime?         @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  users                 User[]
-  customers             Customer[]
-  orders                Order[]
-  invoices              Invoice[]
-  payments              PaymentTransaction[]
-  drivers               Driver[]
-  vehicles              Vehicle[]
-  cylinderTypes         CylinderType[]
-  cylinderPrices        CylinderPrice[]
-  emptyCylinderPrices   EmptyCylinderPrice[]
-  inventoryEvents       InventoryEvent[]
-  inventorySummaries    InventorySummary[]
-  settings              DistributorSetting[]
-  billingCycles         BillingCycle[]
-  pendingActions        PendingAction[]
-  paymentCommitments    PaymentCommitment[]
-  accountabilityLogs    AccountabilityLog[]
-  stockMismatchRecords  StockMismatchRecord[]
-  auditLogs             AuditLog[]
-  licenses              License[]
-  gstCredentials        GstCredential[]
-  contactSubmissions    ContactSubmission[]
-  gstApiUsage           GstApiUsage[]
-  seatRequests          SeatRequest[]
-  invoiceCounters       InvoiceCounter[]
+  users                User[]
+  customers            Customer[]
+  orders               Order[]
+  invoices             Invoice[]
+  payments             PaymentTransaction[]
+  drivers              Driver[]
+  vehicles             Vehicle[]
+  cylinderTypes        CylinderType[]
+  cylinderPrices       CylinderPrice[]
+  emptyCylinderPrices  EmptyCylinderPrice[]
+  inventoryEvents      InventoryEvent[]
+  inventorySummaries   InventorySummary[]
+  settings             DistributorSetting[]
+  billingCycles        BillingCycle[]
+  pendingActions       PendingAction[]
+  paymentCommitments   PaymentCommitment[]
+  accountabilityLogs   AccountabilityLog[]
+  stockMismatchRecords StockMismatchRecord[]
+  auditLogs            AuditLog[]
+  licenses             License[]
+  gstCredentials       GstCredential[]
+  contactSubmissions   ContactSubmission[]
+  gstApiUsage          GstApiUsage[]
+  seatRequests         SeatRequest[]
+  invoiceCounters      InvoiceCounter[]
 
   @@map("distributors")
 }
@@ -416,10 +416,11 @@ model User {
   deletedAt             DateTime?          @map("deleted_at")
 
   // Relations
-  distributor    Distributor? @relation(fields: [distributorId], references: [id])
-  customer       Customer?   @relation(fields: [customerId], references: [id])
-  auditLogs      AuditLog[]
-  driverAssignments DriverAssignment[] @relation("AssignedBy")
+  distributor           Distributor?       @relation(fields: [distributorId], references: [id])
+  customer              Customer?          @relation(fields: [customerId], references: [id])
+  auditLogs             AuditLog[]
+  driverAssignments     DriverAssignment[] @relation("AssignedBy")
+  cancelledGstDocuments GstDocument[]      @relation("CancelledGstDocuments")
 
   @@index([email])
   @@index([distributorId])
@@ -430,50 +431,50 @@ model User {
 // ─── Customers ───────────────────────────────────────────────────────────────
 
 model Customer {
-  id                    String         @id @default(uuid()) @map("customer_id")
-  distributorId         String         @map("distributor_id")
-  customerName          String         @map("customer_name")
-  businessName          String?        @map("business_name")
-  gstin                 String?
-  customerType          String         @default("B2C") @map("customer_type") // B2B or B2C
-  phone                 String
-  email                 String?
-  billingAddressLine1   String?        @map("billing_address_line1")
-  billingAddressLine2   String?        @map("billing_address_line2")
-  billingCity           String?        @map("billing_city")
-  billingState          String?        @map("billing_state")
-  billingPincode        String?        @map("billing_pincode")
-  shippingAddressLine1  String?        @map("shipping_address_line1")
-  shippingAddressLine2  String?        @map("shipping_address_line2")
-  shippingCity          String?        @map("shipping_city")
-  shippingState         String?        @map("shipping_state")
-  shippingPincode       String?        @map("shipping_pincode")
-  creditPeriodDays      Int            @default(30) @map("credit_period_days")
+  id                         String         @id @default(uuid()) @map("customer_id")
+  distributorId              String         @map("distributor_id")
+  customerName               String         @map("customer_name")
+  businessName               String?        @map("business_name")
+  gstin                      String?
+  customerType               String         @default("B2C") @map("customer_type") // B2B or B2C
+  phone                      String
+  email                      String?
+  billingAddressLine1        String?        @map("billing_address_line1")
+  billingAddressLine2        String?        @map("billing_address_line2")
+  billingCity                String?        @map("billing_city")
+  billingState               String?        @map("billing_state")
+  billingPincode             String?        @map("billing_pincode")
+  shippingAddressLine1       String?        @map("shipping_address_line1")
+  shippingAddressLine2       String?        @map("shipping_address_line2")
+  shippingCity               String?        @map("shipping_city")
+  shippingState              String?        @map("shipping_state")
+  shippingPincode            String?        @map("shipping_pincode")
+  creditPeriodDays           Int            @default(30) @map("credit_period_days")
   // Optional per-customer inward transportation charge (₹ per delivered
   // cylinder, GST-inclusive — same basis as cylinder rates). 0 = no charge.
-  transportChargePerCylinder Decimal   @default(0) @map("transport_charge_per_cylinder") @db.Decimal(18, 4)
-  status                CustomerStatus @default(active)
-  stopSupply            Boolean        @default(false) @map("stop_supply")
-  preferredDriverId     String?        @map("preferred_driver_id")
-  createdAt             DateTime       @default(now()) @map("created_at")
-  updatedAt             DateTime       @updatedAt @map("updated_at")
-  deletedAt             DateTime?      @map("deleted_at")
+  transportChargePerCylinder Decimal        @default(0) @map("transport_charge_per_cylinder") @db.Decimal(18, 4)
+  status                     CustomerStatus @default(active)
+  stopSupply                 Boolean        @default(false) @map("stop_supply")
+  preferredDriverId          String?        @map("preferred_driver_id")
+  createdAt                  DateTime       @default(now()) @map("created_at")
+  updatedAt                  DateTime       @updatedAt @map("updated_at")
+  deletedAt                  DateTime?      @map("deleted_at")
 
   // Relations
-  distributor           Distributor    @relation(fields: [distributorId], references: [id])
-  users                 User[]
-  contacts              CustomerContact[]
-  cylinderDiscounts     CustomerCylinderDiscount[]
-  orders                Order[]
-  invoices              Invoice[]
-  payments              PaymentTransaction[]
-  inventoryBalances     CustomerInventoryBalance[]
-  ledgerEntries         CustomerLedgerEntry[]
-  modificationRequests  CustomerModificationRequest[]
-  auditTrail            CustomerAuditTrail[]
-  accountabilityLogs    AccountabilityLog[]
-  paymentCommitments    PaymentCommitment[]
-  stockMismatchRecords  StockMismatchRecord[]
+  distributor          Distributor                   @relation(fields: [distributorId], references: [id])
+  users                User[]
+  contacts             CustomerContact[]
+  cylinderDiscounts    CustomerCylinderDiscount[]
+  orders               Order[]
+  invoices             Invoice[]
+  payments             PaymentTransaction[]
+  inventoryBalances    CustomerInventoryBalance[]
+  ledgerEntries        CustomerLedgerEntry[]
+  modificationRequests CustomerModificationRequest[]
+  auditTrail           CustomerAuditTrail[]
+  accountabilityLogs   AccountabilityLog[]
+  paymentCommitments   PaymentCommitment[]
+  stockMismatchRecords StockMismatchRecord[]
 
   @@index([distributorId, status])
   @@index([distributorId, customerName])
@@ -482,12 +483,12 @@ model Customer {
 }
 
 model CustomerContact {
-  id          String  @id @default(uuid()) @map("contact_id")
-  customerId  String  @map("customer_id")
-  name        String
-  phone       String
-  email       String?
-  isPrimary   Boolean @default(false) @map("is_primary")
+  id         String  @id @default(uuid()) @map("contact_id")
+  customerId String  @map("customer_id")
+  name       String
+  phone      String
+  email      String?
+  isPrimary  Boolean @default(false) @map("is_primary")
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
@@ -495,9 +496,9 @@ model CustomerContact {
 }
 
 model CustomerCylinderDiscount {
-  id              String @id @default(uuid()) @map("discount_id")
-  customerId      String @map("customer_id")
-  cylinderTypeId  String @map("cylinder_type_id")
+  id              String  @id @default(uuid()) @map("discount_id")
+  customerId      String  @map("customer_id")
+  cylinderTypeId  String  @map("cylinder_type_id")
   discountPerUnit Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
 
   customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -514,7 +515,7 @@ model CustomerInventoryBalance {
   withCustomerQty Int      @default(0) @map("with_customer_qty")
   pendingReturns  Int      @default(0) @map("pending_returns")
   missingQty      Int      @default(0) @map("missing_qty")
-  lastUpdated     DateTime @default(now()) @map("last_updated") @updatedAt
+  lastUpdated     DateTime @default(now()) @updatedAt @map("last_updated")
 
   customer     Customer     @relation(fields: [customerId], references: [id])
   cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
@@ -532,7 +533,7 @@ model CustomerModificationRequest {
   reviewedBy       String?          @map("reviewed_by")
   status           AdjustmentStatus @default(pending)
   reason           String?
-  changes          Json?            // JSONB for field changes
+  changes          Json? // JSONB for field changes
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
 
@@ -582,33 +583,33 @@ model CustomerLedgerEntry {
 // ─── Products ────────────────────────────────────────────────────────────────
 
 model CylinderType {
-  id                 String   @id @default(uuid()) @map("cylinder_type_id")
-  distributorId      String   @map("distributor_id")
-  typeName           String   @map("type_name")
-  capacity           Float
-  unit               String   @default("KG")
-  hsnCode            String   @default("27111900") @map("hsn_code")
+  id                String   @id @default(uuid()) @map("cylinder_type_id")
+  distributorId     String   @map("distributor_id")
+  typeName          String   @map("type_name")
+  capacity          Float
+  unit              String   @default("KG")
+  hsnCode           String   @default("27111900") @map("hsn_code")
   // Optional pointer back to the provider catalog row this type was imported
   // from. Lets us trace tenant cylinder types back to the global IOCL/HPCL/etc.
   // catalog (nullable for legacy rows and for fully bespoke types).
-  providerCatalogId  String?  @map("provider_catalog_id")
-  isActive           Boolean  @default(true) @map("is_active")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  providerCatalogId String?  @map("provider_catalog_id")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
-  distributor        Distributor                @relation(fields: [distributorId], references: [id])
-  providerCatalog    ProviderCatalogCylinderType? @relation(fields: [providerCatalogId], references: [id])
-  prices             CylinderPrice[]
-  emptyPrices        EmptyCylinderPrice[]
-  discounts          CustomerCylinderDiscount[]
-  orderItems         OrderItem[]
-  invoiceItems       InvoiceItem[]
-  inventoryEvents    InventoryEvent[]
-  inventorySummaries InventorySummary[]
-  customerBalances   CustomerInventoryBalance[]
-  thresholds         CylinderThreshold[]
-  cancelledStocks    CancelledStockEvent[]
-  accountabilityLogs AccountabilityLog[]
+  distributor          Distributor                  @relation(fields: [distributorId], references: [id])
+  providerCatalog      ProviderCatalogCylinderType? @relation(fields: [providerCatalogId], references: [id])
+  prices               CylinderPrice[]
+  emptyPrices          EmptyCylinderPrice[]
+  discounts            CustomerCylinderDiscount[]
+  orderItems           OrderItem[]
+  invoiceItems         InvoiceItem[]
+  inventoryEvents      InventoryEvent[]
+  inventorySummaries   InventorySummary[]
+  customerBalances     CustomerInventoryBalance[]
+  thresholds           CylinderThreshold[]
+  cancelledStocks      CancelledStockEvent[]
+  accountabilityLogs   AccountabilityLog[]
   stockMismatchRecords StockMismatchRecord[]
 
   @@unique([distributorId, typeName])
@@ -632,11 +633,11 @@ model CylinderPrice {
 }
 
 model EmptyCylinderPrice {
-  id                String   @id @default(uuid()) @map("empty_price_id")
-  distributorId     String   @map("distributor_id")
-  cylinderTypeId    String   @map("cylinder_type_id")
-  emptyCylinderPrice Decimal @map("empty_cylinder_price") @db.Decimal(18, 4)
-  createdAt         DateTime @default(now()) @map("created_at")
+  id                 String   @id @default(uuid()) @map("empty_price_id")
+  distributorId      String   @map("distributor_id")
+  cylinderTypeId     String   @map("cylinder_type_id")
+  emptyCylinderPrice Decimal  @map("empty_cylinder_price") @db.Decimal(18, 4)
+  createdAt          DateTime @default(now()) @map("created_at")
 
   distributor  Distributor  @relation(fields: [distributorId], references: [id])
   cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
@@ -662,23 +663,23 @@ model CylinderThreshold {
 // ─── Orders ──────────────────────────────────────────────────────────────────
 
 model Order {
-  id                  String      @id @default(uuid()) @map("order_id")
-  orderNumber         String      @unique @map("order_number")
-  distributorId       String      @map("distributor_id")
-  customerId          String      @map("customer_id")
-  driverId            String?     @map("driver_id")
-  vehicleId           String?     @map("vehicle_id")
-  orderDate           DateTime    @map("order_date") @db.Date
-  deliveryDate        DateTime    @map("delivery_date") @db.Date
-  status              OrderStatus @default(pending_driver_assignment)
-  orderType           OrderType   @default(delivery) @map("order_type")
-  totalAmount         Decimal     @default(0) @map("total_amount") @db.Decimal(18, 4)
-  specialInstructions String?     @map("special_instructions")
-  deliveryLatitude    Float?      @map("delivery_latitude")
-  deliveryLongitude   Float?      @map("delivery_longitude")
-  deliveryNotes       String?     @map("delivery_notes")
-  deliveredAt         DateTime?   @map("delivered_at")
-  cancelledAt         DateTime?   @map("cancelled_at")
+  id                    String      @id @default(uuid()) @map("order_id")
+  orderNumber           String      @unique @map("order_number")
+  distributorId         String      @map("distributor_id")
+  customerId            String      @map("customer_id")
+  driverId              String?     @map("driver_id")
+  vehicleId             String?     @map("vehicle_id")
+  orderDate             DateTime    @map("order_date") @db.Date
+  deliveryDate          DateTime    @map("delivery_date") @db.Date
+  status                OrderStatus @default(pending_driver_assignment)
+  orderType             OrderType   @default(delivery) @map("order_type")
+  totalAmount           Decimal     @default(0) @map("total_amount") @db.Decimal(18, 4)
+  specialInstructions   String?     @map("special_instructions")
+  deliveryLatitude      Float?      @map("delivery_latitude")
+  deliveryLongitude     Float?      @map("delivery_longitude")
+  deliveryNotes         String?     @map("delivery_notes")
+  deliveredAt           DateTime?   @map("delivered_at")
+  cancelledAt           DateTime?   @map("cancelled_at")
   cancellationReason    String?     @map("cancellation_reason")
   customerConfirmed     Boolean?    @map("customer_confirmed")
   customerConfirmedAt   DateTime?   @map("customer_confirmed_at")
@@ -697,25 +698,25 @@ model Order {
   // filter the trip-sheet PDF used to rely on. NULL for legacy orders
   // dispatched before this column existed — the trip-sheet service
   // falls back to the legacy filter for those.
-  tripNumber          Int?        @map("trip_number")
-  createdAt           DateTime    @default(now()) @map("created_at")
-  updatedAt           DateTime    @updatedAt @map("updated_at")
-  deletedAt           DateTime?   @map("deleted_at")
+  tripNumber            Int?        @map("trip_number")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @updatedAt @map("updated_at")
+  deletedAt             DateTime?   @map("deleted_at")
 
   // Relations
-  distributor          Distributor          @relation(fields: [distributorId], references: [id])
-  customer             Customer             @relation(fields: [customerId], references: [id])
-  driver               Driver?              @relation(fields: [driverId], references: [id])
-  vehicle              Vehicle?             @relation(fields: [vehicleId], references: [id])
-  items                OrderItem[]
-  invoice              Invoice?
-  statusLogs           OrderStatusLog[]
-  driverAssignments    DriverAssignment[]
-  cancelledStockEvents CancelledStockEvent[]
-  cancelledStockEventId String?              @unique @map("cancelled_stock_event_id")
-  cancelledStockEvent   CancelledStockEvent? @relation("TaggedOrder", fields: [cancelledStockEventId], references: [id])
-  gstDocuments         GstDocument[]
-  paymentCommitments   PaymentCommitment[]
+  distributor           Distributor           @relation(fields: [distributorId], references: [id])
+  customer              Customer              @relation(fields: [customerId], references: [id])
+  driver                Driver?               @relation(fields: [driverId], references: [id])
+  vehicle               Vehicle?              @relation(fields: [vehicleId], references: [id])
+  items                 OrderItem[]
+  invoice               Invoice?
+  statusLogs            OrderStatusLog[]
+  driverAssignments     DriverAssignment[]
+  cancelledStockEvents  CancelledStockEvent[]
+  cancelledStockEventId String?               @unique @map("cancelled_stock_event_id")
+  cancelledStockEvent   CancelledStockEvent?  @relation("TaggedOrder", fields: [cancelledStockEventId], references: [id])
+  gstDocuments          GstDocument[]
+  paymentCommitments    PaymentCommitment[]
 
   @@index([distributorId, status, deliveryDate])
   @@index([distributorId, customerId, createdAt(sort: Desc)])
@@ -758,24 +759,24 @@ model OrderStatusLog {
 // ─── Drivers & Vehicles ──────────────────────────────────────────────────────
 
 model Driver {
-  id               String       @id @default(uuid()) @map("driver_id")
-  distributorId    String       @map("distributor_id")
-  driverName       String       @map("driver_name")
-  phone            String
-  licenseNumber    String?      @map("license_number")
-  employmentType   String?      @map("employment_type")
-  status           DriverStatus @default(active)
-  availableToday   Boolean      @default(true) @map("available_today")
-  preferredVehicleId String?    @map("preferred_vehicle_id")
-  joiningDate      DateTime?    @map("joining_date") @db.Date
-  deactivatedAt    DateTime?    @map("deactivated_at")
-  deactivationNotes String?     @map("deactivation_notes")
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
-  deletedAt        DateTime?    @map("deleted_at")
+  id                 String       @id @default(uuid()) @map("driver_id")
+  distributorId      String       @map("distributor_id")
+  driverName         String       @map("driver_name")
+  phone              String
+  licenseNumber      String?      @map("license_number")
+  employmentType     String?      @map("employment_type")
+  status             DriverStatus @default(active)
+  availableToday     Boolean      @default(true) @map("available_today")
+  preferredVehicleId String?      @map("preferred_vehicle_id")
+  joiningDate        DateTime?    @map("joining_date") @db.Date
+  deactivatedAt      DateTime?    @map("deactivated_at")
+  deactivationNotes  String?      @map("deactivation_notes")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+  deletedAt          DateTime?    @map("deleted_at")
 
   // Relations
-  distributor          Distributor            @relation(fields: [distributorId], references: [id])
+  distributor          Distributor               @relation(fields: [distributorId], references: [id])
   orders               Order[]
   vehicleAssignments   DriverVehicleAssignment[]
   driverAssignments    DriverAssignment[]
@@ -788,23 +789,23 @@ model Driver {
 }
 
 model Vehicle {
-  id              String        @id @default(uuid()) @map("vehicle_id")
-  distributorId   String        @map("distributor_id")
-  vehicleNumber   String        @map("vehicle_number")
-  vehicleType     String?       @map("vehicle_type")
-  capacity        Int?
-  status          VehicleStatus @default(idle)
-  deactivatedAt   DateTime?     @map("deactivated_at")
-  deactivationNotes String?     @map("deactivation_notes")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
-  deletedAt       DateTime?     @map("deleted_at")
+  id                String        @id @default(uuid()) @map("vehicle_id")
+  distributorId     String        @map("distributor_id")
+  vehicleNumber     String        @map("vehicle_number")
+  vehicleType       String?       @map("vehicle_type")
+  capacity          Int?
+  status            VehicleStatus @default(idle)
+  deactivatedAt     DateTime?     @map("deactivated_at")
+  deactivationNotes String?       @map("deactivation_notes")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  deletedAt         DateTime?     @map("deleted_at")
 
   // Relations
-  distributor        Distributor            @relation(fields: [distributorId], references: [id])
-  orders             Order[]
-  vehicleAssignments DriverVehicleAssignment[]
-  vehicleInventory   VehicleInventory[]
+  distributor          Distributor               @relation(fields: [distributorId], references: [id])
+  orders               Order[]
+  vehicleAssignments   DriverVehicleAssignment[]
+  vehicleInventory     VehicleInventory[]
   cancelledStockEvents CancelledStockEvent[]
   stockMismatchRecords StockMismatchRecord[]
 
@@ -813,40 +814,38 @@ model Vehicle {
 }
 
 model DriverVehicleAssignment {
-  id             String           @id @default(uuid()) @map("assignment_id")
-  driverId       String           @map("driver_id")
-  vehicleId      String           @map("vehicle_id")
-  distributorId  String           @map("distributor_id")
-  assignmentDate DateTime         @map("assignment_date") @db.Date
-  tripNumber     Int              @default(1) @map("trip_number")
-  status         AssignmentStatus @default(dispatch_ready)
-  isReconciled   Boolean          @default(false) @map("is_reconciled")
-  isSubmitted    Boolean          @default(false) @map("is_submitted")
+  id                      String           @id @default(uuid()) @map("assignment_id")
+  driverId                String           @map("driver_id")
+  vehicleId               String           @map("vehicle_id")
+  distributorId           String           @map("distributor_id")
+  assignmentDate          DateTime         @map("assignment_date") @db.Date
+  tripNumber              Int              @default(1) @map("trip_number")
+  status                  AssignmentStatus @default(dispatch_ready)
+  isReconciled            Boolean          @default(false) @map("is_reconciled")
+  isSubmitted             Boolean          @default(false) @map("is_submitted")
   // WI-038: consolidated EWB ("trip sheet") number persisted after a
   // successful gencewb call at the end of pre-dispatch preflight.
-  tripSheetNo          String?   @map("trip_sheet_no")
-  tripSheetGeneratedAt DateTime? @map("trip_sheet_generated_at")
+  tripSheetNo             String?          @map("trip_sheet_no")
+  tripSheetGeneratedAt    DateTime?        @map("trip_sheet_generated_at")
   // WI-065: Add-to-Trip generates a SECOND consolidated EWB covering the
   // mid-trip batch (NIC has no "append" endpoint on gencewb — once
   // generated a CEWB is sealed; new orders need a fresh CEWB). The driver
   // carries both. Stays NULL when only one batch was dispatched.
-  tripSheetNo2          String?  @map("trip_sheet_no_2")
-  tripSheetNo2GeneratedAt DateTime? @map("trip_sheet_no_2_generated_at")
+  tripSheetNo2            String?          @map("trip_sheet_no_2")
+  tripSheetNo2GeneratedAt DateTime?        @map("trip_sheet_no_2_generated_at")
   // WI-094: trip lifecycle timestamps. Set server-side only — dispatchedAt
   // on successful preflight, returnedAt on markVehicleReturned, reconciledAt
   // on reconcileVehicle. No client write path exposes these.
-  dispatchedAt   DateTime?        @map("dispatched_at")
-  returnedAt     DateTime?        @map("returned_at")
-  reconciledAt   DateTime?        @map("reconciled_at")
-  createdAt      DateTime         @default(now()) @map("created_at")
-  updatedAt      DateTime         @updatedAt @map("updated_at")
+  dispatchedAt            DateTime?        @map("dispatched_at")
+  returnedAt              DateTime?        @map("returned_at")
+  reconciledAt            DateTime?        @map("reconciled_at")
+  createdAt               DateTime         @default(now()) @map("created_at")
+  updatedAt               DateTime         @updatedAt @map("updated_at")
 
-  driver  Driver  @relation(fields: [driverId], references: [id])
-  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+  driver                Driver                          @relation(fields: [driverId], references: [id])
+  vehicle               Vehicle                         @relation(fields: [vehicleId], references: [id])
   reconciliationEmpties ReconciliationEmptiesReturned[]
 
-  @@index([distributorId, assignmentDate])
-  @@index([driverId, assignmentDate])
   // WI-061: prevent duplicate DVA rows for the same driver+date+trip.
   // The dev DB accumulated 4 rows for one driver/date because nothing
   // enforced uniqueness; trip-sheet UX picks whichever row the user
@@ -854,6 +853,8 @@ model DriverVehicleAssignment {
   // the same DVA row across trips (increments tripNumber in place),
   // so the natural key is (driverId, assignmentDate, tripNumber).
   @@unique([driverId, assignmentDate, tripNumber])
+  @@index([distributorId, assignmentDate])
+  @@index([driverId, assignmentDate])
   @@map("driver_vehicle_assignments")
 }
 
@@ -885,9 +886,9 @@ model DriverAssignment {
   status     String   @default("active")
   notes      String?
 
-  order       Order @relation(fields: [orderId], references: [id])
-  driver      Driver @relation(fields: [driverId], references: [id])
-  assignedByUser User @relation("AssignedBy", fields: [assignedBy], references: [id])
+  order          Order  @relation(fields: [orderId], references: [id])
+  driver         Driver @relation(fields: [driverId], references: [id])
+  assignedByUser User   @relation("AssignedBy", fields: [assignedBy], references: [id])
 
   @@index([orderId])
   @@map("driver_assignments")
@@ -922,7 +923,7 @@ model InvoiceCounter {
   lastSequence  Int      @default(0) @map("last_sequence")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  distributor   Distributor @relation(fields: [distributorId], references: [id])
+  distributor Distributor @relation(fields: [distributorId], references: [id])
 
   @@unique([distributorId, type, financialYear])
   @@index([distributorId])
@@ -930,48 +931,48 @@ model InvoiceCounter {
 }
 
 model Invoice {
-  id                String        @id @default(uuid()) @map("invoice_id")
-  invoiceNumber     String        @unique @map("invoice_number")
-  distributorId     String        @map("distributor_id")
-  customerId        String?       @map("customer_id")
-  orderId           String?       @unique @map("order_id")
-  issueDate         DateTime      @map("issue_date") @db.Date
-  dueDate           DateTime      @map("due_date") @db.Date
-  totalAmount       Decimal       @default(0) @map("total_amount") @db.Decimal(18, 4)
-  amountPaid        Decimal       @default(0) @map("amount_paid") @db.Decimal(18, 4)
-  outstandingAmount Decimal       @default(0) @map("outstanding_amount") @db.Decimal(18, 4)
-  status            InvoiceStatus @default(draft)
-  irnStatus         IrnStatus     @default(not_attempted) @map("irn_status")
-  ewbStatus         EwbStatus     @default(not_attempted) @map("ewb_status")
-  irn               String?
-  ackNo             String?       @map("ack_no")
-  ackDate           DateTime?     @map("ack_date")
-  cgstValue         Decimal       @default(0) @map("cgst_value") @db.Decimal(18, 4)
-  sgstValue         Decimal       @default(0) @map("sgst_value") @db.Decimal(18, 4)
-  igstValue         Decimal       @default(0) @map("igst_value") @db.Decimal(18, 4)
-  isGaslinkBilling  Boolean       @default(false) @map("is_gaslink_billing")
-  isOpeningBalance  Boolean       @default(false) @map("is_opening_balance")
+  id                    String        @id @default(uuid()) @map("invoice_id")
+  invoiceNumber         String        @unique @map("invoice_number")
+  distributorId         String        @map("distributor_id")
+  customerId            String?       @map("customer_id")
+  orderId               String?       @unique @map("order_id")
+  issueDate             DateTime      @map("issue_date") @db.Date
+  dueDate               DateTime      @map("due_date") @db.Date
+  totalAmount           Decimal       @default(0) @map("total_amount") @db.Decimal(18, 4)
+  amountPaid            Decimal       @default(0) @map("amount_paid") @db.Decimal(18, 4)
+  outstandingAmount     Decimal       @default(0) @map("outstanding_amount") @db.Decimal(18, 4)
+  status                InvoiceStatus @default(draft)
+  irnStatus             IrnStatus     @default(not_attempted) @map("irn_status")
+  ewbStatus             EwbStatus     @default(not_attempted) @map("ewb_status")
+  irn                   String?
+  ackNo                 String?       @map("ack_no")
+  ackDate               DateTime?     @map("ack_date")
+  cgstValue             Decimal       @default(0) @map("cgst_value") @db.Decimal(18, 4)
+  sgstValue             Decimal       @default(0) @map("sgst_value") @db.Decimal(18, 4)
+  igstValue             Decimal       @default(0) @map("igst_value") @db.Decimal(18, 4)
+  isGaslinkBilling      Boolean       @default(false) @map("is_gaslink_billing")
+  isOpeningBalance      Boolean       @default(false) @map("is_opening_balance")
   // WI-037: set when a post-delivery reissue (cancel + regenerate IRN/EWB
   // because delivered qty ≠ ordered qty) has been applied. Used by the
   // reissue audit + UI badges.
-  revisedPostDeliveryAt DateTime? @map("revised_post_delivery_at")
-  notes             String?
-  issuedBy          String?       @map("issued_by")
-  closedAt          DateTime?     @map("closed_at")
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
-  deletedAt         DateTime?     @map("deleted_at")
+  revisedPostDeliveryAt DateTime?     @map("revised_post_delivery_at")
+  notes                 String?
+  issuedBy              String?       @map("issued_by")
+  closedAt              DateTime?     @map("closed_at")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+  deletedAt             DateTime?     @map("deleted_at")
 
   // Relations
-  distributor      Distributor          @relation(fields: [distributorId], references: [id])
-  customer         Customer?            @relation(fields: [customerId], references: [id])
-  order            Order?               @relation(fields: [orderId], references: [id])
-  items            InvoiceItem[]
+  distributor        Distributor         @relation(fields: [distributorId], references: [id])
+  customer           Customer?           @relation(fields: [customerId], references: [id])
+  order              Order?              @relation(fields: [orderId], references: [id])
+  items              InvoiceItem[]
   paymentAllocations PaymentAllocation[]
-  creditNotes      CreditNote[]
-  debitNotes       DebitNote[]
-  gstDocuments     GstDocument[]
-  revisions        InvoiceRevision[]
+  creditNotes        CreditNote[]
+  debitNotes         DebitNote[]
+  gstDocuments       GstDocument[]
+  revisions          InvoiceRevision[]
 
   @@index([distributorId, status, dueDate])
   @@index([distributorId, customerId, createdAt(sort: Desc)])
@@ -985,19 +986,19 @@ model Invoice {
 /// snapshots are deliberately denormalised so the row stays meaningful
 /// even if the invoice is later mutated again.
 model InvoiceRevision {
-  id              String   @id @default(uuid()) @map("revision_id")
-  invoiceId       String   @map("invoice_id")
-  distributorId   String   @map("distributor_id")
-  revisionNumber  Int      @map("revision_number")
-  reason          String
-  originalTotal   Decimal  @map("original_total") @db.Decimal(18, 4)
-  revisedTotal    Decimal  @map("revised_total") @db.Decimal(18, 4)
-  originalItems   Json     @map("original_items")
-  revisedItems    Json     @map("revised_items")
-  revisedBy       String?  @map("revised_by")
-  revisedAt       DateTime @default(now()) @map("revised_at")
+  id             String   @id @default(uuid()) @map("revision_id")
+  invoiceId      String   @map("invoice_id")
+  distributorId  String   @map("distributor_id")
+  revisionNumber Int      @map("revision_number")
+  reason         String
+  originalTotal  Decimal  @map("original_total") @db.Decimal(18, 4)
+  revisedTotal   Decimal  @map("revised_total") @db.Decimal(18, 4)
+  originalItems  Json     @map("original_items")
+  revisedItems   Json     @map("revised_items")
+  revisedBy      String?  @map("revised_by")
+  revisedAt      DateTime @default(now()) @map("revised_at")
 
-  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
   @@index([distributorId])
@@ -1005,16 +1006,16 @@ model InvoiceRevision {
 }
 
 model InvoiceItem {
-  id             String  @id @default(uuid()) @map("invoice_item_id")
-  invoiceId      String  @map("invoice_id")
-  cylinderTypeId String? @map("cylinder_type_id")
-  description    String
-  hsnCode        String  @default("27111900") @map("hsn_code")
-  quantity       Int
-  unitPrice      Decimal @map("unit_price") @db.Decimal(18, 4)
+  id              String  @id @default(uuid()) @map("invoice_item_id")
+  invoiceId       String  @map("invoice_id")
+  cylinderTypeId  String? @map("cylinder_type_id")
+  description     String
+  hsnCode         String  @default("27111900") @map("hsn_code")
+  quantity        Int
+  unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
   discountPerUnit Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
-  gstRate        Float   @default(18) @map("gst_rate")
-  totalPrice     Decimal @map("total_price") @db.Decimal(18, 4)
+  gstRate         Float   @default(18) @map("gst_rate")
+  totalPrice      Decimal @map("total_price") @db.Decimal(18, 4)
 
   invoice      Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id])
@@ -1023,21 +1024,21 @@ model InvoiceItem {
 }
 
 model CreditNote {
-  id          String           @id @default(uuid()) @map("credit_note_id")
-  invoiceId   String           @map("invoice_id")
-  creditNoteNumber String?     @unique @map("credit_note_number")
-  totalAmount Decimal          @map("total_amount") @db.Decimal(18, 4)
-  reason      String
+  id               String           @id @default(uuid()) @map("credit_note_id")
+  invoiceId        String           @map("invoice_id")
+  creditNoteNumber String?          @unique @map("credit_note_number")
+  totalAmount      Decimal          @map("total_amount") @db.Decimal(18, 4)
+  reason           String
   // WI-055: free-text customer-visible explanation. Optional, separate
   // from `reason` which stays a single-line summary used in audit logs.
-  note        String?
-  status      CreditNoteStatus @default(pending_cn)
-  issueDate   DateTime?        @map("issue_date") @db.Date
-  issuedBy    String?          @map("issued_by")
-  approvedBy  String?          @map("approved_by")
-  approvedAt  DateTime?        @map("approved_at")
-  createdAt   DateTime         @default(now()) @map("created_at")
-  updatedAt   DateTime         @updatedAt @map("updated_at")
+  note             String?
+  status           CreditNoteStatus @default(pending_cn)
+  issueDate        DateTime?        @map("issue_date") @db.Date
+  issuedBy         String?          @map("issued_by")
+  approvedBy       String?          @map("approved_by")
+  approvedAt       DateTime?        @map("approved_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
   invoice Invoice @relation(fields: [invoiceId], references: [id])
 
@@ -1045,20 +1046,20 @@ model CreditNote {
 }
 
 model DebitNote {
-  id             String          @id @default(uuid()) @map("debit_note_id")
-  invoiceId      String          @map("invoice_id")
-  debitNoteNumber String?        @unique @map("debit_note_number")
-  totalAmount    Decimal         @map("total_amount") @db.Decimal(18, 4)
-  reason         String
+  id              String          @id @default(uuid()) @map("debit_note_id")
+  invoiceId       String          @map("invoice_id")
+  debitNoteNumber String?         @unique @map("debit_note_number")
+  totalAmount     Decimal         @map("total_amount") @db.Decimal(18, 4)
+  reason          String
   // WI-055: same as CreditNote.note above.
-  note           String?
-  status         DebitNoteStatus @default(pending_dn)
-  issueDate      DateTime?       @map("issue_date") @db.Date
-  issuedBy       String?         @map("issued_by")
-  approvedBy     String?         @map("approved_by")
-  approvedAt     DateTime?       @map("approved_at")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
+  note            String?
+  status          DebitNoteStatus @default(pending_dn)
+  issueDate       DateTime?       @map("issue_date") @db.Date
+  issuedBy        String?         @map("issued_by")
+  approvedBy      String?         @map("approved_by")
+  approvedAt      DateTime?       @map("approved_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
 
   invoice Invoice @relation(fields: [invoiceId], references: [id])
 
@@ -1068,22 +1069,22 @@ model DebitNote {
 // ─── Payments ────────────────────────────────────────────────────────────────
 
 model PaymentTransaction {
-  id              String               @id @default(uuid()) @map("payment_id")
-  distributorId   String               @map("distributor_id")
-  customerId      String               @map("customer_id")
-  amount          Decimal              @db.Decimal(18, 4)
-  paymentMethod   PaymentMethod        @map("payment_method")
-  referenceNumber String?              @map("reference_number")
-  transactionDate DateTime             @map("transaction_date") @db.Date
+  id               String                  @id @default(uuid()) @map("payment_id")
+  distributorId    String                  @map("distributor_id")
+  customerId       String                  @map("customer_id")
+  amount           Decimal                 @db.Decimal(18, 4)
+  paymentMethod    PaymentMethod           @map("payment_method")
+  referenceNumber  String?                 @map("reference_number")
+  transactionDate  DateTime                @map("transaction_date") @db.Date
   allocationStatus PaymentAllocationStatus @default(unallocated) @map("allocation_status")
-  receivedBy      String?              @map("received_by")
-  notes           String?
-  createdAt       DateTime             @default(now()) @map("created_at")
-  updatedAt       DateTime             @updatedAt @map("updated_at")
-  deletedAt       DateTime?            @map("deleted_at")
+  receivedBy       String?                 @map("received_by")
+  notes            String?
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+  deletedAt        DateTime?               @map("deleted_at")
 
-  distributor Distributor       @relation(fields: [distributorId], references: [id])
-  customer    Customer          @relation(fields: [customerId], references: [id])
+  distributor Distributor         @relation(fields: [distributorId], references: [id])
+  customer    Customer            @relation(fields: [customerId], references: [id])
   allocations PaymentAllocation[]
 
   @@index([distributorId, customerId, createdAt(sort: Desc)])
@@ -1107,29 +1108,29 @@ model PaymentAllocation {
 // ─── Inventory (Event-Sourced) ───────────────────────────────────────────────
 
 model InventoryEvent {
-  id             String             @id @default(uuid()) @map("event_id")
-  distributorId  String             @map("distributor_id")
-  cylinderTypeId String             @map("cylinder_type_id")
-  eventType      InventoryEventType @map("event_type")
-  fullsChange    Int                @default(0) @map("fulls_change")
-  emptiesChange  Int                @default(0) @map("empties_change")
-  eventDate      DateTime           @map("event_date") @db.Date
-  referenceId    String?            @map("reference_id")
-  referenceType  String?            @map("reference_type")
-  documentType   String?            @map("document_type")
-  documentNumber String?            @map("document_number")
-  documentDate   DateTime?          @map("document_date") @db.Date
-  vehicleNumber  String?            @map("vehicle_number")
-  driverName     String?            @map("driver_name")
+  id               String             @id @default(uuid()) @map("event_id")
+  distributorId    String             @map("distributor_id")
+  cylinderTypeId   String             @map("cylinder_type_id")
+  eventType        InventoryEventType @map("event_type")
+  fullsChange      Int                @default(0) @map("fulls_change")
+  emptiesChange    Int                @default(0) @map("empties_change")
+  eventDate        DateTime           @map("event_date") @db.Date
+  referenceId      String?            @map("reference_id")
+  referenceType    String?            @map("reference_type")
+  documentType     String?            @map("document_type")
+  documentNumber   String?            @map("document_number")
+  documentDate     DateTime?          @map("document_date") @db.Date
+  vehicleNumber    String?            @map("vehicle_number")
+  driverName       String?            @map("driver_name")
   // WI-1.4 — additional metadata captured by the Incoming Fulls /
   // Outgoing Empties modals. All nullable so existing rows + non-using
   // event types stay untouched.
-  amount             Decimal? @map("amount") @db.Decimal(12, 2)
-  condition          String?  @map("condition") // 'good' | 'defective' (outgoing-empties only)
-  authorizationRef   String?  @map("authorization_ref")
-  notes          String?
-  createdBy      String             @map("created_by")
-  createdAt      DateTime           @default(now()) @map("created_at")
+  amount           Decimal?           @map("amount") @db.Decimal(12, 2)
+  condition        String?            @map("condition") // 'good' | 'defective' (outgoing-empties only)
+  authorizationRef String?            @map("authorization_ref")
+  notes            String?
+  createdBy        String             @map("created_by")
+  createdAt        DateTime           @default(now()) @map("created_at")
 
   distributor  Distributor  @relation(fields: [distributorId], references: [id])
   cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
@@ -1141,27 +1142,27 @@ model InventoryEvent {
 }
 
 model InventorySummary {
-  id              String   @id @default(uuid()) @map("summary_id")
-  distributorId   String   @map("distributor_id")
-  cylinderTypeId  String   @map("cylinder_type_id")
-  summaryDate     DateTime @map("summary_date") @db.Date
-  openingFulls    Int      @default(0) @map("opening_fulls")
-  openingEmpties  Int      @default(0) @map("opening_empties")
-  incomingFulls   Int      @default(0) @map("incoming_fulls")
-  outgoingEmpties Int      @default(0) @map("outgoing_empties")
-  deliveredQty    Int      @default(0) @map("delivered_qty")
-  dispatchedQty   Int      @default(0) @map("dispatched_qty")
-  collectedEmpties Int     @default(0) @map("collected_empties")
-  emptiesReturnedVerified Int @default(0) @map("empties_returned_verified")
-  cancelledStockQty Int    @default(0) @map("cancelled_stock_qty")
-  manualAdjustment Int     @default(0) @map("manual_adjustment")
-  closingFulls    Int      @default(0) @map("closing_fulls")
-  closingEmpties  Int      @default(0) @map("closing_empties")
-  isLocked        Boolean  @default(false) @map("is_locked")
-  lockedAt        DateTime? @map("locked_at")
-  lockedBy        String?   @map("locked_by")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id                      String    @id @default(uuid()) @map("summary_id")
+  distributorId           String    @map("distributor_id")
+  cylinderTypeId          String    @map("cylinder_type_id")
+  summaryDate             DateTime  @map("summary_date") @db.Date
+  openingFulls            Int       @default(0) @map("opening_fulls")
+  openingEmpties          Int       @default(0) @map("opening_empties")
+  incomingFulls           Int       @default(0) @map("incoming_fulls")
+  outgoingEmpties         Int       @default(0) @map("outgoing_empties")
+  deliveredQty            Int       @default(0) @map("delivered_qty")
+  dispatchedQty           Int       @default(0) @map("dispatched_qty")
+  collectedEmpties        Int       @default(0) @map("collected_empties")
+  emptiesReturnedVerified Int       @default(0) @map("empties_returned_verified")
+  cancelledStockQty       Int       @default(0) @map("cancelled_stock_qty")
+  manualAdjustment        Int       @default(0) @map("manual_adjustment")
+  closingFulls            Int       @default(0) @map("closing_fulls")
+  closingEmpties          Int       @default(0) @map("closing_empties")
+  isLocked                Boolean   @default(false) @map("is_locked")
+  lockedAt                DateTime? @map("locked_at")
+  lockedBy                String?   @map("locked_by")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
 
   distributor  Distributor  @relation(fields: [distributorId], references: [id])
   cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
@@ -1203,33 +1204,44 @@ model CancelledStockEvent {
 // ─── GST Documents ───────────────────────────────────────────────────────────
 
 model GstDocument {
-  id              String     @id @default(uuid()) @map("gst_document_id")
-  invoiceId       String?    @map("invoice_id")
-  orderId         String?    @map("order_id")
-  distributorId   String     @map("distributor_id")
-  gstDocNo        String?    @map("gst_doc_no")
-  docType         GstDocType @map("doc_type")
-  irnStatus       IrnStatus  @default(not_attempted) @map("irn_status")
-  ewbStatus       EwbStatus  @default(not_attempted) @map("ewb_status")
-  irn             String?
-  ackNo           String?    @map("ack_no")
-  ackDate         DateTime?  @map("ack_date")
-  signedQr        String?    @map("signed_qr")
-  ewbNo           String?    @map("ewb_no")
-  ewbDate         DateTime?  @map("ewb_date")
-  ewbValidTill    DateTime?  @map("ewb_valid_till")
-  requestPayload  Json?      @map("request_payload")
-  responsePayload Json?      @map("response_payload")
-  errorCode       String?    @map("error_code")
-  errorMessage    String?    @map("error_message")
-  isLatest        Boolean    @default(true) @map("is_latest")
-  cancelledAt     DateTime?  @map("cancelled_at")
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
-  deletedAt       DateTime?  @map("deleted_at")
+  id                String     @id @default(uuid()) @map("gst_document_id")
+  invoiceId         String?    @map("invoice_id")
+  orderId           String?    @map("order_id")
+  distributorId     String     @map("distributor_id")
+  gstDocNo          String?    @map("gst_doc_no")
+  docType           GstDocType @map("doc_type")
+  irnStatus         IrnStatus  @default(not_attempted) @map("irn_status")
+  ewbStatus         EwbStatus  @default(not_attempted) @map("ewb_status")
+  irn               String?
+  ackNo             String?    @map("ack_no")
+  ackDate           DateTime?  @map("ack_date")
+  signedQr          String?    @map("signed_qr")
+  ewbNo             String?    @map("ewb_no")
+  ewbDate           DateTime?  @map("ewb_date")
+  ewbValidTill      DateTime?  @map("ewb_valid_till")
+  requestPayload    Json?      @map("request_payload")
+  responsePayload   Json?      @map("response_payload")
+  errorCode         String?    @map("error_code")
+  errorMessage      String?    @map("error_message")
+  isLatest          Boolean    @default(true) @map("is_latest")
+  cancelledAt       DateTime?  @map("cancelled_at")
+  /// GROUP-7S: persisted cancellation context. NIC's CANCEL APIs accept
+  /// CnlRsn (code '1'-'4': Duplicate / Data Entry Mistake / Order
+  /// Cancelled / Others) + CnlRem (free text ≤100). The free text was
+  /// previously sent to NIC but never stored — only buried in gst_api_logs.
+  /// `cancelReason` keeps the operator's note queryable from the domain
+  /// row; `cancelReasonCode` keeps NIC's structured code for GSTR audit.
+  /// `cancelledByUserId` ties the action back to the user who clicked.
+  cancelReason      String?    @map("cancel_reason")
+  cancelReasonCode  String?    @map("cancel_reason_code")
+  cancelledByUserId String?    @map("cancelled_by_user_id")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+  deletedAt         DateTime?  @map("deleted_at")
 
-  invoice Invoice? @relation(fields: [invoiceId], references: [id])
-  order   Order?   @relation(fields: [orderId], references: [id])
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id])
+  order       Order?   @relation(fields: [orderId], references: [id])
+  cancelledBy User?    @relation("CancelledGstDocuments", fields: [cancelledByUserId], references: [id])
 
   @@index([invoiceId, isLatest])
   @@index([distributorId])
@@ -1238,21 +1250,21 @@ model GstDocument {
 }
 
 model GstCredential {
-  id             String   @id @default(uuid()) @map("credential_id")
-  distributorId  String?  @map("distributor_id")
-  scope          String   @default("einvoice") // 'einvoice' or 'ewaybill'
-  clientId       String   @map("client_id")
-  clientSecret   String   @map("client_secret")
+  id             String    @id @default(uuid()) @map("credential_id")
+  distributorId  String?   @map("distributor_id")
+  scope          String    @default("einvoice") // 'einvoice' or 'ewaybill'
+  clientId       String    @map("client_id")
+  clientSecret   String    @map("client_secret")
   username       String
-  password       String   @default("")
+  password       String    @default("")
   gstin          String
   email          String?
-  isValid        Boolean  @default(false) @map("is_valid")
+  isValid        Boolean   @default(false) @map("is_valid")
   lastValidated  DateTime? @map("last_validated")
   tokenCache     String?   @map("token_cache")
   tokenExpiresAt DateTime? @map("token_expires_at")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   distributor Distributor? @relation(fields: [distributorId], references: [id])
 
@@ -1263,21 +1275,21 @@ model GstCredential {
 // ─── GasLink SaaS Billing ────────────────────────────────────────────────────
 
 model BillingCycle {
-  id                  String            @id @default(uuid()) @map("cycle_id")
-  distributorId       String            @map("distributor_id")
-  periodType          BillingPeriodType @map("period_type")
-  periodStartDate     DateTime          @map("period_start_date") @db.Date
-  periodEndDate       DateTime          @map("period_end_date") @db.Date
-  billingStatus       BillingStatus     @default(pending_generation) @map("billing_status")
-  billingTier         BillingTier       @map("billing_tier")
-  totalAmountExclGst  Decimal           @default(0) @map("total_amount_excl_gst") @db.Decimal(18, 4)
-  totalGstAmount      Decimal           @default(0) @map("total_gst_amount") @db.Decimal(18, 4)
-  totalAmountInclGst  Decimal           @default(0) @map("total_amount_incl_gst") @db.Decimal(18, 4)
-  invoiceId           String?           @map("invoice_id")
-  dueDate             DateTime?         @map("due_date") @db.Date
-  suspendDate         DateTime?         @map("suspend_date") @db.Date
-  createdAt           DateTime          @default(now()) @map("created_at")
-  updatedAt           DateTime          @updatedAt @map("updated_at")
+  id                 String            @id @default(uuid()) @map("cycle_id")
+  distributorId      String            @map("distributor_id")
+  periodType         BillingPeriodType @map("period_type")
+  periodStartDate    DateTime          @map("period_start_date") @db.Date
+  periodEndDate      DateTime          @map("period_end_date") @db.Date
+  billingStatus      BillingStatus     @default(pending_generation) @map("billing_status")
+  billingTier        BillingTier       @map("billing_tier")
+  totalAmountExclGst Decimal           @default(0) @map("total_amount_excl_gst") @db.Decimal(18, 4)
+  totalGstAmount     Decimal           @default(0) @map("total_gst_amount") @db.Decimal(18, 4)
+  totalAmountInclGst Decimal           @default(0) @map("total_amount_incl_gst") @db.Decimal(18, 4)
+  invoiceId          String?           @map("invoice_id")
+  dueDate            DateTime?         @map("due_date") @db.Date
+  suspendDate        DateTime?         @map("suspend_date") @db.Date
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
 
   distributor Distributor   @relation(fields: [distributorId], references: [id])
   items       BillingItem[]
@@ -1288,22 +1300,22 @@ model BillingCycle {
 }
 
 model BillingItem {
-  id                String          @id @default(uuid()) @map("item_id")
-  billingCycleId    String          @map("billing_cycle_id")
-  itemType          BillingItemType @map("item_type")
-  description       String
-  hsnCode           String          @default("998314") @map("hsn_code")
-  uom               String          @default("NOS")
-  quantity           Int
-  unitPriceExclGst  Decimal         @map("unit_price_excl_gst") @db.Decimal(18, 4)
-  gstRate           Float           @default(18) @map("gst_rate")
-  discountAmount    Decimal         @default(0) @map("discount_amount") @db.Decimal(18, 4)
-  lineTotalExclGst  Decimal         @map("line_total_excl_gst") @db.Decimal(18, 4)
-  lineGstAmount     Decimal         @map("line_gst_amount") @db.Decimal(18, 4)
-  lineTotalInclGst  Decimal         @map("line_total_incl_gst") @db.Decimal(18, 4)
-  metadata          Json?
-  createdAt         DateTime        @default(now()) @map("created_at")
-  updatedAt         DateTime        @updatedAt @map("updated_at")
+  id               String          @id @default(uuid()) @map("item_id")
+  billingCycleId   String          @map("billing_cycle_id")
+  itemType         BillingItemType @map("item_type")
+  description      String
+  hsnCode          String          @default("998314") @map("hsn_code")
+  uom              String          @default("NOS")
+  quantity         Int
+  unitPriceExclGst Decimal         @map("unit_price_excl_gst") @db.Decimal(18, 4)
+  gstRate          Float           @default(18) @map("gst_rate")
+  discountAmount   Decimal         @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  lineTotalExclGst Decimal         @map("line_total_excl_gst") @db.Decimal(18, 4)
+  lineGstAmount    Decimal         @map("line_gst_amount") @db.Decimal(18, 4)
+  lineTotalInclGst Decimal         @map("line_total_incl_gst") @db.Decimal(18, 4)
+  metadata         Json?
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
 
   billingCycle BillingCycle @relation(fields: [billingCycleId], references: [id], onDelete: Cascade)
 
@@ -1313,26 +1325,26 @@ model BillingItem {
 // ─── Pricing Configuration ──────────────────────────────────────────────────
 
 model PricingTier {
-  id                  String           @id @default(uuid()) @map("tier_id")
-  plan                SubscriptionPlan
-  volumeMin           Int              @map("volume_min")
-  volumeMax           Int?             @map("volume_max")
-  monthlyPrice        Decimal          @map("monthly_price") @db.Decimal(18, 4)
-  quarterlyDiscount   Float            @default(5) @map("quarterly_discount")
-  halfYearlyDiscount  Float            @default(10) @map("half_yearly_discount")
-  yearlyDiscount      Float            @default(15) @map("yearly_discount")
-  adminSeats          Int              @default(1) @map("admin_seats")
-  financeSeats        Int              @default(1) @map("finance_seats")
-  inventorySeats      Int              @default(1) @map("inventory_seats")
-  driverSeats         Int              @default(5) @map("driver_seats")
-  gstApiCallsIncluded Int              @default(1500) @map("gst_api_calls_included")
-  extraSeatPriceAdmin Decimal          @default(299) @map("extra_seat_price_admin") @db.Decimal(18, 4)
-  extraSeatPriceDriver Decimal         @default(99) @map("extra_seat_price_driver") @db.Decimal(18, 4)
-  customerPortalPrice Decimal          @default(49) @map("customer_portal_price") @db.Decimal(18, 4)
-  gstApiOveragePrice  Decimal          @default(2) @map("gst_api_overage_price") @db.Decimal(18, 4)
-  isActive            Boolean          @default(true) @map("is_active")
-  createdAt           DateTime         @default(now()) @map("created_at")
-  updatedAt           DateTime         @updatedAt @map("updated_at")
+  id                   String           @id @default(uuid()) @map("tier_id")
+  plan                 SubscriptionPlan
+  volumeMin            Int              @map("volume_min")
+  volumeMax            Int?             @map("volume_max")
+  monthlyPrice         Decimal          @map("monthly_price") @db.Decimal(18, 4)
+  quarterlyDiscount    Float            @default(5) @map("quarterly_discount")
+  halfYearlyDiscount   Float            @default(10) @map("half_yearly_discount")
+  yearlyDiscount       Float            @default(15) @map("yearly_discount")
+  adminSeats           Int              @default(1) @map("admin_seats")
+  financeSeats         Int              @default(1) @map("finance_seats")
+  inventorySeats       Int              @default(1) @map("inventory_seats")
+  driverSeats          Int              @default(5) @map("driver_seats")
+  gstApiCallsIncluded  Int              @default(1500) @map("gst_api_calls_included")
+  extraSeatPriceAdmin  Decimal          @default(299) @map("extra_seat_price_admin") @db.Decimal(18, 4)
+  extraSeatPriceDriver Decimal          @default(99) @map("extra_seat_price_driver") @db.Decimal(18, 4)
+  customerPortalPrice  Decimal          @default(49) @map("customer_portal_price") @db.Decimal(18, 4)
+  gstApiOveragePrice   Decimal          @default(2) @map("gst_api_overage_price") @db.Decimal(18, 4)
+  isActive             Boolean          @default(true) @map("is_active")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
 
   @@unique([plan])
   @@map("pricing_tiers")
@@ -1341,16 +1353,16 @@ model PricingTier {
 // ─── GST API Usage Tracking ─────────────────────────────────────────────────
 
 model GstApiUsage {
-  id              String   @id @default(uuid()) @map("usage_id")
-  distributorId   String   @map("distributor_id")
-  month           Int
-  year            Int
-  irnCallCount    Int      @default(0) @map("irn_call_count")
-  ewbCallCount    Int      @default(0) @map("ewb_call_count")
-  totalCalls      Int      @default(0) @map("total_calls")
-  allocatedCalls  Int      @default(0) @map("allocated_calls")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id             String   @id @default(uuid()) @map("usage_id")
+  distributorId  String   @map("distributor_id")
+  month          Int
+  year           Int
+  irnCallCount   Int      @default(0) @map("irn_call_count")
+  ewbCallCount   Int      @default(0) @map("ewb_call_count")
+  totalCalls     Int      @default(0) @map("total_calls")
+  allocatedCalls Int      @default(0) @map("allocated_calls")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   distributor Distributor @relation(fields: [distributorId], references: [id])
 
@@ -1370,10 +1382,10 @@ model GstApiLog {
   invoiceId       String?  @map("invoice_id")
   orderId         String?  @map("order_id")
   apiType         String   @map("api_type") // IRN_GENERATE / EWB_GENERATE_INLINE / EWB_GENERATE_BY_IRN / EWB_GENERATE_STANDALONE / IRN_CANCEL / EWB_CANCEL / GSTIN_LOOKUP / EWB_RECOVER ...
-  scope           String   // 'einvoice' | 'ewaybill'
+  scope           String // 'einvoice' | 'ewaybill'
   endpoint        String
   httpStatus      Int?     @map("http_status")
-  status          String   // 'success' | 'failed'
+  status          String // 'success' | 'failed'
   errorCode       String?  @map("error_code")
   errorMessage    String?  @map("error_message")
   requestPayload  Json     @map("request_payload")
@@ -1390,17 +1402,17 @@ model GstApiLog {
 // ─── Seat Overage Requests ──────────────────────────────────────────────────
 
 model SeatRequest {
-  id              String            @id @default(uuid()) @map("request_id")
-  distributorId   String            @map("distributor_id")
-  requestedRole   String            @map("requested_role")
-  requestedBy     String            @map("requested_by")
-  reason          String?
-  status          SeatRequestStatus @default(pending_seat)
-  approvedBy      String?           @map("approved_by")
-  approvedAt      DateTime?         @map("approved_at")
-  pricePerMonth   Decimal?          @map("price_per_month") @db.Decimal(18, 4)
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
+  id            String            @id @default(uuid()) @map("request_id")
+  distributorId String            @map("distributor_id")
+  requestedRole String            @map("requested_role")
+  requestedBy   String            @map("requested_by")
+  reason        String?
+  status        SeatRequestStatus @default(pending_seat)
+  approvedBy    String?           @map("approved_by")
+  approvedAt    DateTime?         @map("approved_at")
+  pricePerMonth Decimal?          @map("price_per_month") @db.Decimal(18, 4)
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
 
   distributor Distributor @relation(fields: [distributorId], references: [id])
 
@@ -1410,29 +1422,29 @@ model SeatRequest {
 // ─── Pending Actions ─────────────────────────────────────────────────────────
 
 model PendingAction {
-  id               String               @id @default(uuid()) @map("action_id")
-  distributorId    String               @map("distributor_id")
+  id               String                @id @default(uuid()) @map("action_id")
+  distributorId    String                @map("distributor_id")
   module           PendingActionModule
-  entityType       String               @map("entity_type")
-  entityId         String               @map("entity_id")
-  actionType       String               @map("action_type")
+  entityType       String                @map("entity_type")
+  entityId         String                @map("entity_id")
+  actionType       String                @map("action_type")
   description      String
-  status           PendingActionStatus  @default(open)
+  status           PendingActionStatus   @default(open)
   severity         PendingActionSeverity @default(medium)
-  requiresApproval Boolean              @default(false) @map("requires_approval")
-  approvedBy       String?              @map("approved_by")
-  approvedAt       DateTime?            @map("approved_at")
-  resolvedBy       String?              @map("resolved_by")
-  resolvedAt       DateTime?            @map("resolved_at")
-  resolutionNotes  String?              @map("resolution_notes")
-  errorCode        String?              @map("error_code")
-  errorMessage     String?              @map("error_message")
-  errorContext     Json?                @map("error_context")
-  retryCount       Int                  @default(0) @map("retry_count")
-  nextRetryAt      DateTime?            @map("next_retry_at")
-  slaDeadline      DateTime?            @map("sla_deadline")
-  createdAt        DateTime             @default(now()) @map("created_at")
-  updatedAt        DateTime             @updatedAt @map("updated_at")
+  requiresApproval Boolean               @default(false) @map("requires_approval")
+  approvedBy       String?               @map("approved_by")
+  approvedAt       DateTime?             @map("approved_at")
+  resolvedBy       String?               @map("resolved_by")
+  resolvedAt       DateTime?             @map("resolved_at")
+  resolutionNotes  String?               @map("resolution_notes")
+  errorCode        String?               @map("error_code")
+  errorMessage     String?               @map("error_message")
+  errorContext     Json?                 @map("error_context")
+  retryCount       Int                   @default(0) @map("retry_count")
+  nextRetryAt      DateTime?             @map("next_retry_at")
+  slaDeadline      DateTime?             @map("sla_deadline")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
 
   distributor Distributor @relation(fields: [distributorId], references: [id])
 
@@ -1475,22 +1487,22 @@ model PaymentCommitment {
 // ─── Accountability ──────────────────────────────────────────────────────────
 
 model AccountabilityLog {
-  id               String               @id @default(uuid()) @map("log_id")
-  distributorId    String               @map("distributor_id")
-  driverId         String?              @map("driver_id")
-  customerId       String?              @map("customer_id")
-  cylinderTypeId   String?              @map("cylinder_type_id")
-  incidentType     AccountabilityType   @map("incident_type")
-  incidentDate     DateTime             @map("incident_date") @db.Date
-  quantity         Int
-  costAmount       Decimal              @default(0) @map("cost_amount") @db.Decimal(18, 4)
-  description      String
-  status           AccountabilityStatus @default(open_accountability)
-  resolvedBy       String?              @map("resolved_by")
-  resolvedAt       DateTime?            @map("resolved_at")
-  resolutionNotes  String?              @map("resolution_notes")
-  createdAt        DateTime             @default(now()) @map("created_at")
-  updatedAt        DateTime             @updatedAt @map("updated_at")
+  id              String               @id @default(uuid()) @map("log_id")
+  distributorId   String               @map("distributor_id")
+  driverId        String?              @map("driver_id")
+  customerId      String?              @map("customer_id")
+  cylinderTypeId  String?              @map("cylinder_type_id")
+  incidentType    AccountabilityType   @map("incident_type")
+  incidentDate    DateTime             @map("incident_date") @db.Date
+  quantity        Int
+  costAmount      Decimal              @default(0) @map("cost_amount") @db.Decimal(18, 4)
+  description     String
+  status          AccountabilityStatus @default(open_accountability)
+  resolvedBy      String?              @map("resolved_by")
+  resolvedAt      DateTime?            @map("resolved_at")
+  resolutionNotes String?              @map("resolution_notes")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
 
   distributor  Distributor   @relation(fields: [distributorId], references: [id])
   driver       Driver?       @relation(fields: [driverId], references: [id])
@@ -1602,9 +1614,9 @@ model HsnCode {
 model ProviderCatalogCylinderType {
   id           String   @id @default(uuid())
   providerCode String   @map("provider_code") // IOCL, HPCL, BPCL, GOGAS, SUPERGAS, TOTALGAS, OTHERS
-  shortName    String   @map("short_name")    // e.g. "19 KG"
-  longName     String   @map("long_name")     // e.g. "HPCL 19 KG Domestic Cylinder"
-  weight       Float                          // capacity in KG
+  shortName    String   @map("short_name") // e.g. "19 KG"
+  longName     String   @map("long_name") // e.g. "HPCL 19 KG Domestic Cylinder"
+  weight       Float // capacity in KG
   hsnCode      String   @default("27111900") @map("hsn_code")
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
@@ -1645,28 +1657,28 @@ enum MismatchStatus {
 }
 
 model StockMismatchRecord {
-  id                String                    @id @default(uuid()) @map("mismatch_id")
-  reportId          String                    @map("report_id")
-  distributorId     String                    @map("distributor_id")
-  vehicleId         String                    @map("vehicle_id")
-  vehicleNumber     String                    @map("vehicle_number")
-  driverId          String?                   @map("driver_id")
-  customerId        String?                   @map("customer_id")
-  tripDate          DateTime                  @map("trip_date") @db.Date
-  mismatchType      MismatchType              @map("mismatch_type")
-  cylinderTypeId    String                    @map("cylinder_type_id")
-  qtyUnaccounted    Int                       @map("qty_unaccounted")
-  unitAmount        Decimal                   @map("unit_amount")        @db.Decimal(12, 2)
-  totalAmount       Decimal                   @map("total_amount")       @db.Decimal(14, 2)
-  accountableParty  AccountableParty          @map("accountable_party")
-  resolutionAction  MismatchResolutionAction  @map("resolution_action")
-  resolutionNotes   String                    @map("resolution_notes")
-  status            MismatchStatus            @default(open)
-  resolvedAt        DateTime?                 @map("resolved_at")
-  resolvedBy        String?                   @map("resolved_by")
-  createdBy         String                    @map("created_by")
-  createdAt         DateTime                  @default(now())            @map("created_at")
-  updatedAt         DateTime                  @updatedAt                 @map("updated_at")
+  id               String                   @id @default(uuid()) @map("mismatch_id")
+  reportId         String                   @map("report_id")
+  distributorId    String                   @map("distributor_id")
+  vehicleId        String                   @map("vehicle_id")
+  vehicleNumber    String                   @map("vehicle_number")
+  driverId         String?                  @map("driver_id")
+  customerId       String?                  @map("customer_id")
+  tripDate         DateTime                 @map("trip_date") @db.Date
+  mismatchType     MismatchType             @map("mismatch_type")
+  cylinderTypeId   String                   @map("cylinder_type_id")
+  qtyUnaccounted   Int                      @map("qty_unaccounted")
+  unitAmount       Decimal                  @map("unit_amount") @db.Decimal(12, 2)
+  totalAmount      Decimal                  @map("total_amount") @db.Decimal(14, 2)
+  accountableParty AccountableParty         @map("accountable_party")
+  resolutionAction MismatchResolutionAction @map("resolution_action")
+  resolutionNotes  String                   @map("resolution_notes")
+  status           MismatchStatus           @default(open)
+  resolvedAt       DateTime?                @map("resolved_at")
+  resolvedBy       String?                  @map("resolved_by")
+  createdBy        String                   @map("created_by")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  updatedAt        DateTime                 @updatedAt @map("updated_at")
 
   distributor  Distributor  @relation(fields: [distributorId], references: [id])
   vehicle      Vehicle      @relation(fields: [vehicleId], references: [id])

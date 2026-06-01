@@ -46,6 +46,7 @@ import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
 import { useAuthStore, selectDistributorId, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { CancelGstModal } from '@/components/CancelGstModal';
 import { cn } from '@/lib/cn';
 
 // ─── Shared constants ────────────────────────────────────────────────────────
@@ -1142,52 +1143,9 @@ function RejectNoteModal({
   );
 }
 
-// ─── Cancel GST Modal (IRN / EWB) ──────────────────────────────────────────
-
-function CancelGstModal({ open, onClose, invoice, type }: { open: boolean; onClose: () => void; invoice: Invoice; type: 'irn' | 'ewb' }) {
-  const queryClient = useQueryClient();
-  const [reason, setReason] = useState('');
-
-  const mutation = useMutation({
-    mutationFn: (data: { reason: string }) =>
-      apiPost(`/invoices/${invoice.invoiceId}/cancel-${type}`, data),
-    onSuccess: () => {
-      toast.success(type === 'irn' ? 'IRN cancelled successfully' : 'E-Way Bill cancelled successfully');
-      queryClient.invalidateQueries({ queryKey: ['invoices'] });
-      onClose();
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!reason.trim()) { toast.error('Please enter a reason'); return; }
-    mutation.mutate({ reason: reason.trim() });
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title={`Cancel ${type === 'irn' ? 'IRN' : 'E-Way Bill'} for ${invoice.invoiceNumber}`}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <p className="text-sm text-surface-500 dark:text-surface-400">
-          This action will cancel the {type === 'irn' ? 'Invoice Registration Number (IRN)' : 'E-Way Bill'} on the GST portal. This cannot be undone.
-        </p>
-        <Input
-          label="Reason for cancellation"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Enter reason (required)"
-          required
-        />
-        <div className="flex justify-end gap-3 pt-4">
-          <Button type="button" variant="secondary" onClick={onClose}>Go Back</Button>
-          <Button type="submit" variant="danger" loading={mutation.isPending}>
-            Cancel {type === 'irn' ? 'IRN' : 'EWB'}
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
+// GROUP-7S: the inline CancelGstModal lived here and in InvoicesPage. The
+// duplicates were extracted to packages/web/src/components/CancelGstModal.tsx
+// which also adds the NIC reason-code dropdown required by the server.
 
 // ─── Credit Note Modal ──────────────────────────────────────────────────────
 

@@ -155,7 +155,7 @@ export async function reissueForDeliveryMismatch(args: {
   if (totalDelivered === 0) {
     if (invoice.ewbStatus === 'active') {
       try {
-        await cancelEwb(invoiceId, distributorId, 'Zero-quantity delivery — voiding invoice');
+        await cancelEwb(invoiceId, distributorId, 'Zero-quantity delivery — voiding invoice', '4');
         logger.info('Zero-delivery void: EWB cancelled', { invoiceId });
       } catch (err: unknown) {
         const message = errInfo(err).message;
@@ -169,7 +169,7 @@ export async function reissueForDeliveryMismatch(args: {
     }
     if (isB2B && invoice.irnStatus === 'success' && invoice.irn) {
       try {
-        await cancelIrn(invoiceId, distributorId, 'Zero-quantity delivery — voiding invoice');
+        await cancelIrn(invoiceId, distributorId, 'Zero-quantity delivery — voiding invoice', '4');
         logger.info('Zero-delivery void: IRN cancelled', { invoiceId, irn: invoice.irn });
       } catch (err: unknown) {
         // NIC may return 5002 — non-fatal. cancelIrn left irnStatus as 'success';
@@ -205,7 +205,7 @@ export async function reissueForDeliveryMismatch(args: {
   const hasActiveEwb = invoice.ewbStatus === 'active';
   if (hasActiveEwb) {
     try {
-      await cancelEwb(invoiceId, distributorId, 'Delivery quantity mismatch — reissuing invoice');
+      await cancelEwb(invoiceId, distributorId, 'Delivery quantity mismatch — reissuing invoice', '4');
       logger.info('Reissue: EWB cancelled', { invoiceId });
     } catch (err: unknown) {
       const message = errInfo(err).message;
@@ -223,7 +223,7 @@ export async function reissueForDeliveryMismatch(args: {
   const previousInvoiceStatus = invoice.status;
   if (isB2B && invoice.irnStatus === 'success' && invoice.irn) {
     try {
-      await cancelIrn(invoiceId, distributorId, 'Delivery quantity mismatch — reissuing invoice');
+      await cancelIrn(invoiceId, distributorId, 'Delivery quantity mismatch — reissuing invoice', '4');
       logger.info('Reissue: IRN cancelled', { invoiceId, irn: invoice.irn });
       // cancelIrn flips invoice.status to 'cancelled' as a side-effect;
       // reissue keeps the invoice live so the customer is still billed

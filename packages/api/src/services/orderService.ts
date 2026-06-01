@@ -1234,7 +1234,9 @@ export async function cancelOrder(
   if (invoiceId && order.invoice?.ewbStatus === 'active') {
     try {
       const { cancelEwb } = await import('./gst/gstService.js');
-      await cancelEwb(invoiceId, distributorId, `Order cancelled: ${reason}`);
+      // Order-cancel path uses NIC code '3' (Order Cancelled) — that's
+      // the most accurate semantic mapping for this code path.
+      await cancelEwb(invoiceId, distributorId, `Order cancelled: ${reason}`, '3', userId);
     } catch (_ewbErr) {
       await prisma.pendingAction.create({
         data: {
@@ -1273,7 +1275,7 @@ export async function cancelOrder(
     } else {
       try {
         const { cancelIrn } = await import('./gst/gstService.js');
-        await cancelIrn(invoiceId, distributorId, `Order cancelled: ${reason}`);
+        await cancelIrn(invoiceId, distributorId, `Order cancelled: ${reason}`, '3', userId);
       } catch (_irnErr) {
         // Mark invoice so the PDF shows an amber badge and the UI shows a warning pill.
         await prisma.invoice.update({

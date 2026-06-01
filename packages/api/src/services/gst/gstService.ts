@@ -885,9 +885,56 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
 }
 
 /**
- * Cancel an IRN for an invoice
+ * NIC reason codes for IRN/EWB cancellation:
+ *   '1' = Duplicate
+ *   '2' = Data Entry Mistake
+ *   '3' = Order Cancelled
+ *   '4' = Others
+ * Always passed in explicitly by the caller (web modal dropdown). The
+ * older keyword-matching path that guessed a code from the free text
+ * (e.g. "duplicate" → 1) was unreliable — every "Wrong GSTIN" got code 4.
  */
-export async function cancelIrn(invoiceId: string, distributorId: string, reason: string) {
+export type GstCancelReasonCode = '1' | '2' | '3' | '4';
+
+/**
+ * Persist cancellation context on the `gst_documents` row. Uses
+ * $executeRawUnsafe because the new columns (cancel_reason,
+ * cancel_reason_code, cancelled_by_user_id) were added in migration
+ * 20260601000000_gst_document_cancel_fields and the typed Prisma
+ * client may not have been regenerated yet on a long-running dev
+ * server (the engine .dll is held open by `dev:api`). Raw SQL keeps
+ * tsc green without forcing a `prisma generate` restart. After the
+ * next clean restart this can be swapped to a typed update.
+ */
+async function persistCancellation(
+  invoiceId: string,
+  fields: { reason: string; reasonCode: GstCancelReasonCode; userId: string | null },
+) {
+  await prisma.$executeRawUnsafe(
+    `UPDATE "gst_documents"
+       SET "cancel_reason" = $1,
+           "cancel_reason_code" = $2,
+           "cancelled_by_user_id" = $3
+     WHERE "invoice_id" = $4 AND "is_latest" = true`,
+    fields.reason,
+    fields.reasonCode,
+    fields.userId,
+    invoiceId,
+  );
+}
+
+/**
+ * Cancel an IRN for an invoice.
+ * @param reasonCode NIC code ('1'-'4'). Required as of GROUP-7S.
+ * @param userId optional — the user who clicked Cancel in the web modal.
+ */
+export async function cancelIrn(
+  invoiceId: string,
+  distributorId: string,
+  reason: string,
+  reasonCode: GstCancelReasonCode,
+  userId: string | null = null,
+) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     select: { irn: true, invoiceNumber: true, orderId: true },
@@ -916,24 +963,17 @@ export async function cancelIrn(invoiceId: string, distributorId: string, reason
   });
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
 
-  // CnlRsn: 1=Duplicate, 2=Data Entry Error, 3=Order Cancelled, 4=Others
-  const cnlRsn = reason.toLowerCase().includes('duplicate') ? '1'
-    : reason.toLowerCase().includes('error') ? '2'
-    : reason.toLowerCase().includes('cancel') ? '3' : '4';
-
   const cancelPayload = {
     Irn: invoice.irn,
-    CnlRsn: cnlRsn,
+    CnlRsn: reasonCode,
     CnlRem: reason.substring(0, 100),
   };
 
   // WI-086 FIX: clearTokenCache removed from here. It is now called once
   // by the cancel orchestrator (cancelOrder in orderService) before the
   // EWB+IRN sequence, so both cancel calls share the same fresh NIC
-  // session. Double-eviction caused two back-to-back auth calls <1 s apart
-  // which made NIC reject the second token with 1004 (SESSION_EXPIRED).
-  // For standalone retries via POST /invoices/:id/cancel-irn, the route
-  // handler calls clearTokenCache before delegating here.
+  // session. Standalone retries via POST /invoices/:id/cancel-irn evict
+  // in the route handler.
   const response = await callWithLog<IrnResponse>(
     distributorId, 'POST',
     `/einvoice/type/CANCEL/version/V1_03?email=${encodeURIComponent(email)}`,
@@ -951,14 +991,25 @@ export async function cancelIrn(invoiceId: string, distributorId: string, reason
     data: { irnStatus: 'cancelled', cancelledAt: new Date() },
   });
 
-  logger.info('IRN cancelled', { invoiceId, irn: invoice.irn });
+  // GROUP-7S: persist the operator-supplied reason + structured code +
+  // user — until now they were dropped from the domain row and only
+  // available via gst_api_logs.request_payload.
+  await persistCancellation(invoiceId, { reason, reasonCode, userId });
+
+  logger.info('IRN cancelled', { invoiceId, irn: invoice.irn, reasonCode });
   return response;
 }
 
 /**
- * Cancel an EWB for an invoice
+ * Cancel an EWB for an invoice. Same reasonCode semantics as cancelIrn.
  */
-export async function cancelEwb(invoiceId: string, distributorId: string, reason: string) {
+export async function cancelEwb(
+  invoiceId: string,
+  distributorId: string,
+  reason: string,
+  reasonCode: GstCancelReasonCode,
+  userId: string | null = null,
+) {
   const gstDoc = await prisma.gstDocument.findFirst({
     where: { invoiceId, isLatest: true, ewbNo: { not: null } },
   });
@@ -970,18 +1021,11 @@ export async function cancelEwb(invoiceId: string, distributorId: string, reason
   });
   const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
 
-  // cancelRsnCode: 1=Duplicate, 2=Data Entry Mistake, 3=Order Cancelled, 4=Others
-  const cancelRsnCode = reason.toLowerCase().includes('duplicate') ? 1
-    : reason.toLowerCase().includes('error') ? 2
-    : reason.toLowerCase().includes('cancel') ? 3 : 4;
-
   // WI-086 FIX: clearTokenCache removed from here — see note in cancelIrn.
-  // The orchestrator (cancelOrder) evicts once before the whole sequence.
-  // Standalone retry via POST /invoices/:id/cancel-ewb evicts in the route.
   const response = await callWithLog<EwbResponse>(
     distributorId, 'POST',
     `/ewaybillapi/v1.03/ewayapi/canewb?email=${encodeURIComponent(email)}`,
-    { ewbNo: parseInt(gstDoc.ewbNo), cancelRsnCode, cancelRmrk: reason.substring(0, 100) },
+    { ewbNo: parseInt(gstDoc.ewbNo), cancelRsnCode: parseInt(reasonCode, 10), cancelRmrk: reason.substring(0, 100) },
     'ewaybill',
     { apiType: 'EWB_CANCEL', invoiceId, orderId: gstDoc.orderId },
   );
@@ -996,7 +1040,9 @@ export async function cancelEwb(invoiceId: string, distributorId: string, reason
     data: { ewbStatus: 'cancelled', cancelledAt: new Date() },
   });
 
-  logger.info('EWB cancelled', { invoiceId, ewbNo: gstDoc.ewbNo });
+  await persistCancellation(invoiceId, { reason, reasonCode, userId });
+
+  logger.info('EWB cancelled', { invoiceId, ewbNo: gstDoc.ewbNo, reasonCode });
   return response;
 }
 
@@ -1402,7 +1448,7 @@ export async function cancelAndRegenerateInvoice(
   // If IRN was generated, cancel it first
   if (invoice?.irn && invoice.irnStatus === 'success') {
     try {
-      await cancelIrn(invoiceId, distributorId, 'Order items changed - regenerating invoice');
+      await cancelIrn(invoiceId, distributorId, 'Order items changed - regenerating invoice', '4');
     } catch (err: unknown) {
       logger.warn('Failed to cancel IRN during regeneration', { invoiceId, error: errInfo(err).message });
     }

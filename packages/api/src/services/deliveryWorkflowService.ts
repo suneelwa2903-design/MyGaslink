@@ -650,7 +650,7 @@ export async function confirmVehicleReconciliation(
         // Just cancel, don't regenerate for undelivered orders
         if (order.invoice.irn && order.invoice.irnStatus === 'success') {
           const { cancelIrn } = await import('./gst/gstService.js');
-          await cancelIrn(order.invoice.id, distributorId, 'Order cancelled during vehicle reconciliation');
+          await cancelIrn(order.invoice.id, distributorId, 'Order cancelled during vehicle reconciliation', '3', userId);
         }
         await prisma.invoice.update({
           where: { id: order.invoice.id },

@@ -271,8 +271,15 @@ describe('cancelOrder — pending_delivery with active EWB', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe('cancelled');
 
-    // EWB cancel called
-    expect(cancelEwbMock).toHaveBeenCalledWith(invoiceId, distributorId, expect.stringContaining('cancelled'));
+    // EWB cancel called with the new 5-arg signature (GROUP-7S).
+    // Order-cancel path uses NIC code '3' (Order Cancelled).
+    expect(cancelEwbMock).toHaveBeenCalledWith(
+      invoiceId,
+      distributorId,
+      expect.stringContaining('cancelled'),
+      '3',
+      expect.any(String),
+    );
     // IRN cancel NOT called (irnStatus was 'pending', not 'success')
     expect(cancelIrnMock).not.toHaveBeenCalled();
 
@@ -409,9 +416,13 @@ describe('cancelOrder — B2B with active IRN + EWB', () => {
       .send({ reason: 'Test B2B cancel' });
 
     expect(res.status).toBe(200);
-    // Both cancel functions called
-    expect(cancelEwbMock).toHaveBeenCalledWith(invoiceId, distributorId, expect.any(String));
-    expect(cancelIrnMock).toHaveBeenCalledWith(invoiceId, distributorId, expect.any(String));
+    // Both cancel functions called with the new 5-arg signature (GROUP-7S).
+    expect(cancelEwbMock).toHaveBeenCalledWith(
+      invoiceId, distributorId, expect.any(String), '3', expect.any(String),
+    );
+    expect(cancelIrnMock).toHaveBeenCalledWith(
+      invoiceId, distributorId, expect.any(String), '3', expect.any(String),
+    );
     // Invoice voided
     const inv = await prisma.invoice.findUnique({ where: { id: invoiceId } });
     expect(inv?.status).toBe('cancelled');
