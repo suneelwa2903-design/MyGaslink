@@ -1539,6 +1539,10 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
 function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
   const [showCreate, setShowCreate] = useState(false);
+  // Edit-role state. When set, we render the edit modal instead of the
+  // list / create sheet.
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null);
+  const [editRole, setEditRole] = useState('distributor_admin');
 
   const [formFirst, setFormFirst] = useState('');
   const [formLast, setFormLast] = useState('');
@@ -1546,9 +1550,15 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
   const [formPassword, setFormPassword] = useState('');
   const [formRole, setFormRole] = useState('distributor_admin');
 
+  // Identity of the logged-in user — we must NOT let them deactivate
+  // themselves (the server also blocks self-delete, but a friendly
+  // client check beats a 400 and prevents the destructive Alert opening).
+  const authUser = useAuthStore((s) => s.user);
+  const selfUserId = authUser?.userId ?? null;
+
   const ROLES = ['distributor_admin', 'finance', 'inventory', 'driver', 'customer'];
 
-  const { data: usersResponse, isLoading, refetch } = useApiQuery<{ users: UserRecord[] }>(
+  const { data: usersResponse, isLoading, isRefetching, refetch } = useApiQuery<{ users: UserRecord[] }>(
     ['users'],
     '/users',
     undefined,
@@ -1571,6 +1581,31 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
     },
   });
 
+  const updateMutation = useApiMutation<UserRecord, { role: string }>(
+    'put',
+    () => `/users/${editingUser?.userId}`,
+    {
+      invalidateKeys: [['users']],
+      successMessage: 'User updated',
+      onSuccess: () => setEditingUser(null),
+      onError: (err: unknown) => {
+        Alert.alert('Could not update user', (err as Error)?.message ?? 'Unknown error');
+      },
+    },
+  );
+
+  const deleteMutation = useApiMutation<unknown, { userId: string }>(
+    'delete',
+    (vars) => `/users/${vars.userId}`,
+    {
+      invalidateKeys: [['users']],
+      successMessage: 'User deactivated',
+      onError: (err: unknown) => {
+        Alert.alert('Could not deactivate user', (err as Error)?.message ?? 'Unknown error');
+      },
+    },
+  );
+
   const resetForm = () => {
     setFormFirst('');
     setFormLast('');
@@ -1591,6 +1626,39 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
       password: formPassword,
       role: formRole,
     });
+  };
+
+  const beginEdit = (u: UserRecord) => {
+    setEditingUser(u);
+    setEditRole(u.role || 'distributor_admin');
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingUser) return;
+    if (!ROLES.includes(editRole) && editRole !== 'super_admin') {
+      Alert.alert('Validation', 'Pick a valid role.');
+      return;
+    }
+    updateMutation.mutate({ role: editRole });
+  };
+
+  const handleDeactivate = (u: UserRecord) => {
+    if (u.userId === selfUserId) {
+      Alert.alert('Not allowed', 'You cannot deactivate your own account.');
+      return;
+    }
+    Alert.alert(
+      'Deactivate user?',
+      `Deactivate ${u.firstName} ${u.lastName}? They will lose access immediately. This can be undone by re-creating their account.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Deactivate',
+          style: 'destructive',
+          onPress: () => deleteMutation.mutate({ userId: u.userId }),
+        },
+      ],
+    );
   };
 
   const roleColors: Record<string, string> = {
@@ -1689,41 +1757,131 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
               <FlatList
                 data={users || []}
                 keyExtractor={(item) => item.userId}
-                renderItem={({ item }) => (
-                  <View
-                    style={{
-                      flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
-                      paddingVertical: 14, gap: 12,
-                    }}
-                  >
+                renderItem={({ item }) => {
+                  const isSelf = item.userId === selfUserId;
+                  return (
                     <View
                       style={{
-                        width: 40, height: 40, borderRadius: 20,
-                        backgroundColor: (roleColors[item.role] || '#3b82f6') + '14',
-                        alignItems: 'center', justifyContent: 'center',
+                        flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
+                        paddingVertical: 14, gap: 12,
                       }}
                     >
-                      <Text style={{ fontSize: 16, fontWeight: '700', color: roleColors[item.role] || '#3b82f6' }}>
-                        {item.firstName?.[0]?.toUpperCase() || '?'}
-                      </Text>
+                      <View
+                        style={{
+                          width: 40, height: 40, borderRadius: 20,
+                          backgroundColor: (roleColors[item.role] || '#3b82f6') + '14',
+                          alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >
+                        <Text style={{ fontSize: 16, fontWeight: '700', color: roleColors[item.role] || '#3b82f6' }}>
+                          {item.firstName?.[0]?.toUpperCase() || '?'}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>
+                          {item.firstName} {item.lastName}
+                          {isSelf && <Text style={{ fontSize: 11, color: theme.textMuted }}>  (you)</Text>}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: theme.textMuted }}>{item.email}</Text>
+                      </View>
+                      <StatusBadge label={item.role?.replace(/_/g, ' ')} color={roleColors[item.role] || '#3b82f6'} />
+                      <TouchableOpacity
+                        onPress={() => beginEdit(item)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ padding: 4 }}
+                      >
+                        <Ionicons name="create-outline" size={18} color={ACCENT} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handleDeactivate(item)}
+                        disabled={isSelf}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ padding: 4, opacity: isSelf ? 0.3 : 1 }}
+                      >
+                        <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                      </TouchableOpacity>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>
-                        {item.firstName} {item.lastName}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: theme.textMuted }}>{item.email}</Text>
-                    </View>
-                    <StatusBadge label={item.role?.replace(/_/g, ' ')} color={roleColors[item.role] || '#3b82f6'} />
-                  </View>
-                )}
+                  );
+                }}
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: theme.divider }} />}
                 ListEmptyComponent={<EmptyList message="No users found" theme={theme} />}
-                refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={ACCENT} />}
+                refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={ACCENT} />}
               />
             )}
             <FAB onPress={() => setShowCreate(true)} />
           </View>
         )}
+
+        {/* Edit User modal — role-only (the server already blocks
+            email / distributor / customer changes via updateUserSchema). */}
+        <Modal
+          visible={!!editingUser}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setEditingUser(null)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+            <View style={{ backgroundColor: theme.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, maxHeight: '85%' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <Text style={{ fontSize: 17, fontWeight: '700', color: theme.text }}>Edit user</Text>
+                <TouchableOpacity onPress={() => setEditingUser(null)}>
+                  <Ionicons name="close" size={24} color={theme.text} />
+                </TouchableOpacity>
+              </View>
+              {editingUser && (
+                <>
+                  <Text style={{ fontSize: 13, color: theme.textMuted, marginBottom: 4 }}>
+                    {editingUser.firstName} {editingUser.lastName}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: theme.textMuted, marginBottom: 16 }}>{editingUser.email}</Text>
+
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textMuted, marginBottom: 8 }}>ROLE</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+                    {ROLES.map((r) => {
+                      const selected = editRole === r;
+                      return (
+                        <TouchableOpacity
+                          key={r}
+                          onPress={() => setEditRole(r)}
+                          style={{
+                            paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+                            borderWidth: 1.5,
+                            borderColor: selected ? (roleColors[r] || ACCENT) : theme.inputBorder,
+                            backgroundColor: selected ? (roleColors[r] || ACCENT) + '14' : theme.inputBg,
+                          }}
+                        >
+                          <Text style={{
+                            fontSize: 12, fontWeight: '700',
+                            color: selected ? (roleColors[r] || ACCENT) : theme.textSecondary,
+                            textTransform: 'capitalize',
+                          }}>
+                            {r.replace(/_/g, ' ')}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={handleSaveEdit}
+                    disabled={updateMutation.isPending}
+                    style={{
+                      backgroundColor: ACCENT, borderRadius: 10, paddingVertical: 12,
+                      alignItems: 'center', marginBottom: 12,
+                      opacity: updateMutation.isPending ? 0.6 : 1,
+                    }}
+                  >
+                    {updateMutation.isPending ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </Modal>
   );
