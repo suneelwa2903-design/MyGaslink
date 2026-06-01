@@ -336,6 +336,50 @@ describe('Guard 5 — API responses match the shape the web types', () => {
     expect(Array.isArray(res.body.data.rawSettings)).toBe(true);
   });
 
+  it('GET /api/payments/ledger/:customerId returns LedgerEntry[] (NOT { rows, summary })', async () => {
+    // Anti-pattern #9 + 2026-06-01 regression: web CustomersPage.LedgerTab
+    // and mobile customer-detail.tsx LedgerTab both type the response as
+    // LedgerEntry[] and call .length / read entryType, amountDelta,
+    // entryDate, narration. Before the fix the endpoint returned the
+    // delivery-aggregate { rows, summary } shape — `.length` was
+    // undefined on the object and every tab rendered "No ledger entries".
+    // Pin the wire contract here.
+    const dist1Cust = await prisma.customer.findFirst({
+      where: { distributorId: 'dist-001', deletedAt: null },
+      select: { id: true },
+    });
+    if (!dist1Cust) return;
+    const res = await request(app)
+      .get(`/api/payments/ledger/${dist1Cust.id}`)
+      .set(auth(dist1AdminToken));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    if (res.body.data.length > 0) {
+      const row = res.body.data[0];
+      expect(row).toHaveProperty('id');
+      expect(row).toHaveProperty('entryType');
+      expect(row).toHaveProperty('amountDelta');
+      expect(typeof row.amountDelta).toBe('number');
+      expect(row).toHaveProperty('entryDate');
+      expect(row).toHaveProperty('narration');
+    }
+  });
+
+  it('GET /api/payments/ledger/:customerId respects dateFrom / dateTo query filter', async () => {
+    const dist1Cust = await prisma.customer.findFirst({
+      where: { distributorId: 'dist-001', deletedAt: null },
+      select: { id: true },
+    });
+    if (!dist1Cust) return;
+    // Empty range — far in the past.
+    const past = await request(app)
+      .get(`/api/payments/ledger/${dist1Cust.id}?dateFrom=1900-01-01&dateTo=1900-12-31`)
+      .set(auth(dist1AdminToken));
+    expect(past.status).toBe(200);
+    expect(Array.isArray(past.body.data)).toBe(true);
+    expect(past.body.data.length).toBe(0);
+  });
+
   it('GET /api/cylinder-types/prices/list returns rows with cylinderType.typeName nested object', async () => {
     // Anti-pattern #9 + 2026-06-01 regression: mobile typed each row as
     // { cylinderType?: string } and rendered `p.cylinderType || ...`.

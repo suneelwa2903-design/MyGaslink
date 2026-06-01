@@ -42,7 +42,11 @@ import {
   ActivityIndicator,
   RefreshControl,
   StyleSheet,
+  Alert,
 } from 'react-native';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { api, getErrorMessage } from '../../src/lib/api';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,7 +64,7 @@ import {
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
 import { useAuthStore } from '../../src/stores/authStore';
-import { Badge, EmptyState } from '../../src/components/ui';
+import { Badge, EmptyState, DateInput } from '../../src/components/ui';
 // STAGE-F: shared CustomerForm body — replaces the duplicate EditCustomerModal
 // that previously lived inline in this file (and in (admin)/more.tsx). The
 // duplicate was flagged in the STEP-3E header as a known cleanup target.
@@ -262,6 +266,40 @@ export default function AdminCustomerDetailScreen() {
   const [invoicesPage, setInvoicesPage] = useState(0);
   const [paymentsPage, setPaymentsPage] = useState(0);
   const [editOpen, setEditOpen] = useState(false);
+  const [ledgerFrom, setLedgerFrom] = useState<string>('');
+  const [ledgerTo, setLedgerTo] = useState<string>('');
+  const [ledgerDownloading, setLedgerDownloading] = useState(false);
+
+  const handleLedgerPdfDownload = useCallback(async () => {
+    if (!customerId) return;
+    try {
+      setLedgerDownloading(true);
+      const params: Record<string, string> = {};
+      if (ledgerFrom) params.from = ledgerFrom;
+      if (ledgerTo) params.to = ledgerTo;
+      const res = await api.get(`/customers/${customerId}/ledger/pdf`, {
+        params,
+        responseType: 'arraybuffer',
+      });
+      const bytes = new Uint8Array(res.data);
+      const file = new File(Paths.cache, `customer-ledger-${customerId}.pdf`);
+      try { file.create(); } catch { /* file already exists */ }
+      file.write(bytes);
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Customer Ledger',
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (err) {
+      Alert.alert('Could not download ledger', getErrorMessage(err));
+    } finally {
+      setLedgerDownloading(false);
+    }
+  }, [customerId, ledgerFrom, ledgerTo]);
 
   // Customer detail
   const {
@@ -304,16 +342,22 @@ export default function AdminCustomerDetailScreen() {
   );
   const payments = paymentsResp?.payments ?? [];
 
-  // Ledger (no pagination at the API — returns the whole array)
+  // Ledger (no pagination — returns the whole array, scoped by optional date range)
+  const ledgerQuery = useMemo(
+    () => (ledgerFrom || ledgerTo
+      ? { ...(ledgerFrom ? { dateFrom: ledgerFrom } : {}), ...(ledgerTo ? { dateTo: ledgerTo } : {}) }
+      : undefined),
+    [ledgerFrom, ledgerTo],
+  );
   const {
     data: ledgerEntries,
     isLoading: ledgerLoading,
     isRefetching: ledgerRefetching,
     refetch: refetchLedger,
   } = useApiQuery<LedgerEntry[]>(
-    ['customer-detail-ledger', customerId],
+    ['customer-detail-ledger', customerId, ledgerFrom, ledgerTo],
     `/payments/ledger/${customerId}`,
-    undefined,
+    ledgerQuery,
     { enabled: !!customerId && tab === 'ledger' },
   );
 
@@ -698,21 +742,73 @@ export default function AdminCustomerDetailScreen() {
     }
 
     // ledger
+    const ledger = ledgerEntries ?? [];
+    const filterBar = (
+      <View
+        style={{
+          flexDirection: 'row',
+          gap: 8,
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: C.divider,
+          alignItems: 'flex-end',
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 11, fontWeight: '600', color: C.textSecondary, marginBottom: 4 }}>From</Text>
+          <DateInput value={ledgerFrom || null} onChange={setLedgerFrom} placeholder="From" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 11, fontWeight: '600', color: C.textSecondary, marginBottom: 4 }}>To</Text>
+          <DateInput value={ledgerTo || null} onChange={setLedgerTo} placeholder="To" />
+        </View>
+        <TouchableOpacity
+          onPress={handleLedgerPdfDownload}
+          disabled={ledgerDownloading || !customerId}
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            borderRadius: 8,
+            backgroundColor: ACCENT,
+            opacity: ledgerDownloading ? 0.6 : 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+          }}
+        >
+          {ledgerDownloading ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="download-outline" size={16} color="#fff" />
+          )}
+          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>PDF</Text>
+        </TouchableOpacity>
+      </View>
+    );
+
     if (ledgerLoading) {
       return (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={ACCENT} />
+        <View style={{ flex: 1 }}>
+          {filterBar}
+          <View style={styles.centered}>
+            <ActivityIndicator size="large" color={ACCENT} />
+          </View>
         </View>
       );
     }
-    const ledger = ledgerEntries ?? [];
     if (ledger.length === 0) {
       return (
-        <View style={styles.centered}>
-          <EmptyState
-            title="No ledger entries"
-            description="No ledger movements for this customer yet."
-          />
+        <View style={{ flex: 1 }}>
+          {filterBar}
+          <View style={styles.centered}>
+            <EmptyState
+              title="No ledger entries"
+              description={(ledgerFrom || ledgerTo)
+                ? 'No entries match the selected date range.'
+                : 'No ledger movements for this customer yet.'}
+            />
+          </View>
         </View>
       );
     }
@@ -724,6 +820,7 @@ export default function AdminCustomerDetailScreen() {
         refreshing={ledgerRefetching}
         onRefresh={refetchLedger}
         contentContainerStyle={styles.listContent}
+        ListHeaderComponent={filterBar}
       />
     );
   };
