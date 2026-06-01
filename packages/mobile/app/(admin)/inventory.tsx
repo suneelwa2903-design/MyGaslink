@@ -106,6 +106,28 @@ interface ReconciliationVehicle {
   vehicleNumber: string;
   pendingCancelledStock: number;
   pendingUndeliveredOrders: number;
+  // Web/server-side fields surfaced 2026-06-01 — the mobile screen
+  // previously dropped them, so the per-cylinder breakdown and the
+  // supervisor-verified empties pre-fill were both missing on confirm.
+  totalPendingItems?: number;
+  mismatchReported?: boolean;
+  pendingOrderSummaries?: Array<{ orderId: string; orderNumber: string; customerName: string }>;
+  pendingCancelledStockLines?: Array<{
+    cseId: string;
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    orderNumber: string;
+    customerName: string;
+    orderedQty: number;
+    deliveredQty: number;
+    shortfallQty: number;
+    status: 'on_vehicle' | 'pending_return' | 'returned_to_depot';
+  }>;
+  emptiesTypes?: Array<{
+    cylinderTypeId: string;
+    typeName: string;
+    collectedQty: number;
+  }>;
 }
 
 interface OnboardingStockRow {
@@ -2803,28 +2825,64 @@ function ReconcileTab() {
 
   const confirmMutation = useApiMutation<
     void,
-    { vehicleId: string; data: { physicalStockConfirmed: boolean; notes: string } }
+    {
+      vehicleId: string;
+      data: {
+        physicalStockConfirmed: boolean;
+        notes: string;
+        emptiesReturned?: Array<{ cylinderTypeId: string; quantity: number }>;
+      };
+    }
   >('post', (vars) => `/delivery/reconciliation/confirm/${vars.vehicleId}`, {
     invalidateKeys: [['reconciliation-pending']],
     successMessage: 'Reconciliation completed',
   });
 
   const [mismatchVehicle, setMismatchVehicle] = useState<ReconciliationVehicle | null>(null);
+  // Per-vehicle, per-cylinder-type "empties physically returned" counts.
+  // Seeded from `emptiesTypes[].collectedQty` (what the driver scanned at
+  // customer stops) and adjusted by the supervisor before confirming.
+  // Stored as strings to keep the TextInput state stable.
+  const [emptiesEdits, setEmptiesEdits] = useState<Record<string, Record<string, string>>>({});
+
+  const setEmptyValue = useCallback((vehicleId: string, cylinderTypeId: string, raw: string) => {
+    const cleaned = raw.replace(/[^0-9]/g, '');
+    setEmptiesEdits((prev) => ({
+      ...prev,
+      [vehicleId]: { ...(prev[vehicleId] ?? {}), [cylinderTypeId]: cleaned },
+    }));
+  }, []);
+
+  const buildEmptiesReturned = useCallback((vehicle: ReconciliationVehicle) => {
+    const overrides = emptiesEdits[vehicle.vehicleId] ?? {};
+    return (vehicle.emptiesTypes ?? []).map((e) => {
+      const override = overrides[e.cylinderTypeId];
+      const qty = override !== undefined && override !== '' ? Number(override) : e.collectedQty;
+      return { cylinderTypeId: e.cylinderTypeId, quantity: Math.max(0, qty) };
+    });
+  }, [emptiesEdits]);
 
   const handleConfirm = (vehicle: ReconciliationVehicle) => {
+    const emptiesReturned = buildEmptiesReturned(vehicle);
+    const pendingOrderCount = vehicle.pendingOrderSummaries?.length ?? 0;
+    const proceed = () =>
+      confirmMutation.mutate({
+        vehicleId: vehicle.vehicleId,
+        data: {
+          physicalStockConfirmed: true,
+          notes: 'Physical stock matches system',
+          ...(emptiesReturned.length > 0 ? { emptiesReturned } : {}),
+        },
+      });
+    const message = pendingOrderCount > 0
+      ? `Vehicle ${vehicle.vehicleNumber}: ${pendingOrderCount} undelivered order${pendingOrderCount === 1 ? '' : 's'} will be force-cancelled. Confirm?`
+      : `Confirm physical stock matches system for ${vehicle.vehicleNumber}?`;
     Alert.alert(
       'Confirm Match',
-      `Confirm physical stock matches system for ${vehicle.vehicleNumber}?`,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          onPress: () =>
-            confirmMutation.mutate({
-              vehicleId: vehicle.vehicleId,
-              data: { physicalStockConfirmed: true, notes: 'Physical stock matches system' },
-            }),
-        },
+        { text: 'Confirm', onPress: proceed, style: pendingOrderCount > 0 ? 'destructive' : 'default' },
       ],
     );
   };
@@ -2896,6 +2954,28 @@ function ReconcileTab() {
             <StatusBadge label="Pending" color={t.orange} bg={t.orangeBg} />
           </View>
 
+          {/* Mismatch banner (when an open STOCK_MISMATCH pending action
+              already exists for this vehicle — the same surface the web
+              shows above its Vehicle Return card). */}
+          {v.mismatchReported && (
+            <View
+              style={{
+                backgroundColor: t.redBg,
+                borderRadius: 8,
+                padding: 10,
+                marginBottom: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <Ionicons name="warning-outline" size={16} color={t.red} />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: t.red, flex: 1 }}>
+                Mismatch already reported for this vehicle — review pending actions before confirming.
+              </Text>
+            </View>
+          )}
+
           {/* Counts */}
           <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
             <View
@@ -2927,6 +3007,108 @@ function ReconcileTab() {
               </Text>
             </View>
           </View>
+
+          {/* Per-cylinder-type cancelled-stock breakdown */}
+          {v.pendingCancelledStockLines && v.pendingCancelledStockLines.length > 0 && (
+            <View
+              style={{
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: t.cardBorder,
+                marginBottom: 14,
+                overflow: 'hidden',
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  backgroundColor: t.metricBg,
+                }}
+              >
+                <Text style={{ flex: 2, fontSize: 10, fontWeight: '700', color: t.textMuted }}>TYPE</Text>
+                <Text style={{ flex: 1, fontSize: 10, fontWeight: '700', color: t.textMuted, textAlign: 'right' }}>ORD</Text>
+                <Text style={{ flex: 1, fontSize: 10, fontWeight: '700', color: t.textMuted, textAlign: 'right' }}>DEL</Text>
+                <Text style={{ flex: 1, fontSize: 10, fontWeight: '700', color: t.textMuted, textAlign: 'right' }}>SHORT</Text>
+              </View>
+              {v.pendingCancelledStockLines.map((line, i) => (
+                <View
+                  key={line.cseId}
+                  style={{
+                    flexDirection: 'row',
+                    paddingHorizontal: 10,
+                    paddingVertical: 8,
+                    borderTopWidth: i === 0 ? 0 : 1,
+                    borderTopColor: t.divider,
+                  }}
+                >
+                  <View style={{ flex: 2 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: t.text }} numberOfLines={1}>
+                      {line.cylinderTypeName}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: t.textMuted }} numberOfLines={1}>
+                      {line.orderNumber} · {line.customerName}
+                    </Text>
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 12, color: t.text, textAlign: 'right' }}>{line.orderedQty}</Text>
+                  <Text style={{ flex: 1, fontSize: 12, color: t.text, textAlign: 'right' }}>{line.deliveredQty}</Text>
+                  <Text style={{ flex: 1, fontSize: 12, fontWeight: '700', color: t.orange, textAlign: 'right' }}>
+                    {line.shortfallQty}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Empties verification — supervisor adjusts the per-type
+              counts before confirming. Sent to the server as
+              `emptiesReturned` on the confirm payload. */}
+          {v.emptiesTypes && v.emptiesTypes.length > 0 && (
+            <View style={{ marginBottom: 14 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: t.textMuted, marginBottom: 6 }}>
+                EMPTIES RETURNING TO DEPOT
+              </Text>
+              {v.emptiesTypes.map((e) => {
+                const editValue = emptiesEdits[v.vehicleId]?.[e.cylinderTypeId];
+                const displayed = editValue ?? String(e.collectedQty);
+                return (
+                  <View
+                    key={e.cylinderTypeId}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingVertical: 6,
+                    }}
+                  >
+                    <Text style={{ flex: 1, fontSize: 13, color: t.text }}>
+                      {e.typeName}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: t.textMuted, marginRight: 8 }}>
+                      collected: {e.collectedQty}
+                    </Text>
+                    <TextInput
+                      value={displayed}
+                      onChangeText={(raw) => setEmptyValue(v.vehicleId, e.cylinderTypeId, raw)}
+                      keyboardType="number-pad"
+                      style={{
+                        width: 80,
+                        borderWidth: 1,
+                        borderColor: t.cardBorder,
+                        borderRadius: 6,
+                        paddingHorizontal: 8,
+                        paddingVertical: 6,
+                        textAlign: 'right',
+                        color: t.text,
+                        backgroundColor: t.inputBg,
+                        fontSize: 13,
+                      }}
+                    />
+                  </View>
+                );
+              })}
+            </View>
+          )}
 
           {/* Actions */}
           <View style={{ flexDirection: 'row', gap: 8 }}>

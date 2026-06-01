@@ -380,6 +380,31 @@ describe('Guard 5 — API responses match the shape the web types', () => {
     expect(past.body.data.length).toBe(0);
   });
 
+  it('GET /api/delivery/reconciliation/pending vehicles carry per-line breakdown + emptiesTypes', async () => {
+    // GROUP-5C wire contract: the mobile Vehicle Return tab now displays
+    // per-cylinder-type ordered/delivered/shortfall and a per-type
+    // empties pre-fill. If a future refactor flattens or renames those
+    // arrays, the mobile screen silently loses its breakdown.
+    const res = await request(app)
+      .get('/api/delivery/reconciliation/pending')
+      .set(auth(dist1AdminToken));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    if (res.body.data.length > 0) {
+      const row = res.body.data[0];
+      expect(row).toHaveProperty('vehicleId');
+      expect(row).toHaveProperty('vehicleNumber');
+      expect(row).toHaveProperty('pendingCancelledStock');
+      expect(row).toHaveProperty('pendingUndeliveredOrders');
+      expect(row).toHaveProperty('pendingCancelledStockLines');
+      expect(Array.isArray(row.pendingCancelledStockLines)).toBe(true);
+      expect(row).toHaveProperty('emptiesTypes');
+      expect(Array.isArray(row.emptiesTypes)).toBe(true);
+      expect(row).toHaveProperty('mismatchReported');
+      expect(typeof row.mismatchReported).toBe('boolean');
+    }
+  });
+
   it('GET /api/inventory/customer-balances rows carry cylinderPrice / emptyCylinderPrice / lastDeliveryDate', async () => {
     // GROUP-5B + WI-080 wire contract: the mobile admin Customer Balances
     // tab needs these three fields to compute the empty-cyl cost total
