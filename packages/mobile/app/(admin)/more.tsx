@@ -24,6 +24,7 @@ import { useAuthStore } from '../../src/stores/authStore';
 // just lacked the toggle UI.
 import { useThemeStore, useIsDark } from '../../src/stores/themeStore';
 import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
+import { DateInput } from '../../src/components/ui';
 import type { UserProfile } from '@gaslink/shared';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
 // STAGE-H: Customers, Fleet, and Reports have been promoted out of this file
@@ -963,12 +964,95 @@ function CylinderTypesModal({ visible, onClose }: { visible: boolean; onClose: (
 function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  const { data: prices, isLoading, refetch, error } = useApiQuery<CylinderPriceRow[]>(
+  const { data: prices, isLoading, isRefetching, refetch, error } = useApiQuery<CylinderPriceRow[]>(
     ['cylinder-prices'],
     '/cylinder-types/prices/list',
     undefined,
     { enabled: visible },
   );
+
+  // Cylinder types — needed to populate the "Add Price" picker. The
+  // /cylinder-types endpoint returns { cylinderTypes: ... }.
+  const { data: typesResp } = useApiQuery<{ cylinderTypes: Array<{ id: string; typeName: string }> }>(
+    ['cylinder-types-for-prices'],
+    '/cylinder-types',
+    undefined,
+    { enabled: visible },
+  );
+  const cylinderTypes = typesResp?.cylinderTypes ?? [];
+
+  // The API is append-only (POST /cylinder-types/prices creates a new
+  // CylinderPrice row; the latest effectiveDate wins on read). So
+  // "edit" is implemented as "add a new entry for the same type with
+  // today's effectiveDate and the new price". DELETE is also exposed
+  // for cleanup.
+  const [addOpen, setAddOpen] = useState(false);
+  const [addCylinderTypeId, setAddCylinderTypeId] = useState('');
+  const [addPrice, setAddPrice] = useState('');
+  const [addEffectiveDate, setAddEffectiveDate] = useState(() => new Date().toISOString().slice(0, 10));
+
+  const createMutation = useApiMutation<unknown, { cylinderTypeId: string; price: number; effectiveDate: string }>(
+    'post',
+    '/cylinder-types/prices',
+    {
+      invalidateKeys: [['cylinder-prices']],
+      successMessage: 'Price added',
+      onSuccess: () => {
+        setAddOpen(false);
+        setAddCylinderTypeId('');
+        setAddPrice('');
+        setAddEffectiveDate(new Date().toISOString().slice(0, 10));
+      },
+      onError: (err: unknown) => {
+        Alert.alert('Could not add price', (err as Error)?.message ?? 'Unknown error');
+      },
+    },
+  );
+
+  const deleteMutation = useApiMutation<unknown, { id: string }>(
+    'delete',
+    (vars) => `/cylinder-types/prices/${vars.id}`,
+    {
+      invalidateKeys: [['cylinder-prices']],
+      successMessage: 'Price removed',
+    },
+  );
+
+  const handleAdd = () => {
+    if (!addCylinderTypeId) {
+      Alert.alert('Required', 'Pick a cylinder type.');
+      return;
+    }
+    const numeric = Number(addPrice);
+    if (Number.isNaN(numeric) || numeric <= 0) {
+      Alert.alert('Required', 'Price must be a positive number.');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(addEffectiveDate)) {
+      Alert.alert('Required', 'Pick an effective date.');
+      return;
+    }
+    createMutation.mutate({
+      cylinderTypeId: addCylinderTypeId,
+      price: numeric,
+      effectiveDate: addEffectiveDate,
+    });
+  };
+
+  const handleDelete = (row: CylinderPriceRow) => {
+    Alert.alert(
+      'Remove price?',
+      `Delete this price entry for ${row.cylinderType?.typeName ?? 'this cylinder type'}? The previous entry (if any) becomes the latest.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteMutation.mutate({ id: row.id }),
+        },
+      ],
+    );
+  };
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
@@ -979,8 +1063,25 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
         ) : (
           <ScrollView
             contentContainerStyle={{ padding: 20 }}
-            refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={ACCENT} />}
+            refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={ACCENT} />}
           >
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 12 }}>
+              <TouchableOpacity
+                onPress={() => setAddOpen(true)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  backgroundColor: ACCENT,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                }}
+              >
+                <Ionicons name="add" size={16} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Add Price</Text>
+              </TouchableOpacity>
+            </View>
             <View
               style={{
                 backgroundColor: theme.cardBg, borderRadius: 14,
@@ -994,12 +1095,16 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
                   borderBottomWidth: 1, borderBottomColor: theme.divider,
                 }}
               >
-                <Text style={{ flex: 1, fontSize: 11, fontWeight: '700', color: theme.textMuted, textTransform: 'uppercase' }}>
+                <Text style={{ flex: 1.4, fontSize: 11, fontWeight: '700', color: theme.textMuted, textTransform: 'uppercase' }}>
                   Cylinder Type
                 </Text>
-                <Text style={{ width: 80, fontSize: 11, fontWeight: '700', color: theme.textMuted, textTransform: 'uppercase', textAlign: 'right' }}>
+                <Text style={{ flex: 1, fontSize: 11, fontWeight: '700', color: theme.textMuted, textTransform: 'uppercase', textAlign: 'right' }}>
                   Price
                 </Text>
+                <Text style={{ flex: 1, fontSize: 11, fontWeight: '700', color: theme.textMuted, textTransform: 'uppercase', textAlign: 'right' }}>
+                  Effective
+                </Text>
+                <View style={{ width: 32 }} />
               </View>
               {error && (
                 <View style={{ padding: 20, alignItems: 'center' }}>
@@ -1020,20 +1125,101 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
                 <View key={p.id}>
                   {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
                   <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 14, alignItems: 'center' }}>
-                    <View style={{ flex: 1 }}>
+                    <View style={{ flex: 1.4 }}>
                       <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }}>
                         {p.cylinderType?.typeName ?? `Type ${i + 1}`}
                       </Text>
                     </View>
-                    <Text style={{ width: 80, fontSize: 15, fontWeight: '700', color: theme.text, textAlign: 'right' }}>
+                    <Text style={{ flex: 1, fontSize: 15, fontWeight: '700', color: theme.text, textAlign: 'right' }}>
                       {formatCurrency(Number(p.price ?? 0))}
                     </Text>
+                    <Text style={{ flex: 1, fontSize: 11, color: theme.textMuted, textAlign: 'right' }}>
+                      {p.effectiveDate ? new Date(p.effectiveDate).toISOString().slice(0, 10) : '—'}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => handleDelete(p)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{ width: 32, alignItems: 'flex-end' }}
+                    >
+                      <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                    </TouchableOpacity>
                   </View>
                 </View>
               ))}
             </View>
           </ScrollView>
         )}
+
+        {/* Add Price modal — bottom-sheet style */}
+        <Modal visible={addOpen} animationType="slide" transparent onRequestClose={() => setAddOpen(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+            <View style={{ backgroundColor: theme.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <Text style={{ fontSize: 17, fontWeight: '700', color: theme.text }}>Add Price</Text>
+                <TouchableOpacity onPress={() => setAddOpen(false)}>
+                  <Ionicons name="close" size={24} color={theme.text} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textMuted, marginBottom: 4 }}>CYLINDER TYPE</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginBottom: 14 }}>
+                {cylinderTypes.map((ct) => {
+                  const selected = addCylinderTypeId === ct.id;
+                  return (
+                    <TouchableOpacity
+                      key={ct.id}
+                      onPress={() => setAddCylinderTypeId(ct.id)}
+                      style={{
+                        paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+                        backgroundColor: selected ? ACCENT : theme.cardBg,
+                        borderWidth: 1, borderColor: selected ? ACCENT : theme.cardBorder,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: selected ? '#fff' : theme.text }}>
+                        {ct.typeName}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textMuted, marginBottom: 4 }}>PRICE (₹)</Text>
+              <TextInput
+                value={addPrice}
+                onChangeText={(v) => setAddPrice(v.replace(/[^0-9.]/g, ''))}
+                placeholder="e.g. 1200"
+                placeholderTextColor={theme.textMuted}
+                keyboardType="decimal-pad"
+                style={{
+                  borderWidth: 1, borderColor: theme.cardBorder, borderRadius: 10,
+                  paddingHorizontal: 12, paddingVertical: 10, fontSize: 15,
+                  color: theme.text, backgroundColor: theme.cardBg, marginBottom: 14,
+                }}
+              />
+
+              <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textMuted, marginBottom: 4 }}>EFFECTIVE DATE</Text>
+              <View style={{ marginBottom: 18 }}>
+                <DateInput value={addEffectiveDate || null} onChange={setAddEffectiveDate} />
+              </View>
+
+              <TouchableOpacity
+                onPress={handleAdd}
+                disabled={createMutation.isPending}
+                style={{
+                  backgroundColor: ACCENT, borderRadius: 10, paddingVertical: 12,
+                  alignItems: 'center', marginBottom: 16,
+                  opacity: createMutation.isPending ? 0.6 : 1,
+                }}
+              >
+                {createMutation.isPending ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>Save Price</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </Modal>
   );
@@ -1043,25 +1229,82 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
 // INVENTORY THRESHOLDS MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Wire shape returned by GET /settings/cylinder-thresholds/list. The
+// Prisma include nests cylinderType under {typeName}. WarningLevel /
+// criticalLevel field names match the schema; the prior "warning" /
+// "critical" / "cylinderType?: string" guesses never matched the API
+// (anti-pattern #9). Fixed 2026-06-01 alongside making the row editable.
 interface ThresholdRow {
-  id?: string;
-  cylinderType?: string;
-  name?: string;
-  warningThreshold?: number;
-  warning?: number;
-  criticalThreshold?: number;
-  critical?: number;
+  id: string;
+  cylinderTypeId: string;
+  cylinderType?: { typeName: string };
+  warningLevel: number;
+  criticalLevel: number;
+  alertEnabled: boolean;
 }
 
 function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  const { data: thresholds, isLoading, refetch } = useApiQuery<ThresholdRow[]>(
+  const { data: thresholds, isLoading, isRefetching, refetch } = useApiQuery<ThresholdRow[]>(
     ['inventory-thresholds'],
     '/settings/cylinder-thresholds/list',
     undefined,
     { enabled: visible },
   );
+
+  // Per-row inline edit state. Stored as strings to keep the TextInput
+  // controlled without int-coercion noise. Only one row edits at a time.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [warningInput, setWarningInput] = useState('');
+  const [criticalInput, setCriticalInput] = useState('');
+
+  const upsertMutation = useApiMutation<
+    unknown,
+    { cylinderTypeId: string; warningLevel: number; criticalLevel: number; alertEnabled: boolean }
+  >('put', '/cylinder-types/thresholds', {
+    invalidateKeys: [['inventory-thresholds']],
+    successMessage: 'Threshold updated',
+    onSuccess: () => setEditingId(null),
+    onError: (err: unknown) => {
+      Alert.alert('Could not save threshold', (err as Error)?.message ?? 'Unknown error');
+    },
+  });
+
+  const beginEdit = (row: ThresholdRow) => {
+    setEditingId(row.id);
+    setWarningInput(String(row.warningLevel));
+    setCriticalInput(String(row.criticalLevel));
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setWarningInput('');
+    setCriticalInput('');
+  };
+
+  const saveEdit = (row: ThresholdRow) => {
+    const warning = Number(warningInput);
+    const critical = Number(criticalInput);
+    if (!Number.isFinite(warning) || warning < 0) {
+      Alert.alert('Invalid value', 'Warning must be a whole number ≥ 0.');
+      return;
+    }
+    if (!Number.isFinite(critical) || critical < 0) {
+      Alert.alert('Invalid value', 'Critical must be a whole number ≥ 0.');
+      return;
+    }
+    if (critical > warning) {
+      Alert.alert('Invalid value', 'Critical must be less than or equal to Warning.');
+      return;
+    }
+    upsertMutation.mutate({
+      cylinderTypeId: row.cylinderTypeId,
+      warningLevel: Math.floor(warning),
+      criticalLevel: Math.floor(critical),
+      alertEnabled: row.alertEnabled,
+    });
+  };
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
@@ -1072,7 +1315,7 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
         ) : (
           <ScrollView
             contentContainerStyle={{ padding: 20 }}
-            refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={ACCENT} />}
+            refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={ACCENT} />}
           >
             <View
               style={{
@@ -1096,38 +1339,92 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
                 <Text style={{ width: 70, fontSize: 11, fontWeight: '700', color: theme.textMuted, textTransform: 'uppercase', textAlign: 'center' }}>
                   Critical
                 </Text>
+                <View style={{ width: 60 }} />
               </View>
               {(!thresholds || thresholds.length === 0) && (
                 <View style={{ padding: 20, alignItems: 'center' }}>
                   <Text style={{ fontSize: 13, color: theme.textMuted }}>No thresholds configured</Text>
                 </View>
               )}
-              {thresholds?.map((t: ThresholdRow, i: number) => (
-                <View key={t.id || i}>
-                  {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
-                  <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 14, alignItems: 'center' }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }}>
-                        {t.cylinderType || t.name || `Type ${i + 1}`}
-                      </Text>
-                    </View>
-                    <View style={{ width: 70, alignItems: 'center' }}>
-                      <View style={{ backgroundColor: '#f59e0b' + '18', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#f59e0b' }}>
-                          {t.warningThreshold ?? t.warning ?? '-'}
+              {thresholds?.map((t: ThresholdRow, i: number) => {
+                const isEditing = editingId === t.id;
+                return (
+                  <View key={t.id}>
+                    {i > 0 && <View style={{ height: 1, backgroundColor: theme.divider }} />}
+                    <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 14, alignItems: 'center' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }}>
+                          {t.cylinderType?.typeName ?? `Type ${i + 1}`}
                         </Text>
                       </View>
-                    </View>
-                    <View style={{ width: 70, alignItems: 'center' }}>
-                      <View style={{ backgroundColor: '#ef4444' + '18', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#ef4444' }}>
-                          {t.criticalThreshold ?? t.critical ?? '-'}
-                        </Text>
-                      </View>
+                      {isEditing ? (
+                        <>
+                          <TextInput
+                            value={warningInput}
+                            onChangeText={(v) => setWarningInput(v.replace(/[^0-9]/g, ''))}
+                            keyboardType="number-pad"
+                            style={{
+                              width: 64, marginHorizontal: 3, paddingHorizontal: 6, paddingVertical: 6,
+                              borderWidth: 1, borderColor: '#f59e0b', borderRadius: 6,
+                              textAlign: 'center', fontSize: 13, color: theme.text, backgroundColor: theme.cardBg,
+                            }}
+                          />
+                          <TextInput
+                            value={criticalInput}
+                            onChangeText={(v) => setCriticalInput(v.replace(/[^0-9]/g, ''))}
+                            keyboardType="number-pad"
+                            style={{
+                              width: 64, marginHorizontal: 3, paddingHorizontal: 6, paddingVertical: 6,
+                              borderWidth: 1, borderColor: '#ef4444', borderRadius: 6,
+                              textAlign: 'center', fontSize: 13, color: theme.text, backgroundColor: theme.cardBg,
+                            }}
+                          />
+                          <View style={{ width: 60, flexDirection: 'row', justifyContent: 'flex-end', gap: 4 }}>
+                            <TouchableOpacity
+                              onPress={() => saveEdit(t)}
+                              disabled={upsertMutation.isPending}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              {upsertMutation.isPending ? (
+                                <ActivityIndicator size="small" color={ACCENT} />
+                              ) : (
+                                <Ionicons name="checkmark" size={20} color="#10b981" />
+                              )}
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={cancelEdit} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                              <Ionicons name="close" size={20} color={theme.textMuted} />
+                            </TouchableOpacity>
+                          </View>
+                        </>
+                      ) : (
+                        <>
+                          <View style={{ width: 70, alignItems: 'center' }}>
+                            <View style={{ backgroundColor: '#f59e0b' + '18', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#f59e0b' }}>
+                                {t.warningLevel}
+                              </Text>
+                            </View>
+                          </View>
+                          <View style={{ width: 70, alignItems: 'center' }}>
+                            <View style={{ backgroundColor: '#ef4444' + '18', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#ef4444' }}>
+                                {t.criticalLevel}
+                              </Text>
+                            </View>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => beginEdit(t)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={{ width: 60, alignItems: 'flex-end' }}
+                          >
+                            <Ionicons name="create-outline" size={18} color={ACCENT} />
+                          </TouchableOpacity>
+                        </>
+                      )}
                     </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </View>
           </ScrollView>
         )}
