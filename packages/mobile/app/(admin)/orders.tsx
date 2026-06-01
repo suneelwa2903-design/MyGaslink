@@ -274,9 +274,15 @@ export default function AdminOrdersScreen() {
   // vehicle from the driver's day-mapping (returned on /drivers as
   // `vehicleNumber`). Cuts an unnecessary query on every Orders mount.
 
+  // Endpoint is `/api/cylinder-types` — not under `/inventory`. The
+  // `/inventory/cylinder-types` URL 404s and silently breaks the
+  // Create Order + Returns Order pickers on every fresh admin login.
+  // The rest of the app uses the correct path; this was the lone
+  // straggler. Other consumers also share the `['cylinder-types']`
+  // query key, so once one screen loads them they're cached for all.
   const { data: cylinderTypesData } = useApiQuery<{ cylinderTypes: CylinderType[] }>(
     ['cylinder-types'],
-    '/inventory/cylinder-types',
+    '/cylinder-types',
     {},
     { staleTime: 10 * 60 * 1000 },
   );
