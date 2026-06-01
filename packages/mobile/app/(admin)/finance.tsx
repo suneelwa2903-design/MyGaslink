@@ -273,12 +273,11 @@ export default function AdminFinanceScreen() {
   const [expandedInvoiceId, setExpandedInvoiceId] = useState<string | null>(null);
   const [payInvoice, setPayInvoice] = useState<Invoice | null>(null);
 
-  // STEP-3I: GST action modal state (lifted to screen level so a single
-  // modal instance is shared across the list).
-  const [cancelIrnInvoice, setCancelIrnInvoice] = useState<Invoice | null>(null);
-  const [cancelEwbInvoice, setCancelEwbInvoice] = useState<Invoice | null>(null);
+  // Cancel-IRN, Cancel-EWB, and Regenerate-Invoice action buttons were
+  // removed from mobile 2026-06-01 per spec — those flows are admin-only
+  // operations that need a reason picker (NIC code 1-4) + free-text
+  // remarks and are kept exclusively on the web. Generate-GST stays.
   const [generateGstInvoice, setGenerateGstInvoice] = useState<Invoice | null>(null);
-  const [regenerateInvoice, setRegenerateInvoice] = useState<Invoice | null>(null);
 
   // Payment state
   const [createPaymentVisible, setCreatePaymentVisible] = useState(false);
@@ -402,10 +401,7 @@ export default function AdminFinanceScreen() {
           setPayInvoice={setPayInvoice}
           setCreditNoteInvoice={setCreditNoteInvoice}
           setDebitNoteInvoice={setDebitNoteInvoice}
-          setCancelIrnInvoice={setCancelIrnInvoice}
-          setCancelEwbInvoice={setCancelEwbInvoice}
           setGenerateGstInvoice={setGenerateGstInvoice}
-          setRegenerateInvoice={setRegenerateInvoice}
         />
       ) : (
         <PaymentsTab
@@ -483,45 +479,15 @@ export default function AdminFinanceScreen() {
         />
       )}
 
-      {/* STEP-3I: Cancel IRN Modal */}
-      {cancelIrnInvoice && (
-        <CancelGstModal
-          C={C}
-          dark={dark}
-          kind="irn"
-          invoice={cancelIrnInvoice}
-          onClose={() => setCancelIrnInvoice(null)}
-        />
-      )}
-
-      {/* STEP-3I: Cancel EWB Modal */}
-      {cancelEwbInvoice && (
-        <CancelGstModal
-          C={C}
-          dark={dark}
-          kind="ewb"
-          invoice={cancelEwbInvoice}
-          onClose={() => setCancelEwbInvoice(null)}
-        />
-      )}
-
-      {/* STEP-3I: Generate GST Modal */}
+      {/* Generate GST Modal (Cancel IRN / Cancel EWB / Regenerate
+          modal mounts removed 2026-06-01 — these flows now live on
+          web only, where a reason picker collects the NIC code). */}
       {generateGstInvoice && (
         <GenerateGstModal
           C={C}
           dark={dark}
           invoice={generateGstInvoice}
           onClose={() => setGenerateGstInvoice(null)}
-        />
-      )}
-
-      {/* STEP-3I: Regenerate Invoice Modal */}
-      {regenerateInvoice && (
-        <RegenerateInvoiceModal
-          C={C}
-          dark={dark}
-          invoice={regenerateInvoice}
-          onClose={() => setRegenerateInvoice(null)}
         />
       )}
     </SafeAreaView>
@@ -552,10 +518,7 @@ interface InvoicesTabProps {
   setPayInvoice: (inv: Invoice) => void;
   setCreditNoteInvoice: (inv: Invoice) => void;
   setDebitNoteInvoice: (inv: Invoice) => void;
-  setCancelIrnInvoice: (inv: Invoice) => void;
-  setCancelEwbInvoice: (inv: Invoice) => void;
   setGenerateGstInvoice: (inv: Invoice) => void;
-  setRegenerateInvoice: (inv: Invoice) => void;
 }
 
 function InvoicesTab({
@@ -580,10 +543,7 @@ function InvoicesTab({
   setPayInvoice,
   setCreditNoteInvoice,
   setDebitNoteInvoice,
-  setCancelIrnInvoice,
-  setCancelEwbInvoice,
   setGenerateGstInvoice,
-  setRegenerateInvoice,
 }: InvoicesTabProps) {
   const invoices = invoicesData?.invoices ?? [];
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -682,20 +642,16 @@ function InvoicesTab({
       const hasDn = (inv.debitNotesCount ?? 0) > 0;
       const showCnDnButtons = gstEnabled && inv.status === 'issued';
 
-      // STEP-3I: GST action visibility mirrors web (BillingPaymentsPage
-      // lines 644-651). All four buttons are hidden when GST is disabled
-      // on the tenant or the user role can't perform GST actions.
-      const showCancelIrn = gstEnabled && canDoGstActions && inv.irnStatus === 'success';
-      const showCancelEwb = gstEnabled && canDoGstActions && inv.ewbStatus === 'active';
+      // Only Generate-GST remains on mobile. Cancel-IRN / Cancel-EWB /
+      // Regenerate now require a NIC reason code (1-4) + free-text remark
+      // captured at the call site, so they're web-only.
       const showGenerateGst =
         gstEnabled &&
         canDoGstActions &&
         inv.status !== 'cancelled' &&
         inv.irnStatus !== 'success' &&
         inv.irnStatus !== 'pending';
-      const showRegenerate =
-        gstEnabled && canDoGstActions && !!inv.orderId && inv.status !== 'cancelled';
-      const anyGstAction = showCancelIrn || showCancelEwb || showGenerateGst || showRegenerate;
+      const anyGstAction = showGenerateGst;
 
       return (
         <TouchableOpacity
@@ -1000,57 +956,8 @@ function InvoicesTab({
                       <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>Generate GST</Text>
                     </TouchableOpacity>
                   )}
-                  {showCancelIrn && (
-                    <TouchableOpacity
-                      onPress={() => setCancelIrnInvoice(inv)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 5,
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderRadius: 8,
-                        backgroundColor: '#ef4444',
-                      }}
-                    >
-                      <Ionicons name="close-circle-outline" size={14} color="#ffffff" />
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>Cancel IRN</Text>
-                    </TouchableOpacity>
-                  )}
-                  {showCancelEwb && (
-                    <TouchableOpacity
-                      onPress={() => setCancelEwbInvoice(inv)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 5,
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderRadius: 8,
-                        backgroundColor: '#ef4444',
-                      }}
-                    >
-                      <Ionicons name="close-circle-outline" size={14} color="#ffffff" />
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>Cancel EWB</Text>
-                    </TouchableOpacity>
-                  )}
-                  {showRegenerate && (
-                    <TouchableOpacity
-                      onPress={() => setRegenerateInvoice(inv)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 5,
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderRadius: 8,
-                        backgroundColor: dark ? '#334155' : '#e2e8f0',
-                      }}
-                    >
-                      <Ionicons name="refresh-outline" size={14} color={C.text} />
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: C.text }}>Regenerate</Text>
-                    </TouchableOpacity>
-                  )}
+                  {/* Cancel IRN / Cancel EWB / Regenerate buttons
+                      removed 2026-06-01 — those flows are web-only now. */}
                 </View>
               )}
 
@@ -1069,7 +976,7 @@ function InvoicesTab({
     [
       expandedInvoiceId, C, dark, gstEnabled, canDoGstActions, setExpandedInvoiceId, setPayInvoice,
       setCreditNoteInvoice, setDebitNoteInvoice, downloadingId, downloadInvoicePdf,
-      setCancelIrnInvoice, setCancelEwbInvoice, setGenerateGstInvoice, setRegenerateInvoice,
+      setGenerateGstInvoice,
     ],
   );
 
@@ -2764,157 +2671,12 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
   );
 }
 
-// ─── STEP-3I: Cancel IRN / Cancel EWB Modal ─────────────────────────────────
-// Combined modal — `kind` selects endpoint + label. Web equivalent:
-// CancelGstModal in BillingPaymentsPage.tsx line 1147. API accepts only
-// { reason: string min(1) max(100) } — no cancellation code enum
-// (packages/api/src/routes/invoices.ts line 232 + 256).
+// CancelGstModal + RegenerateInvoiceModal removed 2026-06-01 —
+// those flows are now web-only (need a NIC reason code picker).
 
-interface CancelGstModalProps {
-  C: ReturnType<typeof getColors>;
-  dark: boolean;
-  kind: 'irn' | 'ewb';
-  invoice: Invoice;
-  onClose: () => void;
-}
-
-function CancelGstModal({ C, dark, kind, invoice, onClose }: CancelGstModalProps) {
-  const [reason, setReason] = useState('');
-  const noun = kind === 'irn' ? 'IRN' : 'E-Way Bill';
-  const endpoint = `/invoices/${invoice.invoiceId}/cancel-${kind}`;
-
-  const cancelMutation = useApiMutation<unknown, { reason: string }>(
-    'post',
-    endpoint,
-    {
-      invalidateKeys: [['admin-invoices']],
-      successMessage: `${noun} cancelled successfully`,
-      onSuccess: () => onClose(),
-    },
-  );
-
-  const handleSubmit = () => {
-    const trimmed = reason.trim();
-    if (!trimmed) {
-      Alert.alert('Validation', 'Please enter a reason.');
-      return;
-    }
-    if (trimmed.length > 100) {
-      Alert.alert('Validation', 'Reason must be 100 characters or fewer.');
-      return;
-    }
-    cancelMutation.mutate({ reason: trimmed });
-  };
-
-  const inputStyle = {
-    backgroundColor: C.inputBg,
-    borderWidth: 1,
-    borderColor: C.inputBorder,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: C.text,
-    minHeight: 80,
-    textAlignVertical: 'top' as const,
-  };
-
-  return (
-    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay }}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View
-            style={{
-              backgroundColor: C.modalBg,
-              borderTopLeftRadius: 20,
-              borderTopRightRadius: 20,
-              paddingHorizontal: 20,
-              paddingTop: 16,
-              paddingBottom: Platform.OS === 'ios' ? 36 : 24,
-            }}
-          >
-            <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: C.divider, marginBottom: 16 }} />
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={{ fontSize: 18, fontWeight: '800', color: C.text }}>
-                Cancel {noun}
-              </Text>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Ionicons name="close" size={24} color={C.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={{ fontSize: 13, color: C.textSecondary, marginBottom: 4 }}>
-              Invoice: <Text style={{ fontWeight: '700', color: C.text }}>{invoice.invoiceNumber}</Text>
-            </Text>
-            {kind === 'irn' && invoice.irn ? (
-              <Text style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }} numberOfLines={1}>
-                IRN: {invoice.irn.slice(0, 16)}…
-              </Text>
-            ) : (
-              <View style={{ marginBottom: 12 }} />
-            )}
-
-            <Text style={{ fontSize: 12, color: C.textSecondary, marginBottom: 12 }}>
-              This will cancel the {noun} on the GST portal. This cannot be undone.
-            </Text>
-
-            <TextInput
-              style={inputStyle}
-              placeholder="Reason (required, max 100 chars)"
-              placeholderTextColor={C.textMuted}
-              value={reason}
-              onChangeText={setReason}
-              multiline
-              maxLength={100}
-            />
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity
-                onPress={onClose}
-                disabled={cancelMutation.isPending}
-                style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: 10,
-                  backgroundColor: dark ? '#334155' : '#f1f5f9',
-                  alignItems: 'center',
-                  opacity: cancelMutation.isPending ? 0.6 : 1,
-                }}
-              >
-                <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>Go Back</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleSubmit}
-                disabled={cancelMutation.isPending}
-                style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: 10,
-                  backgroundColor: cancelMutation.isPending ? '#9ca3af' : '#ef4444',
-                  alignItems: 'center',
-                }}
-              >
-                {cancelMutation.isPending ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff' }}>
-                    Cancel {kind === 'irn' ? 'IRN' : 'EWB'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </View>
-    </Modal>
-  );
-}
-
-// ─── STEP-3I: Generate GST Modal ────────────────────────────────────────────
-// Retries IRN generation on a FAILED invoice. Web doesn't have a confirm
-// step (it just fires the mutation from the detail modal); the mobile UX
-// adds one because the call is long-running (~20-30s of NIC round-trips)
-// and the user has no way to abort once it starts.
+// ─── Generate GST Modal ─────────────────────────────────────────────────────
+// Survives the 2026-06-01 mobile cleanup. Retries IRN + EWB compliance for
+// an invoice whose previous attempt failed or never ran.
 
 interface GenerateGstModalProps {
   C: ReturnType<typeof getColors>;
@@ -2995,103 +2757,6 @@ function GenerateGstModal({ C, dark, invoice, onClose }: GenerateGstModalProps) 
               ) : (
                 <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff' }}>
                   Generate
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-// ─── STEP-3I: Regenerate Invoice Modal ──────────────────────────────────────
-// Cancels the original invoice + re-creates a fresh one from the linked
-// order. Used after a delivery-state change (e.g. partially-delivered
-// reissue, customer detail correction). Web equivalent: the Regenerate
-// Invoice button in InvoiceDetailModal (no confirmation; just direct
-// mutation). Mobile adds a confirm step because the action is destructive
-// (the old PDF + IRN are voided).
-
-interface RegenerateInvoiceModalProps {
-  C: ReturnType<typeof getColors>;
-  dark: boolean;
-  invoice: Invoice;
-  onClose: () => void;
-}
-
-function RegenerateInvoiceModal({ C, dark, invoice, onClose }: RegenerateInvoiceModalProps) {
-  const regenMutation = useApiMutation<unknown, undefined>(
-    'post',
-    `/invoices/${invoice.invoiceId}/regenerate`,
-    {
-      invalidateKeys: [['admin-invoices']],
-      successMessage: 'Invoice regenerated successfully',
-      onSuccess: () => onClose(),
-    },
-  );
-
-  return (
-    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay }}>
-        <View
-          style={{
-            backgroundColor: C.modalBg,
-            borderTopLeftRadius: 20,
-            borderTopRightRadius: 20,
-            paddingHorizontal: 20,
-            paddingTop: 16,
-            paddingBottom: Platform.OS === 'ios' ? 36 : 24,
-          }}
-        >
-          <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: C.divider, marginBottom: 16 }} />
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <Text style={{ fontSize: 18, fontWeight: '800', color: C.text }}>Regenerate Invoice</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Ionicons name="close" size={24} color={C.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={{ fontSize: 13, color: C.textSecondary, marginBottom: 16 }}>
-            Invoice: <Text style={{ fontWeight: '700', color: C.text }}>{invoice.invoiceNumber}</Text>
-          </Text>
-
-          <Text style={{ fontSize: 13, color: C.textSecondary, marginBottom: 20, lineHeight: 18 }}>
-            This cancels the current invoice and creates a fresh one from the linked
-            order. The original PDF and (if present) IRN will be voided. Continue?
-          </Text>
-
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TouchableOpacity
-              onPress={onClose}
-              disabled={regenMutation.isPending}
-              style={{
-                flex: 1,
-                paddingVertical: 12,
-                borderRadius: 10,
-                backgroundColor: dark ? '#334155' : '#f1f5f9',
-                alignItems: 'center',
-                opacity: regenMutation.isPending ? 0.6 : 1,
-              }}
-            >
-              <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>Go Back</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => regenMutation.mutate(undefined)}
-              disabled={regenMutation.isPending}
-              style={{
-                flex: 1,
-                paddingVertical: 12,
-                borderRadius: 10,
-                backgroundColor: regenMutation.isPending ? '#9ca3af' : '#0369a1',
-                alignItems: 'center',
-              }}
-            >
-              {regenMutation.isPending ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff' }}>
-                  Regenerate
                 </Text>
               )}
             </TouchableOpacity>
