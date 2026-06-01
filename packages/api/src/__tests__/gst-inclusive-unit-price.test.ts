@@ -71,8 +71,20 @@ async function seedDeliveredOrder(opts: {
   const cyl = await prisma.cylinderType.findFirstOrThrow({
     where: { distributorId: DIST, typeName: '425 KG' },
   });
+  // 2026-06-01: pin to a Karnataka customer (intra-state with Sharma KA →
+  // KA). Without this, `findFirst` picked any B2B customer with a gstin —
+  // on CI it picked Hyderabad Caterers (Telangana) so the invoice ran the
+  // INTER-state branch and all GST went to igstValue. The test then
+  // checked cgst + sgst only and got 0, failing with `expected +0 to be
+  // 6406.78`. Bangalore Foods is the canonical KA customer on dist-002.
   const customer = await prisma.customer.findFirstOrThrow({
-    where: { distributorId: DIST, customerType: 'B2B', gstin: { not: null }, deletedAt: null },
+    where: {
+      distributorId: DIST,
+      customerType: 'B2B',
+      gstin: { not: null },
+      billingState: 'Karnataka',
+      deletedAt: null,
+    },
   });
   const effectiveInclusive = Math.max(opts.unitPriceInclusive - (opts.discountPerUnit ?? 0), 0);
   const lineInclusive = effectiveInclusive * opts.quantity;
