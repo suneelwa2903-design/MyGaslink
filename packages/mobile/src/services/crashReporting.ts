@@ -1,27 +1,46 @@
 /**
- * Crash Reporting Service — Sentry Integration
+ * Crash Reporting Service — Sentry React Native v8 integration.
  *
- * Sentry is active in production builds. In dev, errors log to console.
+ * Active in EAS preview + production builds. In dev (__DEV__), Sentry
+ * is intentionally NOT initialised — errors log to console only, so
+ * developer crash noise doesn't burn the production Sentry quota.
  *
- * To fully activate, ensure @sentry/react-native is installed:
- *   npx expo install @sentry/react-native
+ * DSN is bundled at build time via process.env.EXPO_PUBLIC_SENTRY_DSN
+ * (set in eas.json's preview/production profile env blocks). If the
+ * DSN is absent at init time (e.g. Expo Go) the init call is a no-op.
+ *
+ * v1.0 configuration choices (locked 2026-06-08):
+ *   - tracesSampleRate: 0.0  — errors only, no performance traces; the
+ *     free Sentry tier covers ~5k errors/month and traces eat through
+ *     quota fast. Flip ON post-launch with a low sample rate.
+ *   - Session replay: OFF (not initialised) — heavy bandwidth, not
+ *     needed for v1.0 visibility.
+ *   - Auto session tracking: ON — free, gives basic crash-free-users
+ *     metric.
+ *
+ * Source map / dSYM upload requires SENTRY_AUTH_TOKEN as an EAS build
+ * secret. Currently deferred (commit-approved 2026-06-08) — crashes
+ * will report with Hermes bytecode stacks until the secret lands. The
+ * @sentry/react-native/expo plugin in app.json handles the upload
+ * automatically once the secret is present.
  */
 
-// import * as Sentry from '@sentry/react-native';
+import * as Sentry from '@sentry/react-native';
 
 const IS_DEV = __DEV__;
+const DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
 
 export function initCrashReporting(): void {
   if (IS_DEV) return;
+  if (!DSN) return;
 
-  // Uncomment after running: npx expo install @sentry/react-native
-  // Sentry.init({
-  //   dsn: SENTRY_DSN,
-  //   enableAutoSessionTracking: true,
-  //   sessionTrackingIntervalMillis: 30_000,
-  //   tracesSampleRate: 0.2,
-  //   environment: IS_DEV ? 'development' : 'production',
-  // });
+  Sentry.init({
+    dsn: DSN,
+    enableAutoSessionTracking: true,
+    sessionTrackingIntervalMillis: 30_000,
+    tracesSampleRate: 0.0,
+    environment: process.env.EXPO_PUBLIC_ENVIRONMENT ?? 'production',
+  });
 }
 
 export function captureException(error: unknown, context?: Record<string, unknown>): void {
@@ -30,7 +49,7 @@ export function captureException(error: unknown, context?: Record<string, unknow
     return;
   }
 
-  // Sentry.captureException(error, { extra: context });
+  Sentry.captureException(error, { extra: context });
 }
 
 export function captureMessage(message: string, level: 'info' | 'warning' | 'error' = 'info'): void {
@@ -39,25 +58,25 @@ export function captureMessage(message: string, level: 'info' | 'warning' | 'err
     return;
   }
 
-  // Sentry.captureMessage(message, level);
+  Sentry.captureMessage(message, level);
 }
 
-export function setUser(_user: { id: string; email: string; role: string } | null): void {
+export function setUser(user: { id: string; email: string; role: string } | null): void {
   if (IS_DEV) return;
 
-  // if (user) {
-  //   Sentry.setUser({ id: user.id, email: user.email, segment: user.role });
-  // } else {
-  //   Sentry.setUser(null);
-  // }
+  if (user) {
+    Sentry.setUser({ id: user.id, email: user.email, segment: user.role });
+  } else {
+    Sentry.setUser(null);
+  }
 }
 
 export function addBreadcrumb(
-  _category: string,
-  _message: string,
-  _data?: Record<string, unknown>,
+  category: string,
+  message: string,
+  data?: Record<string, unknown>,
 ): void {
   if (IS_DEV) return;
 
-  // Sentry.addBreadcrumb({ category, message, data, level: 'info' });
+  Sentry.addBreadcrumb({ category, message, data, level: 'info' });
 }

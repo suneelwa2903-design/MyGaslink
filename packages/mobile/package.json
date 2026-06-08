@@ -19,6 +19,7 @@
     "@gaslink/shared": "workspace:*",
     "@react-native-community/datetimepicker": "^8.4.4",
     "@react-native-community/netinfo": "^11.4.1",
+    "@sentry/react-native": "^8.13.0",
     "@tanstack/react-query": "^5.80.0",
     "axios": "^1.15.0",
     "expo": "~54.0.35",
