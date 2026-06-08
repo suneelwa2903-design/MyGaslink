@@ -45,6 +45,18 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "_note": "TODO Suneel — fill these in once Apple Developer Program enrollment completes. appleId is the iTunes Connect login email, ascAppId is the numeric App Store Connect app id, appleTeamId is the 10-char team identifier from developer.apple.com/account.",
+        "appleId": "",
+        "ascAppId": "",
+        "appleTeamId": ""
+      },
+      "android": {
+        "_note": "TODO — fill once Google Play service account JSON is provisioned. serviceAccountKeyPath is relative to packages/mobile/.",
+        "serviceAccountKeyPath": "",
+        "track": "internal"
+      }
+    }
   }
 }

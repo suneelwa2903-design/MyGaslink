@@ -17,10 +17,15 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mygaslink.app",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "We need your location for delivery tracking",
         "NSCameraUsageDescription": "We need camera access for delivery proof photos",
-        "NSPhotoLibraryUsageDescription": "Allow MyGasLink to save delivery proof photos"
+        "NSPhotoLibraryUsageDescription": "Allow MyGasLink to save delivery proof photos",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
