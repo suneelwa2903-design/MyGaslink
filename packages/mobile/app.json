@@ -82,13 +82,6 @@
           "cameraPermission": "Allow MyGasLink to access your camera for delivery proof."
         }
       ],
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/notification-icon.png",
-          "color": "#338dff"
-        }
-      ],
       "@react-native-community/datetimepicker",
       "expo-font"
     ],
