@@ -26,37 +26,64 @@ Re-New GasLink is an LPG distribution management SaaS — monorepo with 3 packag
 - `packages/web` — React 19 + Vite + Tailwind + Zustand
 - `packages/mobile` — React Native + Expo 54 + NativeWind
 
-**Status:** Production live as of 2026-05-29. See PRODUCTION STATE below.
+**Status:** Production live as of 2026-05-29. Current focus: iOS submission track (single-tracking). See PRODUCTION STATE below.
 
 ---
 
 ## PRODUCTION STATE
 
-*Last updated: 2026-05-29*
+*Last updated: 2026-06-08 (Phase 0 iOS audit — ground-truth refresh, [docs/IOS-PHASE0-GROUND-TRUTH.md](docs/IOS-PHASE0-GROUND-TRUTH.md))*
 
 - **LIVE AT:** mygaslink.com / api.mygaslink.com
 - **SUPER-ADMIN:** suneel@mygaslink.com (password set)
-- **EC2 HEAD:** `58404de` (check with `git log --oneline -1`)
-- **RDS MIGRATIONS:** 17 / 17 applied
-- **TESTS:** 716 passing
+- **LOCAL HEAD:** `4b7e83f` (2026-06-07 — Google Analytics gtag.js). EC2 HEAD unknown from this machine; was `58404de` as of 2026-05-29, ~96 commits ago.
+- **RDS MIGRATIONS:** 17 / 17 applied (last verified 2026-05-29)
+- **TESTS:** 942 passing + 2 skipped, 0 failing. Per-package: api 895, mobile 41 (+2 skipped), web 6. `pnpm typecheck` and `pnpm lint` both exit 0.
 - **`INVENTORY_DISPATCH_DEBIT`:** `true`
 - **`TZ`:** `Asia/Kolkata`
 
-### MUST DO BEFORE FIRST DISTRIBUTOR
+### CURRENT FOCUS: iOS feature parity + App Store submission (single track)
 
-1. WhiteBooks production credentials → update `/etc/environment` on EC2
-2. DPDP consent checkbox in mobile app
-3. Account deletion UI in mobile app
-4. SSL cert pinning in mobile (**NON-NEGOTIABLE**)
-5. Push notifications (super-critical — drivers won't get delivery alerts otherwise)
+All other tracks parked until iOS is in App Store review. See [docs/IOS-PHASE0-GROUND-TRUTH.md](docs/IOS-PHASE0-GROUND-TRUTH.md) for the full audit. Target: submission in ~7-10 days from 2026-06-08; Apple review adds 1-2 days.
 
-### ANDROID SUBMISSION — 3 steps remaining
+**Parked until iOS submission complete:**
+- WhiteBooks production activation
+- Super Admin SaaS billing ship-blockers ([docs/SUPERADMIN-BILLING-AUDIT.md](docs/SUPERADMIN-BILLING-AUDIT.md) — 5 fixes, ~2 hours of work). Gated by July 1 first-real-billing event — **must restart by ~2026-06-25** or July billing slips.
+- GSTR-1 export feature
+- Distributor NIC portal registration push
+- Float-to-Decimal service migration (WI-006)
+- Customer ledger view (WI-075)
+- B2C reissue docNo bump
+- WhatsApp outreach to new distributors
+- FLAG_SECURE removal (Android)
+- Push notifications (super-critical label transferred to v1.1 Sprint 1 — see below)
+- SSL cert pinning in mobile (deferred to post-v1.0; Apple doesn't require it, DPDP review likely will)
+
+### iOS submission ship-blockers (pre-Apple-review)
+
+| # | Item | Status 2026-06-08 | Phase |
+|---|------|--------------------|-------|
+| 1 | Apple Developer Program enrollment (Organization, D-U-N-S → Apple) | TODO Suneel — start within 48h | Parallel — longest lead time |
+| 2 | Account deletion: PII anonymization + statutory retention, real `DELETE /api/users/me` | Spec being written — [docs/IOS-ACCOUNT-DELETION-SPEC.md](docs/IOS-ACCOUNT-DELETION-SPEC.md). Currently a `mailto:` link → Apple 5.1.1(v) rejection risk | Spec → 3-4 day mini-track parallel to Phase 1 |
+| 3 | DPDP consent checkbox in mobile app | ✅ Done (verified Phase 0) | — |
+| 4 | Feature parity matrix (Android vs iOS) per app per screen | Phase 1 in progress | Phase 1 |
+| 5 | iOS config: `buildNumber`, `usesNonExemptEncryption`, `eas.json submit.production.ios` block | Fixed in this housekeeping pass | Phase 1 setup |
+| 6 | `expo prebuild --no-install` dry-run to surface native module Info.plist gaps | Phase 1 | Phase 1 |
+
+### v1.1 Post-iOS-submission backlog (Sprint 1)
+
+- **Push notifications** — wire real APNs + FCM via `expo-notifications`. Currently a no-op stub; SSE covers driver foreground only. Plugin removed from `app.config` for v1.0 to avoid Apple rejection on entitlement-without-handler. Package + code stubs retained for the v1.1 rebuild.
+- **Super Admin SaaS billing 5 ship-blockers** — must restart by ~2026-06-25 for July 1 first-distributor billing event.
+- **SSL cert pinning in mobile** — Apple doesn't require; DPDP/security review likely will.
+- **Account deletion UI v2** — if Apple flags any v1.0 shortcuts during review.
+
+### ANDROID SUBMISSION — 3 steps remaining (PARKED — finish after iOS submission)
 
 1. Ads declaration → "No ads"
 2. Confirm content rating "Submitted"
 3. `eas build --platform android --profile production`
 
-### PARKED (post-launch)
+### PARKED (defer past iOS submission)
 
 - Monitoring (CloudWatch alarms + UptimeRobot)
 - GitHub billing fix (GH_PAT workaround is in place)
