@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity, Alert, Modal,
   TextInput, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
@@ -558,6 +558,7 @@ export default function CustomerOrdersScreen() {
 
       {/* New Order Modal */}
       <Modal visible={showForm} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
+        <SafeAreaProvider>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -643,10 +644,12 @@ export default function CustomerOrdersScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+        </SafeAreaProvider>
       </Modal>
 
       {/* Modify Order Modal */}
       <Modal visible={!!modifyOrder} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
+        <SafeAreaProvider>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -701,6 +704,7 @@ export default function CustomerOrdersScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+        </SafeAreaProvider>
       </Modal>
 
       {/* WI-122: payment-commitment prompt (overdue gate). */}
@@ -711,6 +715,7 @@ export default function CustomerOrdersScreen() {
         presentationStyle="overFullScreen"
         statusBarTranslucent
       >
+        <SafeAreaProvider>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{
@@ -791,6 +796,7 @@ export default function CustomerOrdersScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+        </SafeAreaProvider>
       </Modal>
 
       {/* WI-127: raise / reopen dispute modal. */}
@@ -801,6 +807,7 @@ export default function CustomerOrdersScreen() {
         presentationStyle="overFullScreen"
         statusBarTranslucent
       >
+        <SafeAreaProvider>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{
@@ -857,6 +864,7 @@ export default function CustomerOrdersScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+        </SafeAreaProvider>
       </Modal>
     </SafeAreaView>
   );

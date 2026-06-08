@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
 import { AppHeader } from '../../src/components/AppHeader';
@@ -18,7 +19,8 @@ const HIDDEN_TABS = ['distributors', 'billing', 'users', 'fleet', 'settings', 'p
 
 export default function SuperAdminLayout() {
   const dark = useIsDark();
-  const tabBarConfig = getTabBarConfig(dark);
+  const insets = useSafeAreaInsets();
+  const tabBarConfig = getTabBarConfig(dark, insets);
 
   return (
     <Tabs screenOptions={{

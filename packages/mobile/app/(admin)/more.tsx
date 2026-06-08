@@ -14,7 +14,7 @@ import {
   Platform,
   Switch,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
@@ -396,7 +396,8 @@ function AnalyticsOverviewModal({ visible, onClose }: { visible: boolean; onClos
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: theme.bg }}>
         <ModalHeader title="Overview" onClose={onClose} theme={theme} />
         {isLoading ? (
           <Loading theme={theme} />
@@ -439,6 +440,7 @@ function AnalyticsOverviewModal({ visible, onClose }: { visible: boolean; onClos
           </ScrollView>
         )}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -551,7 +553,8 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: theme.bg }}>
         <ModalHeader title="GST Configuration" onClose={onClose} theme={theme} />
         {isLoading ? (
           <Loading theme={theme} />
@@ -715,6 +718,7 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
           </KeyboardAvoidingView>
         )}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -967,7 +971,8 @@ function CylinderTypesModal({ visible, onClose }: { visible: boolean; onClose: (
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: theme.bg }}>
         <ModalHeader title="Cylinder Types" onClose={onClose} theme={theme} />
         {isLoading ? (
           <Loading theme={theme} />
@@ -1052,6 +1057,7 @@ function CylinderTypesModal({ visible, onClose }: { visible: boolean; onClose: (
           submitting={createMutation.isPending || updateMutation.isPending}
         />
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -1155,7 +1161,8 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: theme.bg }}>
         <ModalHeader title="Cylinder Prices" onClose={onClose} theme={theme} />
         {isLoading ? (
           <Loading theme={theme} />
@@ -1320,6 +1327,7 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
           </View>
         </Modal>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -1407,7 +1415,8 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: theme.bg }}>
         <ModalHeader title="Inventory Thresholds" onClose={onClose} theme={theme} />
         {isLoading ? (
           <Loading theme={theme} />
@@ -1528,6 +1537,7 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
           </ScrollView>
         )}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -1672,7 +1682,8 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: theme.bg }}>
         <ModalHeader title="User Management" onClose={onClose} theme={theme} />
 
         {showCreate ? (
@@ -1883,6 +1894,7 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
           </View>
         </Modal>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

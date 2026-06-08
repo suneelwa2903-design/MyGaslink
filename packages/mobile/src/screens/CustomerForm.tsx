@@ -51,7 +51,7 @@ import {
   Switch,
   Modal,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { apiGet, getErrorMessage } from '../lib/api';
 import { useApiQuery } from '../hooks/useApi';
@@ -525,7 +525,7 @@ export function CustomerForm({
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+    <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       {/* Header */}
       <View
         style={{
@@ -1060,7 +1060,9 @@ export function CustomerFormModal({
       presentationStyle="fullScreen"
       onRequestClose={onClose}
     >
-      <CustomerForm {...rest} onCancel={onClose} />
+      <SafeAreaProvider>
+        <CustomerForm {...rest} onCancel={onClose} />
+      </SafeAreaProvider>
     </Modal>
   );
 }

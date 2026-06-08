@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
 import { AppHeader } from '../../src/components/AppHeader';
@@ -14,7 +15,8 @@ const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; fille
 
 export default function InventoryLayout() {
   const dark = useIsDark();
-  const tabBarConfig = getTabBarConfig(dark);
+  const insets = useSafeAreaInsets();
+  const tabBarConfig = getTabBarConfig(dark, insets);
 
   return (
     <Tabs screenOptions={{

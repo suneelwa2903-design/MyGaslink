@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, Alert, TouchableOpacity, Modal, TextInput,
   KeyboardAvoidingView, Platform, RefreshControl,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
@@ -238,6 +238,7 @@ export default function CustomerAccountScreen() {
 
       {/* Edit Profile Modal */}
       <Modal visible={showEdit} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
+        <SafeAreaProvider>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -298,6 +299,7 @@ export default function CustomerAccountScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+        </SafeAreaProvider>
       </Modal>
     </SafeAreaView>
   );

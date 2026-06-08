@@ -3,6 +3,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAuthStore } from '../src/stores/authStore';
 import { useIsDark, useThemeHasHydrated } from '../src/stores/themeStore';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
@@ -56,19 +57,21 @@ export default function RootLayout() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <View style={{ flex: 1 }}>
-          <NetworkIndicator />
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="(customer)" />
-            <Stack.Screen name="(driver)" />
-            <Stack.Screen name="(admin)" />
-            <Stack.Screen name="(super-admin)" />
-            <Stack.Screen name="(inventory)" />
-            <Stack.Screen name="(finance)" />
-          </Stack>
-        </View>
+        <SafeAreaProvider>
+          <StatusBar style={isDark ? 'light' : 'dark'} />
+          <View style={{ flex: 1 }}>
+            <NetworkIndicator />
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(customer)" />
+              <Stack.Screen name="(driver)" />
+              <Stack.Screen name="(admin)" />
+              <Stack.Screen name="(super-admin)" />
+              <Stack.Screen name="(inventory)" />
+              <Stack.Screen name="(finance)" />
+            </Stack>
+          </View>
+        </SafeAreaProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   );

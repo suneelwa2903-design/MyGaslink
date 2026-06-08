@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity, Modal,
   FlatList, Alert, ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -197,7 +197,8 @@ export default function CustomerInvoicesScreen() {
 
       {/* Invoice Detail Modal */}
       <Modal visible={!!selectedId} animationType="slide">
-        <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <SafeAreaProvider>
+        <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: colors.bg }}>
           {/* Header */}
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -437,6 +438,7 @@ export default function CustomerInvoicesScreen() {
             )}
           </ScrollView>
         </SafeAreaView>
+        </SafeAreaProvider>
       </Modal>
     </SafeAreaView>
   );

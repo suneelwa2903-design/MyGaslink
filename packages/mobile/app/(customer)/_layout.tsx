@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
 import { AppHeader } from '../../src/components/AppHeader';
@@ -19,10 +20,11 @@ const TAB_CONFIG: Array<{
 
 export default function CustomerLayout() {
   const dark = useIsDark();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs screenOptions={{
-      ...getTabBarConfig(dark),
+      ...getTabBarConfig(dark, insets),
       headerTitle: () => <AppHeader />,
       headerTitleAlign: 'center',
     }}>

@@ -12,7 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
@@ -313,6 +313,7 @@ export default function DriverOrdersScreen() {
         presentationStyle="overFullScreen"
         statusBarTranslucent
       >
+        <SafeAreaProvider>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
@@ -480,6 +481,7 @@ export default function DriverOrdersScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+        </SafeAreaProvider>
       </Modal>
 
       {/* Camera Modal */}

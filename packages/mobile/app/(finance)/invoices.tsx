@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, TouchableOpacity, Modal, FlatList, ActivityIndicator } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
@@ -200,7 +200,8 @@ function InvoiceDetailModal({
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: colors.bg }}>
         {/* Header */}
         <View style={{
           flexDirection: 'row',
@@ -318,6 +319,7 @@ function InvoiceDetailModal({
           </ScrollView>
         )}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

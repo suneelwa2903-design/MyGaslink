@@ -13,7 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -2405,7 +2405,8 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
 
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: C.bg }}>
         {/* Header */}
         <View
           style={{
@@ -2667,6 +2668,7 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

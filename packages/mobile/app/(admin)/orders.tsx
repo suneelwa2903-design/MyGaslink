@@ -14,7 +14,7 @@ import {
   Platform,
   StyleSheet,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -1036,7 +1036,8 @@ function CreateOrderModal({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1 }}
@@ -1293,6 +1294,7 @@ function CreateOrderModal({
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -1695,7 +1697,8 @@ function DeliveryConfirmationModal({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1 }}
@@ -1825,6 +1828,7 @@ function DeliveryConfirmationModal({
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -1850,6 +1854,7 @@ function DispatchResultModal({
   const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} animationType="slide" transparent>
+      <SafeAreaProvider>
       <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
         <View style={[styles.bottomSheet, { backgroundColor: C.modalBg, maxHeight: '85%' }]}>
           <View style={styles.bottomSheetHandle} />
@@ -1912,13 +1917,14 @@ function DispatchResultModal({
             ))}
           </ScrollView>
 
-          <View style={{ paddingHorizontal: 16, paddingBottom: Math.max(20, insets.bottom + 12) }}>
+          <View style={{ paddingHorizontal: 16, paddingBottom: Math.max(34, insets.bottom + 12) }}>
             <TouchableOpacity style={styles.primaryBtn} onPress={onClose}>
               <Text style={styles.primaryBtnText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
       </View>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -1994,7 +2000,8 @@ function ReturnsOrderModal({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
           <View style={[styles.modalHeader, { borderBottomColor: C.divider }]}>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={C.text} /></TouchableOpacity>
@@ -2129,6 +2136,7 @@ function ReturnsOrderModal({
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -2196,7 +2204,8 @@ function EditOrderModal({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
+      <SafeAreaProvider>
+      <SafeAreaView edges={['top','bottom','left','right']} style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
           <View style={[styles.modalHeader, { borderBottomColor: C.divider }]}>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={C.text} /></TouchableOpacity>
@@ -2276,6 +2285,7 @@ function EditOrderModal({
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

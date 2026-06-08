@@ -1,3 +1,4 @@
+import type { EdgeInsets } from 'react-native-safe-area-context';
 import { useIsDark } from './stores/themeStore';
 
 // ─── Design tokens ──────────────────────────────────────────────────────────
@@ -89,7 +90,7 @@ export type ThemeColors = ReturnType<typeof useTheme>['colors'];
  *   }}>
  * That keeps the import graph one-way (AppHeader → theme), which is fine.
  */
-export function getTabBarConfig(dark: boolean) {
+export function getTabBarConfig(dark: boolean, insets: EdgeInsets) {
   const colors = dark ? COLORS.dark : COLORS.light;
   const activeColor = ACCENT.red;
   // Dark inactive tab labels were #64748b (too dark) — lighten for legibility.
@@ -115,8 +116,12 @@ export function getTabBarConfig(dark: boolean) {
       borderTopWidth: 1,
       borderTopColor: colors.cardBorder,
       paddingTop: 6,
-      paddingBottom: 8,
-      height: 64,
+      // SAA C1: respect the home-indicator (iOS) / gesture-pill (Android)
+      // safe-area inset. Preserves the prior visual baseline of 6 dp padding
+      // above the system nav, and grows the bar by `insets.bottom` so labels
+      // are not clipped under the system nav on gesture-nav phones.
+      paddingBottom: insets.bottom + 6,
+      height: 64 + insets.bottom,
     },
     tabBarLabelStyle: {
       fontSize: 11,

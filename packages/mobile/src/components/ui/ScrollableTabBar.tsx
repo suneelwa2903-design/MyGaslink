@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { ScrollView, TouchableOpacity, View, Text, Platform } from 'react-native';
+import { ScrollView, TouchableOpacity, View, Text } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme, ACCENT } from '../../theme';
 
@@ -74,6 +75,7 @@ export function ScrollableTabBar({
   navigation,
 }: ScrollableTabBarProps) {
   const { dark, colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const activeColor = ACCENT.red;
   const inactiveColor = dark ? '#94a3b8' : '#94a3b8';
 
@@ -98,11 +100,13 @@ export function ScrollableTabBar({
         backgroundColor: colors.bg,
         borderTopWidth: 1,
         borderTopColor: colors.cardBorder,
-        // Match the existing tab-bar height (theme.ts:119) plus iOS home-bar
-        // safe area. The 8/12 paddings keep tappable area comfortable.
+        // SAA C1: respect the home-indicator (iOS) / gesture-pill (Android)
+        // safe-area inset. The base 6 dp keeps the prior tappable area; the
+        // bar grows by `insets.bottom` so labels are not clipped under the
+        // system nav on gesture-nav phones.
         paddingTop: 6,
-        paddingBottom: Platform.OS === 'ios' ? 8 : 6,
-        height: 64,
+        paddingBottom: insets.bottom + 6,
+        height: 64 + insets.bottom,
       }}
     >
       <ScrollView
