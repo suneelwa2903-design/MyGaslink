@@ -1,19 +1,32 @@
 /**
- * Microphone permission guard — Android + iOS must stay in lockstep.
+ * Microphone permission guard — Android + iOS app.json declarations only.
  *
- * The camera surface is photos-only ([DeliveryProofCamera.tsx] uses
- * takePictureAsync, never recordAsync). Neither platform should declare
- * microphone access. If a future feature genuinely needs the mic, BOTH
- * surfaces must be updated together:
- *   - Android: add "RECORD_AUDIO" to expo.android.permissions
- *   - iOS:     add "NSMicrophoneUsageDescription" to expo.ios.infoPlist
+ * SCOPE — honest version (was misstated in dd24d68's commit message):
+ * This test pins what's in `app.json`. It does NOT reflect AndroidManifest
+ * reality. The expo-camera plugin contributes RECORD_AUDIO to the
+ * generated AndroidManifest.xml unconditionally (to support video
+ * recording), so Android users continue to be prompted for mic access
+ * regardless of what app.json says. Verified by `expo prebuild --platform
+ * android --no-install --clean` on 2026-06-08 — generated manifest had
+ * RECORD_AUDIO at line 8 despite app.json no longer declaring it.
  *
- * Updating one without the other ships a feature that works on one
- * platform and silently fails on the other (iOS will not show the prompt;
- * Android will throw a SecurityException at runtime).
+ * What this test still catches:
+ * - Someone re-adding RECORD_AUDIO to app.json (a dead duplicate that
+ *   reads as if it controls anything but doesn't).
+ * - Someone adding NSMicrophoneUsageDescription to iOS without adding
+ *   RECORD_AUDIO back to Android's app.json — the lockstep assertion
+ *   forces both surfaces to be considered together.
  *
- * This test catches the half-declaration case. It deliberately asserts
- * absence, not presence — the negative pin is the regression guard.
+ * What this test does NOT catch:
+ * - The fact that expo-camera ships RECORD_AUDIO in the manifest today.
+ *   To actually remove the manifest entry, a config plugin tombstone
+ *   (Android manifest merge with tools:node="remove") is required.
+ *   Tracked as v1.1 backlog if the mic prompt becomes a real concern.
+ *
+ * If a future feature genuinely uses the mic (e.g. switches to
+ * recordAsync), update BOTH surfaces consciously AND flip this test
+ * file's assertions from "absent" to "present-on-both" — the lockstep
+ * assertion will fail the moment one is added without the other.
  */
 
 import appJson from '../../app.json';
