@@ -86,8 +86,7 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-font",
-      "@sentry/react-native"
+      "expo-font"
     ],
     "scheme": "mygaslink",
     "extra": {
