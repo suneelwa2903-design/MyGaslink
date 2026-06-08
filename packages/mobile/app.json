@@ -25,7 +25,11 @@
         "NSLocationWhenInUseUsageDescription": "We need your location for delivery tracking",
         "NSCameraUsageDescription": "We need camera access for delivery proof photos",
         "NSPhotoLibraryUsageDescription": "Allow MyGasLink to save delivery proof photos",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "LSApplicationQueriesSchemes": [
+          "mailto",
+          "tel"
+        ]
       }
     },
     "android": {
