@@ -1,26 +1,26 @@
-# iOS Account Deletion — Specification
+# iOS Account Deletion — Specification (request-and-queue, v1.0 + v1.1)
 
 **Status:** SPEC (no code yet)
 **Author:** Claude (Opus 4.7)
-**Date:** 2026-06-08
+**Date:** 2026-06-08 (rewritten 2026-06-08 — split into v1.0 / v1.1)
 **Owner:** Suneel
 **Target:** Mobile (iOS App Store + Google Play) + API
-**Estimate:** 3.5 working days (1 engineer) — see §9
+**Estimate:** ~5.5 working days total — **v1.0 ≈ 2 days (iOS ship-blocker)**, **v1.1 ≈ 3.5 days (must land within 25 days of v1.0)**. See §12.
 
 ---
 
-## 1. Problem Statement + Legal Landscape
+## 1. Problem statement + legal landscape
 
 ### 1.1 What we have today
 
-The current implementation (`packages/mobile/src/components/DeleteAccountButton.tsx`) is a `mailto:info@mygaslink.com` link with a pre-filled subject + body. The user is told their request "will be processed within 30 days." This is wired into:
+The current implementation ([packages/mobile/src/components/DeleteAccountButton.tsx](../packages/mobile/src/components/DeleteAccountButton.tsx)) is a `mailto:info@mygaslink.com` link with a pre-filled subject + body. The user is told their request "will be processed within 30 days." This is wired into:
 
-- `packages/mobile/app/(admin)/more.tsx`
-- `packages/mobile/app/(super-admin)/settings.tsx`
-- `packages/mobile/app/(customer)/account.tsx`
-- `packages/mobile/app/(driver)/profile.tsx`
-- `packages/mobile/app/(finance)/profile.tsx`
-- `packages/mobile/app/(inventory)/profile.tsx`
+- [packages/mobile/app/(admin)/more.tsx](../packages/mobile/app/(admin)/more.tsx)
+- [packages/mobile/app/(super-admin)/settings.tsx](../packages/mobile/app/(super-admin)/settings.tsx)
+- [packages/mobile/app/(customer)/account.tsx](../packages/mobile/app/(customer)/account.tsx)
+- [packages/mobile/app/(driver)/profile.tsx](../packages/mobile/app/(driver)/profile.tsx)
+- [packages/mobile/app/(finance)/profile.tsx](../packages/mobile/app/(finance)/profile.tsx)
+- [packages/mobile/app/(inventory)/profile.tsx](../packages/mobile/app/(inventory)/profile.tsx)
 
 This was acceptable for Google Play under the "off-app deletion path is allowed if disclosed" rule. **It is NOT acceptable for Apple.**
 
@@ -42,882 +42,906 @@ The Digital Personal Data Protection Act 2023 (DPDP), §12(1):
 
 §12(3) adds the duty on the Data Fiduciary to "erase the personal data unless retention is necessary for compliance with any law for the time being in force."
 
-**Implication:** we MUST honour deletion of *personal data* but MAY retain *financial records* required by other laws.
-
 ### 1.4 Indian Income Tax + GST statutory retention — 8 years
 
-- **Income Tax Act, §44AA + Rule 6F(5):** "books of account and other documents […] shall be kept and maintained for a period of six years from the end of the relevant assessment year." Practical floor: **6 years** for taxpayers under presumptive schemes, **8 years** in practice for reassessment-window safety (§149 reassessment window was extended to 10 years for high-value cases by Finance Act 2021).
-- **CGST Act, §36 + Rule 56(15):** "every registered person required to keep and maintain books of account or other records […] shall retain them until the expiry of **seventy-two months** [6 years] from the due date of furnishing of annual return for the year pertaining to such accounts and records." Annual return (GSTR-9) is due 31-Dec of the following FY, so the effective floor is **~6.75 years from invoice date**.
-- **Distributor obligation under PESO + LPG control orders:** distribution records (delivery logs, returns) — 3 years.
+- **Income Tax Act, §44AA + Rule 6F(5):** books of account retained 6 years from end of relevant AY. **§149 reassessment window** extended to 10 years by Finance Act 2021 for high-value cases.
+- **CGST Act, §36 + Rule 56(15):** retain "until the expiry of seventy-two months [6 years] from the due date of furnishing of annual return" — effective ~6.75 years from invoice date.
+- **PESO + LPG control orders:** distribution records 3 years.
 
-**We pick 8 years** as the single retention window. It safely covers the longest applicable rule (Income Tax §149 reassessment), is easy to communicate to the user, and survives a CA's review. Confirm with CA before shipping (see §10).
+**We pick 8 years.** Single retention window, safely covers §149, easy to communicate. CA confirmation pending (see §13).
 
-### 1.5 The resolution: PII anonymization with statutory record retention
+### 1.5 Why request-and-queue, NOT synchronous deletion
 
-A literal `DELETE FROM users WHERE id = ?` would violate Income Tax + GST law because invoices and payment ledger rows reference `customerId` / `userId`. A literal "keep everything" would violate DPDP §12.
+The previous revision of this spec assumed an immediate synchronous wipe at `DELETE /api/users/me` time. Suneel correctly pushed back: this is neither industry standard nor required by Apple. Every consumer app of comparable scale — **Instagram, X, LinkedIn, Reddit, Snap, TikTok, Discord** — runs a **request-and-30-day-queue** model. Apple's reviewer accepts it; DPDP §12 accepts it (the right to erasure does not specify "instant"); and a 30-day cancellation window measurably reduces (a) impulsive-deletion regret support tickets, and (b) account-takeover-driven malicious-deletion attacks.
 
-**The design:** drop personally identifying fields (name, email, phone, address, photo, FCM token, refresh token) and replace them with a deterministic anonymous token (`ANON-<sha256(userId)[:16]>`) so foreign-key integrity is preserved. Keep the underlying financial/audit rows intact for 8 years. After 8 years, a separate scheduled job (out of scope for this WI — track as follow-up) permanently DELETEs the anonymized rows.
+For Re-New GasLink specifically there is a third, stronger argument: **we are inside the live first-distributor onboarding window.** A synchronous wipe touching 14 PII-bearing models in one transaction during the first months of production is exactly the kind of feature that ships, runs once, and silently anonymizes a row it shouldn't. A 30-day queue gives us:
 
-We will tell the user this honestly in the in-app confirmation (§2). Apple's guideline explicitly allows this — "*except where the developer is required to retain data for legitimate legal purposes*" — provided the disclosure is clear.
+- An audit trail (`AccountDeletionRequest` row sits visible) before any data is touched.
+- A cancellation path for users who deleted by mistake or had their account taken over.
+- A nightly worker we can monitor + dry-run on staging with real volume before it runs on production.
+- A 5-day operational buffer (§9) between v1.0 going live and the first user's request maturing.
 
----
+**The split:**
+- **v1.0 (iOS ship-blocker, ~2 working days):** the in-app request flow + the request endpoint + login block. Submits a row to `AccountDeletionRequest`. Does NOT anonymize PII.
+- **v1.1 (≤25 days post-v1.0, hard deadline):** the background worker that performs the 46-model PII anonymization captured in §10 + a `Driver.userId` FK migration.
 
-## 2. Apple-Acceptable Disclosure Copy
-
-The exact text shown on the confirmation screen (§7, screen 2). Calibrated to be (a) honest enough for Apple's reviewer, (b) legally accurate for Indian Income Tax + GST + DPDP, (c) short enough to read on a single mobile viewport.
-
-> **Delete Your Account**
->
-> Your account will be deleted immediately. Your personal information — name, email, phone, address, and photo — will be permanently removed and cannot be recovered.
->
-> As required by Indian Income Tax and GST law, your invoice and payment history must be retained for 8 years. After deletion these records remain in our system in **anonymized form**, linked to a non-identifying ID — not to you. They are used only for statutory tax compliance and audit, never for marketing or analytics.
->
-> After 8 years, all records will be permanently deleted.
->
-> This action cannot be undone. You will be signed out of all devices.
-
-**Locked wording.** Do not paraphrase without re-reviewing against §5.1.1(v). Reviewers compare disclosure copy to actual behaviour — if we say "name removed" we must actually null `firstName`/`lastName`.
-
-A shorter inline confirmation appears on the force-type screen (§7, screen 3):
-
-> Type **DELETE MY ACCOUNT** below to confirm. This cannot be undone.
+This is the design the rest of the spec describes.
 
 ---
 
-## 3. PII vs Statutory-Record Mapping — Model-by-Model Audit
+## 2. Architecture — request-and-queue
 
-**Legend (Type column):**
-- **PII** — Personally Identifying. Null out, or replace with `ANON-<hash>` token if NOT NULL.
-- **PII-link** — A reference to a record that itself holds PII; cleared on the parent (no action needed on the child link).
-- **Tenant** — `distributorId` / `customerId` linking to a distributor or customer entity. Retain unchanged.
-- **Statutory** — Required for 8-year IT/GST retention. Retain unchanged.
-- **Operational** — Active session / queue / cache state. Cascade delete or revoke immediately.
-- **Reference** — Cross-tenant master data (HSN, states, provider catalog). Skip entirely.
-- **Out-of-scope** — Tenant-level data; deletion of a user does NOT cascade to the tenant.
+Two-phase architecture. v1.0 is fully shippable on its own (Apple sees a working in-app deletion flow with a clear 30-day disclosure). v1.1 must follow it within 25 days or the in-app disclosure becomes a false statement.
 
-**Legend (Action column):** `NULL` | `ANON` (replace with `ANON-<hash>`) | `RETAIN` | `DELETE` | `REVOKE` | `SKIP`.
-
-### 3.1 Scope decision matrix per role
-
-Account deletion semantics differ by `User.role`:
-
-| Role | Deletes own User row? | Cascades to Customer? | Cascades to Driver? | Notes |
-|------|----------------------|----------------------|---------------------|-------|
-| `customer` | Yes — anonymize | Yes — anonymize **linked** Customer (User.customerId) IF no other Users link to the same Customer | No | Customer entity itself can also be referenced by sibling User rows (rare); enumerate before anonymizing. |
-| `driver` | Yes — anonymize | No | Yes — soft-deactivate Driver row; anonymize PII fields | Driver row holds `phone`, `driverName`, `licenseNumber` — all PII. |
-| `finance`, `inventory`, `distributor_admin` | Yes — anonymize | No | No | Pure employee account. No Customer/Driver cascade. |
-| `super_admin` | **BLOCKED** (423) | — | — | Only deletable by another super_admin via a separate admin endpoint (out of scope). |
-
-### 3.2 Per-model audit
-
-> Reference: `packages/api/prisma/schema.prisma`. Line ranges are approximate (single migration, but lines drift with edits — re-check on implementation).
-
-#### 3.2.1 — Distributor (schema.prisma:320)
-**Out-of-scope.** Tenant-level. Deleting a user MUST NOT touch this row, even if the user is the distributor's only admin (see §10 open question on orphaned tenants).
-
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| (all) | Tenant | SKIP | — |
-
-#### 3.2.2 — User (schema.prisma:395) — **PRIMARY TARGET**
-
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `id` | PK | RETAIN | Anchor for foreign-key integrity. |
-| `email` | PII | ANON → `deleted-<hash>@anon.mygaslink.local` | Must be unique → use hash. |
-| `passwordHash` | PII (auth) | NULL or set to a cryptographically random unreachable hash | Prevents any future login. |
-| `firstName` | PII | ANON → `"Deleted"` | NOT NULL. Use literal `"Deleted"` for human-readable audit. |
-| `lastName` | PII | ANON → `"User"` | NOT NULL. Use literal `"User"`. |
-| `phone` | PII | NULL | Nullable. |
-| `role` | Statutory | RETAIN | Needed to interpret historical audit logs (who did what). |
-| `status` | Operational | Set to `inactive` | Belt + braces vs the `deletedAt` timestamp. |
-| `provisioningStatus` | Operational | RETAIN | — |
-| `distributorId` | Tenant | RETAIN | Required for tenant lineage in audit log. |
-| `customerId` | PII-link | RETAIN | Anonymized on the Customer row separately. |
-| `requiresPasswordReset` | Operational | Set to `false` | Doesn't matter — login is blocked by null password — but tidy. |
-| `refreshToken` | PII (auth) | NULL | Revokes all refresh sessions. |
-| `lastLoginAt` | PII (telemetry) | NULL | Last-login timestamp could be identifying in a tiny tenant. |
-| `loginAttempts` | Operational | Set to `0` | — |
-| `lockedUntil` | Operational | NULL | — |
-| `resetOtp` | PII (auth) | NULL | — |
-| `resetOtpExpiresAt` | PII (auth) | NULL | — |
-| `createdAt` | Statutory | RETAIN | — |
-| `updatedAt` | Auto | RETAIN | — |
-| `deletedAt` | Marker | SET = `now()` | Soft-delete marker — distinguishes "anonymized" from "active". |
-
-#### 3.2.3 — Customer (schema.prisma:433) — **CASCADE WHEN ROLE = customer**
-
-Only cascade IF `User.customerId IS NOT NULL` AND no *other* active (non-deletedAt) User row references the same `customerId`. Otherwise leave Customer alone (a B2B customer can have multiple portal logins).
-
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `id` | PK | RETAIN | — |
-| `distributorId` | Tenant | RETAIN | — |
-| `customerName` | PII | ANON → `"Deleted Customer"` | NOT NULL. |
-| `businessName` | PII | NULL | Nullable. |
-| `gstin` | Statutory | RETAIN | GSTIN is on invoices, IRN, EWB. Required for GSTR-1 audit. **DO NOT NULL.** Apple disclosure (§2) covers this — "tax compliance" exception. |
-| `customerType` | Statutory | RETAIN | — |
-| `phone` | PII | NULL → empty string `""` if NOT NULL (column is NOT NULL on Customer) | Yes, the schema enforces NOT NULL — use `""` here. |
-| `email` | PII | NULL | Nullable. |
-| `billingAddressLine1` | PII | NULL | All billing address fields nullable. |
-| `billingAddressLine2` | PII | NULL | — |
-| `billingCity` | PII (low-cardinality, but still) | NULL | — |
-| `billingState` | Statutory | RETAIN | Required for IGST vs CGST/SGST on retained invoices. |
-| `billingPincode` | PII | NULL | — |
-| `shippingAddressLine1` | PII | NULL | — |
-| `shippingAddressLine2` | PII | NULL | — |
-| `shippingCity` | PII | NULL | — |
-| `shippingState` | Statutory | RETAIN | Required for IGST determination on EWB. |
-| `shippingPincode` | PII | NULL | — |
-| `creditPeriodDays` | Operational | RETAIN | Harmless. |
-| `transportChargePerCylinder` | Operational | RETAIN | — |
-| `status` | Operational | Set to `inactive` | — |
-| `stopSupply` | Operational | Set to `true` | Prevents accidental re-activation. |
-| `preferredDriverId` | Operational | NULL | — |
-| `deletedAt` | Marker | SET = `now()` | — |
-
-#### 3.2.4 — CustomerContact (schema.prisma:485)
-
-In-scope IF Customer is being cascaded. `onDelete: Cascade` is set in schema, but we are *anonymizing* not deleting the Customer.
-
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `id` | PK | RETAIN | — |
-| `customerId` | Tenant | RETAIN | — |
-| `name` | PII | ANON → `"Deleted"` | — |
-| `phone` | PII | NULL → `""` (NOT NULL) | — |
-| `email` | PII | NULL | — |
-| `isPrimary` | Operational | RETAIN | — |
-
-#### 3.2.5 — CustomerCylinderDiscount (schema.prisma:498)
-No PII. Cascade with Customer.
-| Field | Type | Action |
-|-------|------|--------|
-| (all) | Operational/Reference | RETAIN |
-
-#### 3.2.6 — CustomerInventoryBalance (schema.prisma:511)
-No PII. Operational state on retained Customer.
-| Field | Type | Action |
-|-------|------|--------|
-| (all) | Operational | RETAIN |
-
-#### 3.2.7 — CustomerModificationRequest (schema.prisma:527)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `requestedBy` | PII-link (User.id) | RETAIN | The User row is being anonymized in §3.2.2 — this FK keeps lineage. |
-| `reviewedBy` | PII-link | RETAIN | — |
-| `reason` | Possibly-PII (free text) | NULL | Free-text fields are PII risk. Null to be safe. |
-| `changes` (Json) | Possibly-PII | NULL | Could contain old name/phone. NULL the JSON. |
-| (rest) | Statutory | RETAIN | — |
-
-#### 3.2.8 — CustomerAuditTrail (schema.prisma:546)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `performedBy` | PII-link (User.id) | RETAIN | — |
-| `actionType` | Statutory | RETAIN | — |
-| `fieldName` | Statutory | RETAIN | — |
-| `oldValue` (Json) | Possibly-PII | **REDACT** | If `fieldName IN ('phone','email','address','name', …)` set to `{"redacted": true}`. Tricky — easier to NULL the whole JSON for the customer's own trail rows. |
-| `newValue` (Json) | Possibly-PII | **REDACT** | Same. |
-| (rest) | Statutory | RETAIN | — |
-
-**Decision:** redact `oldValue`/`newValue` JSON to `{"redacted": "user-deletion-2026-06-XX"}` for rows where `customerId` is the deleted user's customer. Keeps the audit timeline intact, removes the PII payload.
-
-#### 3.2.9 — CustomerLedgerEntry (schema.prisma:563) — **STATUTORY**
-| Field | Type | Action |
-|-------|------|--------|
-| (all) | Statutory | RETAIN |
-
-The ledger is the spine of the 8-year retention. Touch nothing.
-
-#### 3.2.10 — CylinderType (schema.prisma:585)
-Tenant-level. Out-of-scope.
-
-#### 3.2.11 — CylinderPrice (schema.prisma:620)
-Tenant-level. Out-of-scope.
-
-#### 3.2.12 — EmptyCylinderPrice (schema.prisma:635)
-Tenant-level. Out-of-scope.
-
-#### 3.2.13 — CylinderThreshold (schema.prisma:649)
-Tenant-level. Out-of-scope.
-
-#### 3.2.14 — Order (schema.prisma:665)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `customerId` | PII-link | RETAIN | Customer is anonymized separately. |
-| `driverId` | PII-link | RETAIN | Driver is anonymized separately if a driver user is being deleted. |
-| `specialInstructions` | Possibly-PII | NULL | Free-text — customers sometimes write "leave at door, key under mat" etc. |
-| `deliveryNotes` | Possibly-PII | NULL | Driver free-text — same risk. |
-| `deliveryLatitude`/`deliveryLongitude` | PII (geolocation) | NULL | Geolocation is PII. **But:** for *delivered* orders these correspond to a delivery proof — see §4.2 nuance. **Decision:** retain on delivered, null on cancelled. |
-| `cancellationReason` | Possibly-PII | NULL | — |
-| `customerDisputeReason` / `disputeResolutionNote` / `disputeReopenReason` | Possibly-PII | NULL | Customer free-text. |
-| (rest) | Statutory | RETAIN | Order is statutorily linked to Invoice via `orderId` — must not delete. |
-
-#### 3.2.15 — OrderItem (schema.prisma:727)
-No PII. RETAIN all. Statutory.
-
-#### 3.2.16 — OrderStatusLog (schema.prisma:744)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `changedBy` | PII-link | RETAIN | — |
-| `notes` | Possibly-PII | NULL | Free text. |
-| (rest) | Statutory | RETAIN | — |
-
-#### 3.2.17 — Driver (schema.prisma:761) — **CASCADE WHEN ROLE = driver**
-
-Driver entity itself is per-tenant, but the Driver row holds the human's PII. Cascade only IF the deleted User is uniquely linked to this Driver (via shared `phone` + `distributorId` — there is no FK; see §10 open question on User↔Driver linkage).
-
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `id` | PK | RETAIN | — |
-| `distributorId` | Tenant | RETAIN | — |
-| `driverName` | PII | ANON → `"Deleted Driver"` | — |
-| `phone` | PII | NULL → `""` (NOT NULL) | — |
-| `licenseNumber` | PII | NULL | DL number is PII. |
-| `employmentType` | Operational | RETAIN | — |
-| `status` | Operational | Set to `inactive` | — |
-| `availableToday` | Operational | Set to `false` | — |
-| `preferredVehicleId` | Operational | NULL | — |
-| `joiningDate` | Statutory (HR record) | RETAIN | Labour-law retention — kept. |
-| `deactivatedAt` | Marker | SET = `now()` | — |
-| `deactivationNotes` | Audit | Set to `"User-initiated account deletion"` | — |
-| `deletedAt` | Marker | SET = `now()` | — |
-
-#### 3.2.18 — Vehicle (schema.prisma:791)
-Tenant-level. Out-of-scope. Vehicle number is the asset, not the user.
-
-#### 3.2.19 — DriverVehicleAssignment (schema.prisma:816)
-No PII. RETAIN. Statutory (links to trip-sheet EWB).
-
-#### 3.2.20 — ReconciliationEmptiesReturned (schema.prisma:865)
-No PII. RETAIN.
-
-#### 3.2.21 — DriverAssignment (schema.prisma:880)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `assignedBy` (User FK) | PII-link | RETAIN | — |
-| `notes` | Possibly-PII | NULL | — |
-| (rest) | Statutory | RETAIN | — |
-
-**§4-relevant:** rows where `driverId` = the deleting driver AND `status='active'` AND the underlying Order is still pending need reassignment. See §4.
-
-#### 3.2.22 — VehicleInventory (schema.prisma:897)
-No PII. RETAIN.
-
-#### 3.2.23 — InvoiceCounter (schema.prisma:918)
-Tenant-level. Out-of-scope.
-
-#### 3.2.24 — Invoice (schema.prisma:933) — **STATUTORY, FULL RETAIN**
-
-| Field | Type | Action |
-|-------|------|--------|
-| (all) | Statutory | RETAIN |
-
-Invoices are the heart of GST/IT retention. **Touch nothing.** This includes `irn`, `ackNo`, `signedQr` — those are NIC artifacts and must remain queryable for GSTR-1 reconciliation.
-
-#### 3.2.25 — InvoiceRevision (schema.prisma:988)
-Statutory. RETAIN all (including the `Json` snapshots — they contain the historical line items, not customer PII).
-
-#### 3.2.26 — InvoiceItem (schema.prisma:1008)
-Statutory. RETAIN all.
-
-#### 3.2.27 — CreditNote (schema.prisma:1026)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `reason` | Statutory (1-liner used in GSTR) | RETAIN | — |
-| `note` | Possibly-PII (free-text to customer) | NULL | — |
-| `issuedBy` / `approvedBy` (User FK) | PII-link | RETAIN | — |
-| (rest) | Statutory | RETAIN | — |
-
-#### 3.2.28 — DebitNote (schema.prisma:1048)
-Same as CreditNote. `note` → NULL, everything else RETAIN.
-
-#### 3.2.29 — PaymentTransaction (schema.prisma:1071) — **STATUTORY**
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `referenceNumber` | Statutory (cheque/UPI/bank ref) | RETAIN | Required for bank reconciliation audit. |
-| `receivedBy` (User FK) | PII-link | RETAIN | — |
-| `notes` | Possibly-PII | NULL | — |
-| (rest) | Statutory | RETAIN | — |
-
-#### 3.2.30 — PaymentAllocation (schema.prisma:1095)
-No PII. RETAIN. Statutory.
-
-#### 3.2.31 — InventoryEvent (schema.prisma:1110)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `driverName` | PII (snapshot, denormalized) | ANON → `"Deleted Driver"` | When deleting a driver, scrub this for rows where `driverName` matches. |
-| `vehicleNumber` | Asset | RETAIN | Not PII. |
-| `notes` | Possibly-PII | NULL | — |
-| `authorizationRef` | Operational | RETAIN | — |
-| `createdBy` (User FK) | PII-link | RETAIN | — |
-| (rest) | Statutory | RETAIN | — |
-
-#### 3.2.32 — InventorySummary (schema.prisma:1144)
-No PII (aggregates only). RETAIN. `lockedBy` is a User FK → RETAIN.
-
-#### 3.2.33 — CancelledStockEvent (schema.prisma:1175)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `reconciledBy` (User FK) | PII-link | RETAIN | — |
-| `notes` | Possibly-PII | NULL | — |
-| (rest) | Statutory | RETAIN | — |
-
-#### 3.2.34 — GstDocument (schema.prisma:1206) — **STATUTORY**
-
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `requestPayload` (Json) | Statutory (IRN/EWB audit) | RETAIN | Contains buyer's GSTIN + address. **GST law requires retaining the as-sent payload.** Apple disclosure (§2) covers this. |
-| `responsePayload` (Json) | Statutory | RETAIN | — |
-| `cancelledByUserId` (User FK) | PII-link | RETAIN | — |
-| `cancelReason` | Statutory (NIC field) | RETAIN | — |
-| (rest) | Statutory | RETAIN | — |
-
-#### 3.2.35 — GstCredential (schema.prisma:1252)
-Tenant-level (distributor's WhiteBooks creds). Out-of-scope.
-
-#### 3.2.36 — BillingCycle / BillingItem (schema.prisma:1277, 1302)
-Tenant-level (GasLink SaaS billing to the distributor). Out-of-scope for user deletion.
-
-#### 3.2.37 — PricingTier (schema.prisma:1327)
-Reference data. SKIP.
-
-#### 3.2.38 — GstApiUsage (schema.prisma:1355)
-Tenant-level. Out-of-scope.
-
-#### 3.2.39 — GstApiLog (schema.prisma:1379) — **STATUTORY (forensic) + PII risk**
-
-This is the per-call audit log of WhiteBooks calls. `requestPayload` contains customer name + GSTIN + address.
-
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `requestPayload` (Json) | Statutory + PII | **RETAIN** | Same argument as `GstDocument` — required by GST/IT retention for the IRN audit chain. |
-| `responsePayload` | Statutory | RETAIN | — |
-| (rest) | Statutory | RETAIN | — |
-
-**Note:** this is borderline. A privacy-purist could argue these logs should be retained only as long as the underlying invoice is queried — but Rule 56(15) doesn't distinguish "the invoice" from "the API audit that proved the invoice was filed." Keep all. Document in privacy policy.
-
-#### 3.2.40 — SeatRequest (schema.prisma:1404)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `requestedBy` / `approvedBy` (User FK) | PII-link | RETAIN | — |
-| `reason` | Possibly-PII | NULL | — |
-| (rest) | Operational | RETAIN | — |
-
-#### 3.2.41 — PendingAction (schema.prisma:1424)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `description` | Possibly-PII | **REDACT** if mentions the deleted user (`LIKE '%<userId>%'` is the cheap check, but description can also mention name/phone — see open question §10). | Free-text. |
-| `approvedBy` / `resolvedBy` (User FK) | PII-link | RETAIN | — |
-| `resolutionNotes` | Possibly-PII | NULL where related to deleted user | — |
-| `errorContext` (Json) | Possibly-PII | RETAIN | Usually NIC error codes — low PII risk. |
-| (rest) | Operational | RETAIN | — |
-
-**Operational nuance:** any `PendingAction` with `status = 'open'` AND `entityType = 'user'` AND `entityId = <deleted userId>` should be resolved/skipped on deletion (orphaned open action).
-
-#### 3.2.42 — PaymentCommitment (schema.prisma:1462)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `createdBy` / `resolvedBy` (User FK) | PII-link | RETAIN | — |
-| (rest) | Statutory (collections) | RETAIN | — |
-
-#### 3.2.43 — AccountabilityLog (schema.prisma:1489)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `description` | Possibly-PII | **REDACT** for rows where `driverId` or `customerId` is the deleted user | Free-text. |
-| `resolvedBy` (User FK) | PII-link | RETAIN | — |
-| `resolutionNotes` | Possibly-PII | NULL for affected rows | — |
-| (rest) | Statutory | RETAIN | — |
-
-#### 3.2.44 — AuditLog (schema.prisma:1519) — **STATUTORY (forensic)**
-
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `userId` | PII-link | RETAIN | The User row it points to is anonymized — that's the anonymization. |
-| `action` | Statutory | RETAIN | — |
-| `entityType` / `entityId` | Statutory | RETAIN | — |
-| `details` (Json) | Possibly-PII | **REDACT for the deletion target's rows** | The `details` JSON may snapshot old email/phone on a user-edit event. Replace with `{"redacted": "user-deletion-2026-06-XX"}` for rows where `userId = <deleted>`. |
-| `ipAddress` | PII | NULL | IP is PII under DPDP. |
-| `userAgent` | PII | NULL | UA strings can be device-fingerprint-identifying. |
-| (rest) | Statutory | RETAIN | — |
-
-**Important:** the **deletion action itself** writes a NEW AuditLog row (§6 step 7). That row's `userId` will be the soon-to-be-anonymized user; its `details` will be `{ deletedFields: [...] }` — sanitized, not containing the original PII values. Apply the same 8-year retention to that row.
-
-#### 3.2.45 — DistributorSetting (schema.prisma:1542)
-Tenant-level. Out-of-scope.
-
-#### 3.2.46 — License (schema.prisma:1558)
-Tenant-level (distributor's PESO/PAN/etc. licenses). Out-of-scope.
-
-#### 3.2.47 — ContactSubmission (schema.prisma:1577)
-Pre-tenant lead form. Out-of-scope for an authenticated user's deletion (the user wasn't authenticated when they submitted). But: if `email`/`phone` of the deleting user appears in `contact_submissions` rows, anonymize those rows opportunistically — they hold direct PII. Decision: **defer to a follow-up** so this WI ships within estimate (track in §10).
-
-#### 3.2.48 — GstState / HsnCode / ProviderCatalogCylinderType (schema.prisma:1598, 1605, 1614)
-Reference data. SKIP.
-
-#### 3.2.49 — StockMismatchRecord (schema.prisma:1659)
-| Field | Type | Action | Notes |
-|-------|------|--------|-------|
-| `vehicleNumber` (snapshot) | Asset | RETAIN | — |
-| `driverId` / `customerId` (FK) | PII-link | RETAIN | Anonymized on parent. |
-| `resolutionNotes` | Possibly-PII | NULL where `driverId` or `customerId` is the deleted user | — |
-| `createdBy` / `resolvedBy` (User FK) | PII-link | RETAIN | — |
-| (rest) | Statutory | RETAIN | — |
-
-### 3.3 Coverage summary
-
-**Total models in schema:** 46 (excluding pure enum definitions).
-**In-scope for user-deletion anonymization:** 14 models with direct PII writes (User, Customer, CustomerContact, CustomerModificationRequest, CustomerAuditTrail, Driver, Order, OrderStatusLog, DriverAssignment, InventoryEvent, CancelledStockEvent, PendingAction, AccountabilityLog, AuditLog) + 1 stretch (StockMismatchRecord — light).
-**Statutory full-retain (touch nothing):** 8 (Invoice, InvoiceRevision, InvoiceItem, CreditNote, DebitNote, PaymentTransaction, PaymentAllocation, CustomerLedgerEntry, GstDocument, GstApiLog).
-**Tenant-level / out-of-scope:** 15.
-**Reference data / skip:** 4.
-
----
-
-## 4. Pending-Order Semantics
-
-When a user requests deletion, in-flight operational state needs to be cleaned up. The principle: **don't leave operational state pointing at a deleted user, but don't lose statutory records by force-finishing them either.**
-
-### 4.1 Open Orders (status ∉ {delivered, modified_delivered, cancelled})
-
-**Customer-initiated deletion:**
-- Orders with `status IN ('pending_driver_assignment', 'pending_dispatch')` → **cancel** with `cancellationReason = 'Customer account deleted'`. No invoice yet, no statutory loss.
-- Orders with `status IN ('preflight_in_progress', 'pending_delivery')` → **HARD BLOCK** the deletion (return 409). An IRN may already be live at NIC; cancelling the order requires `irn_cancel` first which has a 24-hour NIC window. Tell the user: "You have an active delivery in progress. Please wait until it is complete and then try again."
-- Orders with `status = 'returns_only'` → cancel.
-
-**Driver-initiated deletion:**
-- Orders where `driverId = <deleting driver>` AND `status IN ('pending_dispatch', 'preflight_in_progress', 'pending_delivery')` → **HARD BLOCK** (409). The distributor admin must reassign first.
-- Orders where `driverId = <deleting driver>` AND `status = 'pending_driver_assignment'` (rare — shouldn't have a driverId yet, but defensive) → null `driverId`.
-
-**Admin/finance/inventory deletion:**
-- No order-level cascade (admins don't own orders).
-
-### 4.2 Pending Invoices
-
-- `Invoice.irnStatus = 'success'` → **RETAIN** unchanged. Already filed with NIC; statutory.
-- `Invoice.irnStatus IN ('not_attempted', 'failed')` AND `Invoice.status = 'draft'` → set `status = 'cancelled'`, add notes "Customer account deleted before invoicing". No IRN was filed, so no NIC reversal needed.
-- `Invoice.irnStatus = 'pending'` (a call in flight) → wait or block. The preflight transaction is short — if `updated_at > now() - 5 min`, retry the check; otherwise treat as failed and cancel.
-
-### 4.3 Pending CreditNote / DebitNote
-
-- `status = 'pending_cn' / 'pending_dn'` (`approved_at IS NULL`) → set `status = 'rejected_cn' / 'rejected_dn'` with `note = 'Customer account deleted'`. No NIC call has happened yet.
-- `status = 'approved_cn'` or `issued` → RETAIN (statutory; IRN may exist).
-
-### 4.4 Active DriverAssignment
-
-- `status = 'active'` AND parent Order is still pending → covered by §4.1's hard-block rule.
-- `status = 'active'` AND parent Order is delivered → set assignment `status = 'completed'` (defensive cleanup; this shouldn't normally happen).
-
-### 4.5 Active sessions / tokens
-
-See §5.
-
-### 4.6 Open PendingAction rows for this user
-
-- `entityType = 'user'` AND `entityId = <userId>` AND `status = 'open'` → set `status = 'skipped'`, `resolutionNotes = 'User-initiated account deletion'`.
-
-### 4.7 PaymentCommitment with `status = 'open'`
-
-If the deleting user is a customer with an open commitment (overdue order, promise-to-pay):
-- The commitment itself is statutory (collections audit) — RETAIN.
-- But it points to a pending Order — if that Order is being cancelled in §4.1, the commitment should be marked `status = 'broken'` with notes `'Account deleted'`. Distributor admin gets a PendingAction to write off or pursue separately.
-
-### 4.8 Outstanding balance check (409 condition)
-
-**Hard block** deletion (return 409) if the customer has `customer_ledger_entries` net balance > some threshold (Suneel decides — recommend ₹100 to allow rounding-error tails). Reason: a customer who owes the distributor money cannot simply delete and walk away — the distributor has a legal recovery right. UX message: "You have ₹X outstanding. Please contact the distributor to settle before deleting your account."
-
-For drivers/admins/finance/inventory: no balance check; their deletion doesn't extinguish customer balances.
-
----
-
-## 5. Session + Token Revocation
-
-### 5.1 Server-side
-
-- `User.refreshToken` → NULL. Kills the long-lived refresh path.
-- `User.passwordHash` → unreachable random value. Prevents password-based login even if email anonymization somehow leaked.
-- `User.email` → ANON. Email-based login lookup `findUnique({ email })` returns nothing.
-
-### 5.2 Active JWT access tokens
-
-Access tokens are stateless. They CANNOT be revoked centrally without a denylist (we don't have one and it's out of scope for this WI).
-
-**Mitigation:** access tokens are short-lived (15 min — confirm with [packages/api/src/services/authService.ts]). Within that window, the JWT still authenticates — but:
-- Every middleware-protected route does `prisma.user.findUnique({ id: req.user.id })` and rejects if `User.status = 'inactive'` OR `User.deletedAt IS NOT NULL`. **Add this check if it isn't already there** — see open question §10.
-- Within 15 minutes the access token naturally expires; the refresh attempt fails (refresh token nulled in §5.1); the user is force-logged-out.
-
-### 5.3 Client-side (mobile)
-
-- On 204 response from `DELETE /api/users/me`, the mobile app immediately:
-  1. Calls `useAuthStore.getState().clear()` to drop in-memory state.
-  2. Calls `await SecureStore.deleteItemAsync('jwt')` and `await SecureStore.deleteItemAsync('refreshToken')`. Required — per CLAUDE.md Mobile Rule #1, tokens live in `expo-secure-store`, NOT AsyncStorage.
-  3. Calls `await AsyncStorage.clear()` for cached query state.
-  4. Resets the React Query cache: `queryClient.clear()`.
-  5. Resets the navigator to `/login`.
-
-### 5.4 Concurrent sessions on web
-
-If the user has a web session open, it dies on next request when middleware checks `User.deletedAt`. Document in privacy policy; no further action.
-
-### 5.5 Push notification tokens / FCM
-
-**Not in current schema.** When push tokens are added (item #5 in CLAUDE.md "MUST DO" list), the spec must include a `UserDeviceToken` model with a deletion-cascade rule.
-
----
-
-## 6. API Contract — `DELETE /api/users/me`
-
-### 6.1 Route
+### 2.1 Sequence diagram
 
 ```
-DELETE /api/users/me
-Authorization: Bearer <accessToken>
-Content-Type: application/json
+                v1.0 (DAY D — iOS ship)                            v1.1 (DAY D + ~30 — nightly worker)
+                ──────────────────────                            ────────────────────────────────────
+
+  User (mobile)              API                Postgres                Cron (00:30 IST)         API/Worker
+       │                      │                     │                          │                    │
+       │ tap "Delete Account" │                     │                          │                    │
+       │ ── disclosure ──┐    │                     │                          │                    │
+       │                 │    │                     │                          │                    │
+       │ type confirm    │    │                     │                          │                    │
+       │ ─── POST ──────►│    │                     │                          │                    │
+       │  /deletion-      │   │                     │                          │                    │
+       │   request        │   │                     │                          │                    │
+       │                  │   │── INSERT ──────────►│                          │                    │
+       │                  │   │  AccountDeletion    │                          │                    │
+       │                  │   │  Request            │                          │                    │
+       │                  │   │  status='pending'   │                          │                    │
+       │                  │   │  scheduledCompletion│                          │                    │
+       │                  │   │   = now() + 30d     │                          │                    │
+       │                  │   │── DELETE ──────────►│                          │                    │
+       │                  │   │  RefreshToken       │                          │                    │
+       │                  │   │  WHERE userId=...   │                          │                    │
+       │                  │   │── enqueue email ────┤                          │                    │
+       │                  │   │                     │                          │                    │
+       │ ◄─── 200 OK ─────┤                         │                          │                    │
+       │  { requestId,    │                         │                          │                    │
+       │   scheduledAt }  │                         │                          │                    │
+       │                  │                         │                          │                    │
+       │  client wipes    │                         │                          │                    │
+       │  SecureStore +   │                         │                          │                    │
+       │  routes /login   │                         │                          │                    │
+       │                  │                         │                          │                    │
+       │                  │  ── while pending ──    │                          │                    │
+       │  user logs in    │                         │                          │                    │
+       │  ─── POST /auth/login ─►                   │                          │                    │
+       │                  │  ◄── 200 + JWT ──┤                                 │                    │
+       │  next API call   │                         │                          │                    │
+       │  ─── GET /orders ──►                       │                          │                    │
+       │                  │── joined query sees     │                          │                    │
+       │                  │   pending deletion ─────┤                          │                    │
+       │  ◄── 403 with    │                         │                          │                    │
+       │   "account_pending_deletion" + scheduledAt │                          │                    │
+       │                  │                         │                          │                    │
+       │  mobile routes to /(shared)/pending-deletion (countdown screen)       │                    │
+       │  shows "23 days remaining" + Cancel button                            │                    │
+       │  ─── POST /deletion-request/cancel ────►                              │                    │
+       │                  │── UPDATE status='cancelled' ────────►              │                    │
+       │  ◄── 204 ────────┤                         │                          │                    │
+       │  normal login resumes                      │                          │                    │
+       │                                                                       │                    │
+       │                                                                       │ runs daily 00:30   │
+       │                                                                       │ ─── SELECT ───────►│
+       │                                                                       │  WHERE status='pending'
+       │                                                                       │    AND scheduledCompletionAt <= now()
+       │                                                                       │                    │
+       │                                                                       │                    │ for each row:
+       │                                                                       │                    │  • re-check sole-admin
+       │                                                                       │                    │  • $transaction:
+       │                                                                       │                    │     - anonymize 14 PII models (§10)
+       │                                                                       │                    │     - statutory rows untouched
+       │                                                                       │                    │     - mark request completed
+       │                                                                       │                    │  • send final email
+       │                                                                       │                    │
+       │ (user can never log in again — email is now deleted-<hash>@anon...)   │                    │
 ```
 
-Mounted in `packages/api/src/app.ts` under `/api/users` with `authenticate` + `resolveDistributor` middleware. **Crucially: no `requireDistributor`** — a customer-portal user has `distributorId` set via Customer; no distributor-header needed.
+### 2.2 The split, in plain English
 
-### 6.2 Request body
+| Phase | When | What ships | What does NOT ship |
+|-------|------|------------|--------------------|
+| **v1.0** | Day D (iOS submission) | `AccountDeletionRequest` table + 3 endpoints + auth-middleware login block + 5 mobile screens + email "we received your request" | Any PII anonymization. The User row remains intact for 30 days. |
+| **v1.1** | Day D+25 (hard) | Nightly cron worker + 46-model anonymization function + `Driver.userId` FK migration + final-confirmation email + observability | Nothing — v1.1 is the deferred half of the same feature. |
 
-```json
-{
-  "confirmText": "DELETE MY ACCOUNT"
+Anything that mutates user PII lives in v1.1. v1.0 only writes one row.
+
+---
+
+## 3. v1.0 schema — `AccountDeletionRequest`
+
+Single new table. One Prisma migration, additive, safe.
+
+```prisma
+/// v1.0: tracks user-initiated account deletion requests. Inserted by
+/// POST /api/users/me/deletion-request; processed by the v1.1 cron worker
+/// once scheduledCompletionAt is reached. While status='pending' the auth
+/// middleware blocks the user from every endpoint except cancel + status
+/// + logout.
+model AccountDeletionRequest {
+  id                       String   @id @default(uuid())
+  userId                   String   @unique @map("user_id")
+  /// preserved at request time so the v1.1 worker can still locate tenant
+  /// scope even after the User row's distributorId is set NULL during anonymization
+  distributorId            String   @map("distributor_id")
+  requestedAt              DateTime @default(now()) @map("requested_at")
+  /// requestedAt + 30 days. The v1.1 worker only acts when now() >= this.
+  scheduledCompletionAt    DateTime @map("scheduled_completion_at")
+  completedAt              DateTime? @map("completed_at")
+  cancelledAt              DateTime? @map("cancelled_at")
+  status                   AccountDeletionStatus @default(pending)
+  /// optional free-text reason captured on the confirm screen. Plain string.
+  reason                   String?  @db.Text
+  requestIp                String?  @map("request_ip")
+  requestUserAgent         String?  @map("request_user_agent") @db.Text
+
+  user                     User @relation(fields: [userId], references: [id])
+
+  @@index([status, scheduledCompletionAt])  // the v1.1 cron query
+  @@index([distributorId])
+  @@map("account_deletion_requests")
+}
+
+enum AccountDeletionStatus {
+  pending
+  cancelled
+  completed
 }
 ```
 
-Zod schema (`packages/api/src/routes/userRoutes.ts` or similar):
+### 3.1 Why `@unique` on `userId`
+
+A user can have at MOST one open deletion request. The unique constraint enforces this at the DB level — a buggy client that double-submits gets a Postgres unique-violation, not two parallel pending rows. If the user cancels (status=cancelled) and later re-requests, we either (a) `upsert` to flip cancelled → pending and reset timestamps, or (b) delete the cancelled row and insert. Recommended: **(a) upsert**, so the cancelled history is preserved in `cancelledAt` for one cycle. After a second request the previous cancelled row is overwritten — acceptable.
+
+### 3.2 Why store `distributorId` on the request row
+
+Defence in depth. By the time the v1.1 worker runs the anonymization, `User.distributorId` could in principle have been nulled (it shouldn't, but the worker should not depend on the User row's tenant fields being intact). Storing `distributorId` at request time guarantees the worker can scope its anonymization queries even if the User row is mid-transform.
+
+### 3.3 Migration
+
+One additive migration: `CREATE TABLE account_deletion_requests` + `CREATE TYPE AccountDeletionStatus`. No backfill needed. Safe to run on production. Filename: `prisma/migrations/<timestamp>_add_account_deletion_requests/migration.sql`. Per the schema rule in CLAUDE.md anti-pattern #2, this is an **incremental migration**, not a reset.
+
+---
+
+## 4. v1.0 API contracts
+
+Three endpoints. All mounted under `/api/users` in [packages/api/src/app.ts](../packages/api/src/app.ts). All go through the standard `sendSuccess` / `sendError` envelope ([utils/apiResponse.ts](../packages/api/src/utils/apiResponse.ts)). Implementation lives in a new route file `packages/api/src/routes/accountDeletionRoutes.ts` or as a section in the existing `userRoutes.ts`.
+
+### 4.1 `POST /api/users/me/deletion-request` — submit a request
+
+**Auth:** authenticated user. Goes through `authenticate` middleware ([packages/api/src/middleware/auth.ts:41](../packages/api/src/middleware/auth.ts)). NO `requireDistributor` — customer-portal users have implicit distributorId from `User.customerId.distributorId`.
+
+**Request body:**
+
+```json
+{
+  "confirmText": "DELETE MY ACCOUNT",
+  "reason": "Optional free-text reason (max 500 chars)"
+}
+```
+
+Zod schema:
+
 ```ts
-const deleteSelfSchema = z.object({
+const submitDeletionSchema = z.object({
   confirmText: z.literal('DELETE MY ACCOUNT'),
+  reason: z.string().max(500).optional(),
 });
 ```
 
-The literal check is the server-side enforcement of the in-app force-typed confirmation. If a client sent the API call without the exact string, return 400.
+**Side-effects (in a single Prisma `$transaction`):**
 
-### 6.3 Responses
+1. **Validate confirmText** (zod literal). On mismatch → 400 `{ code: 'INVALID_CONFIRMATION' }`. This is the server-side enforcement of the in-app force-typed confirmation — a client cannot skip the modal.
 
-| Status | When | Body |
-|--------|------|------|
-| `204 No Content` | Success — anonymization committed. | (empty) |
-| `400 Bad Request` | `confirmText` missing or not exactly `"DELETE MY ACCOUNT"`. | `{ error: { code: 'INVALID_CONFIRMATION', message: '...' } }` via `sendError`. |
-| `401 Unauthorized` | No / invalid JWT. | Standard envelope from `sendUnauthorized`. |
-| `409 Conflict` | Outstanding balance > threshold, OR active delivery in progress, OR (driver) active assignment in non-cancellable state. | `{ error: { code: 'DELETION_BLOCKED', message: '<reason>', context: { type: 'outstanding_balance' \| 'active_delivery' \| 'active_driver_assignment', detail: ... } } }` |
-| `423 Locked` | User role is `super_admin`. Super-admins cannot self-delete. | `{ error: { code: 'SUPERADMIN_SELF_DELETE_BLOCKED', message: 'Super-admin accounts must be deleted by another super-admin.' } }` |
-| `404 Not Found` | User already anonymized (`deletedAt IS NOT NULL`) — idempotency case. | Standard envelope. |
-| `500 Internal Server Error` | Transaction rollback. | Standard envelope; alert via Sentry. |
+2. **Sole-admin block.** If `req.user.role === 'distributor_admin'`:
+   ```ts
+   const otherAdmins = await prisma.user.count({
+     where: {
+       distributorId: req.user.distributorId,
+       role: 'distributor_admin',
+       id: { not: req.user.userId },
+       status: 'active',
+       deletedAt: null,
+     },
+   });
+   if (otherAdmins === 0) return sendError(res, 423, 'SOLE_ADMIN_BLOCK', '...');
+   ```
+   Returns **423 Locked** with body:
+   ```json
+   { "error": { "code": "SOLE_ADMIN_BLOCK",
+                "message": "You are the only admin for this distributor; add a second admin before deleting your account." } }
+   ```
 
-### 6.4 Side effects — ordered
+3. **Super-admin block.** If `role === 'super_admin'` → 423 with code `SUPERADMIN_SELF_DELETE_BLOCKED`. (Same response shape as #2.)
 
-1. **Authenticate** (JWT middleware). Reject if invalid.
-2. **Re-fetch User row** from DB (`prisma.user.findUnique({ id: req.user.id })`). If `deletedAt IS NOT NULL` → return 404 (idempotency).
-3. **Role gate.** If `role = 'super_admin'` → return 423.
-4. **Validate `confirmText`** (zod literal). If mismatch → 400.
-5. **Pre-check blocking conditions:**
-   - For customers: outstanding balance via `customer_ledger_entries` net sum > ₹100 → 409.
-   - For customers: any Order with `status IN ('preflight_in_progress', 'pending_delivery')` → 409.
-   - For drivers: any Order where `driverId = userId` AND `status IN ('pending_dispatch', 'preflight_in_progress', 'pending_delivery')` → 409.
-6. **Begin Prisma transaction** (`prisma.$transaction(async tx => { ... })`).
-7. **Apply anonymization mapping (§3.2)** in this order to avoid FK contention:
-   1. Cancel pending Orders (§4.1).
-   2. Cancel pending Invoices in draft (§4.2).
-   3. Reject pending CN/DN (§4.3).
-   4. Resolve open PendingAction rows for the user (§4.6).
-   5. Mark PaymentCommitments broken (§4.7).
-   6. Anonymize related Driver row (if role=driver).
-   7. Anonymize related Customer row (if role=customer and no other Users link to it).
-   8. Anonymize related CustomerContact, CustomerModificationRequest, CustomerAuditTrail, CustomerLedgerEntry (NULL free-text only).
-   9. NULL free-text + geo on Orders + OrderStatusLog + InventoryEvent + CancelledStockEvent + AccountabilityLog + StockMismatchRecord linked to this user.
-   10. Redact AuditLog `details` JSON + null IP/UA for `userId = <deleted>`.
-   11. NULL `User.refreshToken`, `User.email` → ANON, `User.firstName/lastName` → ANON, `User.phone` → NULL, `User.passwordHash` → unreachable, `User.status` → `inactive`, `User.deletedAt` → `now()`.
-8. **Write a final AuditLog row** with `action = 'user.account.deleted_self'`, `entityType = 'user'`, `entityId = userId`, `details = { affectedModels: [...], anonymizedAt: now() }`. This row's `userId` is the now-anonymized user — that's fine; the audit lineage stays.
-9. **Commit transaction.**
-10. **Return 204.**
+4. **Duplicate-request guard.** If an `AccountDeletionRequest` already exists with `userId=req.user.userId AND status='pending'` → 409 `{ code: 'DELETION_ALREADY_PENDING', context: { scheduledCompletionAt } }`. The mobile client should never hit this (we redirect to the pending-deletion screen instead), but the server enforces it.
 
-### 6.5 Idempotency
+5. **Outstanding-balance check (customer role only).**
+   ```ts
+   if (req.user.role === 'customer' && req.user.customerId) {
+     const balance = await sumLedger(req.user.customerId); // existing helper
+     if (balance > 100) return sendError(res, 409, 'OUTSTANDING_BALANCE',
+       `You have ₹${balance} outstanding...`, { context: { type: 'outstanding_balance', balance } });
+   }
+   ```
+   Threshold is ₹100 (allows rounding-error tails). Reuse the existing customer-ledger sum helper if one exists; otherwise inline a `customerLedgerEntries` `groupBy/sum`. **Important:** the `where` MUST include `distributorId` (CLAUDE.md anti-pattern #13).
 
-A second `DELETE /api/users/me` for the same userId — but wait, the user's tokens are revoked after step 9, so they can't authenticate. The idempotency case is purely defensive against a client retrying mid-flight before getting the 204. Step 2's `deletedAt` check handles it (returns 404).
+6. **Insert `AccountDeletionRequest`:**
+   ```ts
+   const scheduled = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+   await tx.accountDeletionRequest.upsert({
+     where: { userId: req.user.userId },
+     update: {
+       status: 'pending',
+       requestedAt: new Date(),
+       scheduledCompletionAt: scheduled,
+       cancelledAt: null,
+       reason: body.reason ?? null,
+       requestIp: req.ip,
+       requestUserAgent: req.headers['user-agent'] ?? null,
+     },
+     create: {
+       userId: req.user.userId,
+       distributorId: req.user.distributorId!,
+       scheduledCompletionAt: scheduled,
+       reason: body.reason ?? null,
+       requestIp: req.ip,
+       requestUserAgent: req.headers['user-agent'] ?? null,
+     },
+   });
+   ```
+   The `upsert` covers the cancel-then-re-request case (§3.1).
 
-### 6.6 Multi-tenant safety
+7. **Revoke refresh tokens.** Delete all `RefreshToken` rows (or null `User.refreshToken` per the current schema) for this user. Forces the next refresh attempt to fail; the access token will naturally expire within 15 minutes.
 
-- A distributor admin **cannot** call `DELETE /api/users/{otherId}` via this endpoint — the path is `/me` only.
-- A separate `DELETE /api/users/:id` endpoint exists today for distributor admins to deactivate seats (verify in [packages/api/src/routes/userRoutes.ts]). That endpoint is **out of scope** for this WI but must:
-  - Be guarded by `requireRole(['distributor_admin', 'super_admin'])`.
-  - Enforce `target.distributorId === req.user.distributorId` (or super_admin override). Per CLAUDE.md Anti-pattern #13, never trust the path param — re-fetch and check.
+8. **Enqueue confirmation email.** Call the existing `sendEmail` helper ([packages/api/src/utils/email.ts](../packages/api/src/utils/email.ts) — nodemailer-based; verify by inspection whether a generic `sendEmail` exists, or add one alongside `sendOtpEmail`). Subject: "Your GasLink account deletion request". Body includes `scheduledCompletionAt`, the cancellation steps, and an FAQ link. Best-effort — failure to send must NOT roll back the transaction; log + Sentry-capture instead.
 
-### 6.7 Rate limiting
+**Response — 200 OK:**
 
-Apply the same per-IP + per-user rate limiter as the auth endpoints (CLAUDE.md Mobile Rule #6). A bot spraying `DELETE /api/users/me` with stolen tokens shouldn't burn through them — 3 attempts per 15 minutes is enough.
-
----
-
-## 7. In-App UX Flow
-
-### 7.1 Three-screen flow
-
-```
-[Settings / Profile / Account screen]
-        │
-        ▼
-[Screen 1: Entry point]
-   ┌───────────────────────────────────────────┐
-   │  Settings                                  │
-   │  ─────────────────                         │
-   │  • Profile                                 │
-   │  • Notifications                           │
-   │  • Privacy Policy                          │
-   │  ─────────────────                         │
-   │  🗑  Delete Account            (red text)  │  ← entry
-   └───────────────────────────────────────────┘
-                        │ tap
-                        ▼
-[Screen 2: Disclosure]
-   ┌───────────────────────────────────────────┐
-   │  Delete Your Account                       │
-   │  ─────────────────                         │
-   │                                            │
-   │  Your account will be deleted              │
-   │  immediately. Your personal information    │
-   │  — name, email, phone, address, and        │
-   │  photo — will be permanently removed       │
-   │  and cannot be recovered.                  │
-   │                                            │
-   │  As required by Indian Income Tax and      │
-   │  GST law, your invoice and payment         │
-   │  history must be retained for 8 years.     │
-   │  After deletion these records remain in    │
-   │  our system in ANONYMIZED form, linked     │
-   │  to a non-identifying ID — not to you.     │
-   │  They are used only for statutory tax      │
-   │  compliance and audit, never for           │
-   │  marketing or analytics.                   │
-   │                                            │
-   │  After 8 years, all records will be        │
-   │  permanently deleted.                      │
-   │                                            │
-   │  This action cannot be undone. You will    │
-   │  be signed out of all devices.             │
-   │                                            │
-   │  ┌───────────────────┐  ┌──────────┐       │
-   │  │     Cancel        │  │ Continue │       │  ← Cancel primary, Continue secondary
-   │  └───────────────────┘  └──────────┘       │
-   └───────────────────────────────────────────┘
-                        │ tap Continue
-                        ▼
-[Screen 3: Force-typed confirmation]
-   ┌───────────────────────────────────────────┐
-   │  Final Confirmation                        │
-   │  ─────────────────                         │
-   │                                            │
-   │  Type DELETE MY ACCOUNT below to confirm.  │
-   │                                            │
-   │  ┌───────────────────────────────────┐     │
-   │  │                                   │     │  ← text input
-   │  └───────────────────────────────────┘     │
-   │                                            │
-   │  ┌───────────────────┐  ┌──────────┐       │
-   │  │     Cancel        │  │  Delete  │       │  ← Delete disabled until exact match
-   │  └───────────────────┘  └──────────┘       │
-   │                                            │
-   │  (loading spinner inline once tapped)      │
-   └───────────────────────────────────────────┘
-                        │ tap Delete (enabled), 204 received
-                        ▼
-[Screen 4: Result + forced logout]
-   ┌───────────────────────────────────────────┐
-   │  ✓  Account Deleted                        │
-   │                                            │
-   │  Your account has been deleted. Your tax   │
-   │  records will be retained anonymously for  │
-   │  8 years per Indian law. The app will      │
-   │  now sign you out.                         │
-   │                                            │
-   │            ┌─────────┐                     │
-   │            │   OK    │                     │  ← tap OK → forced navigation to /login
-   │            └─────────┘                     │
-   └───────────────────────────────────────────┘
-                        │ tap OK
-                        ▼
-                  [/login screen]
-                  (cannot log back in — email anonymized)
+```json
+{
+  "success": true,
+  "data": {
+    "requestId": "<uuid>",
+    "requestedAt": "2026-06-08T10:23:45Z",
+    "scheduledCompletionAt": "2026-07-08T10:23:45Z",
+    "cancellationDeadline": "2026-07-08T10:23:45Z"
+  }
+}
 ```
 
-### 7.2 Error states on Screen 3
+The mobile client uses the response to render Screen 4 (success) and then forcibly logs the user out — token wipe via `expo-secure-store` per CLAUDE.md Mobile Rule #1.
 
-When `DELETE /api/users/me` returns non-204:
-- `409` with `context.type = 'outstanding_balance'` → modal: "You have ₹X outstanding. Please contact the distributor to settle before deleting." Single OK button → back to Screen 1.
-- `409` with `context.type = 'active_delivery'` → modal: "You have an active delivery in progress. Please try again after it's complete." Single OK.
-- `409` with `context.type = 'active_driver_assignment'` → modal: "You have an active dispatch assignment. Please ask your distributor admin to reassign and try again." Single OK.
-- `423` (super_admin) → modal: "Super-admin accounts cannot be self-deleted. Contact another super-admin." (Should never reach this — UI should hide the entry point for super_admin role; see §7.4.)
-- `500` → modal: "Something went wrong. Please try again or contact support." Single OK.
+### 4.2 `POST /api/users/me/deletion-request/cancel` — cancel
 
-### 7.3 Files to add/change
+**Auth:** the special middleware described in §5. Reachable WHILE the user has a pending deletion request (this is the whole point — the auth middleware otherwise blocks them).
 
-**Add:**
-- `packages/mobile/app/(shared)/delete-account/index.tsx` — Screen 2 (disclosure).
-- `packages/mobile/app/(shared)/delete-account/confirm.tsx` — Screen 3 (force-typed).
-- `packages/mobile/app/(shared)/delete-account/done.tsx` — Screen 4 (result).
-- `packages/mobile/src/api/account.ts` — `deleteAccount()` API client, calls `useApiMutation` per CLAUDE.md Mobile Rule #3.
+**Request body:** none.
 
-Alternative single-screen-per-role approach (NOT recommended — leads to drift):
-- `packages/mobile/app/(customer)/settings/delete-account.tsx` + driver + admin + finance + inventory + super-admin. 6× the screens, same logic. Avoid.
+**Side-effects:**
+- Find the user's pending request. If none → 404.
+- Set `status='cancelled'`, `cancelledAt=now()`.
 
-**Modify:**
-- `packages/mobile/src/components/DeleteAccountButton.tsx` — replace `mailto:` `handleOpenMail` with `router.push('/(shared)/delete-account')`. Drop the modal entirely OR keep it as the entry but make its CTA go to the new flow.
-- The 6 screens that today use `<DeleteAccountButton />`:
-  - `packages/mobile/app/(admin)/more.tsx`
-  - `packages/mobile/app/(super-admin)/settings.tsx` — additionally hide for super_admin role (§7.4).
-  - `packages/mobile/app/(customer)/account.tsx`
-  - `packages/mobile/app/(driver)/profile.tsx`
-  - `packages/mobile/app/(finance)/profile.tsx`
-  - `packages/mobile/app/(inventory)/profile.tsx`
-  - No changes needed beyond the underlying component update — they each just render `<DeleteAccountButton />`.
+**Response — 204 No Content.**
 
-### 7.4 Super-admin hide
+After cancellation the user's normal flow resumes on their next API call. (The session that called cancel is still authenticated; the auth middleware on the next request sees `status='cancelled'` and lets the call through.)
 
-In `packages/mobile/app/(super-admin)/settings.tsx`, wrap the `<DeleteAccountButton />` with `{user.role !== 'super_admin' && ...}`. Belt + braces alongside the 423 server response.
+### 4.3 `GET /api/users/me/deletion-request` — read status
 
-### 7.5 Loading / error states
+**Auth:** same special middleware.
 
-Per CLAUDE.md Mobile Rule #2, every screen handles loading / error / empty:
-- Screen 3 Submit button shows spinner while mutation is in-flight.
-- 409 / 423 / 500 → modal pattern above.
-- Network error → "No internet connection. Please try again." (Mobile is offline-aware per CLAUDE.md Mobile Rule #4 — but account deletion is not queueable; the user must be online.)
+**Response — 200 OK:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "requestId": "<uuid>",
+    "status": "pending",
+    "requestedAt": "2026-06-08T10:23:45Z",
+    "scheduledCompletionAt": "2026-07-08T10:23:45Z",
+    "daysRemaining": 23
+  }
+}
+```
+
+Used by the mobile "pending-deletion" screen (§6, screen 5) to render the countdown. `daysRemaining = ceil((scheduledCompletionAt - now()) / 1 day)`.
 
 ---
 
-## 8. Test Plan
+## 5. v1.0 auth middleware change — login block
 
-### 8.1 Unit tests
+This is the most-important change in v1.0. It's what makes the request meaningful — without it, a user could "delete their account" and continue using the app for 30 days as if nothing happened.
 
-**File:** `packages/api/src/__tests__/account-deletion-anonymization.test.ts`
+### 5.1 The change
 
-- Seed a customer User + Customer + CustomerContact + 5 historical Orders + 5 historical Invoices (irn=success) + a PaymentTransaction + an AuditLog with PII in details + 1 open Order.
-- Call the anonymization function (extracted from the route handler for testability).
-- Assert per the §3.2 mapping:
-  - `User.email` matches `/^deleted-[a-f0-9]+@anon\.mygaslink\.local$/`
-  - `User.firstName === 'Deleted'`, `lastName === 'User'`, `phone IS NULL`, `passwordHash !== originalHash`, `refreshToken IS NULL`, `status === 'inactive'`, `deletedAt IS NOT NULL`.
-  - `Customer.customerName === 'Deleted Customer'`, `phone === ''`, `email IS NULL`, billing address line 1-2 NULL, billing state RETAINED.
-  - 5 historical Invoice rows: every field unchanged (snapshot-compare).
-  - 5 historical Order rows: `specialInstructions`/`deliveryNotes` NULL, `customerId` UNCHANGED, status UNCHANGED.
-  - The 1 open Order: `status === 'cancelled'`, `cancellationReason === 'Customer account deleted'`.
-  - AuditLog row with the deletion: present, `action === 'user.account.deleted_self'`.
-  - AuditLog rows on the deleted user: `details = { redacted: '...' }`, `ipAddress IS NULL`, `userAgent IS NULL`.
+[packages/api/src/middleware/auth.ts:41](../packages/api/src/middleware/auth.ts) — `authenticate()` — currently does:
 
-- Repeat for a driver User (assert Driver row anonymized, no Customer cascade).
-- Repeat for an admin User (assert User-only anonymization, no Customer/Driver cascade).
+```ts
+const user = await prisma.user.findUnique({
+  where: { id: decoded.userId },
+  select: { id: true, status: true, role: true, distributorId: true, customerId: true },
+});
+```
 
-**Anti-pattern guard test:** assert that for every Prisma update used by the anonymization function, `distributorId` is in the `where` clause (per CLAUDE.md Anti-pattern #13). Pattern lifted from [packages/api/src/__tests__/anti-pattern-guards.test.ts].
+Extend the select to include the pending-deletion-request status via a left join:
 
-### 8.2 Integration tests
+```ts
+const user = await prisma.user.findUnique({
+  where: { id: decoded.userId },
+  select: {
+    id: true, status: true, role: true, distributorId: true, customerId: true,
+    accountDeletionRequest: {
+      where: { status: 'pending' },
+      select: { id: true, scheduledCompletionAt: true },
+    },
+  },
+});
+```
 
-**File:** `packages/api/src/__tests__/users-delete-me.test.ts`
+(`User.accountDeletionRequest` is the back-relation auto-generated by the new `AccountDeletionRequest` model in §3 — Prisma generates it from the `@relation` on the child side.)
 
-- `DELETE /api/users/me` with valid token + confirmText → 204; subsequent GET on the user 404s.
-- Without confirmText → 400.
-- Without token → 401.
-- Customer with outstanding balance > ₹100 → 409 `outstanding_balance`.
-- Customer with order in `pending_delivery` → 409 `active_delivery`.
-- Driver with order in `pending_delivery` → 409 `active_driver_assignment`.
-- super_admin role → 423.
-- Second call after success → 404 (idempotency).
-- **Multi-tenant guard:** delete user from dist-001; verify dist-002's customers, orders, drivers, invoices, audit logs are bit-identical (snapshot-compare).
-- **Statutory retention guard:** delete a customer with 3 historical Invoices (one with `irn='abc123'`); verify all 3 Invoice rows are completely untouched (every field).
+Then after the existing `if (!user || user.status !== 'active')` block, add:
 
-### 8.3 E2E (manual)
+```ts
+if (user.accountDeletionRequest?.[0]) {
+  const path = req.path;
+  const ALLOWED_DURING_PENDING_DELETION = [
+    'POST /api/users/me/deletion-request/cancel',
+    'GET /api/users/me/deletion-request',
+    'POST /api/auth/logout',
+  ];
+  const requestKey = `${req.method} ${req.baseUrl}${req.path}`;
+  if (!ALLOWED_DURING_PENDING_DELETION.includes(requestKey)) {
+    return res.status(403).json({
+      success: false,
+      data: null,
+      error: 'account_pending_deletion',
+      code: 'ACCOUNT_PENDING_DELETION',
+      context: { scheduledCompletionAt: user.accountDeletionRequest[0].scheduledCompletionAt },
+    });
+  }
+  // fall through — request is one of the three special endpoints
+  req.user = { /* same as before */ };
+  return next();
+}
+```
 
-Steps documented in `docs/E2E_Testing_Guide.xlsx` (add new tab "Account Deletion"):
-1. Log in as customer `royal@kitchen.com`.
-2. Navigate Settings → Account → Delete Account.
-3. Confirm disclosure screen text matches §2 verbatim.
-4. Tap Continue. Type `delete my account` (lowercase) → Delete button stays disabled.
-5. Type `DELETE MY ACCOUNT` → Delete button enables.
-6. Tap Delete → spinner → success screen.
-7. Tap OK → routed to /login.
-8. Attempt login with `royal@kitchen.com / Customer@123` → "Invalid credentials" (email anonymized).
-9. Verify in DB (`pnpm db:studio`): User row has `firstName='Deleted'`, `email LIKE 'deleted-%@anon.mygaslink.local'`, `deletedAt IS NOT NULL`. Customer row anonymized. Historical Invoice rows unchanged.
+The exact allowlist matching uses whatever pattern matches the project's actual mount points — verify the cancel/status routes are at `/api/users/me/deletion-request*` and not somewhere else.
 
-### 8.4 Apple-reviewer test account
+### 5.2 Mobile client behaviour on `account_pending_deletion`
 
-Create a dedicated TestFlight account `apple-reviewer@mygaslink.com` with role `customer`, distributor `Bhargava Gas Agency`. Seed 1 historical paid Invoice and 0 pending orders. Document in the App Store Connect "Notes for Reviewer" field:
+The mobile axios interceptor ([packages/mobile/src/lib/api.ts](../packages/mobile/src/lib/api.ts), reference for SecureStore pattern at :13) special-cases `error === 'account_pending_deletion'`:
 
-> "To test account deletion: log in as apple-reviewer@mygaslink.com / [password], navigate Settings → Account → Delete Account, follow the in-app flow. The account is rebuilt nightly by our seed script so you can re-test."
+```ts
+if (response.status === 403 && response.data?.error === 'account_pending_deletion') {
+  router.replace('/(shared)/pending-deletion');
+  return Promise.reject(error);
+}
+```
 
-Add the seed step to `packages/api/scripts/seed-apple-test-account.ts` and to nightly cron.
+The pending-deletion screen reads `GET /api/users/me/deletion-request` for the countdown.
 
-### 8.5 OWASP / security review
+### 5.3 Why this is safer than nulling the password
 
-- Re-run `/secure` skill on the diff.
-- Specifically verify (per CLAUDE.md Anti-pattern #13): every Prisma write in the anonymization function has `distributorId` in `where` where the model is tenant-scoped.
-- Verify the `confirmText` literal is server-validated (CLAUDE.md Anti-pattern §2 — never trust client claims).
+The previous spec's "anonymize email so login lookup fails" approach was correct only if we anonymized at request time. In the request-and-queue model the User row is still intact for 30 days — login by email/password still works. The middleware-level block is the ONLY thing preventing a "deleted" user from continuing to use the app. Get this right.
 
 ---
 
-## 9. Effort Estimate
+## 6. v1.0 in-app UX flow (4 deletion screens + 1 special-state screen)
+
+### 6.1 Screen 1 — Entry point
+
+`Settings → Account → Delete Account` on every role's settings/profile screen. Replace the current `mailto:` behaviour in [DeleteAccountButton.tsx](../packages/mobile/src/components/DeleteAccountButton.tsx) with `router.push('/(shared)/delete-account')`.
+
+### 6.2 Screen 2 — Disclosure
+
+```
+┌───────────────────────────────────────────┐
+│  Delete Your Account                       │
+│  ─────────────────                         │
+│                                            │
+│  Your account deletion request will be     │
+│  submitted. Your personal information —    │
+│  name, email, phone, address, and photo —  │
+│  will be removed within 30 days.           │
+│                                            │
+│  You can CANCEL this request anytime in    │
+│  those 30 days by logging in.              │
+│                                            │
+│  After 30 days, as required by Indian      │
+│  Income Tax and GST law, your invoice and  │
+│  payment history will be retained          │
+│  ANONYMOUSLY for 8 years. Anonymized       │
+│  records are linked to a random ID — not   │
+│  to you — and are used only for statutory  │
+│  tax compliance and audit, never for       │
+│  marketing or analytics.                   │
+│                                            │
+│  After 8 years, all records will be        │
+│  permanently deleted.                      │
+│                                            │
+│  This cannot be undone after 30 days.      │
+│                                            │
+│  ┌───────────────────┐  ┌──────────┐       │
+│  │     Cancel        │  │ Continue │       │
+│  └───────────────────┘  └──────────┘       │
+└───────────────────────────────────────────┘
+```
+
+### 6.3 Screen 3 — Force-typed confirmation
+
+```
+┌───────────────────────────────────────────┐
+│  Final Confirmation                        │
+│  ─────────────────                         │
+│                                            │
+│  Type DELETE MY ACCOUNT below to confirm.  │
+│                                            │
+│  ┌───────────────────────────────────┐     │
+│  │                                   │     │
+│  └───────────────────────────────────┘     │
+│                                            │
+│  Reason (optional):                        │
+│  ┌───────────────────────────────────┐     │
+│  │                                   │     │
+│  └───────────────────────────────────┘     │
+│                                            │
+│  ┌───────────────────┐  ┌──────────┐       │
+│  │     Cancel        │  │  Submit  │       │  ← Submit disabled until exact match
+│  └───────────────────┘  └──────────┘       │
+└───────────────────────────────────────────┘
+```
+
+Submit calls `POST /api/users/me/deletion-request`.
+
+### 6.4 Screen 4 — Submitted (forced logout)
+
+```
+┌───────────────────────────────────────────┐
+│  ✓  Request Submitted                      │
+│                                            │
+│  Your deletion request has been submitted. │
+│  Your account will be removed within 30    │
+│  days (by Jul 8, 2026).                    │
+│                                            │
+│  You'll receive an email confirmation.     │
+│                                            │
+│  You can cancel anytime within 30 days     │
+│  by logging in.                            │
+│                                            │
+│  The app will now sign you out.            │
+│                                            │
+│            ┌─────────┐                     │
+│            │   OK    │                     │  → /login (after SecureStore wipe)
+│            └─────────┘                     │
+└───────────────────────────────────────────┘
+```
+
+On OK: `queryClient.clear()`, `SecureStore.deleteItemAsync('jwt')`, `SecureStore.deleteItemAsync('refreshToken')`, `useAuthStore.getState().clear()`, `router.replace('/login')`.
+
+### 6.5 Screen 5 — Pending-deletion (NEW — appears when user with pending request logs back in)
+
+```
+┌───────────────────────────────────────────┐
+│  Account Pending Deletion                  │
+│  ─────────────────                         │
+│                                            │
+│  Your account will be deleted in 23 days.  │
+│                                            │
+│  ┌─────────────────────────────────────┐   │
+│  │ Scheduled completion: Jul 8, 2026   │   │
+│  └─────────────────────────────────────┘   │
+│                                            │
+│  After 30 days from your request, your     │
+│  personal information will be removed and  │
+│  cannot be recovered.                      │
+│                                            │
+│  If you've changed your mind, cancel       │
+│  below — your account will resume          │
+│  normally.                                 │
+│                                            │
+│  ┌─────────────────────────────────────┐   │
+│  │   Cancel Deletion Request           │   │  ← primary
+│  └─────────────────────────────────────┘   │
+│                                            │
+│  ┌─────────────────────────────────────┐   │
+│  │   Sign Out                          │   │  ← secondary
+│  └─────────────────────────────────────┘   │
+└───────────────────────────────────────────┘
+```
+
+On Cancel tap → `POST /api/users/me/deletion-request/cancel` → on 204, `queryClient.invalidateQueries()` and `router.replace('/')` (the user's role-appropriate home).
+On Sign Out tap → SecureStore wipe + `/login`.
+
+### 6.6 Files to add
+
+- [packages/mobile/app/(shared)/delete-account/index.tsx](../packages/mobile/app/(shared)/delete-account/index.tsx) — Screen 2 (disclosure)
+- [packages/mobile/app/(shared)/delete-account/confirm.tsx](../packages/mobile/app/(shared)/delete-account/confirm.tsx) — Screen 3 (force-typed)
+- [packages/mobile/app/(shared)/delete-account/success.tsx](../packages/mobile/app/(shared)/delete-account/success.tsx) — Screen 4
+- [packages/mobile/app/(shared)/pending-deletion/index.tsx](../packages/mobile/app/(shared)/pending-deletion/index.tsx) — Screen 5
+- [packages/mobile/src/api/account.ts](../packages/mobile/src/api/account.ts) — three API client methods: `submitDeletionRequest`, `cancelDeletionRequest`, `getDeletionRequest`. All via `useApiMutation` / `useApiQuery` per CLAUDE.md Mobile Rule #3.
+
+### 6.7 Files to modify
+
+- [packages/mobile/src/components/DeleteAccountButton.tsx](../packages/mobile/src/components/DeleteAccountButton.tsx) — replace the `Linking.openURL('mailto:...')` call with `router.push('/(shared)/delete-account')`. Grep'd locations (verify with `grep -rn DeleteAccountButton packages/mobile`) — there should be no change to the 6 entry-point screens that already render `<DeleteAccountButton />`.
+- [packages/mobile/src/lib/api.ts](../packages/mobile/src/lib/api.ts) — axios interceptor for the `account_pending_deletion` 403 redirect (§5.2).
+- [packages/mobile/app/(super-admin)/settings.tsx](../packages/mobile/app/(super-admin)/settings.tsx) — wrap `<DeleteAccountButton />` with `{user.role !== 'super_admin' && ...}` (belt + braces alongside the 423 server response).
+
+### 6.8 Loading / error / empty states (CLAUDE.md Mobile Rule #2)
+
+- Submit button shows inline spinner during the mutation.
+- 409 `outstanding_balance` → modal "You have ₹X outstanding. Please contact the distributor to settle before deleting." OK → back to Screen 1.
+- 423 `SOLE_ADMIN_BLOCK` → modal "You are the only admin for this distributor; please add a second admin before deleting your account."
+- 423 `SUPERADMIN_SELF_DELETE_BLOCKED` → modal "Super-admin accounts cannot be self-deleted. Contact another super-admin." (Should never reach this — UI hides the entry point.)
+- 500 → modal "Something went wrong. Please try again or contact support."
+- Network error on the pending-deletion screen → keep cached countdown if available, else "Couldn't refresh status. You can still cancel." with a retry chip.
+
+---
+
+## 7. v1.0 disclosure copy — locked
+
+**This is the user-facing source of truth for the v1.1 deadline discipline.** Whatever this says, v1.1 must make true.
+
+The exact text on Screen 2:
+
+> **Delete Your Account**
+>
+> Your account deletion request will be submitted. Your personal information — name, email, phone, address, and photo — will be removed within 30 days.
+>
+> You can cancel this request anytime in those 30 days by logging in.
+>
+> After 30 days, as required by Indian Income Tax and GST law, your invoice and payment history will be retained anonymously for 8 years. Anonymized records are linked to a random ID — not to you — and are used only for statutory tax compliance and audit, never for marketing or analytics.
+>
+> After 8 years, all records will be permanently deleted.
+>
+> This cannot be undone after 30 days.
+
+The shorter Screen 3 prompt:
+
+> Type **DELETE MY ACCOUNT** below to confirm. You can cancel this request within 30 days.
+
+**Locked.** Do not paraphrase without re-reviewing against Apple §5.1.1(v). If CA confirms a retention period other than 8 years (§13 q.1), this is the only copy that changes.
+
+---
+
+## 8. v1.1 background worker — design
+
+### 8.1 Trigger — existing cron infrastructure
+
+The API already runs `node-cron` jobs. Reference: [packages/api/src/jobs/overdueInvoicesJob.ts](../packages/api/src/jobs/overdueInvoicesJob.ts) (the `runOverdueSweep` daily sweep at midnight server-local time), kicked off in [packages/api/src/server.ts:6](../packages/api/src/server.ts) via `startOverdueInvoicesCron()`.
+
+**No new infrastructure needed.** Add `packages/api/src/jobs/accountDeletionWorker.ts` modelled on the same pattern; wire it into `server.ts` next to `startOverdueInvoicesCron()`. Schedule: `00 30 * * *` IST (00:30 — one hour after the overdue sweep so the two don't compete for connections).
+
+### 8.2 The query
+
+```ts
+const due = await prisma.accountDeletionRequest.findMany({
+  where: {
+    status: 'pending',
+    scheduledCompletionAt: { lte: new Date() },
+  },
+  select: { id: true, userId: true, distributorId: true },
+  // deterministic order — oldest first, so a partial-batch failure
+  // doesn't randomize which subset got processed
+  orderBy: { scheduledCompletionAt: 'asc' },
+});
+```
+
+### 8.3 Per-request loop
+
+For each due row, in its own `$transaction`:
+
+1. **Re-fetch** the User + the request inside the txn (defends against a cancel that landed between the SELECT and the UPDATE).
+2. **Skip if** the request is no longer `status='pending'` (raced with a cancel) OR the User's `deletedAt IS NOT NULL` (already anonymized somehow).
+3. **Sole-admin re-check.** Conditions in the 30-day window may have changed. If the user is the last `distributor_admin` for this tenant NOW (even though they weren't at request time), DO NOT anonymize. Instead: mark the request `status='completed'` with `completedAt=now()` BUT leave PII intact, AND send TWO emails:
+   - To the user at their (still-real) email: "Your deletion request could not be completed because you are now the sole admin for your distributor. Please add a second admin and re-submit."
+   - To `suneel@mygaslink.com`: alert with `userId`, `distributorId`, `requestedAt`.
+   This is a known edge case; manual resolution.
+4. **Apply the §10 anonymization mapping** (the full 46-model audit). Order matters — see §8.5.
+5. **Mark the request** `status='completed'`, `completedAt=now()`.
+6. **Commit.**
+7. **Enqueue final email** (best-effort, out of txn): "Your GasLink account has been deleted as requested."
+
+### 8.4 Idempotency
+
+- `status='completed'` rows are skipped on the next run by the `WHERE status='pending'` filter.
+- Within a single run, the `for` loop processes one txn per request; a per-row failure rolls back THAT row and leaves it `status='pending'` for tomorrow.
+- The anonymization function itself uses `prisma.<model>.updateMany({ where: { ... } })` (not `update`), so re-running on an already-anonymized row is a no-op.
+
+### 8.5 Anonymization order — avoid FK contention
+
+1. Cancel pending Orders / draft Invoices / pending CN/DN that survived the 30-day window (rare but possible — see §10 for the rules; these are now hard-blocked at v1.1 deletion time same way the v1.0 request was blocked, BUT a long-lived `pending_delivery` order from before the request could still exist).
+2. Resolve open `PendingAction` rows for the user.
+3. Mark `PaymentCommitment` rows broken where applicable.
+4. Anonymize related Driver row (if `role='driver'` AND `Driver.userId === user.id` per the v1.1 FK from §8.6).
+5. Anonymize related Customer row (if `role='customer'` AND no OTHER active Users link to the same `customerId`).
+6. Anonymize related CustomerContact / CustomerModificationRequest / CustomerAuditTrail (NULL free-text only; statutory rows like CustomerLedgerEntry are skipped).
+7. NULL free-text + geo on Orders / OrderStatusLog / InventoryEvent / CancelledStockEvent / AccountabilityLog / StockMismatchRecord linked to this user.
+8. Redact `AuditLog.details` JSON + null `ipAddress`, `userAgent` for `userId = <deleted>`.
+9. Anonymize the User row itself (last, so all FK lookups still resolve while we're updating children).
+10. Write a final `AuditLog` row: `action='user.account.deleted_completed'`, `entityType='user'`, `entityId=userId`, `details={ requestId, requestedAt, scheduledCompletionAt, completedAt }` — no PII payload.
+
+### 8.6 `Driver.userId` FK migration (lands in v1.1)
+
+Current schema ([prisma/schema.prisma:761](../packages/api/prisma/schema.prisma)) has `Driver` with `driverName` + `phone` but NO foreign key to `User`. The v1 driver/user linkage is by-convention (same `distributorId` + matching `phone`), which is fragile.
+
+v1.1 adds a proper FK:
+
+```prisma
+model Driver {
+  // ...existing fields...
+  userId        String?  @unique @map("user_id")
+  user          User?    @relation("DriverUser", fields: [userId], references: [id])
+
+  @@index([userId])
+}
+```
+
+Migration:
+1. Add nullable `userId` column.
+2. Backfill via a one-time script that joins `Driver(distributorId, phone)` to `User(distributorId, phone, role='driver')`. Rows that don't match get left NULL (with a logged report — Suneel reviews manually).
+3. After backfill confirmation, leave nullable (some Drivers may be pre-User legacy).
+
+Adds ~4h to v1.1; covered in §12.
+
+### 8.7 Observability
+
+- Every completion + every per-row failure logged via Winston (`logger.info` / `logger.error` per [packages/api/src/utils/logger.ts](../packages/api/src/utils/logger.ts)).
+- Failures captured to Sentry with tags `{ kind: 'accountDeletionWorker', userId, distributorId }`.
+- Daily summary log line: `{ processed: N, succeeded: N, failed: N, soleAdminBlocked: N }`.
+- (Stretch) Daily email to `suneel@mygaslink.com` only if `failed > 0 OR soleAdminBlocked > 0`.
+
+### 8.8 Manual override
+
+A separate admin endpoint `POST /api/admin/account-deletion-requests/:id/run-now` (super_admin only) for the rare case Suneel needs to force-process a request ahead of schedule. **Out of scope for v1.1** unless it's trivial; flag as v1.2.
+
+---
+
+## 9. v1.1 hard deadline — discipline
+
+**This section is the operational reason §7's disclosure copy must match v1.1's behaviour.**
+
+If v1.0 ships on day **D** (iOS goes live), the FIRST user who requests deletion that same day will have their request mature on day **D+30**. The v1.1 worker MUST be running in production by day **D+25 at the latest**.
+
+If it isn't:
+- The in-app disclosure ("removed within 30 days") becomes a false statement.
+- DPDP Act §12 + Apple §5.1.1(v) are both violated by inaction.
+- A single user filing a DPDP complaint at that point is enough to attract regulator attention to the live first-distributor onboarding window — exactly the worst possible timing.
+
+### 9.1 The 5-day buffer (D+25, not D+30)
+
+The 5 days between D+25 and D+30 exist for:
+
+1. **CA's final retention-period sanity check** — if CA confirms a period other than 8 years, the disclosure copy in §7 changes; a thin v1.0 redeploy may be needed BEFORE any user's request matures.
+2. **Worker dry-run on staging with production-scale volume** — even with zero pending requests on day D, on D+25 we want one full staging run against a seeded request to prove the 46-model anonymization works end-to-end on real-shape data.
+3. **One-day rollback window** if the v1.1 deploy itself goes wrong.
+
+### 9.2 Action items the day v1.0 ships
+
+- [ ] Calendar reminder set for **D+15**: "v1.1 anonymization worker must be code-complete and in staging."
+- [ ] Calendar reminder set for **D+22**: "v1.1 staging dry-run must have passed."
+- [ ] Calendar reminder set for **D+25**: "v1.1 MUST be in production today."
+- [ ] Monitoring alert: count of `AccountDeletionRequest WHERE status='pending' AND scheduledCompletionAt < now()` — should be 0 once v1.1 is live; alert immediately if it goes >0.
+
+**This is not optional.** The disclosure copy is a legal commitment.
+
+---
+
+## 10. v1.1 PII mapping — preserved from previous spec
+
+The 46-model audit from the previous revision of this document is **executed by the v1.1 worker, not the v1.0 endpoint**. The audit's content is unchanged — only the timing moved. Reproduced inline below so the spec stays self-contained.
+
+**Legend (Action):** `NULL` | `ANON` (replace with `ANON-<hash>` or fixed literal) | `RETAIN` | `DELETE` | `REVOKE` | `SKIP`.
+
+### 10.1 Role-based scope matrix
+
+| Role | Deletes own User? | Cascades to Customer? | Cascades to Driver? |
+|------|-------------------|------------------------|----------------------|
+| `customer` | Yes — anonymize | Yes IF no other Users link to the same Customer | No |
+| `driver` | Yes — anonymize | No | Yes (via the v1.1 `Driver.userId` FK — §8.6) |
+| `finance`, `inventory` | Yes — anonymize | No | No |
+| `distributor_admin` | Yes — anonymize, after sole-admin check (§4.1 step 2 + §8.3 step 3) | No | No |
+| `super_admin` | **BLOCKED (423)** | — | — |
+
+### 10.2 Per-model summary table
+
+Models are referenced by their location in [packages/api/prisma/schema.prisma](../packages/api/prisma/schema.prisma) (1694 lines as of 2026-06-08). Line numbers are approximate; re-check on implementation.
+
+| # | Model | Location | Action | Notes |
+|---|-------|----------|--------|-------|
+| 1 | Distributor | :320 | SKIP | Tenant-level. |
+| 2 | **User** | :395 | **ANON** | Primary target: `email → deleted-<hash>@anon.mygaslink.local`, `firstName='Deleted'`, `lastName='User'`, `phone NULL`, `passwordHash → random-unreachable`, `refreshToken NULL`, `status='inactive'`, `deletedAt=now()`. RETAIN: `id`, `role`, `distributorId`, `customerId`, `createdAt`. |
+| 3 | **Customer** | :433 | ANON if cascading | `customerName='Deleted Customer'`, `phone=''`, `email NULL`, address lines NULL. RETAIN: `gstin`, `billingState`, `shippingState`, `customerType`, `id`, `distributorId`. Set `status='inactive'`, `stopSupply=true`, `deletedAt=now()`. |
+| 4 | CustomerContact | :485 | ANON if Customer cascading | `name='Deleted'`, `phone=''`, `email NULL`. |
+| 5 | CustomerCylinderDiscount | :498 | RETAIN | No PII. |
+| 6 | CustomerInventoryBalance | :511 | RETAIN | Aggregates. |
+| 7 | CustomerModificationRequest | :527 | Partial | `reason NULL`, `changes` JSON NULL. RETAIN FKs. |
+| 8 | CustomerAuditTrail | :546 | REDACT | `oldValue`/`newValue` JSON → `{"redacted": "user-deletion-<date>"}` for affected rows. RETAIN rest. |
+| 9 | **CustomerLedgerEntry** | :563 | **RETAIN** | Statutory spine. Touch nothing. |
+| 10 | CylinderType | :585 | SKIP | Tenant-level. |
+| 11 | CylinderPrice | :620 | SKIP | Tenant-level. |
+| 12 | EmptyCylinderPrice | :635 | SKIP | Tenant-level. |
+| 13 | CylinderThreshold | :649 | SKIP | Tenant-level. |
+| 14 | Order | :665 | Partial | `specialInstructions NULL`, `deliveryNotes NULL`, geo fields NULL on cancelled (RETAIN on delivered — they're delivery proof), `cancellationReason NULL`, dispute reasons NULL. RETAIN: status, totals, customerId, driverId. |
+| 15 | OrderItem | :727 | RETAIN | Statutory. |
+| 16 | OrderStatusLog | :744 | Partial | `notes NULL`. RETAIN FKs. |
+| 17 | **Driver** | :761 | ANON if cascading | `driverName='Deleted Driver'`, `phone=''`, `licenseNumber NULL`, `status='inactive'`, `availableToday=false`, `deactivatedAt=now()`, `deletedAt=now()`, `deactivationNotes='User-initiated account deletion'`. RETAIN: `joiningDate` (HR), `distributorId`. **v1.1 cascade key: `Driver.userId === user.id`** (FK added in §8.6). |
+| 18 | Vehicle | :791 | SKIP | Asset, not PII. |
+| 19 | DriverVehicleAssignment | :816 | RETAIN | Statutory (links to EWB trip-sheet). |
+| 20 | ReconciliationEmptiesReturned | :865 | RETAIN | No PII. |
+| 21 | DriverAssignment | :880 | Partial | `notes NULL`. RETAIN FKs. |
+| 22 | VehicleInventory | :897 | RETAIN | No PII. |
+| 23 | InvoiceCounter | :918 | SKIP | Tenant-level. |
+| 24 | **Invoice** | :933 | **RETAIN** | Statutory. Touch nothing — IRN/EWB/QR included. |
+| 25 | InvoiceRevision | :988 | RETAIN | Statutory. |
+| 26 | InvoiceItem | :1008 | RETAIN | Statutory. |
+| 27 | CreditNote | :1026 | Partial | `note NULL`. RETAIN rest. |
+| 28 | DebitNote | :1048 | Partial | Same as CN. |
+| 29 | **PaymentTransaction** | :1071 | Partial | `notes NULL`. RETAIN `referenceNumber`, FKs, statutory fields. |
+| 30 | PaymentAllocation | :1095 | RETAIN | No PII. |
+| 31 | InventoryEvent | :1110 | Partial | `driverName='Deleted Driver'` (denorm snapshot), `notes NULL`. RETAIN FKs + vehicleNumber. |
+| 32 | InventorySummary | :1144 | RETAIN | Aggregates. |
+| 33 | CancelledStockEvent | :1175 | Partial | `notes NULL`. RETAIN FKs. |
+| 34 | **GstDocument** | :1206 | **RETAIN** | Statutory + NIC audit chain. requestPayload/responsePayload kept. |
+| 35 | GstCredential | :1252 | SKIP | Tenant-level. |
+| 36 | BillingCycle / BillingItem | :1277, :1302 | SKIP | Tenant-level. |
+| 37 | PricingTier | :1327 | SKIP | Reference. |
+| 38 | GstApiUsage | :1355 | SKIP | Tenant-level. |
+| 39 | GstApiLog | :1379 | RETAIN | Statutory (same argument as GstDocument). |
+| 40 | SeatRequest | :1404 | Partial | `reason NULL`. RETAIN FKs. |
+| 41 | PendingAction | :1424 | Partial | Resolve open rows for this user (`status='skipped'`); REDACT `description`/`resolutionNotes` JSON for affected rows. |
+| 42 | PaymentCommitment | :1462 | RETAIN | Statutory (collections). |
+| 43 | AccountabilityLog | :1489 | Partial | REDACT `description`/`resolutionNotes` for affected rows. |
+| 44 | **AuditLog** | :1519 | Partial | REDACT `details` JSON, NULL `ipAddress` + `userAgent` for rows where `userId === deleted user`. RETAIN `action`, `entityType`, `entityId`, `userId` FK. The deletion-completed row itself is written here. |
+| 45 | DistributorSetting | :1542 | SKIP | Tenant-level. |
+| 46 | License | :1558 | SKIP | Tenant-level. |
+| 47 | ContactSubmission | :1577 | DEFERRED | Pre-auth lead form. Opportunistic anonymization (rows matching deleted user's `phone`/`email`) is a v1.2 nice-to-have. |
+| 48 | StockMismatchRecord | :1659 | Partial | `resolutionNotes NULL`. RETAIN FKs. |
+| 49 | **AccountDeletionRequest** | (new in §3) | RETAIN | The audit trail of the deletion itself. `status='completed'`, `completedAt=now()`. |
+
+**Coverage summary:** 14 models with anonymization writes, 8 statutory full-retain, ~15 tenant-level/skip, ~4 reference-data/skip. Net: the worker touches ≤20 of 49 models per request.
+
+### 10.3 Statutory anchor — what we PROMISE to retain
+
+For Apple-reviewer audit AND DPDP compliance trail: Invoice, InvoiceRevision, InvoiceItem, CreditNote, DebitNote, PaymentTransaction, PaymentAllocation, CustomerLedgerEntry, GstDocument, GstApiLog. These are NEVER touched by the v1.1 worker, period.
+
+---
+
+## 11. Test plan — v1.0 + v1.1
+
+### 11.1 v1.0 tests
+
+**Unit** ([packages/api/src/__tests__/account-deletion-request.unit.test.ts](../packages/api/src/__tests__/account-deletion-request.unit.test.ts)):
+- `confirmText` literal validation — accept exact `"DELETE MY ACCOUNT"`, reject anything else (case-sensitive, no trailing whitespace).
+- `scheduledCompletionAt` math — `requestedAt + 30 days` exact, no DST drift (uses ms arithmetic).
+- Sole-admin gate — given a tenant with 2 admins, deleting one is allowed; deleting the second is blocked with 423.
+
+**Integration** ([packages/api/src/__tests__/account-deletion-request.test.ts](../packages/api/src/__tests__/account-deletion-request.test.ts), seeded via the test helpers in [packages/api/src/__tests__/helpers.ts](../packages/api/src/__tests__/helpers.ts)):
+- End-to-end happy path: customer → POST /deletion-request (200) → next GET /orders (403 `account_pending_deletion`) → POST /deletion-request/cancel (204) → next GET /orders (200).
+- Duplicate request: second POST returns 409 with `scheduledCompletionAt` in context.
+- Outstanding balance: customer with ₹500 ledger debit → 409 `OUTSTANDING_BALANCE`.
+- Sole-admin block: distributor_admin who's the only admin → 423 `SOLE_ADMIN_BLOCK`.
+- Super-admin block: super_admin → 423 `SUPERADMIN_SELF_DELETE_BLOCKED`.
+- **Multi-tenant guard** (CLAUDE.md tenant rule + anti-pattern #13): dist-001 user requests deletion; assert dist-002 customers/orders/audit-logs unchanged (snapshot-compare via `prisma.customer.findMany({ where: { distributorId: 'dist-002' } })`).
+- Cancel after timeout: simulate `scheduledCompletionAt < now()` (no v1.1 worker yet) and confirm cancel still works — v1.0 must NOT auto-process; it only acknowledges requests.
+- Login block special-endpoint allowlist: with a pending request, `POST /deletion-request/cancel`, `GET /deletion-request`, `POST /auth/logout` all return 200/204; everything else returns 403.
+
+**Manual E2E** (add tab to [docs/E2E_Testing_Guide.xlsx](E2E_Testing_Guide.xlsx)):
+1. Log in `royal@kitchen.com`. Settings → Account → Delete Account. Confirm disclosure copy matches §7.
+2. Continue → type `delete my account` (lowercase) → Submit disabled.
+3. Type `DELETE MY ACCOUNT` → Submit enabled → tap. Success screen.
+4. Tap OK → /login.
+5. Log in `royal@kitchen.com` again → pending-deletion screen with "30 days remaining".
+6. Tap Cancel Deletion Request → routed to customer home, normal flow.
+7. Repeat 1-4, do NOT cancel. Verify in DB (`pnpm db:studio`): `account_deletion_requests` row, `status='pending'`, `scheduled_completion_at ≈ requested_at + 30d`. `refresh_token` on User row NULL.
+
+### 11.2 v1.1 tests
+
+**Unit** ([packages/api/src/__tests__/account-deletion-anonymization.unit.test.ts](../packages/api/src/__tests__/account-deletion-anonymization.unit.test.ts)):
+- Anonymization function applied to a mock customer User — every field listed in §10.2 row 2 is mutated; every statutory field unchanged.
+- Same for a driver User — Driver row anonymized via `Driver.userId` FK; statutory rows untouched.
+- Anti-pattern guard: every Prisma `updateMany`/`update` issued by the anonymization function has `distributorId` in its `where` clause. Same pattern as [packages/api/src/__tests__/anti-pattern-guards.test.ts](../packages/api/src/__tests__/anti-pattern-guards.test.ts).
+
+**Integration** ([packages/api/src/__tests__/account-deletion-worker.test.ts](../packages/api/src/__tests__/account-deletion-worker.test.ts)):
+- Seed a customer with: 5 historical Invoices (irn=success), 3 historical Orders, 1 PaymentTransaction, an AuditLog with PII, 0 open Orders.
+- Insert an `AccountDeletionRequest` with `scheduledCompletionAt = now() - 1 day`.
+- Run the worker.
+- Assert per §10: User anonymized, Customer anonymized, 5 Invoices bit-identical (snapshot), 3 Orders have `specialInstructions/deliveryNotes NULL` but status unchanged, PaymentTransaction `notes NULL` and `referenceNumber` intact, AuditLog rows `details={redacted...}` + IP/UA NULL. Request row `status='completed'`, `completedAt` set.
+- **Idempotency**: run the worker a second time on the same DB state; assert nothing changes (no errors, request stays `completed`).
+- **Partial failure rollback**: monkey-patch one of the anonymization sub-steps to throw; assert the txn rolls back, User row UNCHANGED, request stays `status='pending'` for retry.
+- **Sole-admin re-check edge case**: seed a distributor with 2 admins, request deletion as admin A, then in the 30-day window DEACTIVATE admin B, run the worker — assert User A NOT anonymized, request marked `completed` with PII intact, log line indicates `soleAdminBlocked`, alert email enqueued (verify via test spy on the email helper).
+- **Multi-tenant guard**: same as v1.0 — assert no dist-002 rows touched.
+
+**Manual E2E**:
+- Stage a v1.0 request with `scheduledCompletionAt = now() - 1 day` via direct DB update.
+- Trigger the cron task manually (export a function from the worker module that the dev can invoke).
+- Verify: User row anonymized in `pnpm db:studio`. Invoices unchanged. `accountDeletionRequest` row `status='completed'`.
+
+### 11.3 Apple-reviewer test account
+
+Identical to the previous spec: create `apple-reviewer@mygaslink.com` (role `customer`, dist Bhargava, 1 paid invoice, 0 pending). Seed nightly. Document in App Store Connect "Notes for Reviewer": "Account deletion: log in → Settings → Account → Delete Account → follow 3 screens. Request will be submitted; in our implementation the actual personal-data wipe happens within 30 days as disclosed in-app, consistent with Instagram/LinkedIn/Reddit. Account rebuilt nightly so you may re-test."
+
+This wording is honest and matches Apple's published acceptance of queued deletion in §5.1.1(v).
+
+### 11.4 Security review
+
+- Re-run `/secure` skill on the v1.0 diff AND on the v1.1 diff separately.
+- Verify (per CLAUDE.md anti-pattern #13): every Prisma write in both phases includes `distributorId` in `where` for tenant-scoped models.
+- Verify the `confirmText` literal is server-validated AND the auth middleware's 403 is hit before any other middleware that might leak data.
+
+---
+
+## 12. Effort — v1.0 + v1.1
+
+### 12.1 v1.0 — ~16h ≈ 2 working days (iOS ship-blocker)
 
 | Section | Work | Hours |
 |---------|------|-------|
-| §3 | Anonymization service — Prisma updates for 14 models in a single transaction | 4 |
-| §4 | Pending-order / pending-invoice cleanup logic + 409 pre-checks | 3 |
-| §5 | Token revocation: server (User.refreshToken null + middleware deletedAt check) + mobile SecureStore wipe | 2 |
-| §6 | `DELETE /api/users/me` route + zod schema + responses + auditLog write | 3 |
-| §7 | 3 mobile screens (disclosure / confirm / done) + entry-point rewire + super-admin hide | 6 |
-| §8 | Unit + integration + manual E2E + Apple-reviewer seed | 6 |
-| Privacy policy / store metadata update | Update `mygaslink.com/privacy` + App Store / Play Store data safety forms to reflect anonymization | 1.5 |
-| Code review + fix-up | Self-review + Suneel review + iterate | 2 |
-| **Total** | | **27.5 hours ≈ 3.5 working days** |
+| §3 | `AccountDeletionRequest` schema + migration | 2 |
+| §4 | Three API endpoints + transactions + sole-admin/balance gates + zod schemas | 4 |
+| §5 | Auth-middleware login block (the joined query, the special-endpoint allowlist, mobile axios interceptor) | 2 |
+| §6 | Mobile screens (×4 deletion + ×1 pending-deletion) + API client + entry-point rewire | 5 |
+| §11.1 | v1.0 unit + integration + manual E2E | 3 |
+| **Total v1.0** | | **~16h** |
 
-**Risk factors:**
-- The §4 pre-checks (outstanding balance, active delivery) need careful query design — getting the balance computation wrong could either (a) block legitimate deletions, embarrassing, or (b) allow deletion of a customer with ₹50k outstanding, real financial harm. Budget the extra 1h for query review.
-- The Customer cascade rule ("anonymize only if no other Users link to this Customer") needs a real query — a B2B customer can have 3 portal logins for 3 employees. Confirm with Suneel: is that even a supported pattern today? If not, skip the multi-user check.
+### 12.2 v1.1 — ~28h ≈ 3.5 working days (must land within 25 days of v1.0)
 
-If §10's open question on User↔Driver linkage requires a schema migration (adding a `Driver.userId` FK), add 4 hours. Not included in the estimate above.
+| Section | Work | Hours |
+|---------|------|-------|
+| §8.6 | `Driver.userId` FK migration + backfill script | 4 |
+| §8.1–§8.5 | Background worker + cron wiring + per-request transaction loop | 4 |
+| §10 | Anonymization function across 14 anonymizing models | 10 |
+| §11.2 | v1.1 unit + integration + manual E2E (including sole-admin re-check + idempotency + partial-failure rollback) | 4 |
+| §8.7 | Observability (logger + Sentry tags + daily summary) | 2 |
+| §8.3 step 3 | Sole-admin re-check edge-case path + alert email | 2 |
+| §9.1 | Staging dry-run with seeded production-shape data + buffer | 2 |
+| **Total v1.1** | | **~28h** |
 
----
+### 12.3 Combined
 
-## 10. Open Questions for Suneel
+**Total:** ~44h ≈ 5.5 working days, split across two releases.
 
-1. **Statutory retention period.** I picked 8 years to cover Income Tax §149 reassessment (extended to 10y for high-value). CGST Rule 56(15) says 6 years; PESO/LPG control orders ~3 years. **Confirm with the CA: is 8 years correct, or should it be 6 years (CGST) / 10 years (IT reassessment)?** The user-facing disclosure (§2) is locked to "8 years" — if CA says 10, we update copy.
-
-2. **Super-admin self-deletion.** I've blocked it entirely (423) — Suneel is the only super-admin and self-deleting would orphan the platform. **Confirm: never allow super_admin self-delete; must be deleted by another super_admin via a separate admin endpoint** (out of scope for this WI). Or: do you want a delegated-deletion-request workflow instead?
-
-3. **Distributor-admin self-deletion → orphaned tenant.** If the *only* distributor_admin for a tenant deletes themselves, the tenant has zero admins and becomes unmanageable (driver/finance/inventory can't add new users). Recommended behaviour: **block** with a 409 if `user.role === 'distributor_admin'` AND `count(other distributor_admins in same tenant where deletedAt IS NULL) === 0`. UX message: "You are the only admin for this distributor. Please add another admin before deleting your account."
-
-4. **User↔Driver linkage.** The schema has no FK between `User` (`role='driver'`) and `Driver`. The link is by-convention (same `distributorId` + matching `phone`?). **Confirm the actual join rule** so the cascade in §3.1 / §3.2.17 can be implemented. If there's no reliable link, we can either (a) skip the Driver cascade (anonymize User only) — Driver row continues to hold the human's name + phone — or (b) require schema migration to add `Driver.userId String? @unique`. Option (b) is cleaner but adds 4 hours.
-
-5. **B2B customer with multiple portal logins.** A single Customer row (B2B account) can be referenced by multiple User rows (`User.customerId`). If User A deletes themselves and Users B + C still link to the same Customer, we **must not** anonymize the Customer (B + C still need it). The §3.1 rule handles this — but is the multi-user-per-customer pattern actually used in production today? If "no," the check is dead defence; if "yes," we need an integration test.
-
-6. **Anonymization of cross-references the user appears in.** Currently a Customer entity can have multiple `CustomerContact` rows (e.g., a husband-and-wife B2B account). If the husband deletes his account and the wife is a contact (name = husband), do we re-point her contact? Recommended: **no**, contacts are statutorily-irrelevant operational metadata; let them stale-out. Confirm.
-
-7. **`ContactSubmission` rows (lead form).** Per §3.2.47 I've deferred anonymizing `contact_submissions` rows whose `phone`/`email` match the deleting user. Confirm we can defer this to a follow-up WI — it's a pre-auth lead-form table; not in the JWT-authenticated user's "owned data" by strict reading.
-
-8. **Real-time NIC reversal for pending IRN.** §4.2 says we cancel draft invoices but don't reverse already-filed IRNs. The Apple disclosure (§2) says "personal information removed" — does the GSTIN/name/address on a *retained, NIC-filed* invoice count as "personal information"? My read: no — it's a tax document, exempt under "legitimate legal purposes." But a strict reading of DPDP could argue otherwise. **Get CA + legal sign-off on the disclosure copy before App Store submission.**
-
-9. **Push notification tokens.** Push isn't shipped yet (CLAUDE.md "MUST DO" item #5). When it is, the spec must add the `UserDeviceToken` model to §3.2. Flag now so it doesn't slip when push lands.
-
-10. **Idempotency response code.** I chose 404 for "user already anonymized" so it's distinguishable from "operation succeeded." Some shops return 204 unconditionally (idempotent PUT/DELETE convention). Confirm preference.
+**Comparison to the previous (synchronous) spec:** the previous spec was 27.5h ≈ 3.5 days for a single-release synchronous wipe. The split adds ~16h (mostly: the schema + 3 endpoints + the login block + the pending-deletion screen + the worker + the FK migration + the sole-admin re-check). The added cost buys: a cancel path, a worker we can monitor, the 5-day operational buffer, the FK migration, and a v1.0 that ships in 2 days instead of 3.5.
 
 ---
 
-## Appendix A — Privacy Policy Update Required
+## 13. Open questions
 
-`mygaslink.com/privacy` currently states "Account deletion is processed within 30 days." This MUST be updated before shipping:
+1. **Statutory retention period.** Locked at 8 years in disclosure copy. CA confirmation still pending. If CA says 6 or 10, only the §7 copy changes (one-line); v1.1 code is retention-period-agnostic — it just stops at "anonymized," and a future 8-year-from-now job permanently deletes.
 
-- Add: "You can delete your account directly within the app at Settings → Account → Delete Account. Deletion is immediate."
-- Add: "Personal information (name, email, phone, address, photo) is permanently removed. Invoice and payment records are retained in anonymized form for 8 years as required by Indian Income Tax and GST law (CGST Rule 56(15), Income Tax §149). After 8 years, all records are permanently deleted."
-- Add: "Anonymized records are linked to a random identifier and cannot be traced back to you. They are used only for statutory tax compliance and audit."
+2. **Email service for confirmation + final emails.** Existing helper [packages/api/src/utils/email.ts](../packages/api/src/utils/email.ts) is nodemailer-based and currently exports `sendOtpEmail`. Need a generic `sendEmail(to, subject, html, text)` or two new helpers (`sendAccountDeletionRequestEmail`, `sendAccountDeletionCompletedEmail`). Verify on implementation; if a generic doesn't exist, the wrap is ~30 min — already in the §12 estimate.
 
-Owner: Suneel (content) + dev (publish).
+3. **`AuditLog` row for the deletion request itself.** Currently v1.0 inserts only the `AccountDeletionRequest` row. Should we ALSO write an `AuditLog` entry at request time (separate from the v1.1 completion entry)? Recommended: yes — `action='user.account.deletion_requested'`, `details={requestId, scheduledCompletionAt}`. Cheap; helps the eventual audit log for DPDP grievance redressal. Confirm.
 
-## Appendix B — App Store / Play Store data-safety form delta
+4. **Cron schedule timezone.** Current cron jobs run at "server local time" per [overdueInvoicesJob.ts](../packages/api/src/jobs/overdueInvoicesJob.ts). EC2 prod has `TZ=Asia/Kolkata` per CLAUDE.md PRODUCTION STATE. Worker should run at IST 00:30. Confirm node-cron's parsing matches (it does — verified in existing job).
 
-App Store Connect → "App Privacy" section:
-- Confirm "Account Deletion" → "Yes, in-app."
-- Update "Data Retention" section to mention 8-year anonymized retention.
+5. **Customer-on-Customer references (e.g. husband/wife B2B account, husband as contact on wife's record).** Recommended: leave — contacts are operational metadata, not the deleting user's "owned" PII. Confirm.
 
-Google Play Console → "Data Safety" section:
-- Same disclosures.
-- "Account Deletion Web Resource" field — point to the new in-app path documentation (or remove if Play allows in-app-only).
+6. **Idempotency response code for `GET /deletion-request` after completion.** Once v1.1 anonymizes the user, the request row is `status='completed'` but the user can no longer authenticate (email anonymized). So this endpoint is unreachable post-completion. No code path needs to handle the case — confirm we're OK leaving it undefined.
+
+7. **Customer cascade with multiple Users.** Is multi-user-per-Customer actually used in production? If "no," the §3.2.3 / §10 cascade check (anonymize Customer only if no other Users link to it) is dead defence. If "yes," we need explicit integration coverage.
+
+8. **`ContactSubmission` deferred to v1.2 — explicit acknowledgement.** Confirm we are OK deferring opportunistic anonymization of pre-auth lead-form rows matching the deleted user's phone/email. They are NOT in the JWT-authenticated user's "owned data" by strict reading of DPDP §12.
+
+9. **Concurrent web session.** With the auth-middleware login block in §5, a web session held by the same user gets 403'd on its next API call and the web client should detect `error === 'account_pending_deletion'` and redirect to a web equivalent of Screen 5. Web-side changes are NOT in scope for v1.0 iOS submission, but they should be tracked for the next web release. Confirm scope.
+
+10. **Real-time NIC reversal for already-filed IRN.** v1.1 anonymizes the Customer row but RETAINS the Invoice row (with `gstin` on it for GSTR-1 audit). The Apple disclosure says "personal information removed" — does a customer's GSTIN/name/address on a retained NIC-filed invoice count as "personal information"? My read: no — it's a tax document under the "legitimate legal purposes" exemption. CA + legal sign-off on the disclosure copy is still recommended before App Store submission.
 
 ---
 
-*End of spec. Implementation should produce a WI-spec (`/work-new`) referencing this document.*
+## Appendix A — Privacy Policy + Store Metadata
+
+`mygaslink.com/privacy` currently states "Account deletion is processed within 30 days." This MUST be updated before v1.0 ships, and the disclosure must match §7 verbatim. Owner: Suneel (content) + dev (publish).
+
+App Store Connect → "App Privacy" → "Account Deletion" → "Yes, in-app." Data Retention section should mention the 30-day request window AND the 8-year anonymized retention.
+
+Google Play Console → "Data Safety" → same disclosures.
+
+---
+
+*End of spec. Implementation should produce two WI specs (`/work-new`) referencing this document — one for v1.0 (iOS ship-blocker) and one for v1.1 (must follow within 25 days).*
