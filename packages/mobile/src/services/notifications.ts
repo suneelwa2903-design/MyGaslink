@@ -1,11 +1,19 @@
 /**
- * Notifications Service — Stub for Expo Go
+ * Notifications Service — v1.0 Stub (push deferred to v1.1)
  *
- * Push notifications are NOT supported in Expo Go (SDK 53+).
- * This file exports no-op stubs so the app doesn't crash.
+ * The expo-notifications plugin was removed from app.config in 6df8856 so
+ * iOS submission isn't rejected for declaring push entitlements without a
+ * working handler. v1.0 has no background push by design — SSE
+ * (services/sseService.ts) covers driver foreground updates.
  *
- * When building a dev APK (eas build --profile development),
- * replace this with the real implementation that imports expo-notifications.
+ * These no-op stubs are kept so the v1.1 push sprint can re-add the plugin
+ * and swap the bodies for real expo-notifications calls without re-wiring
+ * scaffolding or updating call sites elsewhere. The v1.1 work item is
+ * tracked under CLAUDE.md "v1.1 Post-iOS-submission backlog (Sprint 1)".
+ *
+ * If you are reading this in a v1.1 task: replace the bodies, re-add the
+ * expo-notifications plugin to app.json, and unskip the two real-flow
+ * tests in __tests__/notifications.test.ts.
  */
 
 export async function registerForPushNotifications(): Promise<string | null> {

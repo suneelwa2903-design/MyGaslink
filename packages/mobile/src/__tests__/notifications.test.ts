@@ -46,14 +46,15 @@ describe('registerForPushNotifications', () => {
   });
 
   // The two tests below assert the REAL push-notification flow (request
-  // permission → fetch Expo push token). That implementation does not exist in
-  // this build: src/services/notifications.ts is an intentional no-op stub
-  // because push notifications are unsupported in Expo Go (SDK 53+) — see the
-  // file header. registerForPushNotifications() hard-returns null and never
-  // calls expo-notifications, so these expectations cannot pass.
-  // Re-enable (remove .skip) once the real implementation is restored for the
-  // dev/prod APK build (eas build --profile development).
-  it.skip('returns push token when permission granted (stub: not built in Expo Go)', async () => {
+  // permission → fetch Expo push token). That implementation does not exist
+  // in v1.0: services/notifications.ts is an intentional no-op stub because
+  // the expo-notifications plugin was removed from app.config in 6df8856 to
+  // avoid Apple-rejecting iOS submission on entitlement-without-handler. SSE
+  // covers driver foreground updates for v1.0. registerForPushNotifications()
+  // hard-returns null and never calls expo-notifications, so these
+  // expectations cannot pass until the v1.1 push sprint restores the real
+  // implementation. Re-enable (remove .skip) as part of that v1.1 work.
+  it.skip('returns push token when permission granted (stub: v1.0 push deferred to v1.1)', async () => {
     (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'granted' });
     (Notifications.getExpoPushTokenAsync as jest.Mock).mockResolvedValue({ data: 'ExponentPushToken[xxx]' });
 
@@ -61,7 +62,7 @@ describe('registerForPushNotifications', () => {
     expect(token).toBe('ExponentPushToken[xxx]');
   });
 
-  it.skip('requests permission when not already granted (stub: not built in Expo Go)', async () => {
+  it.skip('requests permission when not already granted (stub: v1.0 push deferred to v1.1)', async () => {
     (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'undetermined' });
     (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'granted' });
     (Notifications.getExpoPushTokenAsync as jest.Mock).mockResolvedValue({ data: 'ExponentPushToken[yyy]' });

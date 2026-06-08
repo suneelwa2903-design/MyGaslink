@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../src/stores/authStore';
@@ -21,52 +21,26 @@ const queryClient = new QueryClient({
 export default function RootLayout() {
   const hydrate = useAuthStore((s) => s.hydrate);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const router = useRouter();
   const isDark = useIsDark();
   const themeHasHydrated = useThemeHasHydrated();
-  const notificationResponseListener = useRef<{ remove: () => void } | null>(null);
+  const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
     hydrate();
   }, [hydrate]);
 
-  // Register push notifications & crash user when authenticated
-  // Lazy-load notifications to avoid expo-notifications crash in Expo Go
-  const user = useAuthStore((s) => s.user);
+  // Push notifications are deferred to v1.1 — the expo-notifications plugin
+  // was removed from app.config in 6df8856 to avoid Apple-rejecting the iOS
+  // build on an entitlement-without-handler. The stub at services/notifications.ts
+  // is retained for the v1.1 rebuild. SSE covers driver foreground updates
+  // (services/sseService.ts) — no background push for v1.0 by design.
   useEffect(() => {
     if (!isAuthenticated || !user) {
       setCrashUser(null);
       return;
     }
     setCrashUser({ id: user.userId, email: user.email, role: user.role });
-
-    // Lazy-load to prevent expo-notifications from crashing at import time in Expo Go
-    import('../src/services/notifications')
-      .then(({ registerForPushNotifications }) => registerForPushNotifications())
-      .catch(() => {
-        // Push notifications not available in Expo Go
-      });
   }, [isAuthenticated, user]);
-
-  // Handle notification taps → deep link (lazy-loaded)
-  useEffect(() => {
-    import('../src/services/notifications')
-      .then(({ addNotificationResponseListener }) => {
-        notificationResponseListener.current = addNotificationResponseListener((response: unknown) => {
-          const data = (response as { notification: { request: { content: { data: Record<string, unknown> } } } }).notification.request.content.data;
-          if (data?.screen) {
-            router.push(data.screen as string);
-          }
-        });
-      })
-      .catch(() => {
-        // Notifications not available in Expo Go
-      });
-
-    return () => {
-      notificationResponseListener.current?.remove();
-    };
-  }, [router]);
 
   // Gate first render until the persisted theme is restored from SecureStore.
   // Without this gate, users who picked dark would briefly see light on
