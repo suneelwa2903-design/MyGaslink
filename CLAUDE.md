@@ -46,6 +46,17 @@ Re-New GasLink is an LPG distribution management SaaS — monorepo with 3 packag
 
 All other tracks parked until iOS is in App Store review. See [docs/IOS-PHASE0-GROUND-TRUTH.md](docs/IOS-PHASE0-GROUND-TRUTH.md) for the full audit. Target: submission in ~7-10 days from 2026-06-08; Apple review adds 1-2 days.
 
+### iOS v1.0 Scope (locked 2026-06-08)
+
+**All three apps ship in v1.0:**
+1. **Distributor admin** — the largest surface (admin + finance + inventory + super-admin route groups, ~40 screens). Primary user: distributor head running orders / GST / fleet / customers / collections.
+2. **Driver** — 6 visible screens + offline queue + SSE event stream. Primary user: delivery driver.
+3. **Customer** — 5 visible screens (Dashboard / Orders / Invoices / Payments / Account). Primary user: household / commercial LPG consumer.
+
+**Phase 4 (App Store Connect prep) implications:** three ASC entries, three sets of screenshots (6.7" + 6.5" iPhone, no iPad — `supportsTablet: false`), three app descriptions / keywords / categories, three privacy nutrition labels (mostly identical content × 3), three independent Apple review processes. Adds ~1.5 days at Phase 4 vs the two-app path. Total iOS submission window stays in the 12-14 calendar day range.
+
+**iPhone-only** for all three (`expo.ios.supportsTablet: false` — Phase 1 L4 decision).
+
 **Parked until iOS submission complete:**
 - WhiteBooks production activation
 - Super Admin SaaS billing ship-blockers ([docs/SUPERADMIN-BILLING-AUDIT.md](docs/SUPERADMIN-BILLING-AUDIT.md) — 5 fixes, ~2 hours of work). Gated by July 1 first-real-billing event — **must restart by ~2026-06-25** or July billing slips.
