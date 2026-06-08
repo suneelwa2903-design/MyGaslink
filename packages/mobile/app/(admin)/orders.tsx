@@ -1087,7 +1087,7 @@ function CreateOrderModal({
               <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
                 <KeyboardAvoidingView
                   behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                  style={{ width: '100%' }}
+                  style={{ flex: 1, justifyContent: 'flex-end' }}
                 >
                   <View style={[styles.pickerSheet, { backgroundColor: C.modalBg }]}>
                     <View style={[styles.pickerSheetHeader, { borderBottomColor: C.divider }]}>
@@ -2031,7 +2031,7 @@ function ReturnsOrderModal({
               <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
                 <KeyboardAvoidingView
                   behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                  style={{ width: '100%' }}
+                  style={{ flex: 1, justifyContent: 'flex-end' }}
                 >
                   <View style={[styles.pickerSheet, { backgroundColor: C.modalBg }]}>
                     <View style={[styles.pickerSheetHeader, { borderBottomColor: C.divider }]}>
@@ -2735,7 +2735,13 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   pickerSheet: {
-    maxHeight: '80%',
+    // SAA C2: maxHeight: '80%' removed. Combined with the picker KAV's
+    // `flex: 1, justifyContent: 'flex-end'` (also SAA C2), the sheet now
+    // flex-grows into the available space above the keyboard instead of
+    // being capped at 80% of (screen − keyboard) which left an awkward
+    // gap on iPhone. The pickerOverlay parent's `justifyContent: 'flex-end'`
+    // keeps the sheet docked to the bottom; the KAV's `behavior: 'padding'`
+    // lifts it above the keyboard.
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
   },
