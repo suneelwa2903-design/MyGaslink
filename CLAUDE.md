@@ -73,8 +73,10 @@ All other tracks parked until iOS is in App Store review. See [docs/IOS-PHASE0-G
 ### v1.1 Post-iOS-submission backlog (Sprint 1)
 
 - **Push notifications** — wire real APNs + FCM via `expo-notifications`. Currently a no-op stub; SSE covers driver foreground only. Plugin removed from `app.config` for v1.0 to avoid Apple rejection on entitlement-without-handler. Package + code stubs retained for the v1.1 rebuild.
+- **Universal Links (Phase 1 H1)** — declare `expo.ios.associatedDomains` in `app.json`, deploy AASA file at `https://mygaslink.com/.well-known/apple-app-site-association`, validate via Apple CDN. Deferred from v1.0 because (a) server emits no HTTPS deep links today so the gap is structural not functional, (b) needs Apple Team ID (post-enrollment) for the AASA appID, (c) half-measure (associatedDomains without AASA) sets a dead entitlement. Custom scheme `mygaslink://` continues to handle in-app links for v1.0. ~half-day when activated.
 - **Super Admin SaaS billing 5 ship-blockers** — must restart by ~2026-06-25 for July 1 first-distributor billing event.
 - **SSL cert pinning in mobile** — Apple doesn't require; DPDP/security review likely will.
+- **iPad layouts** — v1.0 ships iPhone-only (`expo.ios.supportsTablet: false`). If a customer asks, flip and supply iPad-specific layouts + ASC iPad screenshots.
 - **Account deletion UI v2** — if Apple flags any v1.0 shortcuts during review.
 
 ### ANDROID SUBMISSION — 3 steps remaining (PARKED — finish after iOS submission)
