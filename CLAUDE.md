@@ -77,6 +77,8 @@ All other tracks parked until iOS is in App Store review. See [docs/IOS-PHASE0-G
 - **Super Admin SaaS billing 5 ship-blockers** — must restart by ~2026-06-25 for July 1 first-distributor billing event.
 - **SSL cert pinning in mobile** — Apple doesn't require; DPDP/security review likely will.
 - **iPad layouts** — v1.0 ships iPhone-only (`expo.ios.supportsTablet: false`). If a customer asks, flip and supply iPad-specific layouts + ASC iPad screenshots.
+- **`expo-system-ui` install** — `app.json` declares `userInterfaceStyle: "light"` but `expo-system-ui` isn't installed, so the declaration is a no-op. Surfaced by the 2026-06-08 `expo prebuild` smoke run (`» android: userInterfaceStyle: Install expo-system-ui in your project to enable this feature`). Not a v1.0 blocker — Android currently falls back to the system theme regardless. Install in v1.1 if strict light-mode enforcement matters.
+- **`RECORD_AUDIO` manifest tombstone** — `expo-camera` plugin contributes `RECORD_AUDIO` to the generated `AndroidManifest.xml` unconditionally even though the app only uses `takePictureAsync` (photos-only). To actually drop the mic prompt from production Android users, write a config plugin with manifest merge `tools:node="remove"`. Half-day work, fragile across Expo SDK upgrades. Low priority — this permission has been declared since the app first shipped, no regression.
 - **Account deletion UI v2** — if Apple flags any v1.0 shortcuts during review.
 
 ### ANDROID SUBMISSION — 3 steps remaining (PARKED — finish after iOS submission)
