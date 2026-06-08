@@ -46,6 +46,12 @@ packages/mobile/.expo/
 packages/mobile/android/
 packages/mobile/ios/
 
+# Mobile build artifacts — EAS-produced binaries, never commit
+*.aab
+*.apk
+*.ipa
+packages/mobile/build-*
+
 # Python (legacy)
 __pycache__/
 *.pyc
