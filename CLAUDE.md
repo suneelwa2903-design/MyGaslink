@@ -96,6 +96,7 @@ All other tracks parked until iOS is in App Store review. See [docs/IOS-PHASE0-G
   3. (Code) Add `SENTRY_ORG=<slug>` and `SENTRY_PROJECT=<slug>` to `eas.json > build.preview.env` and `build.production.env`. The slug is the human-readable identifier from the Sentry dashboard URL (NOT the numeric ID).
   4. (Code) Re-add `"@sentry/react-native"` to `app.json > expo.plugins`.
   5. Cloud-build to verify (`eas build --platform android --profile preview`). If the `:app:createBundleReleaseJsAndAssets_SentryUpload_*` Gradle task succeeds, source maps are flowing.
+- **Real production monitor (was misnamed "E2E Production Monitor")** — the existing `.github/workflows/e2e-monitor.yml` was disabled on 2026-06-08 because it never actually monitored production (it spun up a local Postgres + API on the GitHub Actions runner — same coverage as `ci.yml`, just on a daily schedule). See [docs/E2E-MONITOR-DIAGNOSIS.md](docs/E2E-MONITOR-DIAGNOSIS.md). Real production monitor scope (Option C): dedicated read-only monitor user against `api.mygaslink.com`, `/health` check + critical-path read queries (order list / invoice list / customer list as that monitor user), auto-issue on failure with `permissions: { issues: write }`, SMTP escalation to `ALERT_EMAIL`. Avoid any write paths. ~1–2 days. Schedule for post-first-distributor sprint when there's real prod traffic to actually monitor.
 - **Account deletion UI v2** — if Apple flags any v1.0 shortcuts during review.
 
 ### ANDROID SUBMISSION — 3 steps remaining (PARKED — finish after iOS submission)

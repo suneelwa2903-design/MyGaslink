@@ -1,12 +1,29 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # E2E Production Monitor
 #
-# Spins up a full environment (Postgres + API) and runs critical-path E2E tests
-# daily at 2:30 AM IST (21:00 UTC previous day).
+# DISABLED 2026-06-08 per Suneel — see docs/E2E-MONITOR-DIAGNOSIS.md.
 #
-# On failure: sends email via SMTP and creates a GitHub issue.
+# The workflow's name is misleading: it does NOT monitor production. It spins
+# up a LOCAL Postgres + API on the GitHub Actions runner and runs the
+# scripts/e2e-monitor.ts smoke tests against `localhost:5000`. Same coverage
+# as ci.yml — just on a daily schedule instead of per-commit. A real production
+# outage at api.mygaslink.com would not be detected by this workflow.
 #
-# Required GitHub Secrets:
+# It had also been failing 13 consecutive runs (since the WI-114 seed-
+# credentials hardening on 2026-05-24) because the workflow env block doesn't
+# pass the WHITEBOOKS_EINVOICE_* env vars that prisma/seed.ts now requires.
+# Rather than fix-forward a workflow whose value-add is questionable, the
+# cron trigger is disabled here pending a real production monitor.
+#
+# Real production monitor planned for post-launch sprint — see CLAUDE.md
+# "v1.1 Post-iOS-submission backlog" → "Real production monitor (Option C)".
+# Scope: dedicated read-only monitor user against the live api.mygaslink.com,
+# /health check + critical-path read queries, auto-issue on failure.
+#
+# `workflow_dispatch:` is retained so the workflow can still be manually
+# triggered from the Actions tab if needed for diagnostics.
+#
+# Required GitHub Secrets (legacy — kept for reference when revived):
 #   DATABASE_URL        – Postgres connection string (only needed for prod mode;
 #                         the CI job builds its own via services)
 #   SMTP_HOST           – SMTP host (e.g. smtp.gmail.com)
@@ -15,13 +32,12 @@
 #   ALERT_EMAIL         – Recipient email for the results report
 # ──────────────────────────────────────────────────────────────────────────────
 
-name: E2E Production Monitor
+name: E2E Production Monitor (DISABLED)
 
 on:
-  schedule:
-    # 2:30 AM IST = 21:00 UTC (previous day)
-    - cron: '0 21 * * *'
-  workflow_dispatch: # allow manual trigger from the Actions tab
+  # schedule: disabled 2026-06-08 — see top-of-file comment.
+  #   - cron: '0 21 * * *'   # was: 2:30 AM IST = 21:00 UTC (previous day)
+  workflow_dispatch: # manual trigger only
 
 concurrency:
   group: e2e-monitor
