@@ -1077,69 +1077,78 @@ function CreateOrderModal({
               <Ionicons name="chevron-down" size={18} color={C.textMuted} />
             </TouchableOpacity>
 
-            {/* Customer picker modal */}
+            {/* Customer picker modal — KAV wrap is required because RN renders
+                nested <Modal> in its own iOS presentation context, so the outer
+                KAV on the Create Order form does NOT propagate inside. iOS only
+                — behavior={undefined} on Android is a no-op and Android's
+                adjustResize (Expo default) keeps working. See docs/IOS-KOF-AUDIT.md. */}
             <Modal visible={showCustomerPicker} animationType="slide" transparent>
               <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
-                <View style={[styles.pickerSheet, { backgroundColor: C.modalBg }]}>
-                  <View style={[styles.pickerSheetHeader, { borderBottomColor: C.divider }]}>
-                    <Text style={[styles.pickerSheetTitle, { color: C.text }]}>Select Customer</Text>
-                    <TouchableOpacity onPress={() => setShowCustomerPicker(false)}>
-                      <Ionicons name="close" size={24} color={C.text} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-                    <View
-                      style={[
-                        styles.searchInputWrapper,
-                        { backgroundColor: C.card, borderColor: C.inputBorder },
-                      ]}
-                    >
-                      <Ionicons name="search-outline" size={16} color={C.textMuted} />
-                      <TextInput
-                        style={[styles.searchInput, { color: C.text }]}
-                        placeholder="Search customers..."
-                        placeholderTextColor={C.textMuted}
-                        value={customerSearch}
-                        onChangeText={setCustomerSearch}
-                        autoFocus
-                      />
-                    </View>
-                  </View>
-                  <FlatList
-                    data={filteredCustomers}
-                    keyExtractor={(c) => c.customerId}
-                    renderItem={({ item: c }) => (
-                      <TouchableOpacity
-                        style={[
-                          styles.pickerItem,
-                          {
-                            backgroundColor:
-                              c.customerId === customerId ? (dark ? '#334155' : '#eff6ff') : 'transparent',
-                          },
-                        ]}
-                        onPress={() => {
-                          setCustomerId(c.customerId);
-                          setShowCustomerPicker(false);
-                          setCustomerSearch('');
-                        }}
-                      >
-                        <Text style={[styles.pickerItemText, { color: C.text }]}>
-                          {c.customerName}
-                        </Text>
-                        {c.phone && (
-                          <Text style={[styles.pickerItemSub, { color: C.textSecondary }]}>
-                            {c.phone}
-                          </Text>
-                        )}
+                <KeyboardAvoidingView
+                  behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                  style={{ width: '100%' }}
+                >
+                  <View style={[styles.pickerSheet, { backgroundColor: C.modalBg }]}>
+                    <View style={[styles.pickerSheetHeader, { borderBottomColor: C.divider }]}>
+                      <Text style={[styles.pickerSheetTitle, { color: C.text }]}>Select Customer</Text>
+                      <TouchableOpacity onPress={() => setShowCustomerPicker(false)}>
+                        <Ionicons name="close" size={24} color={C.text} />
                       </TouchableOpacity>
-                    )}
-                    ListEmptyComponent={
-                      <Text style={[styles.pickerEmpty, { color: C.textMuted }]}>
-                        No customers found
-                      </Text>
-                    }
-                  />
-                </View>
+                    </View>
+                    <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+                      <View
+                        style={[
+                          styles.searchInputWrapper,
+                          { backgroundColor: C.card, borderColor: C.inputBorder },
+                        ]}
+                      >
+                        <Ionicons name="search-outline" size={16} color={C.textMuted} />
+                        <TextInput
+                          style={[styles.searchInput, { color: C.text }]}
+                          placeholder="Search customers..."
+                          placeholderTextColor={C.textMuted}
+                          value={customerSearch}
+                          onChangeText={setCustomerSearch}
+                          autoFocus
+                        />
+                      </View>
+                    </View>
+                    <FlatList
+                      data={filteredCustomers}
+                      keyExtractor={(c) => c.customerId}
+                      renderItem={({ item: c }) => (
+                        <TouchableOpacity
+                          style={[
+                            styles.pickerItem,
+                            {
+                              backgroundColor:
+                                c.customerId === customerId ? (dark ? '#334155' : '#eff6ff') : 'transparent',
+                            },
+                          ]}
+                          onPress={() => {
+                            setCustomerId(c.customerId);
+                            setShowCustomerPicker(false);
+                            setCustomerSearch('');
+                          }}
+                        >
+                          <Text style={[styles.pickerItemText, { color: C.text }]}>
+                            {c.customerName}
+                          </Text>
+                          {c.phone && (
+                            <Text style={[styles.pickerItemSub, { color: C.textSecondary }]}>
+                              {c.phone}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                      ListEmptyComponent={
+                        <Text style={[styles.pickerEmpty, { color: C.textMuted }]}>
+                          No customers found
+                        </Text>
+                      }
+                    />
+                  </View>
+                </KeyboardAvoidingView>
               </View>
             </Modal>
 
@@ -2009,45 +2018,52 @@ function ReturnsOrderModal({
               <Ionicons name="chevron-down" size={18} color={C.textMuted} />
             </TouchableOpacity>
 
+            {/* Returns Order customer picker — same KAV-wrap rationale as the
+                Create Order picker above (see comment there). */}
             <Modal visible={showCustomerPicker} animationType="slide" transparent>
               <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
-                <View style={[styles.pickerSheet, { backgroundColor: C.modalBg }]}>
-                  <View style={[styles.pickerSheetHeader, { borderBottomColor: C.divider }]}>
-                    <Text style={[styles.pickerSheetTitle, { color: C.text }]}>Select Customer</Text>
-                    <TouchableOpacity onPress={() => setShowCustomerPicker(false)}>
-                      <Ionicons name="close" size={24} color={C.text} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-                    <View style={[styles.searchInputWrapper, { backgroundColor: C.card, borderColor: C.inputBorder }]}>
-                      <Ionicons name="search-outline" size={16} color={C.textMuted} />
-                      <TextInput
-                        style={[styles.searchInput, { color: C.text }]}
-                        placeholder="Search customers..."
-                        placeholderTextColor={C.textMuted}
-                        value={customerSearch}
-                        onChangeText={setCustomerSearch}
-                        autoFocus
-                      />
-                    </View>
-                  </View>
-                  <FlatList
-                    data={filteredCustomers}
-                    keyExtractor={(c) => c.customerId}
-                    renderItem={({ item }) => (
-                      <TouchableOpacity
-                        style={[styles.pickerRow, { borderBottomColor: C.divider }]}
-                        onPress={() => {
-                          setCustomerId(item.customerId);
-                          setShowCustomerPicker(false);
-                          setCustomerSearch('');
-                        }}
-                      >
-                        <Text style={[styles.pickerRowText, { color: C.text }]}>{item.customerName}</Text>
+                <KeyboardAvoidingView
+                  behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                  style={{ width: '100%' }}
+                >
+                  <View style={[styles.pickerSheet, { backgroundColor: C.modalBg }]}>
+                    <View style={[styles.pickerSheetHeader, { borderBottomColor: C.divider }]}>
+                      <Text style={[styles.pickerSheetTitle, { color: C.text }]}>Select Customer</Text>
+                      <TouchableOpacity onPress={() => setShowCustomerPicker(false)}>
+                        <Ionicons name="close" size={24} color={C.text} />
                       </TouchableOpacity>
-                    )}
-                  />
-                </View>
+                    </View>
+                    <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+                      <View style={[styles.searchInputWrapper, { backgroundColor: C.card, borderColor: C.inputBorder }]}>
+                        <Ionicons name="search-outline" size={16} color={C.textMuted} />
+                        <TextInput
+                          style={[styles.searchInput, { color: C.text }]}
+                          placeholder="Search customers..."
+                          placeholderTextColor={C.textMuted}
+                          value={customerSearch}
+                          onChangeText={setCustomerSearch}
+                          autoFocus
+                        />
+                      </View>
+                    </View>
+                    <FlatList
+                      data={filteredCustomers}
+                      keyExtractor={(c) => c.customerId}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          style={[styles.pickerRow, { borderBottomColor: C.divider }]}
+                          onPress={() => {
+                            setCustomerId(item.customerId);
+                            setShowCustomerPicker(false);
+                            setCustomerSearch('');
+                          }}
+                        >
+                          <Text style={[styles.pickerRowText, { color: C.text }]}>{item.customerName}</Text>
+                        </TouchableOpacity>
+                      )}
+                    />
+                  </View>
+                </KeyboardAvoidingView>
               </View>
             </Modal>
 

@@ -1,5 +1,17 @@
 import { useEffect, useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, TouchableOpacity, Alert, Modal, TextInput, Image } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  RefreshControl,
+  TouchableOpacity,
+  Alert,
+  Modal,
+  TextInput,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApiQuery } from '../../src/hooks/useApi';
@@ -288,6 +300,12 @@ export default function DriverOrdersScreen() {
           - `statusBarTranslucent` is the Android equivalent for the status
             bar — needed for the dark overlay to paint edge-to-edge on
             Android 11+ edge-to-edge layouts. */}
+      {/* KAV wrap on iOS so the keyboard doesn't obscure the multiline
+          "Delivery Notes" TextInput + the "Confirm Delivery" button at the
+          bottom of the sheet. behavior={undefined} on Android is a no-op;
+          AndroidManifest's default adjustResize (Expo's default for unset
+          softwareKeyboardLayoutMode) keeps Android working as before. See
+          docs/IOS-KOF-AUDIT.md. */}
       <Modal
         visible={!!selectedOrder}
         animationType="slide"
@@ -295,7 +313,10 @@ export default function DriverOrdersScreen() {
         presentationStyle="overFullScreen"
         statusBarTranslucent
       >
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
+        >
           <View style={{
             backgroundColor: colors.cardBg,
             borderTopLeftRadius: 24,
@@ -458,7 +479,7 @@ export default function DriverOrdersScreen() {
               )}
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Camera Modal */}
