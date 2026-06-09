@@ -8,6 +8,7 @@ import { useAuthStore } from '../src/stores/authStore';
 import { useIsDark, useThemeHasHydrated } from '../src/stores/themeStore';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { NetworkIndicator } from '../src/components/NetworkIndicator';
+import { InsetsDebugOverlay } from '../src/components/dev/InsetsDebugOverlay';
 import { initCrashReporting, setUser as setCrashUser } from '../src/services/crashReporting';
 
 // Initialize crash reporting on app load
@@ -61,6 +62,12 @@ export default function RootLayout() {
           <StatusBar style={isDark ? 'light' : 'dark'} />
           <View style={{ flex: 1 }}>
             <NetworkIndicator />
+            {/* P1-2: temporary debug overlay — DEV-only; renders the
+                runtime safe-area insets + derived tab-bar paddingBottom +
+                height so we can verify on a real iPhone whether the bug
+                is in the inset value or the layout formula. Remove this
+                line and the import after P1-2 is diagnosed and fixed. */}
+            <InsetsDebugOverlay />
             <Stack screenOptions={{ headerShown: false }}>
               <Stack.Screen name="(auth)" />
               <Stack.Screen name="(customer)" />
