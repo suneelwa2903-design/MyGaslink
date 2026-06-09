@@ -8,7 +8,7 @@
  * web client receives the same shape as before the Float→Decimal
  * migration (WI-006).
  */
-import { decimalsToNumbers } from './decimal.js';
+import { decimalsToNumbers, toNum } from './decimal.js';
 
 /**
  * The mappers rename `id` → `<entity>Id`, recursively map nested relations,
@@ -229,6 +229,164 @@ export function mapInvoice(inv: InvoiceInput | null | undefined): MappedRecord |
 
 export function mapInvoices(list: InvoiceInput[]): MappedRecord[] {
   return list.map((inv) => mapInvoice(inv) as MappedRecord);
+}
+
+// ─── Customer Portal Invoice Detail ──────────────────────────────────────────
+//
+// Customer-facing invoice detail response shape, separate from `mapInvoice`
+// which serves admin contexts (web + admin/finance mobile). The customer
+// mobile UI at packages/mobile/app/(customer)/invoices.tsx expects field
+// names that are customer-friendly (`lineTotal`, `cgstAmount`, `subtotal`,
+// `payments[]`) rather than the schema-native names (`totalPrice`,
+// `cgstValue`, `paymentAllocations[]`). Reshaping happens here at the API
+// boundary so the UI's local InvoiceDetail interface is the source of truth
+// for what customers see; admin consumers of mapInvoice are unaffected.
+//
+// Formulas locked in docs/INVOICE-NUMBERS-AUDIT.md (P0-1 cross-view
+// consistency audit) after Suneel's Q1-Q3 sign-off:
+// - subtotal = totalAmount − cgst − sgst − igst (pure deduction, reconciles
+//   exactly to totalAmount; matches PDF "Subtotal" row to sub-rupee
+//   rounding; works for mixed GST rates and GST-disabled mode)
+// - lineTotal = item.totalPrice directly (post-discount GST-inclusive;
+//   matches PDF "Amount" column and admin web "Total" column)
+// - displayed unitPrice = totalPrice / quantity, rounded 2dp (variant (a')
+//   per Q1 lock; ensures qty × shown = lineTotal always reconciles for
+//   customer mental math, no conditional render needed for discount lines)
+// - billingAddress = filtered comma-join of the 5 billing address columns,
+//   identical to invoicePdfService.ts generateInvoicePdf > address build
+// - customerGstin returned as `null` for URP/B2C (Q2 lock); the UI already
+//   conditionally renders this row only when truthy.
+
+type CustomerInvoiceItemRow = HasId & WithCylinderType & {
+  description?: string | null;
+  quantity?: number | null;
+  totalPrice?: unknown;
+  gstRate?: number | null;
+};
+
+type CustomerInvoiceAllocationRow = HasId & {
+  amount?: unknown;
+  payment?: {
+    id?: string;
+    transactionDate?: Date | string | null;
+    paymentMethod?: string | null;
+    referenceNumber?: string | null;
+  } | null;
+};
+
+interface CustomerInvoiceInput extends HasId {
+  invoiceNumber?: string | null;
+  items?: CustomerInvoiceItemRow[] | null;
+  customer?: {
+    customerName?: string | null;
+    gstin?: string | null;
+    billingAddressLine1?: string | null;
+    billingAddressLine2?: string | null;
+    billingCity?: string | null;
+    billingState?: string | null;
+    billingPincode?: string | null;
+  } | null;
+  order?: { status?: string | null } | null;
+  paymentAllocations?: CustomerInvoiceAllocationRow[] | null;
+  cgstValue?: unknown;
+  sgstValue?: unknown;
+  igstValue?: unknown;
+  totalAmount?: unknown;
+}
+
+export function mapCustomerInvoiceDetail(
+  inv: CustomerInvoiceInput | null | undefined,
+): MappedRecord | null | undefined {
+  if (!inv) return inv;
+
+  // Monetary fields — toNum handles Prisma.Decimal | string | number | null.
+  const cgstAmount = toNum(inv.cgstValue);
+  const sgstAmount = toNum(inv.sgstValue);
+  const igstAmount = toNum(inv.igstValue);
+  const totalAmount = toNum(inv.totalAmount);
+
+  // Subtotal — pure deduction. Locked formula per audit.
+  const subtotal = Number((totalAmount - cgstAmount - sgstAmount - igstAmount).toFixed(2));
+
+  // Address — comma-join non-empty parts; matches PDF generator's address build.
+  const billingAddress = inv.customer
+    ? ([
+        inv.customer.billingAddressLine1,
+        inv.customer.billingAddressLine2,
+        inv.customer.billingCity,
+        inv.customer.billingState,
+        inv.customer.billingPincode,
+      ]
+        .filter((s) => s != null && String(s).trim() !== '')
+        .join(', ') || null)
+    : null;
+
+  // Items — rename totalPrice → lineTotal and compute display unitPrice as
+  // post-discount inclusive (variant a'). Drop schema-internal fields the
+  // customer app doesn't read to keep the response shape tight.
+  const items = (inv.items ?? []).map((it) => {
+    const m = renameId(it, 'invoiceItemId') as MappedRecord;
+    const quantity = Number(it.quantity ?? 0);
+    const totalPrice = toNum(it.totalPrice);
+    m.cylinderTypeName = it.cylinderType?.typeName ?? it.description ?? '';
+    m.quantity = quantity;
+    m.lineTotal = totalPrice;
+    m.unitPrice = quantity > 0 ? Number((totalPrice / quantity).toFixed(2)) : 0;
+    m.gstRate = Number(it.gstRate ?? 0);
+    delete m.totalPrice;
+    delete m.discountPerUnit;
+    delete m.invoiceId;
+    delete m.cylinderTypeId;
+    delete m.cylinderType;
+    delete m.description;
+    delete m.hsnCode;
+    return m;
+  });
+
+  // Payments — flatten allocations and hoist nested payment metadata so the
+  // customer UI doesn't have to traverse `allocation.payment.X`.
+  const payments = (inv.paymentAllocations ?? []).map((alloc) => ({
+    paymentId: alloc.payment?.id ?? alloc.id ?? '',
+    amount: toNum(alloc.amount),
+    transactionDate: alloc.payment?.transactionDate ?? null,
+    paymentMethod: alloc.payment?.paymentMethod ?? '',
+    referenceNumber: alloc.payment?.referenceNumber ?? null,
+  }));
+
+  // Build the response. renameId handles the id rename + Decimal conversion
+  // on all scalar fields that pass through unchanged; we overlay the
+  // customer-friendly aliases and strip schema-leaking fields.
+  const mapped = renameId(inv, 'invoiceId');
+  mapped.customerName = inv.customer?.customerName ?? 'Customer';
+  mapped.customerGstin = inv.customer?.gstin ?? null;
+  mapped.billingAddress = billingAddress;
+  mapped.items = items;
+  mapped.subtotal = subtotal;
+  mapped.cgstAmount = cgstAmount;
+  mapped.sgstAmount = sgstAmount;
+  mapped.igstAmount = igstAmount;
+  mapped.totalAmount = totalAmount;
+  mapped.orderStatus = inv.order?.status ?? null;
+  mapped.payments = payments;
+  // Strip schema-internal fields the customer app doesn't read. Keeps the
+  // response tight and avoids accidental exposure of admin-only fields
+  // (e.g. issuedBy, notes, internal IDs) on the customer surface.
+  delete mapped.cgstValue;
+  delete mapped.sgstValue;
+  delete mapped.igstValue;
+  delete mapped.customer;
+  delete mapped.order;
+  delete mapped.paymentAllocations;
+  delete mapped.creditNotes;
+  delete mapped.debitNotes;
+  delete mapped.distributorId;
+  delete mapped.customerId;
+  delete mapped.orderId;
+  delete mapped.issuedBy;
+  delete mapped.closedAt;
+  delete mapped.notes;
+  delete mapped.deletedAt;
+  return mapped;
 }
 
 // ─── Payment ─────────────────────────────────────────────────────────────────

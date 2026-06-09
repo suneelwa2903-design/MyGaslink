@@ -499,10 +499,27 @@ export async function getMyInvoiceById(distributorId: string, customerId: string
   return prisma.invoice.findFirst({
     where: { id: invoiceId, customerId, distributorId, deletedAt: null },
     include: {
+      // P0-1: customer relation needed for customerName / customerGstin /
+      // billingAddress. The mapper at utils/mappers.ts > mapCustomerInvoiceDetail
+      // selects exactly these fields; do not add columns here without updating
+      // the mapper's CustomerInvoiceInput interface.
+      customer: {
+        select: {
+          customerName: true,
+          gstin: true,
+          billingAddressLine1: true,
+          billingAddressLine2: true,
+          billingCity: true,
+          billingState: true,
+          billingPincode: true,
+        },
+      },
       items: { include: { cylinderType: { select: { typeName: true } } } },
       order: { select: { orderNumber: true, status: true } },
       paymentAllocations: {
-        include: { payment: { select: { paymentMethod: true, referenceNumber: true, transactionDate: true } } },
+        // P0-1: also select payment.id so the customer mapper can hoist it as
+        // payments[].paymentId for the UI's Payment History list.
+        include: { payment: { select: { id: true, paymentMethod: true, referenceNumber: true, transactionDate: true } } },
       },
       creditNotes: true,
       debitNotes: true,

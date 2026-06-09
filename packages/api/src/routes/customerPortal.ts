@@ -5,7 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
 import * as portalService from '../services/customerPortalService.js';
-import { mapCustomer, mapOrder, mapOrders, mapInvoice, mapInvoices, mapPayment, mapPayments } from '../utils/mappers.js';
+import { mapCustomer, mapOrder, mapOrders, mapInvoices, mapCustomerInvoiceDetail, mapPayment, mapPayments } from '../utils/mappers.js';
 import { z } from 'zod';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
@@ -276,7 +276,11 @@ router.get('/invoices/:id',
       req.user!.distributorId!, req.user!.customerId, param(req.params.id)
     );
     if (!invoice) return sendNotFound(res, 'Invoice');
-    return sendSuccess(res, mapInvoice(invoice));
+    // P0-1: customer-portal-specific shape (lineTotal, subtotal, cgstAmount,
+    // payments[] flat). The admin /api/invoices/:id endpoint continues to
+    // use mapInvoice with schema-native names; only this customer endpoint
+    // returns the customer-friendly shape.
+    return sendSuccess(res, mapCustomerInvoiceDetail(invoice));
   } catch (err) {
     return sendError(res, (err as Error).message);
   }

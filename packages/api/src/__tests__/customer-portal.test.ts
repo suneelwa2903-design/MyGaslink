@@ -736,3 +736,238 @@ describe('Customer Portal - Account', () => {
     expect(disc?.discountPerUnit).toBe(150);
   });
 });
+
+// ─── P0-1 — invoice detail mapper wire-shape guard ──────────────────────────
+//
+// Pins the customer-portal invoice detail response shape against the customer
+// mobile UI's local InvoiceDetail interface in
+// packages/mobile/app/(customer)/invoices.tsx:23-55. Pre-P0-1, the response
+// was missing every customer-friendly field (subtotal, cgstAmount,
+// customerName, lineTotal, payments[]) because the route used the
+// schema-native mapInvoice and the Prisma query didn't include `customer`.
+// All four invoices below are seeded on the existing dist-001 B2B customer
+// (the same one used by the rest of this file); cleanup happens in afterAll.
+//
+// Each test asserts ONE narrow reconciliation contract:
+//   (i)   mixed-rate GST invoice — subtotal + cgst + sgst + igst === totalAmount
+//   (ii)  GST-disabled invoice — subtotal === totalAmount and all GST = 0
+//   (iii) URP/B2C — customerGstin is null (mobile UI hides the GSTIN row)
+//   (iv)  line with discount > 0 — qty × shown unitPrice === lineTotal exactly
+//         (the variant a' guarantee that motivated the totalPrice/quantity
+//         math in mapCustomerInvoiceDetail)
+
+describe('P0-1 — GET /customer-portal/invoices/:id mapper shape', () => {
+  const createdInvoiceIds: string[] = [];
+  const createdItemIds: string[] = [];
+  let cylinderTypeId: string;
+  let originalGstin: string | null = null;
+  let invoiceCounter = 0;
+
+  beforeAll(async () => {
+    const ct = await prisma.cylinderType.findFirst({ where: { distributorId } });
+    if (!ct) throw new Error('No cylinder type in dist-001 to seed invoice items');
+    cylinderTypeId = ct.id;
+
+    // Remember the customer's GSTIN so we can restore it. We mutate it for
+    // test (iii) and don't want to leak the change into subsequent tests
+    // or manual runs.
+    const c = await prisma.customer.findUnique({ where: { id: customerId }, select: { gstin: true } });
+    originalGstin = c?.gstin ?? null;
+  });
+
+  afterAll(async () => {
+    // Strict cleanup: delete only the rows this block created. Use the ID
+    // arrays accumulated during the tests rather than a broader query, to
+    // avoid the anti-pattern #8 trap of catching unrelated rows.
+    if (createdItemIds.length) {
+      await prisma.invoiceItem.deleteMany({ where: { id: { in: createdItemIds } } });
+    }
+    if (createdInvoiceIds.length) {
+      await prisma.invoice.deleteMany({ where: { id: { in: createdInvoiceIds } } });
+    }
+    // Restore the customer's GSTIN to its original value (test iii nulls it).
+    await prisma.customer.update({ where: { id: customerId }, data: { gstin: originalGstin } });
+  });
+
+  /** Helper: seed one invoice + N items inline. Returns the invoice id. */
+  async function seedInvoice(opts: {
+    cgstValue: number;
+    sgstValue: number;
+    igstValue: number;
+    items: Array<{ quantity: number; unitPrice: number; discountPerUnit?: number; gstRate: number; totalPrice: number }>;
+  }) {
+    invoiceCounter += 1;
+    const totalAmount = opts.items.reduce((s, i) => s + i.totalPrice, 0);
+    const inv = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `TEST-P01-${Date.now().toString(36)}-${invoiceCounter}`,
+        distributorId,
+        customerId,
+        issueDate: new Date('2099-12-31'),
+        dueDate: new Date('2099-12-31'),
+        status: 'issued',
+        totalAmount,
+        amountPaid: 0,
+        outstandingAmount: totalAmount,
+        cgstValue: opts.cgstValue,
+        sgstValue: opts.sgstValue,
+        igstValue: opts.igstValue,
+      },
+    });
+    createdInvoiceIds.push(inv.id);
+    for (const it of opts.items) {
+      const row = await prisma.invoiceItem.create({
+        data: {
+          invoiceId: inv.id,
+          cylinderTypeId,
+          description: 'P0-1 test item',
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          discountPerUnit: it.discountPerUnit ?? 0,
+          gstRate: it.gstRate,
+          totalPrice: it.totalPrice,
+        },
+      });
+      createdItemIds.push(row.id);
+    }
+    return inv.id;
+  }
+
+  it('(i) mixed-rate GST invoice: subtotal + cgst + sgst + igst === totalAmount', async () => {
+    // 2 × 1050 (5% incl) + 1 × 1180 (18% incl) = 2100 + 1180 = 3280 total.
+    // Tax extracted: 2100 − 2100/1.05 = 100; 1180 − 1180/1.18 = 180; sum 280.
+    // Intra-state → cgst = sgst = 140; igst = 0. Subtotal = 3280 − 280 = 3000.
+    const invoiceId = await seedInvoice({
+      cgstValue: 140,
+      sgstValue: 140,
+      igstValue: 0,
+      items: [
+        { quantity: 2, unitPrice: 1050, gstRate: 5, totalPrice: 2100 },
+        { quantity: 1, unitPrice: 1180, gstRate: 18, totalPrice: 1180 },
+      ],
+    });
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${invoiceId}`)
+      .set(auth(customerToken));
+    expect(res.status).toBe(200);
+
+    const d = res.body.data;
+    // Locked shape: customer-friendly names present.
+    expect(d.invoiceId).toBe(invoiceId);
+    expect(typeof d.customerName).toBe('string');
+    expect(typeof d.subtotal).toBe('number');
+    expect(typeof d.cgstAmount).toBe('number');
+    expect(typeof d.sgstAmount).toBe('number');
+    expect(typeof d.igstAmount).toBe('number');
+    expect(typeof d.totalAmount).toBe('number');
+    expect(Array.isArray(d.items)).toBe(true);
+    expect(Array.isArray(d.payments)).toBe(true);
+
+    // Numeric reconciliation: subtotal + cgst + sgst + igst === totalAmount.
+    expect(d.totalAmount).toBe(3280);
+    expect(d.cgstAmount).toBe(140);
+    expect(d.sgstAmount).toBe(140);
+    expect(d.igstAmount).toBe(0);
+    expect(d.subtotal).toBe(3000);
+    expect(d.subtotal + d.cgstAmount + d.sgstAmount + d.igstAmount).toBe(d.totalAmount);
+
+    // Per-item: lineTotal = totalPrice; displayed unitPrice = totalPrice / qty.
+    const item5pct = d.items.find((i: { gstRate: number }) => i.gstRate === 5);
+    expect(item5pct.lineTotal).toBe(2100);
+    expect(item5pct.unitPrice).toBe(1050);
+    expect(item5pct.quantity).toBe(2);
+
+    const item18pct = d.items.find((i: { gstRate: number }) => i.gstRate === 18);
+    expect(item18pct.lineTotal).toBe(1180);
+    expect(item18pct.unitPrice).toBe(1180);
+    expect(item18pct.quantity).toBe(1);
+
+    // Schema-internal field names must NOT leak through to the customer
+    // surface (the bug that motivated P0-1).
+    expect(d.cgstValue).toBeUndefined();
+    expect(d.sgstValue).toBeUndefined();
+    expect(d.igstValue).toBeUndefined();
+    expect(d.paymentAllocations).toBeUndefined();
+  });
+
+  it('(ii) GST-disabled invoice: subtotal === totalAmount and all GST = 0', async () => {
+    // qty 2 × ₹500 (no GST). Total 1000. cgst/sgst/igst all zero.
+    const invoiceId = await seedInvoice({
+      cgstValue: 0,
+      sgstValue: 0,
+      igstValue: 0,
+      items: [{ quantity: 2, unitPrice: 500, gstRate: 0, totalPrice: 1000 }],
+    });
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${invoiceId}`)
+      .set(auth(customerToken));
+    expect(res.status).toBe(200);
+
+    const d = res.body.data;
+    expect(d.totalAmount).toBe(1000);
+    expect(d.cgstAmount).toBe(0);
+    expect(d.sgstAmount).toBe(0);
+    expect(d.igstAmount).toBe(0);
+    expect(d.subtotal).toBe(1000); // pure deduction with all-zero GST = totalAmount
+
+    expect(d.items[0].lineTotal).toBe(1000);
+    expect(d.items[0].unitPrice).toBe(500);
+    expect(d.items[0].gstRate).toBe(0);
+  });
+
+  it('(iii) URP/B2C customer (no GSTIN): customerGstin is null', async () => {
+    // Mutate THIS customer to have no GSTIN, then check the response. The
+    // mobile UI ((customer)/invoices.tsx:267) renders the GSTIN row only when
+    // truthy, so null = row hidden = correct for a URP customer viewing their
+    // own invoice.
+    await prisma.customer.update({ where: { id: customerId }, data: { gstin: null } });
+
+    const invoiceId = await seedInvoice({
+      cgstValue: 0,
+      sgstValue: 0,
+      igstValue: 0,
+      items: [{ quantity: 1, unitPrice: 500, gstRate: 0, totalPrice: 500 }],
+    });
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${invoiceId}`)
+      .set(auth(customerToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.customerGstin).toBeNull();
+    expect(res.body.data.customerName).toBeTruthy(); // name still populated
+  });
+
+  it('(iv) line with discount > 0: qty × shown unitPrice === lineTotal exactly', async () => {
+    // unitPrice (pre-discount inclusive) ₹1180, discount ₹80, qty 2.
+    // totalPrice = (1180 − 80) × 2 = 2200. cgst = 2200 × 18/(118×2) = ~167.80.
+    // The mapper's displayed unitPrice = totalPrice / qty = 1100 (post-discount
+    // inclusive). qty × 1100 = 2200 reconciles to lineTotal exactly — this is
+    // the (a') variant guarantee.
+    const invoiceId = await seedInvoice({
+      cgstValue: 167.80,
+      sgstValue: 167.80,
+      igstValue: 0,
+      items: [
+        { quantity: 2, unitPrice: 1180, discountPerUnit: 80, gstRate: 18, totalPrice: 2200 },
+      ],
+    });
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${invoiceId}`)
+      .set(auth(customerToken));
+    expect(res.status).toBe(200);
+
+    const item = res.body.data.items[0];
+    expect(item.quantity).toBe(2);
+    expect(item.lineTotal).toBe(2200);
+    expect(item.unitPrice).toBe(1100); // 2200 / 2, post-discount inclusive
+    // The (a') reconciliation: qty × shown unit price exactly equals lineTotal.
+    expect(item.quantity * item.unitPrice).toBe(item.lineTotal);
+
+    // Schema-internal fields stay hidden even with discount present.
+    expect(item.discountPerUnit).toBeUndefined();
+    expect(item.totalPrice).toBeUndefined();
+  });
+});

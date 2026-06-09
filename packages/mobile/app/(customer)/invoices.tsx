@@ -283,10 +283,18 @@ export default function CustomerInvoicesScreen() {
                 }}>
                   <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 12 }}>Items</Text>
                   {/* Table Header */}
+                  {/* P0-1 (Q1 lock variant a'): the PRICE column was renamed
+                      to "UNIT PRICE (incl. GST)" and now maps to
+                      `item.unitPrice` = totalPrice / quantity (post-discount,
+                      GST-inclusive) so qty × shown unit price = lineTotal
+                      reconciles for any line, including discount-bearing
+                      ones. Header allowed to wrap to 2 lines on narrow
+                      screens — accept the slight header-row height bump
+                      over an ambiguous shorter label. */}
                   <View style={{ flexDirection: 'row', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                     <Text style={{ flex: 2, fontSize: 11, fontWeight: '600', color: colors.textMuted }}>ITEM</Text>
                     <Text style={{ flex: 0.5, fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'center' }}>QTY</Text>
-                    <Text style={{ flex: 1, fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'right' }}>PRICE</Text>
+                    <Text numberOfLines={2} style={{ flex: 1.2, fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'right' }}>UNIT PRICE (incl. GST)</Text>
                     <Text style={{ flex: 0.5, fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'right' }}>GST</Text>
                     <Text style={{ flex: 1, fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'right' }}>TOTAL</Text>
                   </View>
@@ -305,7 +313,9 @@ export default function CustomerInvoicesScreen() {
                       <Text style={{ flex: 0.5, fontSize: 13, color: colors.text, textAlign: 'center' }}>
                         {item.quantity}
                       </Text>
-                      <Text style={{ flex: 1, fontSize: 13, color: colors.text, textAlign: 'right' }}>
+                      {/* P0-1: column flex matches the header (1.2) so cell
+                          alignment stays consistent with the new label. */}
+                      <Text style={{ flex: 1.2, fontSize: 13, color: colors.text, textAlign: 'right' }}>
                         {formatINR(item.unitPrice)}
                       </Text>
                       <Text style={{ flex: 0.5, fontSize: 12, color: colors.textSecondary, textAlign: 'right' }}>
