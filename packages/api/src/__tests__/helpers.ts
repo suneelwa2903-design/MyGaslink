@@ -159,10 +159,25 @@ export async function cleanupTestOrders(distributorId: string) {
 }
 
 /**
- * Today's date as YYYY-MM-DD string.
+ * Today's date as YYYY-MM-DD string in the test process's LOCAL timezone.
+ *
+ * Why local TZ, not UTC: every API path that validates "today / tomorrow"
+ * does so via `new Date(); setHours(0, 0, 0, 0)` which uses local TZ
+ * (see customerPortalService.ts:256). Using `toISOString()` here would
+ * return the UTC calendar date, which between ~18:30 UTC and 23:59 UTC
+ * daily disagrees with the local (IST) date by one day — triggering
+ * "Delivery date must be today or tomorrow" 400s in customer-portal
+ * tests at the midnight-IST boundary. The local-TZ computation makes
+ * test and API agree on what "today" means regardless of wall-clock
+ * time. See docs/E2E-MONITOR-DIAGNOSIS.md sibling commit for the broader
+ * timezone-flakiness discussion.
  */
 export function today(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /**

@@ -109,7 +109,7 @@ All other tracks parked until iOS is in App Store review. See [docs/IOS-PHASE0-G
 
 - Monitoring (CloudWatch alarms + UptimeRobot)
 - GitHub billing fix (GH_PAT workaround is in place)
-- Test flakiness (timezone + anti-pattern-guards DB contamination)
+- Test flakiness — anti-pattern-guards DB contamination still parked. **Timezone half resolved 2026-06-09**: customer-portal date tests now use local-TZ date strings to match the API's `setHours(0,0,0,0)` validation (see `packages/api/src/__tests__/helpers.ts > today()` and `customer-portal-order-modify.test.ts > isoDay()`). If other midnight-window failures surface, apply the same pattern (local-TZ `getFullYear()/getMonth()/getDate()` instead of `toISOString().split('T')[0]`).
 
 ---
 

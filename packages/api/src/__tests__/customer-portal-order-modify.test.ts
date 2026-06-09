@@ -21,10 +21,21 @@ type ModifiedOrderItem = Awaited<ReturnType<typeof modifyMyOrder>>['items'][numb
 const DIST = 'dist-002';
 const TEST_DATE = new Date('2099-12-31');
 
+/**
+ * YYYY-MM-DD in LOCAL TZ for a day `offsetDays` from today.
+ * Why local TZ — same rationale as helpers.ts > today(). The API
+ * validates with `new Date(); setHours(0,0,0,0)` (local TZ); using
+ * `toISOString()` here would put us one calendar day off between
+ * ~18:30 UTC and 23:59 UTC daily and fail the "today or tomorrow"
+ * check.
+ */
 function isoDay(offsetDays: number): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().split('T')[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 const createdOrderIds: string[] = [];
