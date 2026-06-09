@@ -12,7 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
@@ -41,6 +41,15 @@ type DeliveryItemEntry = { delivered: string; empties: string };
 export default function DriverOrdersScreen() {
   const { dark, colors } = useTheme();
   const queryClient = useQueryClient();
+  // NEW-4 + NEW-5 (2026-06-09): root-SafeAreaProvider insets feed both edges
+  // of the Confirm Delivery modal sheet — top to clear the iOS status bar /
+  // Android notch on tall sheets (long item lists push the sheet upward),
+  // bottom to clear the iOS home indicator / Android gesture pill. Same
+  // pattern as the customer modal sweep in P0-3 / P0-4 / P0-3b. The
+  // modal's own SafeAreaProvider wrap at line ~316 is iOS UIWindow
+  // insurance, not the inset reader for this sheet (per the P0-3 fix's
+  // commit body — root SAP wins).
+  const insets = useSafeAreaInsets();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [showCamera, setShowCamera] = useState(false);
@@ -322,12 +331,40 @@ export default function DriverOrdersScreen() {
             backgroundColor: colors.cardBg,
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
-            padding: 24,
+            // NEW-4: the sheet had no maxHeight and no inner ScrollView, so
+            // a multi-item delivery (Suneel's dist-002 tests use 4 cylinder
+            // types: 5kg + 19kg + 47.5kg + 425kg) made the sheet taller
+            // than the screen. With justifyContent: 'flex-end' that pushed
+            // the sheet's TOP edge above the iOS status bar / Android
+            // notch — Suneel reported "Items" overlapping the time display
+            // on iPhone, and the top items were unreachable.
+            // NEW-5: paddingBottom: 24 + insets.bottom matches P0-3 / P0-4
+            // / P0-3b — Confirm Delivery button + Delivery Notes input row
+            // sit above the home indicator / gesture pill.
+            // STRUCTURAL: maxHeight: '88%' caps the sheet so it never
+            // crosses the safe area top, and the inner ScrollView (added
+            // below) lets the driver reach every cylinder row regardless
+            // of order size. The title and the button row stay PINNED at
+            // the top + bottom edges of the sheet — only the middle
+            // (info, items, photo, notes) scrolls. flexShrink: 1 on the
+            // ScrollView is required so it actually compresses + scrolls
+            // when content height exceeds the available middle space; by
+            // default RN ScrollView is flexShrink: 0 and would render its
+            // full natural height past the parent's maxHeight clip.
+            paddingTop: 24 + insets.top,
+            paddingHorizontal: 24,
+            paddingBottom: 24 + insets.bottom,
+            maxHeight: '88%',
           }}>
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>
               Order: {selectedOrder?.orderNumber}
             </Text>
 
+            <ScrollView
+              style={{ flexShrink: 1 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
             <View style={{ gap: 8 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: colors.textSecondary }}>Customer</Text>
@@ -463,6 +500,7 @@ export default function DriverOrdersScreen() {
                 }}
               />
             </View>
+            </ScrollView>
 
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
               <View style={{ flex: 1 }}>
