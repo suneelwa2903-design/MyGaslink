@@ -303,12 +303,15 @@ router.get('/invoices/:id/pdf',
     );
     if (!invoice) return sendNotFound(res, 'Invoice');
 
+    // P0-2: allow PDF download for any non-draft, non-cancelled invoice.
+    // Was previously also gated on `order.status IN [delivered,
+    // modified_delivered]` — that hid downloads for opening-balance
+    // invoices (no linked order) and historical invoices whose order
+    // status had drifted. Indian GST law (CGST Rule 56) requires 8-year
+    // retention; the customer-facing app must let customers retrieve any
+    // invoice they ever received.
     const allowedStatuses = ['issued', 'partially_paid', 'paid'];
-    const allowedOrderStatuses = ['delivered', 'modified_delivered'];
-    if (
-      !allowedStatuses.includes(invoice.status) ||
-      !invoice.order || !allowedOrderStatuses.includes(invoice.order.status)
-    ) {
+    if (!allowedStatuses.includes(invoice.status)) {
       return sendError(res, 'A PDF is not available for this invoice', 403);
     }
 

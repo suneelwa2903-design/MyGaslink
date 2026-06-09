@@ -327,11 +327,18 @@ describe('Customer Portal - Invoice PDF download (WI-126)', () => {
     expect(res.status).toBe(403);
   });
 
-  it('refuses the PDF when the linked order is not delivered (403)', async () => {
+  // P0-2 (was WI-126): the order-status gate has been removed. An invoice
+  // with a pending order (not yet delivered) is still a valid issued tax
+  // invoice — Indian GST law requires 8-year retention for the customer,
+  // so the download must be available. The remaining gate is on invoice
+  // status only: issued/partially_paid/paid → allowed; draft/cancelled →
+  // 403 (covered by the P0-2 describe block below).
+  it('allows the PDF when the linked order is still pending — invoice status is what gates', async () => {
     const res = await request(app)
       .get(`/api/customer-portal/invoices/${pendingOrderInvoiceId}/pdf`)
       .set(auth(customerToken));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
   });
 });
 
@@ -969,5 +976,151 @@ describe('P0-1 — GET /customer-portal/invoices/:id mapper shape', () => {
     // Schema-internal fields stay hidden even with discount present.
     expect(item.discountPerUnit).toBeUndefined();
     expect(item.totalPrice).toBeUndefined();
+  });
+});
+
+// ─── P0-2 — invoice PDF download gate ──────────────────────────────────────
+//
+// Suneel reported the download button missing on "historical" invoices.
+// Root cause: the gate at /customer-portal/invoices/:id/pdf required
+// `order.status IN [delivered, modified_delivered]` AND the order must
+// exist. That hid downloads for (a) opening-balance invoices (no linked
+// order — created via WI-076 customer-balance import or manual invoices
+// without an order) and (b) any historical invoice whose order status
+// had drifted out of the narrow allowed set.
+//
+// Indian GST law (CGST Rule 56) requires customers to retain every tax
+// invoice for 8 years. The customer-facing app must let them retrieve
+// any invoice they ever received. New gate: status IN
+// [issued, partially_paid, paid] only. Draft / cancelled stay blocked
+// — they aren't statutory artefacts.
+
+describe('P0-2 — GET /customer-portal/invoices/:id/pdf gate (8-year retention)', () => {
+  const createdInvoiceIds: string[] = [];
+  const createdItemIds: string[] = [];
+  let cylinderTypeId: string;
+  let invoiceCounter = 0;
+
+  beforeAll(async () => {
+    const ct = await prisma.cylinderType.findFirst({ where: { distributorId } });
+    if (!ct) throw new Error('No cylinder type in dist-001 to seed PDF-gate invoices');
+    cylinderTypeId = ct.id;
+  });
+
+  afterAll(async () => {
+    if (createdItemIds.length) {
+      await prisma.invoiceItem.deleteMany({ where: { id: { in: createdItemIds } } });
+    }
+    if (createdInvoiceIds.length) {
+      await prisma.invoice.deleteMany({ where: { id: { in: createdInvoiceIds } } });
+    }
+  });
+
+  /**
+   * Helper: seed a no-order invoice (mimics WI-076 opening-balance imports
+   * and manually-created invoices). Status is configurable so the same
+   * helper drives the positive (issued) and negative (cancelled) cases.
+   */
+  async function seedNoOrderInvoice(status: $Enums.InvoiceStatus) {
+    invoiceCounter += 1;
+    const inv = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `TEST-P02-${Date.now().toString(36)}-${invoiceCounter}`,
+        distributorId,
+        customerId,
+        issueDate: new Date('2099-12-31'),
+        dueDate: new Date('2099-12-31'),
+        status,
+        totalAmount: 500,
+        amountPaid: 0,
+        outstandingAmount: 500,
+        cgstValue: 0,
+        sgstValue: 0,
+        igstValue: 0,
+        isOpeningBalance: true,
+      },
+    });
+    createdInvoiceIds.push(inv.id);
+    const item = await prisma.invoiceItem.create({
+      data: {
+        invoiceId: inv.id,
+        cylinderTypeId,
+        description: 'Opening balance line',
+        quantity: 1,
+        unitPrice: 500,
+        discountPerUnit: 0,
+        gstRate: 0,
+        totalPrice: 500,
+      },
+    });
+    createdItemIds.push(item.id);
+    return inv.id;
+  }
+
+  it('returns 200 + PDF buffer for an issued invoice with NO linked order (opening balance)', async () => {
+    const invoiceId = await seedNoOrderInvoice('issued');
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${invoiceId}/pdf`)
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+    // Body is a Buffer in supertest; non-empty means the PDF rendered.
+    expect(res.body).toBeInstanceOf(Buffer);
+    expect(res.body.length).toBeGreaterThan(100);
+  });
+
+  it('returns 403 for a cancelled invoice (not a statutory artefact)', async () => {
+    const invoiceId = await seedNoOrderInvoice('cancelled');
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${invoiceId}/pdf`)
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error || res.body.message).toBeDefined();
+  });
+
+  it('returns 403 for a draft invoice (not yet issued)', async () => {
+    const invoiceId = await seedNoOrderInvoice('draft');
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${invoiceId}/pdf`)
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(403);
+  });
+
+  it('blocks cross-tenant access (customer cannot fetch another distributor\'s invoice PDF)', async () => {
+    // Seed an invoice on dist-002 for THIS customer's id reused — Prisma
+    // will create it under dist-002, the token customer belongs to dist-001
+    // so the lookup must scope to distributorId and return 404. This guards
+    // against the IDOR class flagged by anti-pattern #13.
+    invoiceCounter += 1;
+    const otherDistInvoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `TEST-P02-XT-${Date.now().toString(36)}-${invoiceCounter}`,
+        distributorId: 'dist-002',
+        customerId,
+        issueDate: new Date('2099-12-31'),
+        dueDate: new Date('2099-12-31'),
+        status: 'issued',
+        totalAmount: 500,
+        amountPaid: 0,
+        outstandingAmount: 500,
+        cgstValue: 0,
+        sgstValue: 0,
+        igstValue: 0,
+        isOpeningBalance: true,
+      },
+    });
+    createdInvoiceIds.push(otherDistInvoice.id);
+
+    const res = await request(app)
+      .get(`/api/customer-portal/invoices/${otherDistInvoice.id}/pdf`)
+      .set(auth(customerToken));
+
+    expect(res.status).toBe(404);
   });
 });

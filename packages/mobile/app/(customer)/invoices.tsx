@@ -14,10 +14,18 @@ import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilte
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Invoice } from '@gaslink/shared';
 
-// WI-126: PDF is offered only for billed invoices whose order was delivered.
-function canDownloadPdf(status?: string | null, orderStatus?: string | null): boolean {
-  return ['issued', 'partially_paid', 'paid'].includes(status ?? '')
-    && ['delivered', 'modified_delivered'].includes(orderStatus ?? '');
+// P0-2: PDF is offered for any non-draft, non-cancelled invoice. The
+// previous gate also required `order.status IN [delivered,
+// modified_delivered]`, which hid the download button on (a) opening-
+// balance invoices (no linked order) and (b) any historical invoice
+// whose order status had drifted out of that narrow allowed set. Indian
+// GST law (CGST Rule 56) requires 8-year retention of every tax invoice
+// — the customer-facing app must let customers retrieve any invoice
+// they ever received. The status check stays (draft/cancelled invoices
+// are not statutory artefacts and should not be downloadable), but the
+// order linkage gate is removed.
+function canDownloadPdf(status?: string | null): boolean {
+  return ['issued', 'partially_paid', 'paid'].includes(status ?? '');
 }
 
 interface InvoiceDetail {
@@ -158,7 +166,7 @@ export default function CustomerInvoicesScreen() {
         </View>
       )}
 
-      {canDownloadPdf(inv.status, inv.orderStatus) && (
+      {canDownloadPdf(inv.status) && (
         <TouchableOpacity
           onPress={() => handleDownloadPdf(inv.invoiceId, inv.invoiceNumber)}
           disabled={downloadingId === inv.invoiceId}
@@ -211,7 +219,7 @@ export default function CustomerInvoicesScreen() {
             <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
               {invoiceDetail?.invoiceNumber ?? 'Invoice'}
             </Text>
-            {invoiceDetail && canDownloadPdf(invoiceDetail.status, invoiceDetail.orderStatus) ? (
+            {invoiceDetail && canDownloadPdf(invoiceDetail.status) ? (
               <TouchableOpacity
                 onPress={() => handleDownloadPdf(invoiceDetail.invoiceId, invoiceDetail.invoiceNumber)}
                 disabled={downloadingId === invoiceDetail.invoiceId}
