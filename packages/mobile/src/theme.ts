@@ -116,11 +116,15 @@ export function getTabBarConfig(dark: boolean, insets: EdgeInsets) {
       borderTopWidth: 1,
       borderTopColor: colors.cardBorder,
       paddingTop: 6,
-      // SAA C1: respect the home-indicator (iOS) / gesture-pill (Android)
-      // safe-area inset. Preserves the prior visual baseline of 6 dp padding
-      // above the system nav, and grows the bar by `insets.bottom` so labels
-      // are not clipped under the system nav on gesture-nav phones.
-      paddingBottom: insets.bottom + 6,
+      // UBB C1 (refines SAA C1): the safe-area inset IS the padding, with a
+      // 6 dp floor for devices where insets.bottom === 0 (Android 3-button
+      // nav, older iPhones). SAA C1 originally used `insets.bottom + 6`
+      // which on iPhone produced a 40dp dead-space band below top-anchored
+      // icons (Suneel reported as a "gap below the tab bar"). Math.max
+      // keeps the floor for inset-zero devices without stacking extra
+      // breath on inset-bearing ones. Height still grows by insets.bottom
+      // so the icons don't get clipped under the system nav.
+      paddingBottom: Math.max(6, insets.bottom),
       height: 64 + insets.bottom,
     },
     tabBarLabelStyle: {

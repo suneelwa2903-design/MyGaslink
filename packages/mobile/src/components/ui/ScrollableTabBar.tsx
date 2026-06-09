@@ -105,13 +105,20 @@ export function ScrollableTabBar({
         // bar grows by `insets.bottom` so labels are not clipped under the
         // system nav on gesture-nav phones.
         paddingTop: 6,
-        paddingBottom: insets.bottom + 6,
+        // UBB C1 (refines SAA C1) — same rationale as theme.ts > getTabBarConfig.
+        // The safe-area inset IS the padding; 6dp floor for inset-zero devices.
+        paddingBottom: Math.max(6, insets.bottom),
         height: 64 + insets.bottom,
       }}
     >
       <ScrollView
         horizontal
-        showsHorizontalScrollIndicator={false}
+        // UBB U6 — the 9-tab admin layout overflows the screen on iPhone (the
+        // last tab "Co..." was cut off with no visual cue). Show the indicator
+        // so users know they can scroll horizontally. iOS renders this as a
+        // thin auto-fading bar at the bottom of the ScrollView; Android shows
+        // a similar discreet indicator. Both are unobtrusive.
+        showsHorizontalScrollIndicator={true}
         contentContainerStyle={{
           alignItems: 'stretch',
           paddingHorizontal: 4,
