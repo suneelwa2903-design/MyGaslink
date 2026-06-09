@@ -92,9 +92,25 @@ export function DateInput({
   placeholder = 'Select date',
   disabled = false,
 }: DateInputProps) {
-  const { colors } = useTheme();
+  const { colors, dark } = useTheme();
   const [iosOpen, setIosOpen] = useState(false);
   const [iosDraft, setIosDraft] = useState<Date>(() => parseIsoLocal(value));
+
+  // NEW-1 (2026-06-09): iOS light-mode contrast bump. The default tokens
+  // colors.inputBg (#f1f5f9 / slate-100) and colors.inputBorder (#e2e8f0
+  // / slate-200) read as "white on white" against the page bg (#ffffff)
+  // on iPhone because iOS doesn't apply Material elevation to a bare
+  // TouchableOpacity the way Android does — Suneel saw the picker row
+  // disappear into the page. Android's system styling masks the same
+  // under-contrast issue. Bump only iOS light mode: stronger border
+  // (1.5dp + slate-300) so the row reads as a distinct surface.
+  // Dark mode unchanged (text contrast fix in theme.ts already handles
+  // legibility there); Android unchanged (no regression on a working
+  // surface); admin screens that use this component unchanged on
+  // Android, marginally clearer on iOS.
+  const isLightIos = Platform.OS === 'ios' && !dark;
+  const rowBorderColor = isLightIos ? '#cbd5e1' : colors.inputBorder;
+  const rowBorderWidth = isLightIos ? 1.5 : 1;
 
   const min = minDate ? parseIsoLocal(minDate) : undefined;
   const max = maxDate ? parseIsoLocal(maxDate) : undefined;
@@ -139,7 +155,8 @@ export function DateInput({
           styles.row,
           {
             backgroundColor: colors.inputBg,
-            borderColor: colors.inputBorder,
+            borderColor: rowBorderColor,
+            borderWidth: rowBorderWidth,
             opacity: disabled ? 0.5 : 1,
           },
         ]}

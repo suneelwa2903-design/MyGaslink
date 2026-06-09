@@ -31,7 +31,14 @@ export function DateRangeFilter({
   const today = todayLocalIso();
 
   return (
-    <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+    // NEW-2 + NEW-3 (2026-06-09): paddingBottom: 16 gives the filter section
+    // consistent breathing room above the FlatList that renders the orders /
+    // invoices / payments below. Without it the Filter row sat flush against
+    // the first list card (NEW-2), and when the filter expands the From/To
+    // pickers touched the first card (NEW-3). One value covers both states
+    // because the spacing is on the outer container, not inside the
+    // collapsible region.
+    <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
       <TouchableOpacity
         onPress={() => setOpen((v) => !v)}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
