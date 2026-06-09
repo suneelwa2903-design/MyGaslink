@@ -828,7 +828,12 @@ export default function CustomerOrdersScreen() {
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{
               backgroundColor: dark ? colors.cardBg : colors.bg,
-              borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24,
+              borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              // P0-4: same fix as P0-3 — 24dp visual breath + insets.bottom so
+              // the Cancel + Submit row clears the Android gesture pill /
+              // 3-button nav (and the iPhone home indicator).
+              paddingTop: 24, paddingHorizontal: 24,
+              paddingBottom: 24 + insets.bottom,
             }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
                 {disputeIsReopen ? 'Reopen dispute' : 'Raise an issue'}
