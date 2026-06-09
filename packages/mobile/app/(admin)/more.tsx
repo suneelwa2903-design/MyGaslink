@@ -981,7 +981,12 @@ function CylinderTypesModal({ visible, onClose }: { visible: boolean; onClose: (
             <FlatList
               data={cylinderTypes}
               keyExtractor={(item) => item.cylinderTypeId}
-              contentContainerStyle={cylinderTypes.length === 0 ? { flex: 1 } : { paddingVertical: 8 }}
+              // UBB C2 U5 — FAB clearance on the non-empty case (FAB at line ~1046).
+              contentContainerStyle={
+                cylinderTypes.length === 0
+                  ? { flex: 1 }
+                  : { paddingVertical: 8, paddingBottom: 96 }
+              }
               renderItem={({ item }) => (
                 <View
                   style={{
@@ -1768,6 +1773,8 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
               <FlatList
                 data={users || []}
                 keyExtractor={(item) => item.userId}
+                /* UBB C2 U5 — FAB clearance (FAB at line ~1822). */
+                contentContainerStyle={{ paddingBottom: 96 }}
                 renderItem={({ item }) => {
                   const isSelf = item.userId === selfUserId;
                   return (

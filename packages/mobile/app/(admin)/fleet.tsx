@@ -595,6 +595,8 @@ export default function AdminFleetScreen() {
         <FlatList
           data={drivers}
           keyExtractor={(item) => item.driverId}
+          /* UBB C2 U5 — FAB clearance, same rationale as vehicles list. */
+          contentContainerStyle={{ paddingBottom: 96 }}
           renderItem={({ item }) => (
             <View
               style={{
@@ -783,6 +785,10 @@ export default function AdminFleetScreen() {
         <FlatList
           data={vehicles}
           keyExtractor={(item) => item.vehicleId}
+          /* UBB C2 U5 — bottom padding to keep the last vehicle row
+             clear of the FAB (56×56 at bottom:24 = 80dp from the
+             scroll-content bottom; 96dp gives a 16dp visual buffer). */
+          contentContainerStyle={{ paddingBottom: 96 }}
           renderItem={({ item }) => (
             <View
               style={{
@@ -806,10 +812,24 @@ export default function AdminFleetScreen() {
                 <Ionicons name="car" size={18} color="#f59e0b" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>
+                {/* UBB C2 U3/U4 — numberOfLines={1} prevents the vehicle
+                    number from wrapping to 3-4 lines on Android when the
+                    DISPATCHED badge + Mark Returned button + Edit icon
+                    cluster on the right squeezes this flex:1 column to
+                    ~28dp on a 360dp screen. ellipsizeMode='tail' keeps
+                    the prefix readable. */}
+                <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  style={{ fontSize: 15, fontWeight: '600', color: colors.text }}
+                >
                   {item.vehicleNumber}
                 </Text>
-                <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  style={{ fontSize: 12, color: colors.textMuted }}
+                >
                   {item.vehicleType}
                   {item.capacity ? ` - ${item.capacity} cyl` : ''}
                 </Text>

@@ -2518,7 +2518,11 @@ const styles = StyleSheet.create({
   // List
   listContent: {
     padding: 16,
-    paddingBottom: 100,
+    // UBB C2 U5 — bumped 100 → 120 for end-of-scroll FAB clearance
+    // (FAB at line ~2662, 56×56 @ bottom:24 needs 80 + 16 buffer = 96
+    // minimum; 120 gives extra breathing room since order cards have
+    // larger heights than fleet rows).
+    paddingBottom: 120,
     gap: 10,
   },
 

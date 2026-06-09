@@ -546,6 +546,9 @@ export default function AdminCustomersScreen() {
         <FlatList
           data={customers}
           keyExtractor={(item) => item.customerId}
+          /* UBB C2 U5 — FAB clearance (FAB at line ~612, 56×56 @ bottom:24
+             needs 80+16 = 96dp). */
+          contentContainerStyle={{ paddingBottom: 96 }}
           renderItem={renderCustomer}
           ItemSeparatorComponent={() => (
             <View style={{ height: 1, backgroundColor: colors.divider }} />
