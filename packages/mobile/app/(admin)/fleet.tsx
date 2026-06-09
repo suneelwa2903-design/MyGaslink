@@ -268,10 +268,20 @@ export default function AdminFleetScreen() {
     { assignmentId: string; driverId: string; vehicleId: string },
     { date: string; driverId: string; vehicleId: string }
   >('put', '/assignments/vehicle-mappings', {
+    // P1-1: ['drivers-list'] feeds the Assign Driver modal on the Orders tab.
+    // Its response shape includes each driver's vehicleNumber (resolved from
+    // today's mapping). When a mapping is created here in Fleet, the
+    // ['drivers-list'] cache stays stale for 30s — long enough for the user
+    // to switch to Orders and see "no drivers have a vehicle today" on a
+    // driver they just mapped. Invalidate it here so the Assign modal
+    // reflects the new mapping immediately. Same fix below on the bulk
+    // confirm mutation. The wider stale-cache risk was already called out
+    // in (admin)/orders.tsx:260-264; the comment predates this fix.
     invalidateKeys: [
       ['admin-vehicle-mappings', mappingDate],
       ['assignments'],
       ['vehicles'],
+      ['drivers-list'],
     ],
     onSuccess: () => setPickerForDriverId(null),
   });
@@ -280,10 +290,14 @@ export default function AdminFleetScreen() {
     { confirmed: number; date: string; message: string },
     { date: string }
   >('post', '/assignments/vehicle-mappings/confirm', {
+    // P1-1: invalidate ['drivers-list'] for the same reason as the upsert
+    // mutation above — bulk confirm is the more common path (copy
+    // yesterday's mappings forward) and was the surface Suneel reported.
     invalidateKeys: [
       ['admin-vehicle-mappings', mappingDate],
       ['assignments'],
       ['vehicles'],
+      ['drivers-list'],
     ],
     onSuccess: (data) => {
       if (data?.confirmed && data.confirmed > 0) {
