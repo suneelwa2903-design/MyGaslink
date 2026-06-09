@@ -16,6 +16,7 @@ import { logger } from '../utils/logger.js';
 import { toNum } from '../utils/decimal.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
 import { computeOrderTotal } from './orderService.js';
+import { notifyDriver } from '../lib/sseManager.js';
 
 // ─── Customer Delivery Confirmation ─────────────────────────────────────────
 
@@ -692,7 +693,12 @@ export async function confirmVehicleReconciliation(
   const reconcileDva = await prisma.driverVehicleAssignment.findFirst({
     where: { vehicleId, distributorId, assignmentDate: startOfUtcDay(), status: { not: 'cancelled' } },
     orderBy: { tripNumber: 'desc' },
-    select: { id: true, vehicle: { select: { vehicleNumber: true } }, driver: { select: { driverName: true } } },
+    select: {
+      id: true,
+      driverId: true, // P2-1: needed to push the post-reconcile SSE event.
+      vehicle: { select: { vehicleNumber: true } },
+      driver: { select: { driverName: true } },
+    },
   });
   if (reconcileDva) {
     await prisma.driverVehicleAssignment.update({
@@ -704,6 +710,22 @@ export async function confirmVehicleReconciliation(
       // preflightDispatch (WI-100 Gap B) rolls this dispatch_ready+isReconciled
       // DVA to the next trip when a new batch is dispatched.
       data: { status: 'dispatch_ready', reconciledAt: new Date(), isReconciled: true },
+    });
+
+    // P2-1: emit trip_updated so the driver's Trip tab refetches
+    // ['driver-active-trip'] the moment Inventory reconciles. The driver
+    // _layout SSE handler at (driver)/_layout.tsx:65 already invalidates
+    // that query key on trip_updated — the gap was that this server path
+    // never published the event. Without it the trip card stayed at
+    // "Trip #N Ready" until the staleTime expired and the driver tabbed
+    // away + back (or pulled-to-refresh), giving the "counter doesn't
+    // bump post-reconciliation" symptom Suneel reported.
+    // The dispatch paths in gstPreflightService.ts already publish this
+    // same event shape (DVA id payload) — mirror that here so the client
+    // contract stays consistent across both ends of the trip lifecycle.
+    notifyDriver(reconcileDva.driverId, {
+      type: 'trip_updated',
+      payload: { dvaId: reconcileDva.id },
     });
   }
 
