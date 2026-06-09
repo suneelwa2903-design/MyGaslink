@@ -50,7 +50,7 @@ interface Invoice {
   amountPaid: number;
   outstandingAmount: number;
   status: string;
-  lineItems?: InvoiceLineItem[];
+  items?: InvoiceLineItem[];
   creditNotesCount?: number;
   debitNotesCount?: number;
   // STEP-3I: GST fields are passed through by mapInvoice (renameId spreads
@@ -784,19 +784,19 @@ function InvoicesTab({
           {expanded && (
             <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.divider }}>
               {/* Line Items */}
-              {inv.lineItems && inv.lineItems.length > 0 && (
+              {inv.items && inv.items.length > 0 && (
                 <View style={{ marginBottom: 12 }}>
                   <Text style={{ fontSize: 13, fontWeight: '700', color: C.text, marginBottom: 8 }}>
                     Line Items
                   </Text>
-                  {inv.lineItems.map((item, idx) => (
+                  {inv.items.map((item, idx) => (
                     <View
                       key={idx}
                       style={{
                         flexDirection: 'row',
                         justifyContent: 'space-between',
                         paddingVertical: 4,
-                        borderBottomWidth: idx < (inv.lineItems?.length ?? 0) - 1 ? 1 : 0,
+                        borderBottomWidth: idx < (inv.items?.length ?? 0) - 1 ? 1 : 0,
                         borderBottomColor: C.divider,
                       }}
                     >
