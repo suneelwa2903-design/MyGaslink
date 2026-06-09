@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity, Alert, Modal,
   TextInput, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
@@ -58,6 +58,15 @@ function disputeState(o: Order): 'none' | 'raised' | 'reopened' | 'resolved' {
 
 export default function CustomerOrdersScreen() {
   const { dark, colors, accent } = useTheme();
+  // P0-3/P0-4: bottom-sheet modals on this screen anchor at the screen
+  // bottom (justifyContent: 'flex-end'). On Android with gesture-pill or
+  // 3-button nav the sheet's bottom row (Cancel + Place Order / Submit)
+  // was clipped because the sheet had a fixed padding: 24 with no inset
+  // awareness. Reading insets at the screen level works because the
+  // SafeAreaProvider lives at app/_layout.tsx (SAA C1); the modal's own
+  // SAP wrap is iOS-UIWindow insurance and not the reader for these
+  // sheets.
+  const insets = useSafeAreaInsets();
 
   const [showForm, setShowForm] = useState(false);
   const [orderItems, setOrderItems] = useState<Record<string, number>>({});
@@ -566,7 +575,14 @@ export default function CustomerOrdersScreen() {
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{
               backgroundColor: dark ? colors.cardBg : colors.bg,
-              borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '80%',
+              borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              paddingTop: 24, paddingHorizontal: 24,
+              // P0-3: 24dp visual breath above the system nav, then push by
+              // insets.bottom so the Cancel + Place Order buttons sit above
+              // the Android gesture pill / 3-button nav. iPhone home indicator
+              // honoured the same way.
+              paddingBottom: 24 + insets.bottom,
+              maxHeight: '80%',
             }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
                 New Order
