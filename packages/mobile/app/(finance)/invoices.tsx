@@ -153,6 +153,16 @@ export default function FinanceInvoicesScreen() {
 
 // ─── Invoice Detail Modal ────────────────────────────────────────────────────
 
+// F-1: this interface reads the schema-native shape that mapInvoice returns
+// from /api/invoices/:id (the same endpoint admin web consumes correctly).
+// Pre-F-1 the screen invented `lineItems`/`amount`/`subtotal`/`cgstAmount`/
+// `sgstAmount` — every one undefined on the wire, every formatINR rendering
+// ₹0.00. Per the docs/INVOICE-NUMBERS-AUDIT.md Q3 lock the fix is Approach B
+// (align the consumer to the contract, not the other way round) — admin web
+// reads these schema-native names correctly and changing the API would
+// regress the working surface. Subtotal is derived client-side via the
+// same pure-deduction formula used by the customer-portal mapper
+// (totalAmount − cgst − sgst − igst).
 interface InvoiceDetailData {
   invoiceId: string;
   invoiceNumber: string;
@@ -160,16 +170,16 @@ interface InvoiceDetailData {
   issueDate: string;
   dueDate: string;
   status: string;
-  lineItems?: {
+  items?: {
     cylinderTypeName: string;
     quantity: number;
     unitPrice: number;
     gstRate: number;
-    amount: number;
+    totalPrice: number;
   }[];
-  subtotal: number;
-  cgstAmount: number;
-  sgstAmount: number;
+  cgstValue: number;
+  sgstValue: number;
+  igstValue: number;
   totalAmount: number;
   amountPaid: number;
   outstandingAmount: number;
@@ -249,16 +259,17 @@ function InvoiceDetailModal({
               </View>
             </View>
 
-            {/* Line Items */}
-            {(invoice.lineItems?.length ?? 0) > 0 && (
+            {/* Line Items (F-1: schema-native `items` + `totalPrice` per
+                Approach B; matches the admin web's contract) */}
+            {(invoice.items?.length ?? 0) > 0 && (
               <View style={{ backgroundColor: sectionBg, borderRadius: 12, padding: 14, gap: 10 }}>
                 <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                   Line Items
                 </Text>
-                {invoice.lineItems!.map((item, idx) => (
+                {invoice.items!.map((item, idx) => (
                   <View key={idx} style={{
-                    paddingBottom: idx < invoice.lineItems!.length - 1 ? 10 : 0,
-                    borderBottomWidth: idx < invoice.lineItems!.length - 1 ? 1 : 0,
+                    paddingBottom: idx < invoice.items!.length - 1 ? 10 : 0,
+                    borderBottomWidth: idx < invoice.items!.length - 1 ? 1 : 0,
                     borderBottomColor: colors.divider,
                     gap: 4,
                   }}>
@@ -267,21 +278,40 @@ function InvoiceDetailModal({
                       <Text style={{ fontSize: 12, color: colors.textSecondary }}>
                         {item.quantity} x {formatINR(item.unitPrice)} @ {item.gstRate}% GST
                       </Text>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{formatINR(item.amount)}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{formatINR(item.totalPrice)}</Text>
                     </View>
                   </View>
                 ))}
               </View>
             )}
 
-            {/* Totals */}
+            {/* Totals (F-1: subtotal derived via pure deduction — matches
+                the formula locked in docs/INVOICE-NUMBERS-AUDIT.md so the
+                finance screen reconciles to the rupee with the customer
+                app + the PDF. IGST shows in place of SGST/CGST when the
+                invoice is inter-state — mirrors the customer UI pattern.) */}
             <View style={{ backgroundColor: sectionBg, borderRadius: 12, padding: 14, gap: 8 }}>
               <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                 Summary
               </Text>
-              <DetailRow label="Subtotal" value={formatINR(invoice.subtotal)} colors={colors} />
-              <DetailRow label="CGST" value={formatINR(invoice.cgstAmount)} colors={colors} />
-              <DetailRow label="SGST" value={formatINR(invoice.sgstAmount)} colors={colors} />
+              <DetailRow
+                label="Subtotal"
+                value={formatINR(
+                  (invoice.totalAmount ?? 0) -
+                  (invoice.cgstValue ?? 0) -
+                  (invoice.sgstValue ?? 0) -
+                  (invoice.igstValue ?? 0),
+                )}
+                colors={colors}
+              />
+              {(invoice.igstValue ?? 0) > 0 ? (
+                <DetailRow label="IGST" value={formatINR(invoice.igstValue)} colors={colors} />
+              ) : (
+                <>
+                  <DetailRow label="CGST" value={formatINR(invoice.cgstValue)} colors={colors} />
+                  <DetailRow label="SGST" value={formatINR(invoice.sgstValue)} colors={colors} />
+                </>
+              )}
               <View style={{ borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 8, marginTop: 4 }}>
                 <DetailRow label="Total" value={formatINR(invoice.totalAmount)} colors={colors} bold />
               </View>
