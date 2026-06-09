@@ -1917,11 +1917,14 @@ function DispatchResultModal({
             ))}
           </ScrollView>
 
-          <View style={{ paddingHorizontal: 16, paddingBottom: Math.max(34, insets.bottom + 12) }}>
-            <TouchableOpacity style={styles.primaryBtn} onPress={onClose}>
-              <Text style={styles.primaryBtnText}>Close</Text>
-            </TouchableOpacity>
-          </View>
+          {/* UBB C3 — redundant red Close button removed. The header X (above)
+              is the consistent close affordance across every modal in the
+              app; the full-width red bottom button was a second close that
+              read as a stray "red bar at the bottom of the modal" (Suneel
+              reported during SAA testing — see docs/IOS-UBB-AUDIT.md U2).
+              The wrapper View stays because it carries the home-indicator
+              floor from SAA C2 — see docs/IOS-SAA-AUDIT.md item 6. */}
+          <View style={{ paddingBottom: Math.max(34, insets.bottom + 12) }} />
         </View>
       </View>
       </SafeAreaProvider>
