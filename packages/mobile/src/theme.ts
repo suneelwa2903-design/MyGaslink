@@ -113,17 +113,27 @@ export function getTabBarConfig(dark: boolean, insets: EdgeInsets) {
     tabBarInactiveTintColor: inactiveColor,
     tabBarStyle: {
       backgroundColor: colors.bg,
-      borderTopWidth: 1,
-      borderTopColor: colors.cardBorder,
+      // P1-2 (2026-06-09) — removed `borderTopWidth: 1` + `borderTopColor`.
+      // Diagnosis locked via the runtime InsetsDebugOverlay chip:
+      // insets.bottom=34, paddingBottom=34, height=98 on iPhone 11 Pro Max
+      // and iPhone 15. The math (Math.max(6, insets.bottom)) is correct —
+      // the 34dp IS the iOS home-indicator safe area, which Apple requires
+      // for gesture-pill clearance and cannot be reclaimed. The remaining
+      // "gap" Suneel saw was the divider line above the tab bar drawing a
+      // visual fence between the tab icons and the same-colour 34dp band
+      // below them. Eye reads the band as empty space below the bar
+      // instead of part of the bar. Removing the divider makes the entire
+      // 98dp footprint read as one continuous tab-bar component, matching
+      // iOS-native convention (UIKit tab bars use a translucent material,
+      // not a hard hairline). Background colour already extends through
+      // the safe area band — no other change needed.
       paddingTop: 6,
       // UBB C1 (refines SAA C1): the safe-area inset IS the padding, with a
       // 6 dp floor for devices where insets.bottom === 0 (Android 3-button
-      // nav, older iPhones). SAA C1 originally used `insets.bottom + 6`
-      // which on iPhone produced a 40dp dead-space band below top-anchored
-      // icons (Suneel reported as a "gap below the tab bar"). Math.max
-      // keeps the floor for inset-zero devices without stacking extra
-      // breath on inset-bearing ones. Height still grows by insets.bottom
-      // so the icons don't get clipped under the system nav.
+      // nav, older iPhones). Math.max keeps the floor for inset-zero
+      // devices without stacking extra breath on inset-bearing ones.
+      // Height still grows by insets.bottom so the icons don't get clipped
+      // under the system nav.
       paddingBottom: Math.max(6, insets.bottom),
       height: 64 + insets.bottom,
     },

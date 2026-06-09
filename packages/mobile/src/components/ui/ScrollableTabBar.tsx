@@ -98,12 +98,15 @@ export function ScrollableTabBar({
     <View
       style={{
         backgroundColor: colors.bg,
-        borderTopWidth: 1,
-        borderTopColor: colors.cardBorder,
-        // SAA C1: respect the home-indicator (iOS) / gesture-pill (Android)
-        // safe-area inset. The base 6 dp keeps the prior tappable area; the
-        // bar grows by `insets.bottom` so labels are not clipped under the
-        // system nav on gesture-nav phones.
+        // P1-2 (2026-06-09) — same fix as theme.ts > getTabBarConfig. The
+        // hairline divider above the tab bar drew a visual fence between
+        // the icon row and the same-colour 34dp home-indicator safe-area
+        // band below, making the band read as wasted space. Removing the
+        // border lets the entire footprint read as one continuous tab bar
+        // (matches iOS-native UIKit convention). Chip diagnosis at
+        // (driver)/_layout.tsx → InsetsDebugOverlay confirmed
+        // insets.bottom=34 / paddingBottom=34 / height=98 on iPhone 11 Pro
+        // Max + iPhone 15 — math is correct, only the divider was wrong.
         paddingTop: 6,
         // UBB C1 (refines SAA C1) — same rationale as theme.ts > getTabBarConfig.
         // The safe-area inset IS the padding; 6dp floor for inset-zero devices.
