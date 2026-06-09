@@ -1,13 +1,22 @@
 import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, formatDate } from '../theme';
+import { DateInput, MIN_DATE_FLOOR, todayLocalIso } from './ui';
 
 /**
  * WI-124: a collapsible From/To date-range filter shared by the customer
  * Orders, Invoices, and Payments lists. Collapsed by default (the list is the
- * primary content); the header shows the active range. Plain YYYY-MM-DD text
- * inputs — no native DateTimePicker module is installed (see payments.tsx).
+ * primary content); the header shows the active range.
+ *
+ * P1-3 sweep (2026-06-09): replaced the plain YYYY-MM-DD TextInputs with the
+ * canonical `DateInput` component so the customer gets the native iOS modal
+ * picker / Android OS dialog instead of typing date strings by hand. The
+ * audit doc at docs/DATE-PICKER-AUDIT.md (commit c37fef6) catalogues every
+ * call site swept in this commit. minDate = MIN_DATE_FLOOR (1990-01-01) per
+ * Q2; maxDate = today per Q2 (no filtering into the future). The "To"
+ * picker chains its `minDate` to `from` so the From > To inversion is
+ * impossible at the UI layer.
  */
 export function DateRangeFilter({
   from, to, setFrom, setTo,
@@ -19,12 +28,7 @@ export function DateRangeFilter({
 }) {
   const { colors, accent } = useTheme();
   const [open, setOpen] = useState(false);
-
-  const inputStyle = {
-    borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
-    backgroundColor: colors.inputBg, color: colors.text,
-  } as const;
+  const today = todayLocalIso();
 
   return (
     <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
@@ -44,27 +48,21 @@ export function DateRangeFilter({
       {open && (
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>From</Text>
-            <TextInput
+            <DateInput
+              label="From"
               value={from}
-              onChangeText={setFrom}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={inputStyle}
+              onChange={setFrom}
+              minDate={MIN_DATE_FLOOR}
+              maxDate={to || today}
             />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>To</Text>
-            <TextInput
+            <DateInput
+              label="To"
               value={to}
-              onChangeText={setTo}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={inputStyle}
+              onChange={setTo}
+              minDate={from || MIN_DATE_FLOOR}
+              maxDate={today}
             />
           </View>
         </View>
@@ -74,9 +72,23 @@ export function DateRangeFilter({
 }
 
 // Default range helper: last 30 days → today (YYYY-MM-DD).
+//
+// P1-3 sweep: both bounds now computed in LOCAL TZ via `todayLocalIso` so the
+// default range agrees with the API's local-TZ date validation (see the TZ
+// flakiness fix at packages/api/src/__tests__/helpers.ts > today() and
+// commit 4300e07). The previous `toISOString().split('T')[0]` returned the
+// UTC calendar date; between ~18:30 UTC and 23:59 UTC daily that was one
+// calendar day off from IST, and the API rejected the "today/tomorrow"
+// boundary cases.
 export function last30Days(): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 30);
-  return { from: from.toISOString().split('T')[0], to: to.toISOString().split('T')[0] };
+  const toDate = new Date();
+  const fromDate = new Date();
+  fromDate.setDate(fromDate.getDate() - 30);
+  const ymd = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  return { from: ymd(fromDate), to: ymd(toDate) };
 }

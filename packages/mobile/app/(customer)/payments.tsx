@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { View, Text, FlatList, RefreshControl, TextInput, Alert } from 'react-native';
+import { View, Text, FlatList, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { Button, EmptyState, MetricCard } from '../../src/components/ui';
+import { Button, EmptyState, MetricCard, DateInput, MIN_DATE_FLOOR, todayLocalIso } from '../../src/components/ui';
 import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useAuthStore } from '../../src/stores/authStore';
 import { api, getErrorMessage } from '../../src/lib/api';
@@ -90,11 +90,9 @@ export default function CustomerPaymentsScreen() {
     }
   };
 
-  const dateInputStyle = {
-    borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
-    backgroundColor: colors.inputBg, color: colors.text,
-  } as const;
+  // P1-3 sweep (2026-06-09): the inline TextInput + dateInputStyle pair was
+  // replaced by the canonical `DateInput` component below for the Customer
+  // Ledger Statement range.
 
   const getMethodIcon = (method: string | null | undefined): keyof typeof Ionicons.glyphMap => {
     if (!method) return 'wallet-outline';
@@ -179,27 +177,21 @@ export default function CustomerPaymentsScreen() {
             </Text>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>From</Text>
-                <TextInput
+                <DateInput
+                  label="From"
                   value={fromDate}
-                  onChangeText={setFromDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={colors.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={dateInputStyle}
+                  onChange={setFromDate}
+                  minDate={MIN_DATE_FLOOR}
+                  maxDate={toDate || todayLocalIso()}
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>To</Text>
-                <TextInput
+                <DateInput
+                  label="To"
                   value={toDate}
-                  onChangeText={setToDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={colors.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={dateInputStyle}
+                  onChange={setToDate}
+                  minDate={fromDate || MIN_DATE_FLOOR}
+                  maxDate={todayLocalIso()}
                 />
               </View>
             </View>

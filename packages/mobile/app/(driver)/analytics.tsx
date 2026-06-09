@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { Card, MetricCard } from '../../src/components/ui';
+import { Card, MetricCard, DateInput, MIN_DATE_FLOOR, todayLocalIso } from '../../src/components/ui';
 import { useTheme, ACCENT, formatINR } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 import { Badge } from '../../src/components/ui';
@@ -92,44 +92,27 @@ export default function DriverAnalyticsScreen() {
           My Performance
         </Text>
 
-        {/* Date range filters */}
+        {/* Date range filters — P1-3 sweep (2026-06-09): native DateInput
+            with min/max constraints prevents the From > To inversion that
+            the prior text inputs allowed (and silently produced an empty
+            result set with no UI signal). */}
         <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>From (YYYY-MM-DD)</Text>
-            <TextInput
+            <DateInput
+              label="From"
               value={dateFrom}
-              onChangeText={setDateFrom}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textMuted}
-              style={{
-                backgroundColor: colors.inputBg,
-                borderWidth: 1,
-                borderColor: colors.inputBorder,
-                borderRadius: 8,
-                paddingHorizontal: 10,
-                paddingVertical: 7,
-                fontSize: 13,
-                color: colors.text,
-              }}
+              onChange={setDateFrom}
+              minDate={MIN_DATE_FLOOR}
+              maxDate={dateTo || todayLocalIso()}
             />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>To (YYYY-MM-DD)</Text>
-            <TextInput
+            <DateInput
+              label="To"
               value={dateTo}
-              onChangeText={setDateTo}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textMuted}
-              style={{
-                backgroundColor: colors.inputBg,
-                borderWidth: 1,
-                borderColor: colors.inputBorder,
-                borderRadius: 8,
-                paddingHorizontal: 10,
-                paddingVertical: 7,
-                fontSize: 13,
-                color: colors.text,
-              }}
+              onChange={setDateTo}
+              minDate={dateFrom || MIN_DATE_FLOOR}
+              maxDate={todayLocalIso()}
             />
           </View>
         </View>

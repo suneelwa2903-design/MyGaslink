@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { getErrorMessage, parseStructuredError } from '../../src/lib/api';
-import { Button, Badge, EmptyState } from '../../src/components/ui';
+import { Button, Badge, EmptyState, DateInput, todayLocalIso } from '../../src/components/ui';
 import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
@@ -776,21 +776,18 @@ export default function CustomerOrdersScreen() {
                       : ' Please confirm when you will pay to continue.'}
                   </Text>
 
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
-                    Promised payment date
-                  </Text>
-                  <TextInput
-                    value={promisedDate}
-                    onChangeText={setPromisedDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor={colors.textMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    style={{
-                      backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder,
-                      borderRadius: 10, padding: 12, fontSize: 15, color: colors.text, marginBottom: 16,
-                    }}
-                  />
+                  {/* P1-3 sweep: native DateInput for the overdue-commitment
+                      date. Unlike the filter ranges (1990 → today), this is
+                      a FORWARD-looking commitment — minDate is today, no
+                      upper bound (customer can promise any future date). */}
+                  <View style={{ marginBottom: 16 }}>
+                    <DateInput
+                      label="Promised payment date"
+                      value={promisedDate}
+                      onChange={setPromisedDate}
+                      minDate={todayLocalIso()}
+                    />
+                  </View>
 
                   {commitmentPrompt?.mode === 'acknowledgment' && (
                     <TouchableOpacity

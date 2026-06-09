@@ -58,6 +58,31 @@ function toIsoLocal(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * Today as YYYY-MM-DD in the device's LOCAL timezone.
+ *
+ * Why local-TZ, not UTC: every API path that validates date strings
+ * uses `setHours(0, 0, 0, 0)` (local TZ) — see helpers.ts > today() in
+ * packages/api and the TZ-flakiness fix at 4300e07. `toISOString()`
+ * returns UTC; between ~18:30 UTC and 23:59 UTC daily that's one
+ * calendar day off from local IST, which the API rejects. Use this
+ * helper anywhere a "max=today" or "default today" is needed so the
+ * client and server agree on the calendar day.
+ *
+ * Exported so the date-input call sites swept by P1-3 use one source
+ * of truth — duplicating the `getFullYear/getMonth/getDate` formula
+ * across screens drifts.
+ */
+export function todayLocalIso(): string {
+  return toIsoLocal(new Date());
+}
+
+/** Lower-bound floor for every date filter in the app. v1.0 has no data
+ *  earlier than 2025-01-01; 1990-01-01 is an effectively-unbounded
+ *  past floor that simplifies the pickers' min constraint. Per P1-3
+ *  Q2/Q3 locks. */
+export const MIN_DATE_FLOOR = '1990-01-01';
+
 export function DateInput({
   value,
   onChange,

@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, TextInput } from 'react-native';
+import { View, Text, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { MetricCard, Card } from '../../src/components/ui';
+import { MetricCard, Card, DateInput, MIN_DATE_FLOOR, todayLocalIso } from '../../src/components/ui';
 import { useTheme, formatINR } from '../../src/theme';
 
 // Uniform height so all four Current Status cards line up regardless of content.
@@ -33,7 +33,7 @@ export default function CustomerDashboardScreen() {
 
   // Activity date range — defaults to the current month (1st → today).
   const [fromDate, setFromDate] = useState(firstOfMonth);
-  const [toDate, setToDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [toDate, setToDate] = useState(todayLocalIso);
 
   const { data, isLoading, refetch } = useApiQuery<CustomerDashboard>(
     ['customer-dashboard', fromDate, toDate],
@@ -47,11 +47,10 @@ export default function CustomerDashboardScreen() {
   const emptiesWithYou = (data?.emptiesByType ?? []).filter((t) => t.withCustomerQty !== 0);
   const emptiesTotal = emptiesWithYou.reduce((sum, t) => sum + t.withCustomerQty, 0);
 
-  const dateInputStyle = {
-    borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
-    backgroundColor: colors.inputBg, color: colors.text,
-  } as const;
+  // P1-3 sweep (2026-06-09): the inline TextInput + dateInputStyle pair was
+  // replaced by the canonical `DateInput` component below. Native picker on
+  // both iOS (modal) and Android (OS dialog); local-TZ math via the
+  // component's parseIsoLocal/toIsoLocal helpers.
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -116,27 +115,21 @@ export default function CustomerDashboardScreen() {
         </Text>
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>From</Text>
-            <TextInput
+            <DateInput
+              label="From"
               value={fromDate}
-              onChangeText={setFromDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={dateInputStyle}
+              onChange={setFromDate}
+              minDate={MIN_DATE_FLOOR}
+              maxDate={toDate || todayLocalIso()}
             />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>To</Text>
-            <TextInput
+            <DateInput
+              label="To"
               value={toDate}
-              onChangeText={setToDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={dateInputStyle}
+              onChange={setToDate}
+              minDate={fromDate || MIN_DATE_FLOOR}
+              maxDate={todayLocalIso()}
             />
           </View>
         </View>
