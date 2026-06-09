@@ -673,7 +673,13 @@ export default function CustomerOrdersScreen() {
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{
               backgroundColor: dark ? colors.cardBg : colors.bg,
-              borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '80%',
+              borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              // P0-3b: same pattern as P0-3/P0-4 — split padding, push
+              // bottom row above Android gesture pill / 3-button nav so
+              // the Cancel + Update Order buttons clear the system nav.
+              paddingTop: 24, paddingHorizontal: 24,
+              paddingBottom: 24 + insets.bottom,
+              maxHeight: '80%',
             }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
                 Modify Order
@@ -736,7 +742,14 @@ export default function CustomerOrdersScreen() {
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{
               backgroundColor: dark ? colors.cardBg : colors.bg,
-              borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24,
+              borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              // P0-3b: same fix as the New Order / Modify Order / Raise
+              // Issue modals. The Commitment prompt's bottom row varies
+              // by mode (Call Distributor / Close in 'blocked', Continue
+              // / Cancel otherwise) — either way it must clear the system
+              // nav so the user can complete the overdue-payment gate.
+              paddingTop: 24, paddingHorizontal: 24,
+              paddingBottom: 24 + insets.bottom,
             }}>
               {commitmentPrompt?.mode === 'blocked' ? (
                 <>
