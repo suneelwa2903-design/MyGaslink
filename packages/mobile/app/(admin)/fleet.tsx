@@ -803,93 +803,135 @@ export default function AdminFleetScreen() {
              clear of the FAB (56×56 at bottom:24 = 80dp from the
              scroll-content bottom; 96dp gives a 16dp visual buffer). */
           contentContainerStyle={{ paddingBottom: 96 }}
-          renderItem={({ item }) => (
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: 16,
-                paddingVertical: 14,
-                gap: 12,
-              }}
-            >
+          renderItem={({ item }) => {
+            // NEW-6 (2026-06-09) — when status === 'dispatched' the row has
+            // 5 inline children (avatar + flex:1 text + Badge + Mark Returned
+            // button + Edit icon). On a 360dp Android screen the action
+            // cluster eats ~226dp + 60dp of padding/gaps, leaving ~14dp for
+            // the flex:1 text column — the vehicle number renders as "…" or
+            // invisible. UBB C2 added numberOfLines={1} which stopped the
+            // 3-4 line wrap on idle rows but didn't address the deeper
+            // squeeze on dispatched rows because UBB C2's manual QA was on
+            // idle rows only (see anti-pattern #20 candidate). Fix: on
+            // dispatched rows ONLY, move the action cluster to a second
+            // row below — text column gets the full width, all actions
+            // stay reachable. Idle / returned / inactive rows keep the
+            // single-row layout (no UX regression where the bug doesn't
+            // live; only Badge + Edit fit comfortably on those).
+            const isDispatched = item.status === 'dispatched';
+            const badgeColor =
+              item.status === 'idle' ? '#10b981'
+              : item.status === 'dispatched' ? '#3b82f6'
+              : item.status === 'returned' ? '#f59e0b'
+              : '#94a3b8';
+
+            return (
               <View
                 style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  backgroundColor: '#f59e0b' + '14',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  paddingHorizontal: 16,
+                  paddingVertical: 14,
                 }}
               >
-                <Ionicons name="car" size={18} color="#f59e0b" />
-              </View>
-              <View style={{ flex: 1 }}>
-                {/* UBB C2 U3/U4 — numberOfLines={1} prevents the vehicle
-                    number from wrapping to 3-4 lines on Android when the
-                    DISPATCHED badge + Mark Returned button + Edit icon
-                    cluster on the right squeezes this flex:1 column to
-                    ~28dp on a 360dp screen. ellipsizeMode='tail' keeps
-                    the prefix readable. */}
-                <Text
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                  style={{ fontSize: 15, fontWeight: '600', color: colors.text }}
-                >
-                  {item.vehicleNumber}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                  style={{ fontSize: 12, color: colors.textMuted }}
-                >
-                  {item.vehicleType}
-                  {item.capacity ? ` - ${item.capacity} cyl` : ''}
-                </Text>
-              </View>
-              <StatusBadge
-                label={item.status}
-                color={
-                  item.status === 'idle' ? '#10b981'
-                  : item.status === 'dispatched' ? '#3b82f6'
-                  : item.status === 'returned' ? '#f59e0b'
-                  : '#94a3b8'
-                }
-              />
-              {/* Mark Returned — visible only when the vehicle is on a
-                  trip. Mirrors the web FleetPage button; hits the same
-                  driver-app endpoint so WI-087/WI-100 guards run too. */}
-              {item.status === 'dispatched' && (
-                <TouchableOpacity
-                  onPress={() => handleMarkReturned(item)}
-                  disabled={markReturnedMutation.isPending}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                <View
                   style={{
-                    marginLeft: 6,
-                    paddingHorizontal: 10,
-                    paddingVertical: 6,
-                    borderRadius: 6,
-                    backgroundColor: '#3b82f6' + '14',
-                    borderWidth: 1,
-                    borderColor: '#3b82f6',
-                    opacity: markReturnedMutation.isPending ? 0.6 : 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
                   }}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#3b82f6' }}>
-                    Mark Returned
-                  </Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                onPress={() => startEditVehicle(item)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                style={{ marginLeft: 8, padding: 4 }}
-              >
-                <Ionicons name="create-outline" size={20} color={ACCENT} />
-              </TouchableOpacity>
-            </View>
-          )}
+                  <View
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: '#f59e0b' + '14',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Ionicons name="car" size={18} color="#f59e0b" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    {/* UBB C2 U3/U4 — numberOfLines={1} prevents 3-4 line
+                        wrap when the column gets squeezed. Kept after
+                        NEW-6 because long vehicle numbers (e.g.
+                        "TEST-DISPATCH-TRIP-D2") still need ellipsis on
+                        narrow screens even with the cluster moved below. */}
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={{ fontSize: 15, fontWeight: '600', color: colors.text }}
+                    >
+                      {item.vehicleNumber}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={{ fontSize: 12, color: colors.textMuted }}
+                    >
+                      {item.vehicleType}
+                      {item.capacity ? ` - ${item.capacity} cyl` : ''}
+                    </Text>
+                  </View>
+                  {/* Non-dispatched: Badge + Edit stay inline (unchanged). */}
+                  {!isDispatched && (
+                    <>
+                      <StatusBadge label={item.status} color={badgeColor} />
+                      <TouchableOpacity
+                        onPress={() => startEditVehicle(item)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ marginLeft: 8, padding: 4 }}
+                      >
+                        <Ionicons name="create-outline" size={20} color={ACCENT} />
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+                {/* Dispatched: action cluster on its own row below, right-
+                    aligned. The Mark Returned button mirrors the web
+                    FleetPage button; hits the same driver-app endpoint so
+                    WI-087/WI-100 guards run too. */}
+                {isDispatched && (
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 8,
+                      marginTop: 8,
+                      justifyContent: 'flex-end',
+                    }}
+                  >
+                    <StatusBadge label={item.status} color={badgeColor} />
+                    <TouchableOpacity
+                      onPress={() => handleMarkReturned(item)}
+                      disabled={markReturnedMutation.isPending}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        backgroundColor: '#3b82f6' + '14',
+                        borderWidth: 1,
+                        borderColor: '#3b82f6',
+                        opacity: markReturnedMutation.isPending ? 0.6 : 1,
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#3b82f6' }}>
+                        Mark Returned
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => startEditVehicle(item)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{ padding: 4 }}
+                    >
+                      <Ionicons name="create-outline" size={20} color={ACCENT} />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            );
+          }}
           ItemSeparatorComponent={() => (
             <View style={{ height: 1, backgroundColor: colors.divider }} />
           )}
