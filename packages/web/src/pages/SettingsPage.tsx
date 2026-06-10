@@ -1080,12 +1080,10 @@ function UsersTab() {
     { value: UserRole.DISTRIBUTOR_ADMIN, label: 'Distributor Admin' },
     { value: UserRole.FINANCE, label: 'Finance' },
     { value: UserRole.INVENTORY, label: 'Inventory' },
-    ...(includePortal
-      ? [
-          { value: UserRole.DRIVER, label: 'Driver' },
-          { value: UserRole.CUSTOMER, label: 'Customer' },
-        ]
-      : []),
+    // Drivers are staff and show by default; only the customer role lives
+    // behind the includePortal opt-in.
+    { value: UserRole.DRIVER, label: 'Driver' },
+    ...(includePortal ? [{ value: UserRole.CUSTOMER, label: 'Customer' }] : []),
   ];
   const statusFilterOptions = [
     { value: '', label: 'All statuses' },
@@ -1135,7 +1133,7 @@ function UsersTab() {
             onChange={(e) => setIncludePortal(e.target.checked)}
             className="rounded"
           />
-          Show customer / driver logins
+          Show customer portal logins
         </label>
         <Button onClick={() => { setEditUser(null); setFormOpen(true); }}>
           <HiOutlinePlus className="h-4 w-4" />Add User
@@ -1237,7 +1235,8 @@ type CreatedCreds = {
 // from a generated DTO. mapDrivers/mapCustomers in the API rename `id`
 // to `driverId`/`customerId`; the dropdowns key off those.
 type UnlinkedDriver = { driverId: string; driverName: string; phone: string; licenseNumber?: string | null };
-type UnlinkedCustomer = { customerId: string; customerName: string; phone: string; email?: string | null };
+type CustomerForPicker = { customerId: string; customerName: string };
+type ContactForPicker = { contactId: string; name: string; phone: string | null; email: string | null; isPrimary: boolean };
 
 function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => void; user: User | null }) {
   const queryClient = useQueryClient();
@@ -1246,8 +1245,13 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
   // Group B Part 3 — track the picked driver/customer ID locally so we can
   // (a) push it back into the mutation payload as `driverId` / `customerId`
   // and (b) wipe it when the admin changes their mind about the role.
+  // Group B Part 7 Bug 1+6 — customer flow now has TWO stages: pick a
+  // customer, then pick one of that customer's contacts. The contactId
+  // isn't stored on the User row (no FK exists) — it's only used at form
+  // time to drive prefill. The user row holds the prefilled values directly.
   const [pickedDriverId, setPickedDriverId] = useState<string>('');
   const [pickedCustomerId, setPickedCustomerId] = useState<string>('');
+  const [pickedContactId, setPickedContactId] = useState<string>('');
 
   const { register, handleSubmit, getValues, setValue, watch, formState: { errors } } = useForm<CreateUserInput>({
     resolver: zodResolver(isEdit ? createUserSchema.partial().omit({ password: true }) : createUserSchema) as unknown as Resolver<CreateUserInput>,
@@ -1260,26 +1264,38 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
   const showDriverPicker = !isEdit && watchedRole === UserRole.DRIVER;
   const showCustomerPicker = !isEdit && watchedRole === UserRole.CUSTOMER;
 
-  // Fetch unlinked drivers/customers only when the relevant role is selected.
-  // Both endpoints get a `unlinked=true` query param (Group B Part 3) — the
-  // API returns only rows without an existing user link.
+  // Fetch unlinked drivers when role=Driver. Drivers stay 1:0..1 with a
+  // user (Driver.userId @unique) so `?unlinked=true` is correct: a driver
+  // who already has a login is not eligible for a second one.
   const { data: unlinkedDrivers, isLoading: driversLoading } = useQuery({
     queryKey: ['users-add-modal', 'unlinked-drivers'],
     queryFn: () => apiGet<{ drivers: UnlinkedDriver[] }>('/drivers', { unlinked: 'true' }),
     select: (data) => data.drivers ?? [],
     enabled: showDriverPicker,
   });
-  const { data: unlinkedCustomers, isLoading: customersLoading } = useQuery({
-    queryKey: ['users-add-modal', 'unlinked-customers'],
-    // pageSize: 100 matches the shared paginationSchema cap. Sending 500
-    // returned 400 and made the picker show "No unlinked customers" with
-    // no diagnostic — the empty form below it looked like the prefill was
-    // broken when really the source list never arrived. Group B Part 3
-    // hotfix: stay under the cap. If a tenant ever has >100 unlinked
-    // customers, the picker needs search-as-you-type, not bigger pages.
-    queryFn: () => apiGet<{ customers: UnlinkedCustomer[] }>('/customers', { unlinked: 'true', pageSize: 100 }),
+
+  // Group B Part 7 Bug 1+6 — customer flow is two-stage.
+  // Stage 1: list ALL customers (NOT ?unlinked=true). A customer is allowed
+  // to have multiple portal users — one per contact — so "unlinked" no
+  // longer maps cleanly here. The picker shows customer name only; the
+  // phone/email shown previously was the customer's primary phone, not
+  // the contact's, and conflated the two concepts.
+  const { data: customersForPicker, isLoading: customersLoading } = useQuery({
+    queryKey: ['users-add-modal', 'all-customers'],
+    queryFn: () => apiGet<{ customers: CustomerForPicker[] }>('/customers', { pageSize: 100 }),
     select: (data) => data.customers ?? [],
     enabled: showCustomerPicker,
+  });
+
+  // Stage 2: fetch the picked customer's contacts. Only fires when both
+  // role=Customer AND a customer is selected. Returns the array used to
+  // populate the second picker. An empty array → "no contacts yet" hint.
+  const { data: customerContacts, isLoading: contactsLoading } = useQuery({
+    queryKey: ['users-add-modal', 'customer-contacts', pickedCustomerId],
+    queryFn: () =>
+      apiGet<{ contacts: ContactForPicker[] }>(`/customers/${pickedCustomerId}/contacts`),
+    select: (data) => data.contacts ?? [],
+    enabled: showCustomerPicker && !!pickedCustomerId,
   });
 
   // When the admin picks an entity, prefill the form fields. The admin still
@@ -1300,15 +1316,31 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
       setValue('email', `${d.phone}@driver.mygaslink.local`, { shouldDirty: true });
     }
   };
+  // Group B Part 7 Bug 1+6 — picking a customer just unlocks the contact
+  // picker; the actual form prefill happens when a CONTACT is picked.
+  // Also reset the inner picker / prefilled fields when the customer
+  // changes so a half-filled-from-the-previous-contact form can't leak
+  // into a different customer's user creation.
   const onPickCustomer = (customerId: string) => {
     setPickedCustomerId(customerId);
-    if (!customerId) return;
-    const c = unlinkedCustomers?.find((x) => x.customerId === customerId);
+    setPickedContactId('');
+    if (!customerId) {
+      setValue('firstName', '', { shouldDirty: false });
+      setValue('lastName', '', { shouldDirty: false });
+      setValue('phone', '', { shouldDirty: false });
+      setValue('email', '', { shouldDirty: false });
+    }
+  };
+
+  const onPickContact = (contactId: string) => {
+    setPickedContactId(contactId);
+    if (!contactId) return;
+    const c = customerContacts?.find((x) => x.contactId === contactId);
     if (!c) return;
-    const [first, ...rest] = c.customerName.trim().split(/\s+/);
-    setValue('firstName', first || c.customerName, { shouldDirty: true });
+    const [first, ...rest] = (c.name || '').trim().split(/\s+/);
+    setValue('firstName', first || c.name || '', { shouldDirty: true });
     setValue('lastName', rest.join(' '), { shouldDirty: true });
-    setValue('phone', c.phone, { shouldDirty: true });
+    if (c.phone) setValue('phone', c.phone, { shouldDirty: true });
     if (c.email) setValue('email', c.email, { shouldDirty: true });
   };
 
@@ -1320,6 +1352,7 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
       lastRoleRef.current = watchedRole;
       setPickedDriverId('');
       setPickedCustomerId('');
+      setPickedContactId('');
     }
   }, [watchedRole]);
 
@@ -1401,24 +1434,56 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
             onChange={onPickDriver}
             options={(unlinkedDrivers ?? []).map((d) => ({
               value: d.driverId,
-              label: `${d.driverName} — ${d.phone}${d.licenseNumber ? ` · ${d.licenseNumber}` : ''}`,
+              // Group B Part 7 Bug 4 — name + phone only. License number was
+              // misleading clutter in the picker (and the original mapDrivers
+              // response also flattens today's vehicle assignment into the
+              // payload, which would have changed daily). Strip both.
+              label: `${d.driverName} — ${d.phone}`,
             }))}
             emptyText="No unlinked drivers — add one from Fleet → Drivers first."
           />
         )}
 
         {showCustomerPicker && (
-          <EntityPicker
-            label="Select existing Customer to link"
-            placeholder={customersLoading ? 'Loading customers…' : 'Pick a customer…'}
-            value={pickedCustomerId}
-            onChange={onPickCustomer}
-            options={(unlinkedCustomers ?? []).map((c) => ({
-              value: c.customerId,
-              label: `${c.customerName} — ${c.phone}${c.email ? ` · ${c.email}` : ''}`,
-            }))}
-            emptyText="No unlinked customers — add one from Customers first."
-          />
+          <>
+            {/* Stage 1 — pick the customer. Name only; phone/email shown
+                in stage 2 against the specific CONTACT being given access. */}
+            <EntityPicker
+              label="Select Customer"
+              placeholder={customersLoading ? 'Loading customers…' : 'Pick a customer…'}
+              value={pickedCustomerId}
+              onChange={onPickCustomer}
+              options={(customersForPicker ?? []).map((c) => ({
+                value: c.customerId,
+                label: c.customerName,
+              }))}
+              emptyText="No customers found — add one from the Customers section first."
+            />
+            {/* Stage 2 — pick which contact at this customer gets the
+                login. Each contact = a separate user row; multiple
+                contacts may have logins for the same customer. */}
+            {pickedCustomerId && (
+              contactsLoading ? (
+                <p className="text-xs text-surface-500">Loading contacts…</p>
+              ) : (customerContacts ?? []).length === 0 ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                  This customer has no contacts yet. Add a contact in the Customers section first, then come back here to create their login.
+                </div>
+              ) : (
+                <EntityPicker
+                  label="Which contact gets portal access?"
+                  placeholder="Pick a contact…"
+                  value={pickedContactId}
+                  onChange={onPickContact}
+                  options={(customerContacts ?? []).map((c) => ({
+                    value: c.contactId,
+                    label: `${c.name}${c.phone ? ` — ${c.phone}` : ''}${c.email ? ` · ${c.email}` : ''}${c.isPrimary ? ' ★' : ''}`,
+                  }))}
+                  emptyText=""
+                />
+              )
+            )}
+          </>
         )}
 
         <div className="grid grid-cols-2 gap-4">

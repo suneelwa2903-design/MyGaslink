@@ -50,13 +50,16 @@ export async function listUsers(
     where.distributorId = distributorId;
   }
 
-  // Role: explicit filter wins; otherwise default-hide customer/driver
-  // unless includePortal=true. Validated against the enum so the caller
-  // can't smuggle a junk value through.
+  // Role: explicit filter wins; otherwise default-hide ONLY customer-role
+  // users (their natural home is the Customers section). Driver-role users
+  // ARE staff and should appear in the default Users list alongside
+  // finance/inventory/distributor_admin (Group B Part 7 Bug 3 — Suneel
+  // pushed back on hiding drivers; they're delivery staff, not portal
+  // logins). `includePortal=true` opt-in restores customer rows too.
   if (filters.roleFilter) {
     where.role = filters.roleFilter as $Enums.UserRole;
   } else if (!filters.includePortal) {
-    where.role = { notIn: ['customer', 'driver'] as $Enums.UserRole[] };
+    where.role = { not: 'customer' as $Enums.UserRole };
   }
 
   if (filters.statusFilter) {

@@ -27,7 +27,12 @@ export const config = {
     contactEmail: process.env.CONTACT_FORM_EMAIL || 'info@mygaslink.com',
   },
 
-  webAppUrl: process.env.WEB_APP_URL || 'http://localhost:5173',
+  // Group B Part 7 Bug 5 — production URL is the safer fallback. Before this,
+  // an unset WEB_APP_URL on prod EC2 would have sent welcome emails carrying
+  // a localhost:5173 link (useless for recipients). With this default, a
+  // missing env var degrades to the public production site; the dev env
+  // overrides by setting WEB_APP_URL=http://localhost:5173 in .env.
+  webAppUrl: process.env.WEB_APP_URL || 'https://mygaslink.com',
 
   gst: {
     clientId: process.env.GASLINK_GST_CLIENT_ID || '',

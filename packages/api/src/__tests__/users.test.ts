@@ -436,19 +436,19 @@ describe('Users — Driver ↔ User FK + unlinked filter (Group B Part 3)', () =
 // supports role/status/search filters and sort. Verifies the staff list
 // stays clean and that opt-in flags work.
 describe('Users — Staff-only list + filters (Group B Part 4)', () => {
-  it('GET /api/users default response excludes customer + driver roles', async () => {
+  it('GET /api/users default response excludes ONLY customer role (drivers stay visible)', async () => {
     const res = await request(app)
       .get('/api/users')
       .set(auth(adminToken));
     expect(res.status).toBe(200);
     const roles = res.body.data.users.map((u: { role: string }) => u.role);
     expect(roles).not.toContain('customer');
-    expect(roles).not.toContain('driver');
+    // Group B Part 7 Bug 3 — drivers ARE staff, they show by default now.
     // sanity: at least one staff role still shows
     expect(roles.some((r: string) => ['distributor_admin', 'finance', 'inventory'].includes(r))).toBe(true);
   });
 
-  it('GET /api/users?includePortal=true includes customer + driver roles', async () => {
+  it('GET /api/users?includePortal=true restores customer-role rows', async () => {
     const res = await request(app)
       .get('/api/users?includePortal=true')
       .set(auth(adminToken));

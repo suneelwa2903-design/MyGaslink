@@ -126,6 +126,36 @@ router.get('/:id',
   }
 );
 
+// GET /api/customers/:id/contacts
+//
+// Group B Part 7 Bug 1+6 — used by the Add User modal's role=Customer flow:
+// admin picks a customer, then a secondary picker shows that customer's
+// CONTACT rows (name + phone + email). Picking a contact prefills the new
+// user's name/phone/email. The endpoint is split from GET /api/customers/:id
+// so the picker doesn't fetch the full customer with all its relations just
+// to read the contacts subtree.
+router.get('/:id/contacts',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const customer = await customerService.getCustomerById(param(req.params.id), req.user!.distributorId!);
+      if (!customer) return sendNotFound(res, 'Customer');
+      // Map each contact to { contactId, name, phone, email, isPrimary }
+      // — the schema-native shape the picker expects.
+      const contacts = (customer.contacts ?? []).map((c) => ({
+        contactId: c.id,
+        name: c.name,
+        phone: c.phone,
+        email: c.email,
+        isPrimary: c.isPrimary,
+      }));
+      return sendSuccess(res, { contacts });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
 // GET /api/customers/:id/ledger/pdf — customer statement PDF (WI-092)
 // Accessible to staff roles and to the customer themselves (own statement only).
 router.get('/:id/ledger/pdf',

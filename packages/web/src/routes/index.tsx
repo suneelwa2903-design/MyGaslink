@@ -12,6 +12,7 @@ import { ProtectedRoute } from './ProtectedRoute';
 const LandingPage = lazy(() => import('@/pages/LandingPage'));
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const ForcePasswordResetPage = lazy(() => import('@/pages/ForcePasswordResetPage'));
+const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 const PrivacyPolicyPage = lazy(() => import('@/pages/PrivacyPolicyPage'));
 const TermsOfServicePage = lazy(() => import('@/pages/TermsOfServicePage'));
@@ -76,6 +77,7 @@ export function AppRoutes() {
           }
         />
         <Route path="/force-password-reset" element={<ForcePasswordResetPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/privacy" element={<PrivacyPolicyPage />} />
         <Route path="/terms" element={<TermsOfServicePage />} />
 

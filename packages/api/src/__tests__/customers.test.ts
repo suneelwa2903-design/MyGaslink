@@ -289,6 +289,76 @@ describe('Customers — Contact CRUD (relaxed phone)', () => {
   });
 });
 
+// Group B Part 7 Bug 1+6 — GET /api/customers/:id/contacts powers the Add
+// User modal's role=Customer two-stage picker. Returns the contacts subtree
+// in the canonical {contactId, name, phone, email, isPrimary} shape.
+describe('Customers — GET /:id/contacts (Group B Part 7)', () => {
+  let customerWithContactsId = '';
+  let customerNoContactsId = '';
+
+  beforeAll(async () => {
+    const a = await request(app)
+      .post('/api/customers')
+      .set(auth(adminToken))
+      .send({
+        customerName: 'Picker Contacts Alpha',
+        phone: '9100700001',
+        contacts: [
+          { name: 'Primary Contact', phone: '9876111111', email: 'primary@picker.test', isPrimary: true },
+          { name: 'Secondary Contact', phone: '9876222222' },
+        ],
+      });
+    expect(a.status).toBe(201);
+    customerWithContactsId = a.body.data.customerId;
+
+    const b = await request(app)
+      .post('/api/customers')
+      .set(auth(adminToken))
+      .send({ customerName: 'Picker Contacts Beta', phone: '9100700002' });
+    expect(b.status).toBe(201);
+    customerNoContactsId = b.body.data.customerId;
+  });
+
+  afterAll(async () => {
+    await prisma.customer.deleteMany({
+      where: { id: { in: [customerWithContactsId, customerNoContactsId].filter(Boolean) } },
+    });
+  });
+
+  it('returns the contact array in canonical shape', async () => {
+    const res = await request(app)
+      .get(`/api/customers/${customerWithContactsId}/contacts`)
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.contacts).toHaveLength(2);
+    const primary = res.body.data.contacts.find((c: { isPrimary: boolean }) => c.isPrimary);
+    expect(primary).toBeDefined();
+    expect(primary.email).toBe('primary@picker.test');
+    expect(primary.phone).toBe('9876111111');
+    expect(primary.name).toBe('Primary Contact');
+    expect(primary.contactId).toBeDefined();
+  });
+
+  it('returns an empty array for a customer with no contacts', async () => {
+    const res = await request(app)
+      .get(`/api/customers/${customerNoContactsId}/contacts`)
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.contacts).toEqual([]);
+  });
+
+  it('404s for a customer on another distributor', async () => {
+    const dist2Customer = await prisma.customer.findFirst({
+      where: { distributorId: 'dist-002', deletedAt: null },
+    });
+    if (!dist2Customer) throw new Error('Seed expected a dist-002 customer');
+    const res = await request(app)
+      .get(`/api/customers/${dist2Customer.id}/contacts`)
+      .set(auth(adminToken));
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('Customers — Tenant Isolation', () => {
   it('cannot fetch a customer from another distributor (404)', async () => {
     // dist-002 customer (seeded as Sharma's tenant)
