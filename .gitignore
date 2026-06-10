@@ -44,6 +44,7 @@ packages/api/prisma/*.db
 # Mobile
 packages/mobile/.expo/
 packages/mobile/android/
+packages/mobile/.android-loop/
 packages/mobile/ios/
 
 # Mobile build artifacts — EAS-produced binaries, never commit
