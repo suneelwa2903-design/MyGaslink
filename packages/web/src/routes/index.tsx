@@ -28,6 +28,8 @@ const PendingActionsPage = lazy(() => import('@/pages/PendingActionsPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const DistributorsPage = lazy(() => import('@/pages/DistributorsPage'));
 const DistributorDetailPage = lazy(() => import('@/pages/DistributorDetailPage'));
+// Group A Step 8: super-admin atomic GST activation flow.
+const GstActivationPage = lazy(() => import('@/pages/admin/GstActivationPage'));
 const BillingSuspendedPage = lazy(() => import('@/pages/BillingSuspendedPage'));
 const HealthMonitoringPage = lazy(() => import('@/pages/HealthMonitoringPage'));
 const ProviderCatalogPage = lazy(() => import('@/pages/ProviderCatalogPage'));
@@ -267,6 +269,7 @@ export function AppRoutes() {
           >
             <Route index element={<DistributorsPage />} />
             <Route path=":id" element={<DistributorDetailPage />} />
+            <Route path=":id/gst-activation" element={<GstActivationPage />} />
           </Route>
 
           {/* Billing now in Settings */}

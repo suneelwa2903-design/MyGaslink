@@ -32,6 +32,9 @@ const distributorSelect = {
   officeCity: true,
   officeState: true,
   officePincode: true,
+  // Group A: surfaced to the GST Activation page so the sandbox option is
+  // disabled in the UI when the tenant is not allowlisted.
+  isTestTenant: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.DistributorSelect;

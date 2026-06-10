@@ -10,6 +10,7 @@ import {
   HiOutlineChartBarSquare,
   HiOutlineDocumentArrowDown,
   HiOutlinePlus,
+  HiOutlineShieldCheck,
 } from 'react-icons/hi2';
 import type { Distributor, BillingCycle } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
@@ -149,6 +150,10 @@ export default function DistributorDetailPage() {
         <div className="flex items-center gap-2">
           <Badge variant={distributor.status === 'active' ? 'success' : 'danger'}>{distributor.status}</Badge>
           {distributor.subscriptionPlan && <Badge variant="info">{distributor.subscriptionPlan}</Badge>}
+          {/* Group A Step 8: super-admin GST activation entry point. */}
+          <Button variant="secondary" onClick={() => navigate(`/app/distributors/${id}/gst-activation`)}>
+            <HiOutlineShieldCheck className="h-4 w-4" /> Configure GST
+          </Button>
           <Button onClick={() => setGenerateOpen(true)}>
             <HiOutlinePlus className="h-4 w-4" /> Generate Invoice
           </Button>

@@ -132,6 +132,10 @@ export interface Distributor {
   officeCity: string | null;
   officeState: string | null;
   officePincode: string | null;
+  // Group A: gate that allows sandbox gstMode. Only dist-demo + internal test
+  // tenants have this true; production distributors transition disabled → live
+  // without ever passing through sandbox.
+  isTestTenant?: boolean;
   createdAt: string;
   updatedAt: string;
 }
