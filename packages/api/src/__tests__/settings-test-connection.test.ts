@@ -46,27 +46,23 @@ vi.mock('../services/gst/gstService.js', async (orig) => {
 });
 
 import { createApp } from '../app.js';
-import { prisma } from '../lib/prisma.js';
-import { generateToken } from './helpers.js';
+import { loginAsSuperAdmin } from './helpers.js';
 import type { Express } from 'express';
-import type { UserRole } from '@gaslink/shared';
 
 let app: Express;
-let sharmaAdminToken: string;
+// Group A Step 6: POST /api/settings/gst/credentials/:scope/test is now
+// super-admin only. Tests switch into dist-002's tenant context via the
+// X-Distributor-Id header.
+let superAdminToken: string;
 
-const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+const auth = (t: string) => ({
+  Authorization: `Bearer ${t}`,
+  'X-Distributor-Id': 'dist-002',
+});
 
 beforeAll(async () => {
   app = createApp();
-  const sharmaAdmin = await prisma.user.findUniqueOrThrow({
-    where: { email: 'sharma@gasdist.com' },
-  });
-  sharmaAdminToken = generateToken({
-    userId: sharmaAdmin.id,
-    email: sharmaAdmin.email,
-    role: sharmaAdmin.role as UserRole,
-    distributorId: sharmaAdmin.distributorId,
-  });
+  superAdminToken = (await loginAsSuperAdmin()).token;
 });
 
 beforeEach(() => {
@@ -82,7 +78,7 @@ describe('WI-054 — Test Connection two-stage probe', () => {
 
     await request(app)
       .post('/api/settings/gst/credentials/einvoice/test')
-      .set(auth(sharmaAdminToken));
+      .set(auth(superAdminToken));
 
     // clearTokenCache must run BEFORE getAuthToken to invalidate any
     // cached token from a prior successful call.
@@ -101,7 +97,7 @@ describe('WI-054 — Test Connection two-stage probe', () => {
 
     const res = await request(app)
       .post('/api/settings/gst/credentials/einvoice/test')
-      .set(auth(sharmaAdminToken));
+      .set(auth(superAdminToken));
 
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({
@@ -118,7 +114,7 @@ describe('WI-054 — Test Connection two-stage probe', () => {
 
     const res = await request(app)
       .post('/api/settings/gst/credentials/einvoice/test')
-      .set(auth(sharmaAdminToken));
+      .set(auth(superAdminToken));
 
     expect(res.status).toBe(200);
     expect(res.body.data.authenticated).toBe(false);
@@ -138,7 +134,7 @@ describe('WI-054 — Test Connection two-stage probe', () => {
 
     const res = await request(app)
       .post('/api/settings/gst/credentials/einvoice/test')
-      .set(auth(sharmaAdminToken));
+      .set(auth(superAdminToken));
 
     expect(res.status).toBe(200);
     expect(res.body.data.authenticated).toBe(true);
@@ -151,7 +147,7 @@ describe('WI-054 — Test Connection two-stage probe', () => {
 
     const res = await request(app)
       .post('/api/settings/gst/credentials/ewaybill/test')
-      .set(auth(sharmaAdminToken));
+      .set(auth(superAdminToken));
 
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({
@@ -168,7 +164,7 @@ describe('WI-054 — Test Connection two-stage probe', () => {
     getAuthTokenMock.mockRejectedValueOnce(new Error('fail'));
     let res = await request(app)
       .post('/api/settings/gst/credentials/einvoice/test')
-      .set(auth(sharmaAdminToken));
+      .set(auth(superAdminToken));
     expect(res.body.data).toHaveProperty('authenticated');
     expect(res.body.data).toHaveProperty('nicReachable');
     expect(typeof res.body.data.authenticated).toBe('boolean');
@@ -179,7 +175,7 @@ describe('WI-054 — Test Connection two-stage probe', () => {
     validateGstinMock.mockResolvedValueOnce({ valid: true });
     res = await request(app)
       .post('/api/settings/gst/credentials/einvoice/test')
-      .set(auth(sharmaAdminToken));
+      .set(auth(superAdminToken));
     expect(res.body.data).toHaveProperty('authenticated');
     expect(res.body.data).toHaveProperty('nicReachable');
     expect(typeof res.body.data.authenticated).toBe('boolean');

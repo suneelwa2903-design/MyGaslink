@@ -434,8 +434,12 @@ export const createDistributorSchema = z.object({
   officePincode: z.string().max(10).optional(),
 });
 
+// Group A Step 6: gstMode is intentionally absent from updateDistributorSchema.
+// The ONLY way to change gst_mode after Group A is the dedicated activation
+// flow at POST /api/admin/distributors/:id/gst/{activate,disable}. The
+// distributor PUT route silently strips gstMode if a client sends it (legacy
+// callers stay functional but the field is ignored).
 export const updateDistributorSchema = createDistributorSchema.partial().extend({
-  gstMode: z.enum(['disabled', 'sandbox', 'live']).optional(),
   status: z.enum(['active', 'suspended', 'inactive']).optional(),
   subscriptionPlan: z.enum(['starter', 'growth', 'business', 'enterprise']).nullable().optional(),
   billingTier: z.enum(['tier_1', 'tier_2', 'tier_3', 'tier_4']).nullable().optional(),

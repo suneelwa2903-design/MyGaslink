@@ -125,9 +125,26 @@ describe('Settings — JSONB key-value', () => {
   });
 });
 
-describe('Settings — GST mode toggle', () => {
-  it('switching GST mode persists on the distributor row', async () => {
-    // dist-001 starts with gstMode = 'disabled' per seed.
+describe('Settings — GST mode toggle (Group A Step 6 — super-admin only)', () => {
+  let superAdminToken: string;
+  beforeAll(async () => {
+    const { loginAsSuperAdmin } = await import('./helpers.js');
+    superAdminToken = (await loginAsSuperAdmin()).token;
+  });
+  const sa = (token: string) => ({
+    Authorization: `Bearer ${token}`,
+    'X-Distributor-Id': 'dist-001',
+  });
+
+  it('Step 6: distributor_admin is DENIED on PUT /gst/mode', async () => {
+    const res = await request(app)
+      .put('/api/settings/gst/mode')
+      .set(auth(adminToken))
+      .send({ mode: 'sandbox' });
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('super_admin (with X-Distributor-Id) can switch GST mode; persists on the row', async () => {
     const before = await prisma.distributor.findUniqueOrThrow({
       where: { id: 'dist-001' },
       select: { gstMode: true },
@@ -135,7 +152,7 @@ describe('Settings — GST mode toggle', () => {
 
     const res = await request(app)
       .put('/api/settings/gst/mode')
-      .set(auth(adminToken))
+      .set(sa(superAdminToken))
       .send({ mode: 'sandbox' });
     if (res.status !== 200) console.log('gst mode error:', res.body);
     expect(res.status).toBe(200);
@@ -146,18 +163,16 @@ describe('Settings — GST mode toggle', () => {
     });
     expect(after.gstMode).toBe('sandbox');
 
-    // Restore so it doesn't pollute other tests that depend on dist-001
-    // being GST-disabled.
     await prisma.distributor.update({
       where: { id: 'dist-001' },
       data: { gstMode: before.gstMode },
     });
   });
 
-  it('rejects invalid GST mode (400)', async () => {
+  it('super_admin: invalid GST mode (400)', async () => {
     const res = await request(app)
       .put('/api/settings/gst/mode')
-      .set(auth(adminToken))
+      .set(sa(superAdminToken))
       .send({ mode: 'magical' });
     expect(res.status).toBe(400);
   });
@@ -282,7 +297,7 @@ describe('Settings — Tenant Isolation', () => {
 // obviously-bogus credentials and expect the route's authenticate
 // failure path: 400 with code AUTH_FAILED, and isValid=false on the
 // stored row. The role gate runs before the WhiteBooks call.
-describe('Settings — Scoped GST credentials (WI-042)', () => {
+describe('Settings — Scoped GST credentials (WI-042 + Group A Step 6 — super-admin only)', () => {
   const distId = 'dist-001';
   const stamp = Date.now();
   const validShape = {
@@ -293,6 +308,17 @@ describe('Settings — Scoped GST credentials (WI-042)', () => {
     gstin: '29AAGCB1286Q1Z0', // valid format; WhiteBooks will still reject
     email: 'test@mygaslink.com',
   };
+  // Group A Step 6: super_admin token + X-Distributor-Id is now the path for
+  // writes on the legacy credentials endpoints. distAdmin is denied.
+  let superAdminToken: string;
+  beforeAll(async () => {
+    const { loginAsSuperAdmin } = await import('./helpers.js');
+    superAdminToken = (await loginAsSuperAdmin()).token;
+  });
+  const sa = (token: string) => ({
+    Authorization: `Bearer ${token}`,
+    'X-Distributor-Id': distId,
+  });
 
   afterAll(async () => {
     // Delete just the row this test created so the seed credentials are
@@ -318,7 +344,7 @@ describe('Settings — Scoped GST credentials (WI-042)', () => {
     });
   });
 
-  it('finance is rejected (403) — only admin can PUT scoped credentials', async () => {
+  it('finance is rejected (403) — only super_admin can PUT scoped credentials', async () => {
     const res = await request(app)
       .put('/api/settings/gst/credentials/einvoice')
       .set(auth(financeToken))
@@ -326,23 +352,28 @@ describe('Settings — Scoped GST credentials (WI-042)', () => {
     expect(res.status).toBe(403);
   });
 
-  it('admin Test & Save: rejects bad scope param (400 BAD_SCOPE)', async () => {
+  it('Step 6: distributor_admin is DENIED on PUT scoped credentials (was allowed; now 403)', async () => {
+    const res = await request(app)
+      .put('/api/settings/gst/credentials/einvoice')
+      .set(auth(adminToken))
+      .send(validShape);
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('super_admin Test & Save: rejects bad scope param (400 BAD_SCOPE)', async () => {
     const res = await request(app)
       .put('/api/settings/gst/credentials/nonsense')
-      .set(auth(adminToken))
+      .set(sa(superAdminToken))
       .send(validShape);
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('BAD_SCOPE');
   });
 
-  it('admin Test & Save: stores row then fails WhiteBooks auth → 400 AUTH_FAILED + isValid=false', async () => {
+  it('super_admin Test & Save: stores row then fails WhiteBooks auth → 400 AUTH_FAILED + isValid=false', async () => {
     const res = await request(app)
       .put('/api/settings/gst/credentials/einvoice')
-      .set(auth(adminToken))
+      .set(sa(superAdminToken))
       .send(validShape);
-    // We expect AUTH_FAILED because the bogus credentials won't pass
-    // real WhiteBooks. If somehow the network is unreachable in CI we
-    // still get 400 from the same error path.
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('AUTH_FAILED');
 
@@ -353,12 +384,19 @@ describe('Settings — Scoped GST credentials (WI-042)', () => {
     expect(row?.isValid).toBe(false);
   });
 
-  it('POST /test rejects bad scope (400 BAD_SCOPE)', async () => {
+  it('super_admin POST /test rejects bad scope (400 BAD_SCOPE)', async () => {
     const res = await request(app)
       .post('/api/settings/gst/credentials/garbage/test')
-      .set(auth(adminToken));
+      .set(sa(superAdminToken));
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('BAD_SCOPE');
+  });
+
+  it('Step 6: distAdmin POST /test is DENIED (was 400 BAD_SCOPE; now 403)', async () => {
+    const res = await request(app)
+      .post('/api/settings/gst/credentials/einvoice/test')
+      .set(auth(adminToken));
+    expect([401, 403]).toContain(res.status);
   });
 
   it('POST /test as finance is rejected (403)', async () => {

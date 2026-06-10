@@ -30,54 +30,73 @@ function auth(token: string) {
 }
 
 // ─── GST MODE TOGGLE TESTS ─────────────────────────────────────────────────
+//
+// Group A Step 6: PUT /api/settings/gst/mode is now SUPER-ADMIN ONLY. The
+// canonical mode-change path is POST /api/admin/distributors/:id/gst/{activate,disable}
+// (Step 5). The legacy endpoint is preserved for super-admin emergency direct
+// toggles. distributor_admin / finance / inventory all → 403.
 
-describe('GST Mode Toggle', () => {
+describe('GST Mode Toggle (Group A Step 6 — super-admin only)', () => {
   let originalMode: string;
 
-  it('should get current GST mode', async () => {
+  // Super-admin uses X-Distributor-Id header to switch into the target tenant.
+  const sa = (token: string, distId: string) => ({
+    Authorization: `Bearer ${token}`,
+    'X-Distributor-Id': distId,
+  });
+
+  it('should get current GST mode (read endpoint still allowed to distAdmin)', async () => {
     const res = await request(app)
       .get('/api/settings')
       .set(auth(adminToken));
 
     expect(res.status).toBe(200);
-    // Store original mode to restore later
     originalMode = res.body.data?.gstMode || 'disabled';
   });
 
-  it('should toggle GST mode to sandbox', async () => {
+  it('Step 6: distributor_admin is DENIED on PUT /gst/mode (was 200; now 403)', async () => {
     const res = await request(app)
       .put('/api/settings/gst/mode')
       .set(auth(adminToken))
+      .send({ mode: 'sandbox' });
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('super_admin (with X-Distributor-Id) can toggle GST mode to sandbox', async () => {
+    const res = await request(app)
+      .put('/api/settings/gst/mode')
+      .set(sa(superAdminToken, distAdminDistributorId))
       .send({ mode: 'sandbox' });
 
     expect(res.status).toBe(200);
     expect(res.body.data.gstMode).toBe('sandbox');
   });
 
-  it('should toggle GST mode to disabled', async () => {
+  it('super_admin can toggle GST mode to disabled', async () => {
     const res = await request(app)
       .put('/api/settings/gst/mode')
-      .set(auth(adminToken))
+      .set(sa(superAdminToken, distAdminDistributorId))
       .send({ mode: 'disabled' });
 
     expect(res.status).toBe(200);
     expect(res.body.data.gstMode).toBe('disabled');
   });
 
-  it('should toggle GST mode to live', async () => {
+  it('super_admin can toggle GST mode to live', async () => {
     const res = await request(app)
       .put('/api/settings/gst/mode')
-      .set(auth(adminToken))
+      .set(sa(superAdminToken, distAdminDistributorId))
       .send({ mode: 'live' });
 
     expect(res.status).toBe(200);
     expect(res.body.data.gstMode).toBe('live');
   });
 
-  it('should reject invalid GST mode', async () => {
+  it('super_admin: invalid mode value still 400 (validation runs after role check)', async () => {
     const res = await request(app)
       .put('/api/settings/gst/mode')
-      .set(auth(adminToken))
+      .set(sa(superAdminToken, distAdminDistributorId))
       .send({ mode: 'invalid_mode' });
 
     expect(res.status).toBe(400);
@@ -101,12 +120,12 @@ describe('GST Mode Toggle', () => {
     expect([403, 401]).toContain(res.status);
   });
 
-  // Restore original mode
+  // Restore original mode via super-admin (the new owner of this endpoint).
   afterAll(async () => {
     if (originalMode) {
       await request(app)
         .put('/api/settings/gst/mode')
-        .set(auth(adminToken))
+        .set(sa(superAdminToken, distAdminDistributorId))
         .send({ mode: originalMode });
     }
   });
@@ -231,17 +250,21 @@ describe('GST Mode — Live to Sandbox block (Group A Step 4)', () => {
 
 // ─── GST CREDENTIALS TESTS ─────────────────────────────────────────────────
 
-describe('GST Credentials', () => {
-  it('should get GST credentials (empty or populated)', async () => {
+describe('GST Credentials (Group A Step 6 — super-admin only for writes)', () => {
+  const sa = (token: string, distId: string) => ({
+    Authorization: `Bearer ${token}`,
+    'X-Distributor-Id': distId,
+  });
+
+  it('should get GST credentials — read endpoint still allowed to distAdmin', async () => {
     const res = await request(app)
       .get('/api/settings/gst/credentials')
       .set(auth(adminToken));
 
     expect(res.status).toBe(200);
-    // Should return an object (possibly with empty fields)
   });
 
-  it('should update GST credentials', async () => {
+  it('Step 6: distributor_admin is DENIED on PUT /gst/credentials (was 200/400; now 403)', async () => {
     const res = await request(app)
       .put('/api/settings/gst/credentials')
       .set(auth(adminToken))
@@ -252,16 +275,29 @@ describe('GST Credentials', () => {
         gstin: '29AALCS4728Q1ZB',
       });
 
-    expect([200, 400]).toContain(res.status);
-    if (res.status === 200) {
-      expect(res.body.data).toBeDefined();
-    }
+    expect([401, 403]).toContain(res.status);
   });
 
-  it('should reject credentials with invalid GSTIN format', async () => {
+  it('super_admin can still update GST credentials (preserves emergency path)', async () => {
     const res = await request(app)
       .put('/api/settings/gst/credentials')
-      .set(auth(adminToken))
+      .set(sa(superAdminToken, distAdminDistributorId))
+      .send({
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        username: 'test-user',
+        gstin: '29AALCS4728Q1ZB',
+      });
+
+    // Either 200 (success) or 400 (WhiteBooks auth fail with the bogus creds).
+    // Both prove the role check passed.
+    expect([200, 400]).toContain(res.status);
+  });
+
+  it('super_admin: invalid GSTIN format returns 400 (validation runs after role check)', async () => {
+    const res = await request(app)
+      .put('/api/settings/gst/credentials')
+      .set(sa(superAdminToken, distAdminDistributorId))
       .send({
         clientId: 'test',
         clientSecret: 'test',

@@ -140,7 +140,11 @@ router.get('/gst/credentials', async (req, res) => {
 });
 
 router.put('/gst/credentials',
-  requireRole('super_admin', 'distributor_admin'),
+  // Group A Step 6: locked down. The activation flow at
+  // POST /api/admin/distributors/:id/gst/activate is the canonical path for
+  // setting/rotating credentials. This endpoint is preserved for super-admin
+  // emergency use (single-scope re-test, etc).
+  requireRole('super_admin'),
   validate(gstCredentialsSchema),
   auditLog('upsert', 'gst_credentials'),
   async (req, res) => {
@@ -161,7 +165,8 @@ router.put('/gst/credentials',
 // back to isValid=false and the WhiteBooks error message is returned
 // to the UI so the admin sees exactly what NIC rejected.
 router.put('/gst/credentials/:scope',
-  requireRole('super_admin', 'distributor_admin'),
+  // Group A Step 6: locked down — see /gst/credentials route comment above.
+  requireRole('super_admin'),
   validate(gstCredentialsSchema),
   auditLog('upsert', 'gst_credentials'),
   async (req, res) => {
@@ -215,7 +220,11 @@ router.put('/gst/credentials/:scope',
 // hops are healthy — the 2026-05-15 outage (auth green, NIC IRN 5002)
 // surfaced as a false positive under the old endpoint shape.
 router.post('/gst/credentials/:scope/test',
-  requireRole('super_admin', 'distributor_admin'),
+  // Group A Step 6: locked down — see /gst/credentials route comment above.
+  // The new activation flow uses POST /api/admin/distributors/:id/gst/test-connection
+  // which accepts body-supplied creds (no DB read). This endpoint stays for
+  // super-admin re-testing of already-saved credentials.
+  requireRole('super_admin'),
   auditLog('test_connection', 'gst_credentials'),
   async (req, res) => {
     try {
@@ -319,7 +328,12 @@ router.post('/gst/credentials/:scope/test',
 );
 
 router.put('/gst/mode',
-  requireRole('super_admin', 'distributor_admin'),
+  // Group A Step 6: locked down. The activation flow at
+  // POST /api/admin/distributors/:id/gst/{activate,disable} is the canonical
+  // path for mode changes. This endpoint is kept for super-admin emergency
+  // direct toggles (e.g. force-disable a misconfigured tenant); it still
+  // runs the sandbox allowlist + live-to-sandbox guards via updateGstMode.
+  requireRole('super_admin'),
   validate(gstModeSchema),
   auditLog('update', 'gst_mode'),
   async (req, res) => {
