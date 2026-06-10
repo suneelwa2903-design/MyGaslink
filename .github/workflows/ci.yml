@@ -66,6 +66,19 @@ jobs:
       WHITEBOOKS_EWAYBILL_CLIENT_SECRET: test-ewaybill-client-secret
       WHITEBOOKS_EWAYBILL_USERNAME: test-ewaybill-username
       WHITEBOOKS_EWAYBILL_PASSWORD: test-ewaybill-password
+      # Group A revision: the test-connection / activation tests in
+      # gst/gstActivation.test.ts make REAL HTTP calls to
+      # apisandbox.whitebooks.in via previewTestConnection(). The Layer 1
+      # env vars below carry the real sandbox credentials so those calls
+      # actually authenticate in CI (same as locally). The 8 legacy
+      # `WHITEBOOKS_*_(CLIENT|USERNAME|PASSWORD)` vars above stay because
+      # seed.ts still requireEnv-guards them — those remain stub values.
+      WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID: ${{ secrets.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID }}
+      WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET: ${{ secrets.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET }}
+      WHITEBOOKS_EINVOICE_SANDBOX_EMAIL: ${{ secrets.WHITEBOOKS_EINVOICE_SANDBOX_EMAIL }}
+      WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_ID: ${{ secrets.WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_ID }}
+      WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_SECRET: ${{ secrets.WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_SECRET }}
+      WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL: ${{ secrets.WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL }}
     steps:
       - uses: actions/checkout@v4
         with:
