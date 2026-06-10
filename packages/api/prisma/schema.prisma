@@ -422,6 +422,13 @@ model User {
   // Relations
   distributor           Distributor?       @relation(fields: [distributorId], references: [id])
   customer              Customer?          @relation(fields: [customerId], references: [id])
+  // Group B Part 3 — explicit Driver→User FK lives on the Driver side
+  // (Driver.userId String? @unique). 1:0..1 — a driver can exist without
+  // a login (orphan), and a user can exist without a driver record
+  // (staff role). The reverse relation lets `prisma.user.findFirst({
+  // include: { driverProfile: true } })` resolve a driver login to its
+  // driver row without the phone-match dance in resolveDriverFromUser().
+  driverProfile         Driver?            @relation("DriverUser")
   auditLogs             AuditLog[]
   driverAssignments     DriverAssignment[] @relation("AssignedBy")
   cancelledGstDocuments GstDocument[]      @relation("CancelledGstDocuments")
@@ -775,12 +782,22 @@ model Driver {
   joiningDate        DateTime?    @map("joining_date") @db.Date
   deactivatedAt      DateTime?    @map("deactivated_at")
   deactivationNotes  String?      @map("deactivation_notes")
+  // Group B Part 3 — explicit FK to the driver's app-login User row.
+  // Nullable so a driver can exist without an immediate login (the Fleet
+  // → Add Driver flow doesn't create a User; that happens later via the
+  // role-first Add User modal which queries `unlinked=true` drivers).
+  // @unique enforces 1:0..1 — one driver, at most one login. The legacy
+  // phone-match join in resolveDriverFromUser() stays as a fallback for
+  // any row that pre-dates this column being populated, but new flows
+  // prefer this FK.
+  userId             String?      @unique @map("user_id")
   createdAt          DateTime     @default(now()) @map("created_at")
   updatedAt          DateTime     @updatedAt @map("updated_at")
   deletedAt          DateTime?    @map("deleted_at")
 
   // Relations
   distributor          Distributor               @relation(fields: [distributorId], references: [id])
+  user                 User?                     @relation("DriverUser", fields: [userId], references: [id])
   orders               Order[]
   vehicleAssignments   DriverVehicleAssignment[]
   driverAssignments    DriverAssignment[]

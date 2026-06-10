@@ -20,8 +20,20 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up rows we created (cascade through child tables first).
+  // Group B Part 3 — also clean the `'X'` / `'9999999999'` drivers spawned
+  // by the WI-088 finance-role test. Before this cleanup, every CI run
+  // left one more X row behind; the 229 garbage rows surfaced by the
+  // FK migration pre-flight were 229 prior test runs. Match by the
+  // unique (name='X', phone='9999999999') signature so we never sweep
+  // unrelated drivers.
   const drivers = await prisma.driver.findMany({
-    where: { driverName: TEST_DRIVER_NAME, distributorId: 'dist-001' },
+    where: {
+      distributorId: 'dist-001',
+      OR: [
+        { driverName: TEST_DRIVER_NAME },
+        { driverName: 'X', phone: '9999999999' },
+      ],
+    },
     select: { id: true },
   });
   const vehicles = await prisma.vehicle.findMany({
@@ -32,6 +44,14 @@ afterAll(async () => {
   if (drivers.length > 0) {
     const driverIds = drivers.map((d) => d.id);
     await prisma.driverVehicleAssignment.deleteMany({ where: { driverId: { in: driverIds } } });
+    // Detach any User row that backfilled-pointed at these drivers via the
+    // Group B Part 3 FK before deleting them — else the FK with ON DELETE
+    // SET NULL would normally handle it, but we keep this explicit so a
+    // stricter FK rule in the future doesn't silently surprise us.
+    await prisma.driver.updateMany({
+      where: { id: { in: driverIds }, userId: { not: null } },
+      data: { userId: null },
+    });
     await prisma.driver.deleteMany({ where: { id: { in: driverIds } } });
   }
   if (vehicles.length > 0) {

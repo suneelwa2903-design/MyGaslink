@@ -5,6 +5,15 @@ import { prisma } from '../lib/prisma.js';
 
 let transporter: nodemailer.Transporter | null = null;
 
+// SMTP availability is read at CALL time, not config-load time, so the
+// vitest setup file can `delete process.env.SMTP_*` after config is
+// imported (config freezes its fields at import — see the test setup
+// comment in __tests__/setup.ts). Production behaviour is unchanged
+// because process.env doesn't get wiped after boot.
+function smtpAvailable(): boolean {
+  return Boolean(process.env.SMTP_HOST) && Boolean(process.env.SMTP_USER);
+}
+
 function getTransporter(): nodemailer.Transporter {
   if (!transporter) {
     transporter = nodemailer.createTransport({
@@ -73,7 +82,7 @@ function fromHeader(): string {
 export async function sendOtpEmail(to: string, otp: string, userName: string): Promise<void> {
   const subject = 'Password Reset OTP - MyGasLink';
 
-  if (!config.smtp.host || !config.smtp.user) {
+  if (!smtpAvailable()) {
     logger.warn('SMTP not configured — OTP email not sent', { to });
     if (config.isDev) {
       logger.info(`[DEV] Password reset OTP for ${to}: ${otp}`);
@@ -160,7 +169,7 @@ export async function sendWelcomeEmail(input: {
 }): Promise<{ status: EmailLogStatus; error?: string }> {
   const subject = 'Welcome to MyGasLink — Your login credentials';
 
-  if (!config.smtp.host || !config.smtp.user) {
+  if (!smtpAvailable()) {
     logger.warn('SMTP not configured — welcome email not sent', { to: input.to });
     await writeEmailLog({
       toEmail: input.to,
@@ -255,7 +264,7 @@ export async function sendWelcomeEmail(input: {
 // ─── Diagnostic — used by scripts/test-smtp.ts ───────────────────────────────
 export async function sendSmtpTestEmail(to: string): Promise<void> {
   const subject = 'SMTP Test — MyGasLink';
-  if (!config.smtp.host || !config.smtp.user) {
+  if (!smtpAvailable()) {
     throw new Error('SMTP_HOST and SMTP_USER must be set to run the SMTP test');
   }
   try {

@@ -76,7 +76,32 @@ router.post('/',
         return sendError(res, 'A distributor must be selected before creating this user. Please select a distributor from the top bar.', 400);
       }
       const tempPassword: string = data.password;
+      // Group B Part 3 — `driverId` is a one-shot wiring instruction, not a
+      // User column. Strip it from `data` before handing to userService so
+      // it doesn't accidentally flow into Prisma's user.create() input.
+      const driverIdToLink: string | undefined = data.driverId;
+      delete data.driverId;
       const user = await userService.createUser(data);
+
+      // Driver linkage — atomically (or as close as we get without a tx
+      // spanning the service boundary) point drivers.user_id at the new
+      // login. If the driver row doesn't belong to this distributor we
+      // silently no-op rather than throw — the user is created either way.
+      if (driverIdToLink && user.role === 'driver' && user.distributorId) {
+        try {
+          await prisma.driver.update({
+            where: { id: driverIdToLink, distributorId: user.distributorId },
+            data: { userId: user.id },
+          });
+        } catch (linkErr) {
+          // Don't fail user creation on a link mismatch. The admin can
+          // re-link from Fleet → Drivers manually if needed.
+          // Most likely cause: a Prisma P2025 (record not found) — driver
+          // belongs to a different distributor or was deleted mid-flight.
+          // eslint-disable-next-line no-console
+          console.warn(`[users] driver link failed for user ${user.id} → driver ${driverIdToLink}: ${(linkErr as Error).message}`);
+        }
+      }
 
       // Fire-and-forget welcome email — never block the response on it.
       // sendWelcomeEmail itself swallows transport errors (returns 'failed'

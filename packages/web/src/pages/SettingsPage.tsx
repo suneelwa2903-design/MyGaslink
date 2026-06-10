@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -1113,32 +1113,115 @@ type CreatedCreds = {
   tempPassword: string;
 };
 
+// Shapes for the entity-prefill pickers. We only read a handful of fields
+// each, so kept tight — no need to import the full Driver/Customer types
+// from a generated DTO. mapDrivers/mapCustomers in the API rename `id`
+// to `driverId`/`customerId`; the dropdowns key off those.
+type UnlinkedDriver = { driverId: string; driverName: string; phone: string; licenseNumber?: string | null };
+type UnlinkedCustomer = { customerId: string; customerName: string; phone: string; email?: string | null };
+
 function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => void; user: User | null }) {
   const queryClient = useQueryClient();
   const isEdit = !!user;
   const [createdCreds, setCreatedCreds] = useState<CreatedCreds | null>(null);
+  // Group B Part 3 — track the picked driver/customer ID locally so we can
+  // (a) push it back into the mutation payload as `driverId` / `customerId`
+  // and (b) wipe it when the admin changes their mind about the role.
+  const [pickedDriverId, setPickedDriverId] = useState<string>('');
+  const [pickedCustomerId, setPickedCustomerId] = useState<string>('');
 
-  const { register, handleSubmit, getValues, formState: { errors } } = useForm<CreateUserInput>({
+  const { register, handleSubmit, getValues, setValue, watch, formState: { errors } } = useForm<CreateUserInput>({
     resolver: zodResolver(isEdit ? createUserSchema.partial().omit({ password: true }) : createUserSchema) as unknown as Resolver<CreateUserInput>,
     defaultValues: user
       ? { email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || '', role: user.role }
-      : { email: '', password: '', firstName: '', lastName: '', phone: '', role: UserRole.INVENTORY },
+      : { email: '', password: '', firstName: '', lastName: '', phone: '', role: '' as unknown as UserRole },
   });
 
+  const watchedRole = watch('role') as UserRole | '';
+  const showDriverPicker = !isEdit && watchedRole === UserRole.DRIVER;
+  const showCustomerPicker = !isEdit && watchedRole === UserRole.CUSTOMER;
+
+  // Fetch unlinked drivers/customers only when the relevant role is selected.
+  // Both endpoints get a `unlinked=true` query param (Group B Part 3) — the
+  // API returns only rows without an existing user link.
+  const { data: unlinkedDrivers, isLoading: driversLoading } = useQuery({
+    queryKey: ['users-add-modal', 'unlinked-drivers'],
+    queryFn: () => apiGet<{ drivers: UnlinkedDriver[] }>('/drivers', { unlinked: 'true' }),
+    select: (data) => data.drivers ?? [],
+    enabled: showDriverPicker,
+  });
+  const { data: unlinkedCustomers, isLoading: customersLoading } = useQuery({
+    queryKey: ['users-add-modal', 'unlinked-customers'],
+    queryFn: () => apiGet<{ customers: UnlinkedCustomer[] }>('/customers', { unlinked: 'true', pageSize: 500 }),
+    select: (data) => data.customers ?? [],
+    enabled: showCustomerPicker,
+  });
+
+  // When the admin picks an entity, prefill the form fields. The admin still
+  // sets the password (entities don't carry one). They may edit any prefilled
+  // value — phone or email — before submitting; the picker is a convenience.
+  const onPickDriver = (driverId: string) => {
+    setPickedDriverId(driverId);
+    if (!driverId) return;
+    const d = unlinkedDrivers?.find((x) => x.driverId === driverId);
+    if (!d) return;
+    const [first, ...rest] = d.driverName.trim().split(/\s+/);
+    setValue('firstName', first || d.driverName, { shouldDirty: true });
+    setValue('lastName', rest.join(' '), { shouldDirty: true });
+    setValue('phone', d.phone, { shouldDirty: true });
+    // Drivers have no email on the schema, so we generate a synthetic one
+    // from the phone if blank — admin can overwrite it in the Email field.
+    if (!getValues('email')) {
+      setValue('email', `${d.phone}@driver.mygaslink.local`, { shouldDirty: true });
+    }
+  };
+  const onPickCustomer = (customerId: string) => {
+    setPickedCustomerId(customerId);
+    if (!customerId) return;
+    const c = unlinkedCustomers?.find((x) => x.customerId === customerId);
+    if (!c) return;
+    const [first, ...rest] = c.customerName.trim().split(/\s+/);
+    setValue('firstName', first || c.customerName, { shouldDirty: true });
+    setValue('lastName', rest.join(' '), { shouldDirty: true });
+    setValue('phone', c.phone, { shouldDirty: true });
+    if (c.email) setValue('email', c.email, { shouldDirty: true });
+  };
+
+  // When the admin changes role, clear the picker selection so a stale
+  // driverId doesn't leak into a customer creation (and vice-versa).
+  const lastRoleRef = useRef<UserRole | ''>(watchedRole);
+  useEffect(() => {
+    if (lastRoleRef.current !== watchedRole) {
+      lastRoleRef.current = watchedRole;
+      setPickedDriverId('');
+      setPickedCustomerId('');
+    }
+  }, [watchedRole]);
+
   const mutation = useMutation({
-    mutationFn: (data: CreateUserInput) =>
-      isEdit
-        ? apiPut<{ user: User }>(`/users/${user.userId}`, data)
-        : apiPost<{ user: User; tempPassword: string }>('/users', data),
+    mutationFn: (data: CreateUserInput) => {
+      // Inject the picked entity ID into the payload at submit time so the
+      // API can wire driver/customer linkage. driverId is consumed by the
+      // route (one-shot) and stripped before Prisma sees it.
+      const payload: CreateUserInput & { driverId?: string; customerId?: string } = { ...data };
+      if (!isEdit) {
+        if (watchedRole === UserRole.DRIVER && pickedDriverId) payload.driverId = pickedDriverId;
+        if (watchedRole === UserRole.CUSTOMER && pickedCustomerId) payload.customerId = pickedCustomerId;
+      }
+      return isEdit
+        ? apiPut<{ user: User }>(`/users/${user.userId}`, payload)
+        : apiPost<{ user: User; tempPassword: string }>('/users', payload);
+    },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
+      // Driver/customer pickers depend on the same backend tables — refetch
+      // so the next time the modal opens, the just-linked entity disappears.
+      queryClient.invalidateQueries({ queryKey: ['users-add-modal'] });
       if (isEdit) {
         toast.success('User updated');
         onClose();
         return;
       }
-      // Show the credentials handoff view. Phone for WhatsApp link comes
-      // from the form (the API normalises empty → null on the user row).
       const created = (result as { user: User; tempPassword: string });
       const submitted = getValues();
       setCreatedCreds({
@@ -1152,7 +1235,10 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  // Role dropdown — empty default forces the admin to pick before the rest
+  // of the form shows. The driver/customer pickers gate on this value.
   const roleOptions = [
+    { value: '', label: 'Select role…' },
     { value: UserRole.DISTRIBUTOR_ADMIN, label: 'Distributor Admin' },
     { value: UserRole.FINANCE, label: 'Finance' },
     { value: UserRole.INVENTORY, label: 'Inventory' },
@@ -1179,6 +1265,37 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
   return (
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit User' : 'Add User'}>
       <form onSubmit={handleSubmit((data) => mutation.mutate(data as CreateUserInput))} className="space-y-4">
+        {/* Role first — drives whether the driver/customer picker shows. */}
+        <Select label="Role" options={roleOptions} required error={errors.role?.message} {...register('role')} />
+
+        {showDriverPicker && (
+          <EntityPicker
+            label="Select existing Driver to link"
+            placeholder={driversLoading ? 'Loading drivers…' : 'Pick a driver…'}
+            value={pickedDriverId}
+            onChange={onPickDriver}
+            options={(unlinkedDrivers ?? []).map((d) => ({
+              value: d.driverId,
+              label: `${d.driverName} — ${d.phone}${d.licenseNumber ? ` · ${d.licenseNumber}` : ''}`,
+            }))}
+            emptyText="No unlinked drivers — add one from Fleet → Drivers first."
+          />
+        )}
+
+        {showCustomerPicker && (
+          <EntityPicker
+            label="Select existing Customer to link"
+            placeholder={customersLoading ? 'Loading customers…' : 'Pick a customer…'}
+            value={pickedCustomerId}
+            onChange={onPickCustomer}
+            options={(unlinkedCustomers ?? []).map((c) => ({
+              value: c.customerId,
+              label: `${c.customerName} — ${c.phone}${c.email ? ` · ${c.email}` : ''}`,
+            }))}
+            emptyText="No unlinked customers — add one from Customers first."
+          />
+        )}
+
         <div className="grid grid-cols-2 gap-4">
           <Input label="First Name" required error={errors.firstName?.message} {...register('firstName')} />
           <Input label="Last Name" required error={errors.lastName?.message} {...register('lastName')} />
@@ -1186,13 +1303,47 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
         <Input label="Email" type="email" required error={errors.email?.message} {...register('email')} />
         {!isEdit && <Input label="Password" type="password" required error={errors.password?.message} {...register('password')} />}
         <Input label="Phone" {...register('phone')} />
-        <Select label="Role" options={roleOptions} required error={errors.role?.message} {...register('role')} />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={mutation.isPending}>{isEdit ? 'Update' : 'Create'}</Button>
         </div>
       </form>
     </Modal>
+  );
+}
+
+function EntityPicker({
+  label,
+  placeholder,
+  value,
+  onChange,
+  options,
+  emptyText,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  emptyText: string;
+}) {
+  return (
+    <div className="rounded-xl border border-dashed border-brand-200 bg-brand-50/40 p-3 dark:border-brand-500/30 dark:bg-brand-500/5">
+      <Select
+        label={label}
+        value={value}
+        onChange={(e) => onChange((e.target as HTMLSelectElement).value)}
+        options={[{ value: '', label: placeholder }, ...options]}
+      />
+      {options.length === 0 && (
+        <p className="mt-1 text-xs text-surface-500">{emptyText}</p>
+      )}
+      {value && (
+        <p className="mt-1 text-xs text-surface-500">
+          Fields below are prefilled from the picked record — edit any of them before saving.
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -1,3 +1,14 @@
+// Import config first so dotenv/config runs ONCE and populates process.env
+// from .env. We then immediately wipe the SMTP keys so any later
+// `getTransporter()` call takes the skipped branch deterministically.
+// Without this dance, every test that creates a user would synchronously
+// open a Gmail SMTP socket — slow, flaky, and would actually email real
+// addresses if any test fixture had a typo'd real domain.
+import '../config/index.js';
+delete process.env.SMTP_HOST;
+delete process.env.SMTP_USER;
+delete process.env.SMTP_PASS;
+
 import { prisma } from '../lib/prisma.js';
 import { afterAll, beforeEach } from 'vitest';
 
@@ -10,6 +21,19 @@ import { afterAll, beforeEach } from 'vitest';
 beforeEach(() => {
   delete process.env.INVENTORY_DISPATCH_DEBIT;
 });
+
+// Group B Part 2 — neutralise SMTP for the test process so tests are
+// deterministic. With live SMTP creds in packages/api/.env (Suneel's
+// dev setup) the welcome-email path otherwise tries a real Gmail
+// connection per test, which is slow and asynchronous. Unsetting both
+// SMTP_HOST and SMTP_USER routes sendWelcomeEmail() / sendOtpEmail()
+// down the 'skipped' branch, which writes the audit row synchronously
+// (or close enough) and never opens a network socket.
+// Tests that need to assert real send behaviour can re-set the vars
+// inside their own setup and call _resetTransporter().
+delete process.env.SMTP_HOST;
+delete process.env.SMTP_USER;
+delete process.env.SMTP_PASS;
 
 afterAll(async () => {
   await prisma.$disconnect();

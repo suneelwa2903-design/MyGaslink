@@ -35,7 +35,7 @@ const customerInclude = {
 
 export async function listCustomers(
   distributorId: string,
-  filters: { status?: string; search?: string; page?: number; pageSize?: number }
+  filters: { status?: string; search?: string; page?: number; pageSize?: number; unlinked?: string }
 ) {
   const where: Prisma.CustomerWhereInput = {
     distributorId,
@@ -49,6 +49,12 @@ export async function listCustomers(
       { phone: { contains: filters.search } },
       { gstin: { contains: filters.search, mode: 'insensitive' } },
     ];
+  }
+  // Group B Part 3 — used by the smart Add User modal when role=customer.
+  // `users: { none: { deletedAt: null } }` returns customers whose User[]
+  // back-relation (1:N via User.customerId) is empty — i.e. no app login.
+  if (filters.unlinked === 'true' || filters.unlinked === '1') {
+    where.users = { none: { deletedAt: null } };
   }
 
   const page = filters.page || 1;

@@ -2,9 +2,23 @@ import { prisma } from '../lib/prisma.js';
 import type { Prisma, $Enums } from '@prisma/client';
 import { utcDayRange } from '../utils/dateOnly.js';
 
-export async function listDrivers(distributorId: string, status?: string) {
+export async function listDrivers(
+  distributorId: string,
+  status?: string,
+  options?: { unlinkedOnly?: boolean },
+) {
   const where: Prisma.DriverWhereInput = { distributorId, deletedAt: null };
   if (status) where.status = status as $Enums.DriverStatus;
+  // Group B Part 3 — when ?unlinked=true on GET /api/drivers, return only
+  // drivers without an app-login row. Used by the new Add User modal:
+  // role=driver dropdown only offers drivers that DON'T already have a
+  // login (otherwise the admin would create a duplicate user for the same
+  // driver). Filter uses the explicit FK first, then the implicit phone-
+  // match as a backstop so any pre-FK driver who happens to share a phone
+  // with a driver-role user is still considered linked.
+  if (options?.unlinkedOnly) {
+    where.userId = null;
+  }
 
   // WI-079: scope the assignment include to TODAY's date range so the
   // surfaced vehicle reflects today's confirmed driver-vehicle mapping

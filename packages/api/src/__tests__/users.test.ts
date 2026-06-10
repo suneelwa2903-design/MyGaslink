@@ -241,6 +241,197 @@ describe('Users — Welcome email + audit log (Group B Part 2)', () => {
   });
 });
 
+// Group B Part 3 — `?unlinked=true` filter on GET /api/drivers and
+// GET /api/customers, plus the new POST /api/users { driverId } wiring
+// that atomically sets Driver.userId after the user row is created.
+describe('Users — Driver ↔ User FK + unlinked filter (Group B Part 3)', () => {
+  let testDriverId: string;
+  let testCustomerId: string;
+  const TEST_DRIVER_USER_EMAIL = 'driver-fk-test@example.com';
+  const TEST_CUSTOMER_USER_EMAIL = 'customer-fk-test@example.com';
+
+  beforeAll(async () => {
+    // Drop any leftover rows from a previously failed run before seeding.
+    const leftoverEmails = [
+      TEST_DRIVER_USER_EMAIL,
+      TEST_CUSTOMER_USER_EMAIL,
+      'driver-fk-x-tenant@example.com',
+    ];
+    await prisma.emailLog.deleteMany({ where: { toEmail: { in: leftoverEmails } } });
+    // Detach drivers that still point at a soon-to-be-deleted user, else
+    // the FK blocks the user delete.
+    const leftoverUsers = await prisma.user.findMany({
+      where: { email: { in: leftoverEmails } },
+      select: { id: true },
+    });
+    if (leftoverUsers.length > 0) {
+      await prisma.driver.updateMany({
+        where: { userId: { in: leftoverUsers.map((u) => u.id) } },
+        data: { userId: null },
+      });
+    }
+    await prisma.user.deleteMany({ where: { email: { in: leftoverEmails } } });
+    await prisma.driver.deleteMany({
+      where: { distributorId: 'dist-001', driverName: 'FK Test Driver' },
+    });
+    await prisma.customer.deleteMany({
+      where: { distributorId: 'dist-001', customerName: 'FK Test Customer' },
+    });
+
+    // Seed a fresh unlinked driver + customer on dist-001 so we can pick
+    // them via the modal flow and assert the link.
+    const driver = await prisma.driver.create({
+      data: {
+        distributorId: 'dist-001',
+        driverName: 'FK Test Driver',
+        phone: '9100012345',
+        licenseNumber: 'DL-FK-TEST-001',
+      },
+    });
+    testDriverId = driver.id;
+
+    const customer = await prisma.customer.create({
+      data: {
+        distributorId: 'dist-001',
+        customerName: 'FK Test Customer',
+        phone: '9100023456',
+        email: 'fkcustomer@example.com',
+      },
+    });
+    testCustomerId = customer.id;
+  });
+
+  afterAll(async () => {
+    await prisma.emailLog.deleteMany({
+      where: { toEmail: { in: [TEST_DRIVER_USER_EMAIL, TEST_CUSTOMER_USER_EMAIL] } },
+    });
+    // Detach the driver before deleting the user it points at, so the FK
+    // doesn't dangle.
+    if (testDriverId) {
+      await prisma.driver.update({
+        where: { id: testDriverId },
+        data: { userId: null },
+      });
+      await prisma.driver.delete({ where: { id: testDriverId } });
+    }
+    await prisma.user.deleteMany({
+      where: { email: { in: [TEST_DRIVER_USER_EMAIL, TEST_CUSTOMER_USER_EMAIL] } },
+    });
+    if (testCustomerId) {
+      await prisma.customer.delete({ where: { id: testCustomerId } });
+    }
+  });
+
+  it('GET /api/drivers?unlinked=true includes our fresh unlinked driver', async () => {
+    const res = await request(app)
+      .get('/api/drivers?unlinked=true')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const ids = res.body.data.drivers.map((d: { driverId: string }) => d.driverId);
+    expect(ids).toContain(testDriverId);
+  });
+
+  it('GET /api/customers?unlinked=true includes our fresh unlinked customer', async () => {
+    const res = await request(app)
+      .get('/api/customers?unlinked=true')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const ids = res.body.data.customers.map((c: { customerId: string }) => c.customerId);
+    expect(ids).toContain(testCustomerId);
+  });
+
+  it('POST /api/users with driverId wires Driver.userId on success', async () => {
+    const res = await request(app)
+      .post('/api/users')
+      .set(auth(adminToken))
+      .send({
+        email: TEST_DRIVER_USER_EMAIL,
+        password: 'DriverFK@123',
+        firstName: 'FK',
+        lastName: 'Driver',
+        phone: '9100012345',
+        role: 'driver',
+        driverId: testDriverId,
+      });
+    expect(res.status).toBe(201);
+    const newUserId: string = res.body.data.user.userId;
+    const driver = await prisma.driver.findUniqueOrThrow({ where: { id: testDriverId } });
+    expect(driver.userId).toBe(newUserId);
+  });
+
+  it('GET /api/drivers?unlinked=true now EXCLUDES the linked driver', async () => {
+    const res = await request(app)
+      .get('/api/drivers?unlinked=true')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const ids = res.body.data.drivers.map((d: { driverId: string }) => d.driverId);
+    expect(ids).not.toContain(testDriverId);
+  });
+
+  it('POST /api/users with customerId sets User.customerId (existing pattern, sanity-check)', async () => {
+    const res = await request(app)
+      .post('/api/users')
+      .set(auth(adminToken))
+      .send({
+        email: TEST_CUSTOMER_USER_EMAIL,
+        password: 'CustomerFK@123',
+        firstName: 'FK',
+        lastName: 'Customer',
+        phone: '9100023456',
+        role: 'customer',
+        customerId: testCustomerId,
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.data.user.customerId).toBe(testCustomerId);
+  });
+
+  it('GET /api/customers?unlinked=true now EXCLUDES the linked customer', async () => {
+    const res = await request(app)
+      .get('/api/customers?unlinked=true')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const ids = res.body.data.customers.map((c: { customerId: string }) => c.customerId);
+    expect(ids).not.toContain(testCustomerId);
+  });
+
+  it('POST /api/users with driverId belonging to ANOTHER distributor silently skips the link (does NOT 403)', async () => {
+    const dist2Driver = await prisma.driver.findFirst({
+      where: { distributorId: 'dist-002', deletedAt: null },
+    });
+    if (!dist2Driver) throw new Error('Seed expected at least one dist-002 driver');
+    // Snapshot the dist-002 driver's userId BEFORE the cross-tenant attempt.
+    // It may already be non-null from the FK migration's backfill (a
+    // dist-002 driver-role User with matching phone). The invariant we're
+    // testing isn't "userId stays NULL" — it's "userId does NOT become the
+    // newly-created cross-tenant user's id".
+    const userIdBefore = dist2Driver.userId ?? null;
+
+    const xTenantEmail = 'driver-fk-x-tenant@example.com';
+    const res = await request(app)
+      .post('/api/users')
+      .set(auth(adminToken))
+      .send({
+        email: xTenantEmail,
+        password: 'CrossT@123',
+        firstName: 'X',
+        lastName: 'Tenant',
+        phone: '9100099999',
+        role: 'driver',
+        driverId: dist2Driver.id, // belongs to dist-002, caller is dist-001
+      });
+    // User creation succeeds in dist-001; link silently fails because the
+    // driver's distributorId doesn't match.
+    expect(res.status).toBe(201);
+    const newUserId: string = res.body.data.user.userId;
+    const reread = await prisma.driver.findUniqueOrThrow({ where: { id: dist2Driver.id } });
+    expect(reread.userId).toBe(userIdBefore);
+    expect(reread.userId).not.toBe(newUserId);
+
+    await prisma.emailLog.deleteMany({ where: { toEmail: xTenantEmail } });
+    await prisma.user.deleteMany({ where: { email: xTenantEmail } });
+  });
+});
+
 describe('Users — Tenant Isolation', () => {
   it('cannot fetch a user from another distributor (404)', async () => {
     const dist2User = await prisma.user.findFirst({

@@ -63,6 +63,13 @@ export const createUserSchema = z.object({
   role: z.nativeEnum(UserRole),
   distributorId: uuid.optional(),
   customerId: uuid.optional(),
+  // Group B Part 3 — one-shot wiring instruction (NOT a User column).
+  // When the Add User modal's role=driver flow picks a driver, the route
+  // creates the User row, then writes drivers.user_id = newUser.id. The
+  // field is unused for any other role. driver_id is the ONLY direction
+  // available for the Driver→User link because the FK lives on the
+  // Driver side (1:0..1, @unique).
+  driverId: uuid.optional(),
 });
 
 export const updateUserSchema = createUserSchema.partial().omit({ password: true });
@@ -512,6 +519,10 @@ export const paymentFilterSchema = paginationSchema.merge(dateRangeSchema).exten
 export const customerFilterSchema = paginationSchema.extend({
   status: z.nativeEnum(CustomerStatus).optional(),
   search: z.string().optional(),
+  // Group B Part 3 — `unlinked=true` returns only customers that have no
+  // app-login user row pointing at them via User.customerId. Drives the
+  // smart Add User modal's role=customer dropdown.
+  unlinked: z.union([z.literal('true'), z.literal('1'), z.literal('false'), z.literal('0')]).optional(),
 });
 
 // ─── Type exports from schemas ───────────────────────────────────────────────

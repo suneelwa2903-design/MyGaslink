@@ -97,8 +97,13 @@ const createDriverSchema = z.object({
 
 driverRouter.get('/', async (req, res) => {
   try {
+    // ?unlinked=true — Group B Part 3, used by the smart Add User modal
+    // when role=driver. Returns only drivers without an app-login user row.
+    const unlinkedOnly = req.query.unlinked === 'true' || req.query.unlinked === '1';
     const drivers = await driverService.listDrivers(
-      req.user!.distributorId!, req.query.status as string
+      req.user!.distributorId!,
+      req.query.status as string,
+      { unlinkedOnly },
     );
     return sendSuccess(res, { drivers: mapDrivers(drivers) });
   } catch (err) {
