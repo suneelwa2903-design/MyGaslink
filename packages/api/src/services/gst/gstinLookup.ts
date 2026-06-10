@@ -5,7 +5,7 @@
  */
 
 import { prisma } from '../../lib/prisma.js';
-import { getCredentials, getAuthToken, GstError } from './whitebooksClient.js';
+import { getCredentials, getAuthToken, getLayer1Credentials, GstError } from './whitebooksClient.js';
 import { logger } from '../../utils/logger.js';
 import { INDIAN_STATES } from '@gaslink/shared';
 import type { NicError } from './nicTypes.js';
@@ -163,17 +163,23 @@ export async function lookupGstin(
     include: { distributor: { select: { gstMode: true } } },
   });
   let creds = ownRow
-    ? {
-        clientId: ownRow.clientId,
-        clientSecret: ownRow.clientSecret,
-        username: ownRow.username,
-        password: ownRow.password,
-        gstin: ownRow.gstin,
-        email: ownRow.email!,
-        baseUrl: (ownRow.distributor?.gstMode === 'sandbox' || !ownRow.distributor)
-          ? 'https://apisandbox.whitebooks.in'
-          : 'https://api.whitebooks.in',
-      }
+    ? (() => {
+        const isSandbox = ownRow.distributor?.gstMode === 'sandbox' || !ownRow.distributor;
+        const authMode: 'sandbox' | 'live' = isSandbox ? 'sandbox' : 'live';
+        // Group A: env-first Layer 1, DB fallback only in sandbox.
+        const layer1 = getLayer1Credentials('einvoice', authMode);
+        return {
+          clientId: layer1?.clientId ?? ownRow.clientId,
+          clientSecret: layer1?.clientSecret ?? ownRow.clientSecret,
+          username: ownRow.username,
+          password: ownRow.password,
+          gstin: ownRow.gstin,
+          email: ownRow.email!,
+          baseUrl: isSandbox
+            ? 'https://apisandbox.whitebooks.in'
+            : 'https://api.whitebooks.in',
+        };
+      })()
     : null;
   let credDistributorId: string | null = ownRow ? distributorId : null;
   // Silence unused-import warning when this path is skipped.
@@ -200,9 +206,12 @@ export async function lookupGstin(
     }
     credDistributorId = fallbackCred.distributorId;
     const isSandbox = fallbackCred.distributor?.gstMode === 'sandbox' || !fallbackCred.distributor;
+    const authMode: 'sandbox' | 'live' = isSandbox ? 'sandbox' : 'live';
+    // Group A: env-first Layer 1, DB fallback only in sandbox.
+    const layer1 = getLayer1Credentials('einvoice', authMode);
     creds = {
-      clientId: fallbackCred.clientId,
-      clientSecret: fallbackCred.clientSecret,
+      clientId: layer1?.clientId ?? fallbackCred.clientId,
+      clientSecret: layer1?.clientSecret ?? fallbackCred.clientSecret,
       username: fallbackCred.username,
       password: fallbackCred.password,
       gstin: fallbackCred.gstin,

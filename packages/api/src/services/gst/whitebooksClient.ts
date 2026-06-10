@@ -77,6 +77,41 @@ interface WhiteBooksCredentials {
   baseUrl: string;
 }
 
+/**
+ * Group A — Layer 1 credentials (client_id + client_secret) live in env vars,
+ * NOT in the per-distributor gst_credentials table. One pair per scope ×
+ * environment, shared by all distributors in the matching mode.
+ *
+ *   WHITEBOOKS_<einvoice|ewaybill>_<sandbox|prod>_CLIENT_ID
+ *   WHITEBOOKS_<einvoice|ewaybill>_<sandbox|prod>_CLIENT_SECRET
+ *
+ * Returns the credentials if env vars are set. Returns null when sandbox env
+ * vars are missing (caller may fall back to DB-stored values for backward
+ * compat). Throws NO_PROD_CREDS when live env vars are missing — live mode
+ * never falls back to DB.
+ */
+export function getLayer1Credentials(
+  scope: 'einvoice' | 'ewaybill',
+  mode: 'sandbox' | 'live',
+): { clientId: string; clientSecret: string } | null {
+  // Internal mode 'live' maps to externally-named env-var suffix 'PROD' per
+  // the Group A spec (human-readable in deploy configs). 'sandbox' → 'SANDBOX'.
+  const envSuffix = mode === 'live' ? 'PROD' : 'SANDBOX';
+  const prefix = `WHITEBOOKS_${scope.toUpperCase()}_${envSuffix}`;
+  const clientId = process.env[`${prefix}_CLIENT_ID`];
+  const clientSecret = process.env[`${prefix}_CLIENT_SECRET`];
+  if (clientId && clientSecret) {
+    return { clientId, clientSecret };
+  }
+  if (mode === 'live') {
+    throw new GstError(
+      'Production WhiteBooks credentials not configured. Contact platform admin.',
+      'NO_PROD_CREDS',
+    );
+  }
+  return null;
+}
+
 interface CachedToken {
   token: string;
   expiresAt: Date;
@@ -120,9 +155,12 @@ export async function getCredentials(distributorId: string | null, scope: 'einvo
     });
     if (!fallback) return null;
     const isSandbox = fallback.distributor?.gstMode === 'sandbox' || !fallback.distributor;
+    const authMode: 'sandbox' | 'live' = isSandbox ? 'sandbox' : 'live';
+    // Group A: env-first Layer 1, DB fallback only in sandbox.
+    const layer1 = getLayer1Credentials(scope, authMode);
     return {
-      clientId: fallback.clientId,
-      clientSecret: fallback.clientSecret,
+      clientId: layer1?.clientId ?? fallback.clientId,
+      clientSecret: layer1?.clientSecret ?? fallback.clientSecret,
       username: fallback.username,
       password: fallback.password,
       gstin: fallback.gstin,
@@ -132,9 +170,12 @@ export async function getCredentials(distributorId: string | null, scope: 'einvo
   }
 
   const isSandbox = cred.distributor?.gstMode === 'sandbox' || !cred.distributor;
+  const authMode: 'sandbox' | 'live' = isSandbox ? 'sandbox' : 'live';
+  // Group A: env-first Layer 1, DB fallback only in sandbox.
+  const layer1 = getLayer1Credentials(scope, authMode);
   return {
-    clientId: cred.clientId,
-    clientSecret: cred.clientSecret,
+    clientId: layer1?.clientId ?? cred.clientId,
+    clientSecret: layer1?.clientSecret ?? cred.clientSecret,
     username: cred.username,
     password: cred.password,
     gstin: cred.gstin,
