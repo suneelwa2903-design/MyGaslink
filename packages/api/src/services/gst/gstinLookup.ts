@@ -174,7 +174,14 @@ export async function lookupGstin(
           username: ownRow.username,
           password: ownRow.password,
           gstin: ownRow.gstin,
-          email: ownRow.email!,
+          // Group A revision: email is GasLink-global (Layer 1 env). Sandbox
+          // may fall back to legacy DB email; live throws upstream via Layer 1.
+          email: layer1?.email ?? ownRow.email ?? (() => {
+            throw new GstError(
+              'GasLink WhiteBooks email-of-record not configured (env + DB both empty)',
+              'NO_GASLINK_EMAIL',
+            );
+          })(),
           baseUrl: isSandbox
             ? 'https://apisandbox.whitebooks.in'
             : 'https://api.whitebooks.in',
@@ -215,7 +222,14 @@ export async function lookupGstin(
       username: fallbackCred.username,
       password: fallbackCred.password,
       gstin: fallbackCred.gstin,
-      email: fallbackCred.email || 'info@mygaslink.com',
+      // Group A revision: email is GasLink-global (Layer 1 env). Fallback to
+      // legacy DB email for sandbox backward compat; throw if neither.
+      email: layer1?.email ?? fallbackCred.email ?? (() => {
+        throw new GstError(
+          'GasLink WhiteBooks email-of-record not configured (env + DB both empty)',
+          'NO_GASLINK_EMAIL',
+        );
+      })(),
       baseUrl: isSandbox ? 'https://apisandbox.whitebooks.in' : 'https://api.whitebooks.in',
     };
   }
@@ -233,7 +247,10 @@ export async function lookupGstin(
   if (creds.clientSecret) headers['client_secret'] = creds.clientSecret;
   if (token !== 'no-token-needed') headers['auth-token'] = token;
 
-  const emailParam = encodeURIComponent(creds.email || 'info@mygaslink.com');
+  // Group A revision: creds.email is now GasLink-global (Layer 1 env).
+  // getCredentials throws NO_GASLINK_EMAIL if neither env nor legacy DB
+  // has a value, so creds.email is guaranteed populated here.
+  const emailParam = encodeURIComponent(creds.email);
   const url = `${creds.baseUrl}/einvoice/type/GSTNDETAILS/version/V1_03?param1=${gstin}&email=${emailParam}`;
   logger.info('GSTIN lookup request', { gstin, url });
 

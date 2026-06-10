@@ -85,10 +85,11 @@ beforeEach(async () => {
 
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
+// Group A revision: Layer 2 is username + password only. Email is
+// GasLink-global Layer 1 (env var), not collected per distributor.
 const SAMPLE_CREDS = {
   username: 'testuser',
   password: 'testpass123',
-  email: 'test@activation.com',
 };
 
 const SAMPLE_BODY = {
@@ -165,7 +166,10 @@ describe('POST /api/admin/distributors/:id/gst/activate — happy path', () => {
     expect(creds).toHaveLength(2);
     expect(creds[0].scope).toBe('einvoice');
     expect(creds[0].username).toBe(SAMPLE_CREDS.username);
-    expect(creds[0].email).toBe(SAMPLE_CREDS.email);
+    // Group A revision: email is no longer written to gst_credentials.email
+    // by the activation flow. The column stays for legacy/cleanup, but is
+    // left null on rows created by activate. Email-of-record lives in env.
+    expect(creds[0].email).toBeNull();
     expect(creds[0].isValid).toBe(true);
     expect(creds[1].scope).toBe('ewaybill');
     expect(creds[1].username).toBe(SAMPLE_CREDS.username); // same_as_einvoice
@@ -188,8 +192,8 @@ describe('POST /api/admin/distributors/:id/gst/activate — happy path', () => {
   });
 
   it('different creds per scope: both rows hold their own values, fingerprints differ', async () => {
-    const einCreds = { username: 'einu', password: 'einp', email: 'ein@x.com' };
-    const ewbCreds = { username: 'ewbu', password: 'ewbp', email: 'ewb@x.com' };
+    const einCreds = { username: 'einu', password: 'einp' };
+    const ewbCreds = { username: 'ewbu', password: 'ewbp' };
     const res = await request(app)
       .post(`/api/admin/distributors/${ADHOC_ID}/gst/activate`)
       .set(auth(superAdminToken))
@@ -234,13 +238,13 @@ describe('POST /api/admin/distributors/:id/gst/activate — role + validation', 
     expect(res.status).toBe(200);
   });
 
-  it('invalid email format returns 400', async () => {
+  it('missing username field returns 400', async () => {
     const res = await request(app)
       .post(`/api/admin/distributors/${ADHOC_ID}/gst/activate`)
       .set(auth(superAdminToken))
       .send({
         ...SAMPLE_BODY,
-        einvoice: { ...SAMPLE_CREDS, email: 'not-an-email' },
+        einvoice: { password: SAMPLE_CREDS.password }, // username missing
       });
     expect(res.status).toBe(400);
   });

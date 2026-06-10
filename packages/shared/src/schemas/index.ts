@@ -319,12 +319,13 @@ export const gstModeSchema = z.object({
 
 // ─── Group A: Atomic GST Activation (super-admin only) ───────────────────────
 //
-// Per-scope Layer 2 credentials. Layer 1 (client_id/client_secret) is read from
-// env vars at runtime — never accepted from a request body.
+// Per-scope Layer 2 credentials. Layer 1 (client_id/client_secret/email) is
+// read from env vars at runtime — never accepted from a request body. Email
+// is GasLink-global, not per-distributor (one MyGasLink WhiteBooks account
+// per scope × environment).
 export const gstLayer2CredentialsSchema = z.object({
   username: z.string().min(1, 'Username is required'),
   password: z.string().min(1, 'Password is required'),
-  email: z.string().email('Valid email required'),
 });
 
 // Reason enum — drives the audit_log details JSON. 'other' requires reasonText.

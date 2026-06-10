@@ -526,9 +526,7 @@ async function regenerateB2bIrn(
 
   const invoiceData = await buildInvoiceDataForIrn(invoiceId, distributor);
   const credEmail =
-    (await getCredentials(distributorId, 'einvoice'))?.email ||
-    distributor.email ||
-    'info@mygaslink.com';
+    (await getCredentials(distributorId, 'einvoice'))!.email;
 
   const callIrn = async (payload: IrnPayload) => callWithLog<IrnResponse>(
     distributorId, 'POST',
@@ -614,10 +612,7 @@ async function regenerateB2bEwb(
   }
   const invoiceData = await buildInvoiceDataForIrn(invoiceId, distributor);
   const credEmail =
-    (await getCredentials(distributorId, 'ewaybill'))?.email ||
-    (await getCredentials(distributorId, 'einvoice'))?.email ||
-    distributor.email ||
-    'info@mygaslink.com';
+    (await getCredentials(distributorId, 'ewaybill'))!.email;
 
   const result = await generateEwbFromIrn(distributorId, invoiceId, {
     irnPayload: buildIrnPayload(invoiceData),
@@ -665,10 +660,7 @@ async function regenerateB2cEwb(
     vehicleNumber, transportMode: '1', distance: 1,
   });
   const credEmail =
-    (await getCredentials(distributorId, 'ewaybill'))?.email ||
-    (await getCredentials(distributorId, 'einvoice'))?.email ||
-    distributor.email ||
-    'info@mygaslink.com';
+    (await getCredentials(distributorId, 'ewaybill'))!.email;
 
   const resp = await callWithLog<EwbResponse>(
     distributorId, 'POST',

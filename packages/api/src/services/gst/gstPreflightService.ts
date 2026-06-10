@@ -664,10 +664,7 @@ async function generateConsolidatedEwb(args: {
 }): Promise<string> {
   const { distributorId, distributor, ewbNumbers, vehicleNumber } = args;
   const credEmail =
-    (await getCredentials(distributorId, 'ewaybill'))?.email ||
-    (await getCredentials(distributorId, 'einvoice'))?.email ||
-    distributor.email ||
-    'info@mygaslink.com';
+    (await getCredentials(distributorId, 'ewaybill'))!.email;
 
   const fromState = parseInt((distributor.gstin || '').substring(0, 2), 10) || 0;
   const payload = {
@@ -1041,9 +1038,7 @@ async function runB2bPreflight(params: {
   const invoiceData = await buildInvoiceData(invoiceId, distributor, undefined);
 
   const credEmail =
-    (await getCredentials(distributorId, 'einvoice'))?.email ||
-    distributor.email ||
-    'info@mygaslink.com';
+    (await getCredentials(distributorId, 'einvoice'))!.email;
 
   // CRITICAL — see comment in gstService.processInvoiceGst on the same flag.
   // Two invoices (INV-MP6FSGSNM1N, INV-MP6JW3EH46T) ended up with a real NIC
@@ -1277,10 +1272,7 @@ async function runB2cPreflight(params: {
 
   const invoiceData = await buildInvoiceData(invoiceId, distributor, undefined);
   const credEmail =
-    (await getCredentials(distributorId, 'ewaybill'))?.email ||
-    (await getCredentials(distributorId, 'einvoice'))?.email ||
-    distributor.email ||
-    'info@mygaslink.com';
+    (await getCredentials(distributorId, 'ewaybill'))!.email;
 
   try {
     const irnPayload = buildIrnPayload(invoiceData);

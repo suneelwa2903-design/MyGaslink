@@ -310,7 +310,7 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
   };
 
   // Get credential email once for all GST API calls
-  const credEmail = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
+  const credEmail = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   // Step 1: Generate IRN (B2B only)
   //
@@ -815,7 +815,7 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
       distance: 0, // Auto-populate from PIN database
     });
 
-    const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
+    const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
     const ewbResponse = await callWithLog<EwbResponse>(
       distributorId, 'POST',
@@ -954,7 +954,7 @@ export async function cancelIrn(
     where: { id: distributorId },
     select: { email: true },
   });
-  const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
+  const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   const cancelPayload = {
     Irn: invoice.irn,
@@ -1012,7 +1012,7 @@ export async function cancelEwb(
     where: { id: distributorId },
     select: { email: true },
   });
-  const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
+  const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   // WI-086 FIX: clearTokenCache removed from here — see note in cancelIrn.
   const response = await callWithLog<EwbResponse>(
@@ -1115,7 +1115,7 @@ export async function processCreditNoteGst(creditNoteId: string, distributorId: 
   };
 
   const payload = buildIrnPayload(data);
-  const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
+  const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   try {
     const response = await callWithLog<IrnResponse>(
@@ -1215,7 +1215,7 @@ export async function processDebitNoteGst(debitNoteId: string, distributorId: st
   };
 
   const payload = buildIrnPayload(data);
-  const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
+  const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   try {
     const response = await callWithLog<IrnResponse>(
@@ -1256,7 +1256,7 @@ export async function validateGstin(distributorId: string, gstin: string) {
     return { valid: true, source: 'local', message: 'GST disabled, skipping validation' };
   }
 
-  const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor.email || 'info@mygaslink.com';
+  const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   try {
     const response = await callWithLog<WhiteBooksEnvelope>(
@@ -1302,9 +1302,7 @@ export async function getIrnByDocDetails(
     select: { email: true },
   });
   const email =
-    (await getCredentials(distributorId, 'einvoice'))?.email ||
-    distributor?.email ||
-    'info@mygaslink.com';
+    (await getCredentials(distributorId, 'einvoice'))!.email;
 
   const dd = docDate.getUTCDate().toString().padStart(2, '0');
   const mm = (docDate.getUTCMonth() + 1).toString().padStart(2, '0');
@@ -1349,7 +1347,7 @@ export async function getIrnDetails(distributorId: string, irn: string) {
     where: { id: distributorId },
     select: { email: true },
   });
-  const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
+  const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   return callWithLog<IrnResponse>(
     distributorId, 'GET',
@@ -1367,7 +1365,7 @@ export async function getEwbStatus(distributorId: string, ewbNo: string) {
     where: { id: distributorId },
     select: { email: true },
   });
-  const email = (await getCredentials(distributorId, 'einvoice'))?.email || distributor?.email || 'info@mygaslink.com';
+  const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   return callWithLog<EwbResponse>(
     distributorId, 'GET',

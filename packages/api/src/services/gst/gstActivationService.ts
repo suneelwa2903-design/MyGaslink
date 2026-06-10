@@ -32,7 +32,6 @@ type GstMode = 'disabled' | 'sandbox' | 'live';
 interface Layer2Creds {
   username: string;
   password: string;
-  email: string;
 }
 
 interface ActivatePayload {
@@ -56,14 +55,15 @@ export class GstActivationError extends Error {
 }
 
 /**
- * sha256[:16] of `username:password:email:gstin`. The point is detection of
- * change ("did the operator rotate creds?") without the value ever flowing
- * back into transcripts, audit dumps, or the API response. NEVER include the
- * raw creds in logs.
+ * sha256[:16] of `username:password:gstin`. The point is detection of change
+ * ("did the operator rotate creds?") without the value ever flowing back into
+ * transcripts, audit dumps, or the API response. NEVER include the raw creds
+ * in logs. (Email is GasLink-global Layer 1 now, not part of the per-tenant
+ * Layer 2 fingerprint.)
  */
 export function credentialFingerprint(creds: Layer2Creds, gstin: string): string {
   return createHash('sha256')
-    .update(`${creds.username}:${creds.password}:${creds.email}:${gstin}`)
+    .update(`${creds.username}:${creds.password}:${gstin}`)
     .digest('hex')
     .slice(0, 16);
 }
@@ -105,7 +105,9 @@ export async function previewTestConnection(
   const baseUrl = mode === 'sandbox'
     ? 'https://apisandbox.whitebooks.in'
     : 'https://api.whitebooks.in';
-  const emailParam = encodeURIComponent(creds.email);
+  // Group A revision: email comes from Layer 1 (GasLink-global), not from
+  // per-distributor Layer 2 input.
+  const emailParam = encodeURIComponent(layer1.email);
 
   // Hit /authenticate directly with the supplied creds. Mirror the auth
   // header / query-param split that whitebooksClient does for each scope.
@@ -124,7 +126,7 @@ export async function previewTestConnection(
     };
   } else {
     const qs = new URLSearchParams({
-      email: creds.email,
+      email: layer1.email,
       username: creds.username,
       password: creds.password,
     }).toString();
@@ -249,12 +251,14 @@ export async function activateGst(
       create: {
         distributorId: dist.id,
         scope,
-        clientId: 'ENV_VAR_ROUTED', // sentinel — Layer 1 lives in env, this column is legacy
+        // Sentinels — Layer 1 (client_id/secret/email) lives in env vars.
+        // These columns are kept on gst_credentials for legacy backward
+        // compat but the runtime auth path no longer reads them.
+        clientId: 'ENV_VAR_ROUTED',
         clientSecret: 'ENV_VAR_ROUTED',
         username: creds.username,
         password: creds.password,
         gstin: dist.gstin!,
-        email: creds.email,
         isValid: true,
         lastValidated: new Date(),
       },
@@ -262,7 +266,6 @@ export async function activateGst(
         username: creds.username,
         password: creds.password,
         gstin: dist.gstin!,
-        email: creds.email,
         isValid: true,
         lastValidated: new Date(),
       },

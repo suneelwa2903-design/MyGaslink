@@ -36,17 +36,14 @@ type Scope = 'einvoice' | 'ewaybill';
 interface Layer2Creds {
   username: string;
   password: string;
-  email: string;
 }
 
 interface ActivationFormFields {
   username: string;
   password: string;
-  email: string;
   // ewaybill-specific (only used if sameCreds === false)
   ewbUsername: string;
   ewbPassword: string;
-  ewbEmail: string;
   reason: 'new_distributor_activation' | 'credential_rotation' | 'mode_change' | 'revoke_access' | 'other';
   reasonText: string;
 }
@@ -193,10 +190,8 @@ function ActivationForm({
     defaultValues: {
       username: '',
       password: '',
-      email: distributor.email || '',
       ewbUsername: '',
       ewbPassword: '',
-      ewbEmail: distributor.email || '',
       reason: 'new_distributor_activation',
       reasonText: '',
     },
@@ -221,17 +216,17 @@ function ActivationForm({
 
   const handleTestConnection = async () => {
     const v = activationForm.getValues();
-    const einCreds: Layer2Creds = { username: v.username, password: v.password, email: v.email };
+    const einCreds: Layer2Creds = { username: v.username, password: v.password };
     const ewbCreds: Layer2Creds = sameCreds
       ? einCreds
-      : { username: v.ewbUsername, password: v.ewbPassword, email: v.ewbEmail };
+      : { username: v.ewbUsername, password: v.ewbPassword };
 
-    if (!einCreds.username || !einCreds.password || !einCreds.email) {
-      toast.error('Fill all einvoice fields before testing');
+    if (!einCreds.username || !einCreds.password) {
+      toast.error('Fill the e-Invoice username and password before testing');
       return;
     }
-    if (!sameCreds && (!ewbCreds.username || !ewbCreds.password || !ewbCreds.email)) {
-      toast.error('Fill all e-Way Bill fields before testing');
+    if (!sameCreds && (!ewbCreds.username || !ewbCreds.password)) {
+      toast.error('Fill the e-Way Bill username and password before testing');
       return;
     }
 
@@ -249,10 +244,10 @@ function ActivationForm({
 
   const activateMutation = useMutation({
     mutationFn: async (body: ActivationFormFields) => {
-      const ein: Layer2Creds = { username: body.username, password: body.password, email: body.email };
+      const ein: Layer2Creds = { username: body.username, password: body.password };
       const ewb = sameCreds
         ? 'same_as_einvoice'
-        : { username: body.ewbUsername, password: body.ewbPassword, email: body.ewbEmail };
+        : { username: body.ewbUsername, password: body.ewbPassword };
       const payload = {
         mode: targetMode === 'disabled' ? 'live' : targetMode,
         einvoice: ein,
@@ -408,6 +403,20 @@ function ActivateSection({
         </button>
       </div>
 
+      {/* Group A revision: only username + password are per-distributor.
+          client_id, client_secret, AND email are GasLink-global env vars —
+          shared across all distributors. Email is the WhiteBooks email-of-
+          record for MyGasLink's own account in this (scope × mode) pair. */}
+      <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-300 flex items-start gap-2">
+        <HiOutlineInformationCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+        <span>
+          Only NIC username + password are per-distributor. The WhiteBooks
+          client credentials and email-of-record are GasLink-global and live
+          in the platform environment — you do not collect them from the
+          distributor.
+        </span>
+      </div>
+
       {/* einvoice creds */}
       <div className="space-y-3">
         <h3 className="text-sm font-semibold text-surface-700 dark:text-surface-300">
@@ -425,13 +434,6 @@ function ActivateSection({
           type="password"
           {...register('password', { required: true })}
           autoComplete="new-password"
-        />
-        <CredField
-          label="Registered Email"
-          hint="email — sent as the email query param on every WhiteBooks call"
-          type="email"
-          {...register('email', { required: true })}
-          autoComplete="off"
         />
       </div>
 
@@ -458,13 +460,6 @@ function ActivateSection({
             type="password"
             {...register('ewbPassword', { required: !sameCreds })}
             autoComplete="new-password"
-          />
-          <CredField
-            label="Registered Email"
-            hint="email"
-            type="email"
-            {...register('ewbEmail', { required: !sameCreds })}
-            autoComplete="off"
           />
         </div>
       )}

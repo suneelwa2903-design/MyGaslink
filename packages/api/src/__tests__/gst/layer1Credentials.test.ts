@@ -6,12 +6,16 @@ import { getLayer1Credentials, GstError } from '../../services/gst/whitebooksCli
 const KEYS = [
   'WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID',
   'WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET',
+  'WHITEBOOKS_EINVOICE_SANDBOX_EMAIL',
   'WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_ID',
   'WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_SECRET',
+  'WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL',
   'WHITEBOOKS_EINVOICE_PROD_CLIENT_ID',
   'WHITEBOOKS_EINVOICE_PROD_CLIENT_SECRET',
+  'WHITEBOOKS_EINVOICE_PROD_EMAIL',
   'WHITEBOOKS_EWAYBILL_PROD_CLIENT_ID',
   'WHITEBOOKS_EWAYBILL_PROD_CLIENT_SECRET',
+  'WHITEBOOKS_EWAYBILL_PROD_EMAIL',
 ] as const;
 
 describe('getLayer1Credentials — Group A env-var routing', () => {
@@ -32,21 +36,25 @@ describe('getLayer1Credentials — Group A env-var routing', () => {
     }
   });
 
-  it('returns env-var values when both env vars are set (einvoice sandbox)', () => {
+  it('returns env-var values when all three env vars are set (einvoice sandbox)', () => {
     process.env.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID = 'env-cid';
     process.env.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET = 'env-csec';
+    process.env.WHITEBOOKS_EINVOICE_SANDBOX_EMAIL = 'sandbox@gaslink.local';
     expect(getLayer1Credentials('einvoice', 'sandbox')).toEqual({
       clientId: 'env-cid',
       clientSecret: 'env-csec',
+      email: 'sandbox@gaslink.local',
     });
   });
 
-  it('returns env-var values when both env vars are set (ewaybill prod)', () => {
+  it('returns env-var values when all three env vars are set (ewaybill prod)', () => {
     process.env.WHITEBOOKS_EWAYBILL_PROD_CLIENT_ID = 'env-ewb-cid';
     process.env.WHITEBOOKS_EWAYBILL_PROD_CLIENT_SECRET = 'env-ewb-csec';
+    process.env.WHITEBOOKS_EWAYBILL_PROD_EMAIL = 'prod@gaslink.com';
     expect(getLayer1Credentials('ewaybill', 'live')).toEqual({
       clientId: 'env-ewb-cid',
       clientSecret: 'env-ewb-csec',
+      email: 'prod@gaslink.com',
     });
   });
 
@@ -55,9 +63,16 @@ describe('getLayer1Credentials — Group A env-var routing', () => {
     expect(getLayer1Credentials('ewaybill', 'sandbox')).toBeNull();
   });
 
-  it('returns null in sandbox when only ONE of the two vars is set (incomplete pair → DB fallback)', () => {
+  it('returns null in sandbox when only TWO of the three vars are set (incomplete triple → DB fallback)', () => {
     process.env.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID = 'env-cid-only';
-    // CLIENT_SECRET not set
+    process.env.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET = 'env-csec-only';
+    // EMAIL not set
+    expect(getLayer1Credentials('einvoice', 'sandbox')).toBeNull();
+  });
+
+  it('returns null in sandbox when email is set but client_id/secret missing', () => {
+    process.env.WHITEBOOKS_EINVOICE_SANDBOX_EMAIL = 'orphan@gaslink.local';
+    // client_id/secret not set
     expect(getLayer1Credentials('einvoice', 'sandbox')).toBeNull();
   });
 
@@ -72,7 +87,7 @@ describe('getLayer1Credentials — Group A env-var routing', () => {
     }
   });
 
-  it('throws NO_PROD_CREDS in live mode when only ONE of the two vars is set (live never falls back)', () => {
+  it('throws NO_PROD_CREDS in live mode when only ONE of the three vars is set (live never falls back)', () => {
     process.env.WHITEBOOKS_EINVOICE_PROD_CLIENT_ID = 'env-cid-only';
     expect(() => getLayer1Credentials('einvoice', 'live')).toThrow(GstError);
   });
@@ -80,19 +95,22 @@ describe('getLayer1Credentials — Group A env-var routing', () => {
   it('einvoice and ewaybill scopes resolve to independent env-var names', () => {
     process.env.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID = 'einv-cid';
     process.env.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET = 'einv-csec';
+    process.env.WHITEBOOKS_EINVOICE_SANDBOX_EMAIL = 'einv@s.com';
     process.env.WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_ID = 'ewb-cid';
     process.env.WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_SECRET = 'ewb-csec';
+    process.env.WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL = 'ewb@s.com';
     expect(getLayer1Credentials('einvoice', 'sandbox')).toEqual({
-      clientId: 'einv-cid', clientSecret: 'einv-csec',
+      clientId: 'einv-cid', clientSecret: 'einv-csec', email: 'einv@s.com',
     });
     expect(getLayer1Credentials('ewaybill', 'sandbox')).toEqual({
-      clientId: 'ewb-cid', clientSecret: 'ewb-csec',
+      clientId: 'ewb-cid', clientSecret: 'ewb-csec', email: 'ewb@s.com',
     });
   });
 
   it('sandbox and live envs are independent — sandbox set, live not → live throws', () => {
     process.env.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID = 'sbx-cid';
     process.env.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET = 'sbx-csec';
+    process.env.WHITEBOOKS_EINVOICE_SANDBOX_EMAIL = 'sbx@l.com';
     expect(getLayer1Credentials('einvoice', 'sandbox')).not.toBeNull();
     expect(() => getLayer1Credentials('einvoice', 'live')).toThrow(GstError);
   });

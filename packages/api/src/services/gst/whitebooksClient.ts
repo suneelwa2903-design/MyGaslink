@@ -73,35 +73,61 @@ interface WhiteBooksCredentials {
   username: string;
   password: string;
   gstin: string;
-  email?: string;
+  // Group A revision: email is now GasLink-global and required. getCredentials
+  // throws NO_GASLINK_EMAIL if neither env var nor legacy DB has a value, so
+  // every WhiteBooksCredentials object that's returned has a populated email.
+  email: string;
   baseUrl: string;
 }
 
 /**
- * Group A — Layer 1 credentials (client_id + client_secret) live in env vars,
- * NOT in the per-distributor gst_credentials table. One pair per scope ×
- * environment, shared by all distributors in the matching mode.
+ * Group A — Layer 1 credentials (client_id + client_secret + email) live in
+ * env vars, NOT in the per-distributor gst_credentials table. One triple per
+ * scope × environment, shared by all distributors in the matching mode.
+ *
+ * MyGasLink itself holds one WhiteBooks account per (scope × env). The email
+ * on every API call is the email-of-record of THAT account — same value for
+ * every distributor. Per-distributor identity comes from Layer 2 username +
+ * password + the distributor's own gstin.
  *
  *   WHITEBOOKS_<einvoice|ewaybill>_<sandbox|prod>_CLIENT_ID
  *   WHITEBOOKS_<einvoice|ewaybill>_<sandbox|prod>_CLIENT_SECRET
+ *   WHITEBOOKS_<einvoice|ewaybill>_<sandbox|prod>_EMAIL
  *
- * Returns the credentials if env vars are set. Returns null when sandbox env
- * vars are missing (caller may fall back to DB-stored values for backward
- * compat). Throws NO_PROD_CREDS when live env vars are missing — live mode
- * never falls back to DB.
+ * Returns the credentials if all three env vars are set. Returns null when
+ * sandbox env vars are missing (caller may fall back to DB-stored values for
+ * backward compat). Throws NO_PROD_CREDS when live env vars are missing —
+ * live mode never falls back to DB.
  */
+/**
+ * Group A revision — convenience for code paths that only need the email
+ * query param for a WhiteBooks call (most non-auth API calls). Goes through
+ * `getCredentials` so the env-first / legacy-DB-fallback / NO_GASLINK_EMAIL
+ * throw policy is consistent with the auth path. Throws NO_CREDENTIALS if
+ * the distributor has no gst_credentials row.
+ */
+export async function getApiCallEmail(
+  distributorId: string,
+  scope: 'einvoice' | 'ewaybill' = 'einvoice',
+): Promise<string> {
+  const creds = await getCredentials(distributorId, scope);
+  if (!creds) throw new GstError('GST credentials not configured', 'NO_CREDENTIALS');
+  return creds.email;
+}
+
 export function getLayer1Credentials(
   scope: 'einvoice' | 'ewaybill',
   mode: 'sandbox' | 'live',
-): { clientId: string; clientSecret: string } | null {
+): { clientId: string; clientSecret: string; email: string } | null {
   // Internal mode 'live' maps to externally-named env-var suffix 'PROD' per
   // the Group A spec (human-readable in deploy configs). 'sandbox' → 'SANDBOX'.
   const envSuffix = mode === 'live' ? 'PROD' : 'SANDBOX';
   const prefix = `WHITEBOOKS_${scope.toUpperCase()}_${envSuffix}`;
   const clientId = process.env[`${prefix}_CLIENT_ID`];
   const clientSecret = process.env[`${prefix}_CLIENT_SECRET`];
-  if (clientId && clientSecret) {
-    return { clientId, clientSecret };
+  const email = process.env[`${prefix}_EMAIL`];
+  if (clientId && clientSecret && email) {
+    return { clientId, clientSecret, email };
   }
   if (mode === 'live') {
     throw new GstError(
@@ -147,6 +173,22 @@ export async function getCredentials(distributorId: string | null, scope: 'einvo
     where: { distributorId, scope },
     include: { distributor: { select: { gstMode: true } } },
   });
+  // Helper — resolve the GasLink-global email-of-record. Env-first, sandbox
+  // falls back to whatever the legacy DB row had, then throws if neither
+  // present. Live mode without env email is caught by getLayer1Credentials's
+  // NO_PROD_CREDS throw upstream.
+  const resolveEmail = (
+    layer1: ReturnType<typeof getLayer1Credentials>,
+    rowEmail: string | null,
+  ): string => {
+    if (layer1?.email) return layer1.email;
+    if (rowEmail) return rowEmail; // legacy DB fallback (sandbox only)
+    throw new GstError(
+      'GasLink WhiteBooks email-of-record not configured (env var WHITEBOOKS_<scope>_<env>_EMAIL is empty and no legacy DB value present). Contact platform admin.',
+      'NO_GASLINK_EMAIL',
+    );
+  };
+
   if (!cred) {
     // Fallback: try the other scope's credentials (some distributors may use same creds for both)
     const fallback = await prisma.gstCredential.findFirst({
@@ -164,7 +206,7 @@ export async function getCredentials(distributorId: string | null, scope: 'einvo
       username: fallback.username,
       password: fallback.password,
       gstin: fallback.gstin,
-      email: fallback.email || 'info@mygaslink.com',
+      email: resolveEmail(layer1, fallback.email ?? null),
       baseUrl: isSandbox ? SANDBOX_BASE : PROD_BASE,
     };
   }
@@ -179,7 +221,7 @@ export async function getCredentials(distributorId: string | null, scope: 'einvo
     username: cred.username,
     password: cred.password,
     gstin: cred.gstin,
-    email: cred.email || 'info@mygaslink.com',
+    email: resolveEmail(layer1, cred.email ?? null),
     baseUrl: isSandbox ? SANDBOX_BASE : PROD_BASE,
   };
 }
@@ -236,7 +278,7 @@ async function doAuthFetch(
   const creds = await getCredentials(distributorId, scope);
   if (!creds) throw new GstError('GST credentials not configured', 'NO_CREDENTIALS');
 
-  const emailParam = encodeURIComponent(creds.email || 'info@mygaslink.com');
+  const emailParam = encodeURIComponent(creds.email);
   let endpoint: string;
   let headers: Record<string, string>;
 
@@ -255,7 +297,7 @@ async function doAuthFetch(
   } else {
     // EWB auth: username + password in QUERY PARAMS (not headers)
     const ewbParams = new URLSearchParams({
-      email: creds.email || 'info@mygaslink.com',
+      email: creds.email,
       username: creds.username,
       password: creds.password || creds.clientSecret,
     });
@@ -566,7 +608,10 @@ const PROBE_RETRY_DELAY_MS = 2000;
 
 export async function pingEinvoiceSession(distributorId: string | null, gstin: string): Promise<void> {
   const creds = await getCredentials(distributorId, 'einvoice');
-  const email = encodeURIComponent(creds?.email || 'info@mygaslink.com');
+  if (!creds) throw new GstError('GST credentials not configured', 'NO_CREDENTIALS');
+  // creds.email is GasLink-global (env-first); resolveEmail throws inside
+  // getCredentials if neither env nor legacy DB has it.
+  const email = encodeURIComponent(creds.email);
 
   // WI-091b — bounded retry to ride through the NIC sandbox flicker.
   // Flicker profile (2026-05-22, dist-002, 4 min @3s): NIC e-Invoice is up
