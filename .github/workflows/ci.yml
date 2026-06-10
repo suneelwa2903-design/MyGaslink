@@ -199,10 +199,31 @@ jobs:
 
       - name: Deploy backend to EC2
         uses: appleboy/ssh-action@v1
+        env:
+          # Group A Step 11 — inject WhiteBooks Layer 1 env vars (12 total: 3
+          # fields × 2 scopes × 2 environments). The deploy step writes them
+          # into /etc/environment alongside the existing DATABASE_URL/JWT vars
+          # so PM2 picks them up via `source /etc/environment`. Live (PROD)
+          # vars stay empty until the WhiteBooks production package is
+          # purchased and Suneel populates the GH secrets — the API code
+          # throws NO_PROD_CREDS on any live call when they're empty (safe).
+          WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID: ${{ secrets.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID }}
+          WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET: ${{ secrets.WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET }}
+          WHITEBOOKS_EINVOICE_SANDBOX_EMAIL: ${{ secrets.WHITEBOOKS_EINVOICE_SANDBOX_EMAIL }}
+          WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_ID: ${{ secrets.WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_ID }}
+          WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_SECRET: ${{ secrets.WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_SECRET }}
+          WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL: ${{ secrets.WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL }}
+          WHITEBOOKS_EINVOICE_PROD_CLIENT_ID: ${{ secrets.WHITEBOOKS_EINVOICE_PROD_CLIENT_ID }}
+          WHITEBOOKS_EINVOICE_PROD_CLIENT_SECRET: ${{ secrets.WHITEBOOKS_EINVOICE_PROD_CLIENT_SECRET }}
+          WHITEBOOKS_EINVOICE_PROD_EMAIL: ${{ secrets.WHITEBOOKS_EINVOICE_PROD_EMAIL }}
+          WHITEBOOKS_EWAYBILL_PROD_CLIENT_ID: ${{ secrets.WHITEBOOKS_EWAYBILL_PROD_CLIENT_ID }}
+          WHITEBOOKS_EWAYBILL_PROD_CLIENT_SECRET: ${{ secrets.WHITEBOOKS_EWAYBILL_PROD_CLIENT_SECRET }}
+          WHITEBOOKS_EWAYBILL_PROD_EMAIL: ${{ secrets.WHITEBOOKS_EWAYBILL_PROD_EMAIL }}
         with:
           host: ${{ secrets.EC2_HOST_PRODUCTION }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID,WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET,WHITEBOOKS_EINVOICE_SANDBOX_EMAIL,WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_ID,WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_SECRET,WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL,WHITEBOOKS_EINVOICE_PROD_CLIENT_ID,WHITEBOOKS_EINVOICE_PROD_CLIENT_SECRET,WHITEBOOKS_EINVOICE_PROD_EMAIL,WHITEBOOKS_EWAYBILL_PROD_CLIENT_ID,WHITEBOOKS_EWAYBILL_PROD_CLIENT_SECRET,WHITEBOOKS_EWAYBILL_PROD_EMAIL
           script: |
             set -e
             set -o pipefail
@@ -217,6 +238,20 @@ jobs:
             pnpm --filter @gaslink/api run db:generate
             pnpm --filter @gaslink/api run db:migrate:prod
             pnpm --filter @gaslink/api run build
+            # Group A Step 11 — write the WhiteBooks Layer 1 env vars into
+            # /etc/environment so they survive PM2 restarts AND systemd
+            # resurrect on reboot. Idempotent: each line is replaced if the
+            # key already exists, appended otherwise. sudo NOT needed —
+            # ec2-user owns /etc/environment in this AMI.
+            for var in WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_ID WHITEBOOKS_EINVOICE_SANDBOX_CLIENT_SECRET WHITEBOOKS_EINVOICE_SANDBOX_EMAIL WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_ID WHITEBOOKS_EWAYBILL_SANDBOX_CLIENT_SECRET WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL WHITEBOOKS_EINVOICE_PROD_CLIENT_ID WHITEBOOKS_EINVOICE_PROD_CLIENT_SECRET WHITEBOOKS_EINVOICE_PROD_EMAIL WHITEBOOKS_EWAYBILL_PROD_CLIENT_ID WHITEBOOKS_EWAYBILL_PROD_CLIENT_SECRET WHITEBOOKS_EWAYBILL_PROD_EMAIL; do
+              val="${!var:-}"
+              # Skip writing PROD vars while they're empty (don't clobber any
+              # value that Suneel may have set manually on the box).
+              if [ -z "$val" ]; then continue; fi
+              # Remove any existing line for this key, then append the new one.
+              sudo sed -i "/^${var}=/d" /etc/environment
+              echo "${var}=${val}" | sudo tee -a /etc/environment > /dev/null
+            done
             # PM2 --update-env replaces the process env with the current shell
             # env, so we must source /etc/environment first or DATABASE_URL,
             # JWT_*, CORS_ORIGINS would be wiped and the api would crash.

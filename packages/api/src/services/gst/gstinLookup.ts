@@ -10,7 +10,8 @@ import { logger } from '../../utils/logger.js';
 import { INDIAN_STATES } from '@gaslink/shared';
 import type { NicError } from './nicTypes.js';
 
-const DEFAULT_IP = '127.0.0.1';
+// Group A Step 11: source IP for NIC's GSP whitelist (see whitebooksClient.ts).
+const DEFAULT_IP = process.env.EC2_PUBLIC_IP || '43.204.63.205';
 
 interface GstinApiResponse {
   status_cd: string | number;

@@ -51,6 +51,11 @@ export async function loggedApiCall<T>(args: LoggedCallArgs<T>): Promise<T> {
       status: 'success',
       response: resp,
       latencyMs: Date.now() - started,
+      // Group A Step 11: success means apiCall got past the fetch/parse/
+      // validate path without throwing — by construction WhiteBooks returned
+      // 2xx. Capturing 200 on success makes gst_api_logs.http_status uniform
+      // (was empty for most rows) so the column is actually queryable.
+      httpStatus: 200,
     });
     return resp;
   } catch (err: unknown) {
@@ -64,6 +69,7 @@ export async function loggedApiCall<T>(args: LoggedCallArgs<T>): Promise<T> {
       latencyMs: Date.now() - started,
       errorCode: err instanceof GstError ? err.code : undefined,
       errorMessage: err instanceof Error ? err.message : String(err),
+      httpStatus: err instanceof GstError ? err.httpStatus : undefined,
     });
     throw err;
   }
@@ -101,6 +107,7 @@ async function writeApiLog(args: LoggedCallArgs<unknown> & {
   latencyMs: number;
   errorCode?: string;
   errorMessage?: string;
+  httpStatus?: number;
 }) {
   // distributorId is required in the gst_api_logs schema; skip GasLink-level
   // calls (null) — those still appear in Winston via the apiCall logger.info.
@@ -123,6 +130,7 @@ async function writeApiLog(args: LoggedCallArgs<unknown> & {
             ? Prisma.DbNull
             : (args.response as Prisma.InputJsonValue),
         latencyMs: args.latencyMs,
+        httpStatus: args.httpStatus ?? null,
       },
     });
   } catch (logErr) {

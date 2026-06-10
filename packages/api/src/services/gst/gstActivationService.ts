@@ -118,7 +118,7 @@ export async function previewTestConnection(
     headers = {
       username: creds.username,
       password: creds.password,
-      ip_address: '127.0.0.1',
+      ip_address: process.env.EC2_PUBLIC_IP || '43.204.63.205',
       client_id: layer1.clientId,
       client_secret: layer1.clientSecret,
       gstin,
@@ -132,7 +132,7 @@ export async function previewTestConnection(
     }).toString();
     endpoint = `/ewaybillapi/v1.03/authenticate?${qs}`;
     headers = {
-      ip_address: '127.0.0.1',
+      ip_address: process.env.EC2_PUBLIC_IP || '43.204.63.205',
       client_id: layer1.clientId,
       client_secret: layer1.clientSecret,
       gstin,

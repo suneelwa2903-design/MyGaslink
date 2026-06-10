@@ -19,7 +19,11 @@ import type {
 const SANDBOX_BASE = 'https://apisandbox.whitebooks.in';
 const PROD_BASE = 'https://api.whitebooks.in';
 const TOKEN_SAFETY_MARGIN_MS = 5 * 60 * 1000; // 5 minutes before expiry
-const DEFAULT_IP = '127.0.0.1';
+// Group A Step 11: NIC's GSP whitelist sits on the egress IP of MyGasLink's
+// EC2 instance. The header value WhiteBooks logs against our calls should
+// match that real source IP, not 127.0.0.1. Override via EC2_PUBLIC_IP for
+// staging / new infra, default to the current prod EC2 elastic IP.
+const DEFAULT_IP = process.env.EC2_PUBLIC_IP || '43.204.63.205';
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000; // UTC+5:30
 
 /**
@@ -541,6 +545,7 @@ export async function apiCall<T = unknown>(
           'NIC session expired on WhiteBooks\' end. Please go to Settings → GST → Test Connection to re-validate, then retry dispatch.',
           'SESSION_EXPIRED',
           json,  // WI-091: persist the original NIC 1004/1005 body to gst_api_logs (was responsePayload=null)
+          res.status,
         );
       }
 
@@ -580,12 +585,13 @@ export async function apiCall<T = unknown>(
           'NIC e-invoice session is temporarily down on WhiteBooks\' end — cancel was rejected after re-auth. Retry in a few minutes via the invoice\'s Retry Cancel action.',
           'SESSION_EXPIRED',
           retryJson,
+          retryRes.status,
         );
       }
-      throw new GstError(retryMsg, retryCode || 'API_ERROR', retryJson);
+      throw new GstError(retryMsg, retryCode || 'API_ERROR', retryJson, retryRes.status);
     }
 
-    throw new GstError(errorMessage, errorCode || 'API_ERROR', json);
+    throw new GstError(errorMessage, errorCode || 'API_ERROR', json, res.status);
   }
 
   return json as T;
@@ -698,8 +704,18 @@ export class GstError extends Error {
    * the upstream returned, not just our parsed error_message. This is
    * critical for the generic 5002 case where NIC gives no field hint —
    * we want the un-massaged response body in gst_api_logs.
+   *
+   * Group A Step 11: `httpStatus` carries the raw HTTP status from the
+   * underlying fetch response so gst_api_logs.http_status is populated on
+   * EVERY failed call (was inconsistent — only some failure paths set it).
+   * Caller-side wrapper sets 200 on success when this is undefined.
    */
-  constructor(message: string, public code: string, public response?: unknown) {
+  constructor(
+    message: string,
+    public code: string,
+    public response?: unknown,
+    public httpStatus?: number,
+  ) {
     super(message);
     this.name = 'GstError';
   }
