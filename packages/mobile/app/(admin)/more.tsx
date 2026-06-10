@@ -1384,13 +1384,21 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
   );
   const users: UserRecord[] = usersResponse?.users ?? [];
 
-  const createMutation = useApiMutation<UserRecord, {
-    firstName: string;
-    lastName: string;
-    email: string;
-    password: string;
-    role: string;
-  }>('post', '/users', {
+  // Group B Part 2 — POST /api/users now returns `{ user, tempPassword }`.
+  // Mobile admin doesn't yet surface the temp password (the web Add User
+  // modal does — copyable banner + WhatsApp share). For mobile, the admin
+  // still has to communicate the password they typed; tempPassword is
+  // captured here only to keep the type accurate, not displayed.
+  const createMutation = useApiMutation<
+    { user: UserRecord; tempPassword: string },
+    {
+      firstName: string;
+      lastName: string;
+      email: string;
+      password: string;
+      role: string;
+    }
+  >('post', '/users', {
     invalidateKeys: [['users']],
     successMessage: 'User created successfully',
     onSuccess: () => {

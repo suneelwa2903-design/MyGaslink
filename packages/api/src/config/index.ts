@@ -22,9 +22,12 @@ export const config = {
     port: parseInt(process.env.SMTP_PORT || '587', 10),
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
-    from: process.env.SMTP_FROM || 'noreply@mygaslink.com',
+    from: process.env.SMTP_FROM || 'info@mygaslink.com',
+    fromName: process.env.SMTP_FROM_NAME || 'MyGasLink',
     contactEmail: process.env.CONTACT_FORM_EMAIL || 'info@mygaslink.com',
   },
+
+  webAppUrl: process.env.WEB_APP_URL || 'http://localhost:5173',
 
   gst: {
     clientId: process.env.GASLINK_GST_CLIENT_ID || '',

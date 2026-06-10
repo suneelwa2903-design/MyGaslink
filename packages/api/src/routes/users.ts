@@ -7,6 +7,9 @@ import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiR
 import { createUserSchema, updateUserSchema, updateOwnProfileSchema } from '@gaslink/shared';
 import * as userService from '../services/userService.js';
 import { mapUser, mapUsers } from '../utils/mappers.js';
+import { sendWelcomeEmail } from '../utils/email.js';
+import { prisma } from '../lib/prisma.js';
+import { config } from '../config/index.js';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
 
@@ -49,6 +52,11 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/users - create user
+// Returns `{ user, tempPassword }` on success. The tempPassword field is
+// echoed back from the request body (NOT re-read from the DB — the row
+// stores only the bcrypt hash) so the Add User modal can render a copyable
+// banner + WhatsApp share button. This is the ONLY response shape that
+// exposes the plaintext password — every other user endpoint omits it.
 router.post('/',
   requireRole('super_admin', 'distributor_admin'),
   validate(createUserSchema),
@@ -67,8 +75,31 @@ router.post('/',
       if (!data.distributorId && data.role !== 'super_admin') {
         return sendError(res, 'A distributor must be selected before creating this user. Please select a distributor from the top bar.', 400);
       }
+      const tempPassword: string = data.password;
       const user = await userService.createUser(data);
-      return sendCreated(res, mapUser(user));
+
+      // Fire-and-forget welcome email — never block the response on it.
+      // sendWelcomeEmail itself swallows transport errors (returns 'failed'
+      // / 'skipped' instead of throwing) so user creation succeeds even if
+      // SMTP is unreachable. The admin still gets the copyable password
+      // banner as a fallback handoff channel.
+      const distributorName = user.distributorId
+        ? (await prisma.distributor.findUnique({
+            where: { id: user.distributorId },
+            select: { businessName: true },
+          }))?.businessName ?? null
+        : null;
+      void sendWelcomeEmail({
+        to: user.email,
+        name: `${user.firstName} ${user.lastName}`.trim(),
+        email: user.email,
+        tempPassword,
+        loginUrl: `${config.webAppUrl}/login`,
+        distributorName,
+        userId: user.id,
+      });
+
+      return sendCreated(res, { user: mapUser(user), tempPassword });
     } catch (err: unknown) {
       const e = err as ServiceError;
       if (e.code === 'P2002') {

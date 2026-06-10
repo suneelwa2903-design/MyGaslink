@@ -1696,3 +1696,23 @@ model StockMismatchRecord {
   @@index([reportId])
   @@map("stock_mismatch_records")
 }
+
+// ─── Email audit log ─────────────────────────────────────────────────────────
+// Closes the auditability gap surfaced during Group B Part-2 investigation.
+// Every outbound email (welcome, otp, contact_form, future templates) writes
+// one row regardless of outcome so support can answer "did the email actually
+// go out?" without grepping winston logs.
+model EmailLog {
+  id        String   @id @default(uuid()) @map("email_log_id")
+  toEmail   String   @map("to_email")
+  subject   String
+  type      String   // welcome | password_reset_otp | contact_form | …
+  status    String   // sent | failed | skipped
+  errorText String?  @map("error_text")
+  userId    String?  @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([type, createdAt])
+  @@index([userId])
+  @@map("email_logs")
+}

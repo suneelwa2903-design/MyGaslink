@@ -16,6 +16,8 @@ import {
   HiOutlineCurrencyRupee,
   HiOutlineCube,
   HiOutlineDocumentArrowDown,
+  HiOutlineClipboardDocument,
+  HiOutlineChatBubbleLeftRight,
 } from 'react-icons/hi2';
 import {
   type DistributorSettings,
@@ -1099,11 +1101,24 @@ function UsersTab() {
   );
 }
 
+// Post-creation handoff payload — only set on a successful CREATE. The
+// modal switches to the credentials view so the admin can copy the temp
+// password or fire it to the user over WhatsApp. The tempPassword string
+// is held in component memory ONLY; it is never written to localStorage,
+// never re-fetched, and disappears the moment the modal closes.
+type CreatedCreds = {
+  name: string;
+  email: string;
+  phone: string;
+  tempPassword: string;
+};
+
 function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => void; user: User | null }) {
   const queryClient = useQueryClient();
   const isEdit = !!user;
+  const [createdCreds, setCreatedCreds] = useState<CreatedCreds | null>(null);
 
-  const { register, handleSubmit, formState: { errors } } = useForm<CreateUserInput>({
+  const { register, handleSubmit, getValues, formState: { errors } } = useForm<CreateUserInput>({
     resolver: zodResolver(isEdit ? createUserSchema.partial().omit({ password: true }) : createUserSchema) as unknown as Resolver<CreateUserInput>,
     defaultValues: user
       ? { email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || '', role: user.role }
@@ -1112,8 +1127,28 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
 
   const mutation = useMutation({
     mutationFn: (data: CreateUserInput) =>
-      isEdit ? apiPut(`/users/${user.userId}`, data) : apiPost('/users', data),
-    onSuccess: () => { toast.success(isEdit ? 'User updated' : 'User created'); queryClient.invalidateQueries({ queryKey: ['users'] }); onClose(); },
+      isEdit
+        ? apiPut<{ user: User }>(`/users/${user.userId}`, data)
+        : apiPost<{ user: User; tempPassword: string }>('/users', data),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      if (isEdit) {
+        toast.success('User updated');
+        onClose();
+        return;
+      }
+      // Show the credentials handoff view. Phone for WhatsApp link comes
+      // from the form (the API normalises empty → null on the user row).
+      const created = (result as { user: User; tempPassword: string });
+      const submitted = getValues();
+      setCreatedCreds({
+        name: `${submitted.firstName} ${submitted.lastName}`.trim(),
+        email: created.user.email,
+        phone: (submitted.phone || created.user.phone || '').toString(),
+        tempPassword: created.tempPassword,
+      });
+      toast.success('User created');
+    },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
@@ -1124,6 +1159,22 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
     { value: UserRole.DRIVER, label: 'Driver' },
     { value: UserRole.CUSTOMER, label: 'Customer' },
   ];
+
+  // Credentials handoff view — replaces the form on successful create.
+  if (createdCreds) {
+    return (
+      <Modal
+        open={open}
+        onClose={() => { setCreatedCreds(null); onClose(); }}
+        title="User created — share credentials"
+      >
+        <CreatedCredentialsView
+          creds={createdCreds}
+          onDone={() => { setCreatedCreds(null); onClose(); }}
+        />
+      </Modal>
+    );
+  }
 
   return (
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit User' : 'Add User'}>
@@ -1142,6 +1193,105 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
         </div>
       </form>
     </Modal>
+  );
+}
+
+function CreatedCredentialsView({ creds, onDone }: { creds: CreatedCreds; onDone: () => void }) {
+  const loginUrl = `${window.location.origin}/login`;
+  const waText = `Your MyGasLink login\n\nLogin: ${loginUrl}\nEmail: ${creds.email}\nTemporary password: ${creds.tempPassword}\n\nYou'll be asked to change this on first login.`;
+  const waPhone = (creds.phone || '').replace(/\D/g, '');
+  const waUrl = waPhone
+    ? `https://wa.me/${waPhone.startsWith('91') || waPhone.length === 10 ? (waPhone.length === 10 ? '91' + waPhone : waPhone) : waPhone}?text=${encodeURIComponent(waText)}`
+    : null;
+
+  const copy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text).then(
+      () => toast.success(`${label} copied`),
+      () => toast.error('Copy failed — please select manually'),
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+        We&apos;ve emailed the user a welcome message with these credentials. As a fallback,
+        copy or WhatsApp them directly — the temporary password is shown <strong>only on this screen</strong>.
+      </div>
+
+      <div className="space-y-2 rounded-xl border border-surface-200 dark:border-surface-700 p-4">
+        <CredRow label="Name" value={creds.name} />
+        <CredRow label="Email" value={creds.email} onCopy={() => copy(creds.email, 'Email')} />
+        <CredRow label="Phone" value={creds.phone || '—'} />
+        <CredRow
+          label="Temporary password"
+          value={creds.tempPassword}
+          mono
+          highlight
+          onCopy={() => copy(creds.tempPassword, 'Password')}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+        <Button type="button" variant="secondary" onClick={() => copy(waText, 'Full message')}>
+          <HiOutlineClipboardDocument className="h-4 w-4" />Copy full message
+        </Button>
+        {waUrl ? (
+          <a
+            href={waUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+          >
+            <HiOutlineChatBubbleLeftRight className="h-4 w-4" />Open in WhatsApp
+          </a>
+        ) : (
+          <span className="text-xs text-surface-500">
+            Add a phone number to enable WhatsApp share
+          </span>
+        )}
+        <Button type="button" onClick={onDone}>Done</Button>
+      </div>
+    </div>
+  );
+}
+
+function CredRow({
+  label,
+  value,
+  mono,
+  highlight,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  highlight?: boolean;
+  onCopy?: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs text-surface-500 w-36 shrink-0">{label}</span>
+      <span
+        className={cn(
+          'flex-1 truncate text-sm',
+          mono && 'font-mono',
+          highlight && 'rounded-md bg-flame-50 dark:bg-flame-500/10 px-2 py-1 text-flame-700 dark:text-flame-300',
+        )}
+      >
+        {value}
+      </span>
+      {onCopy && (
+        <button
+          type="button"
+          onClick={onCopy}
+          className="rounded-md p-1.5 text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-700"
+          aria-label={`Copy ${label}`}
+          title={`Copy ${label}`}
+        >
+          <HiOutlineClipboardDocument className="h-4 w-4" />
+        </button>
+      )}
+    </div>
   );
 }
 

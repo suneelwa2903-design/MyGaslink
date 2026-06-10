@@ -104,9 +104,15 @@ describe('Users — Create / update / delete (CRUD with ownership)', () => {
       });
     if (res.status !== 201) console.log('create user error:', res.body);
     expect(res.status).toBe(201);
-    expect(res.body.data.distributorId).toBe('dist-001');
-    expect(res.body.data.email).toBe(TEST_EMAIL);
-    createdId = res.body.data.userId;
+    // Group B Part 2 — POST /api/users now returns `{ user, tempPassword }`.
+    // tempPassword is the plaintext the caller submitted, echoed back so the
+    // Add User modal can render a copyable banner. Every other endpoint
+    // omits this field.
+    expect(res.body.data.user.distributorId).toBe('dist-001');
+    expect(res.body.data.user.email).toBe(TEST_EMAIL);
+    expect(res.body.data.tempPassword).toBe('Test@1234');
+    expect(res.body.data.user.requiresPasswordReset).toBe(true);
+    createdId = res.body.data.user.userId;
   });
 
   it('rejects POST with missing required fields (400)', async () => {
@@ -157,6 +163,81 @@ describe('Users — Create / update / delete (CRUD with ownership)', () => {
       .delete(`/api/users/${me.id}`)
       .set(auth(adminToken));
     expect(res.status).toBe(400);
+  });
+});
+
+// Group B Part 2 — POST /api/users wires a fire-and-forget welcome email
+// and writes an `email_logs` row regardless of outcome. The dev DB has no
+// SMTP_HOST configured, so the welcome path takes the 'skipped' branch.
+// Test asserts:
+//   1. response shape carries `{ user, tempPassword }`
+//   2. an `email_logs` row exists with type=welcome, status=skipped, userId set
+//   3. SMTP failures (would-be 'failed' status) NEVER block user creation
+// The third assertion is implicit — every prior CRUD test creating a user
+// already proved POST /api/users returns 201 with SMTP unconfigured.
+describe('Users — Welcome email + audit log (Group B Part 2)', () => {
+  const TEST_EMAIL_3 = 'welcome-test@example.com';
+
+  afterAll(async () => {
+    // emailLog rows cascade away when we drop the user, but the FK is
+    // nullable + best-effort, so clean them explicitly to keep the table
+    // tidy across test runs.
+    await prisma.emailLog.deleteMany({
+      where: { toEmail: TEST_EMAIL_3 },
+    });
+    await prisma.user.deleteMany({
+      where: { email: TEST_EMAIL_3 },
+    });
+  });
+
+  it('POST /api/users writes an email_logs row (type=welcome, status=skipped when SMTP unconfigured)', async () => {
+    const before = await prisma.emailLog.count({
+      where: { toEmail: TEST_EMAIL_3, type: 'welcome' },
+    });
+    expect(before).toBe(0);
+
+    const res = await request(app)
+      .post('/api/users')
+      .set(auth(adminToken))
+      .send({
+        email: TEST_EMAIL_3,
+        password: 'Welcome@1234',
+        firstName: 'Welcome',
+        lastName: 'Tester',
+        phone: '9100000444',
+        role: 'inventory',
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.data.tempPassword).toBe('Welcome@1234');
+    const newUserId: string = res.body.data.user.userId;
+
+    // The route schedules sendWelcomeEmail via `void` — give the microtask
+    // a couple of ticks to drain before we assert on the audit row.
+    await new Promise((r) => setTimeout(r, 50));
+
+    const logs = await prisma.emailLog.findMany({
+      where: { toEmail: TEST_EMAIL_3, type: 'welcome' },
+    });
+    expect(logs).toHaveLength(1);
+    expect(logs[0].status).toBe('skipped');
+    expect(logs[0].errorText).toBe('SMTP not configured');
+    expect(logs[0].userId).toBe(newUserId);
+    expect(logs[0].subject).toBe('Welcome to MyGasLink — Your login credentials');
+  });
+
+  it('PUT /api/users/:id (update) does NOT send a welcome email', async () => {
+    const existing = await prisma.user.findFirstOrThrow({
+      where: { email: TEST_EMAIL_3 },
+    });
+    await request(app)
+      .put(`/api/users/${existing.id}`)
+      .set(auth(adminToken))
+      .send({ firstName: 'Renamed' });
+    // No new welcome row should be written on update.
+    const logs = await prisma.emailLog.count({
+      where: { toEmail: TEST_EMAIL_3, type: 'welcome' },
+    });
+    expect(logs).toBe(1);
   });
 });
 
