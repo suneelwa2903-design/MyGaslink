@@ -1152,7 +1152,13 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
   });
   const { data: unlinkedCustomers, isLoading: customersLoading } = useQuery({
     queryKey: ['users-add-modal', 'unlinked-customers'],
-    queryFn: () => apiGet<{ customers: UnlinkedCustomer[] }>('/customers', { unlinked: 'true', pageSize: 500 }),
+    // pageSize: 100 matches the shared paginationSchema cap. Sending 500
+    // returned 400 and made the picker show "No unlinked customers" with
+    // no diagnostic — the empty form below it looked like the prefill was
+    // broken when really the source list never arrived. Group B Part 3
+    // hotfix: stay under the cap. If a tenant ever has >100 unlinked
+    // customers, the picker needs search-as-you-type, not bigger pages.
+    queryFn: () => apiGet<{ customers: UnlinkedCustomer[] }>('/customers', { unlinked: 'true', pageSize: 100 }),
     select: (data) => data.customers ?? [],
     enabled: showCustomerPicker,
   });

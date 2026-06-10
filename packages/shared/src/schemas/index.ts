@@ -9,7 +9,15 @@ import { GSTIN_REGEX } from '../constants/index.js';
 
 const uuid = z.string().uuid();
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const phone = z.string().min(10).max(15).regex(/^[+]?[\d\s-]+$/);
+// Main phone helper for primary user/customer/driver phone columns. Looser
+// than the original strict regex so natural Indian formats (+91, spaces,
+// hyphens) are accepted; human-readable error messages so the failure mode
+// is obvious in the inline error text.
+const phone = z
+  .string()
+  .min(10, 'Phone number is too short (need at least 10 digits)')
+  .max(15, 'Phone number is too long (max 15 characters)')
+  .regex(/^[+]?[\d\s-]+$/, 'Phone number can contain digits, spaces, hyphens, and an optional leading +');
 const email = z.string().trim().toLowerCase().email();
 const gstin = z.string().regex(GSTIN_REGEX, 'Invalid GSTIN format').optional().or(z.literal(''));
 const positiveNumber = z.number().positive();

@@ -269,6 +269,32 @@ export default function CustomersPage() {
 
 // ─── Customer Form Modal ──────────────────────────────────────────────────────
 
+// Walks the react-hook-form errors tree and returns the count of leaf nodes
+// (each individual field-level error). `errors.contacts` is an array whose
+// entries are themselves nested error objects, so the contacts subtree is
+// flattened separately.
+type FormErrorNode = {
+  message?: string;
+  [key: string]: unknown;
+};
+function countErrors(errors: Record<string, unknown>): number {
+  let n = 0;
+  for (const [key, val] of Object.entries(errors)) {
+    if (key === 'contacts' || key === 'cylinderDiscounts') {
+      const arr = (val as FormErrorNode[] | undefined) ?? [];
+      for (const row of arr) {
+        if (!row) continue;
+        for (const k of Object.keys(row)) {
+          if ((row as FormErrorNode)[k] && typeof (row as FormErrorNode)[k] === 'object') n += 1;
+        }
+      }
+    } else if (val && typeof val === 'object' && (val as FormErrorNode).message) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 function CustomerFormModal({
   open,
   onClose,
@@ -404,16 +430,41 @@ function CustomerFormModal({
 
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
 
-  // Ref + invalid-submit handler so contact errors below the fold actually
-  // surface to the admin. Before this, an invalid contact phone caused
+  // Ref + invalid-submit handler so validation errors below the fold actually
+  // surface to the admin. Before this, ANY validation failure (missing
+  // customer name, short main phone, contact phone format, etc.) caused
   // handleSubmit to silently no-op — the user saw no toast, no scroll, no
-  // banner. KN Murthy (Vanasthali) hit exactly this.
+  // banner. The inline `.error-text` paragraphs were in the DOM but
+  // typically below the fold on a tall modal.
+  // Two failure modes converge here:
+  //   1. Errors anywhere on the form  → top-level banner + scroll to first
+  //      error + toast.
+  //   2. Errors specifically in the contacts subtree → additionally show the
+  //      per-section banner above the contact rows so the admin sees which
+  //      row needs fixing.
+  const formRef = useRef<HTMLFormElement | null>(null);
   const contactsSectionRef = useRef<HTMLDivElement | null>(null);
+  const [submitErrorCount, setSubmitErrorCount] = useState(0);
   const onInvalid = (formErrors: typeof errors) => {
+    const count = countErrors(formErrors);
+    setSubmitErrorCount(count);
     if (formErrors.contacts) {
       toast.error('Please fix the errors in the Contacts section before saving.');
       contactsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
     }
+    toast.error(
+      count === 1
+        ? 'Please fix the highlighted field before saving.'
+        : `Please fix ${count} highlighted fields before saving.`,
+    );
+    // Scroll to the first input whose name matches a key with errors.
+    const firstErrorKey = Object.keys(formErrors)[0];
+    const firstInput = formRef.current?.querySelector(
+      `[name="${firstErrorKey}"]`,
+    ) as HTMLElement | null;
+    (firstInput ?? formRef.current)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    firstInput?.focus?.();
   };
   const contactErrorCount = Array.isArray(errors.contacts)
     ? errors.contacts.filter(Boolean).length
@@ -421,7 +472,27 @@ function CustomerFormModal({
 
   return (
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Customer' : 'New Customer'} size="xl">
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data as CreateCustomerInput), onInvalid)} className="space-y-6">
+      <form
+        ref={formRef}
+        onSubmit={handleSubmit(
+          (data) => {
+            setSubmitErrorCount(0);
+            mutation.mutate(data as CreateCustomerInput);
+          },
+          onInvalid,
+        )}
+        className="space-y-6"
+      >
+        {submitErrorCount > 0 && (
+          <div
+            role="alert"
+            className="sticky top-0 z-10 -mx-1 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
+          >
+            {submitErrorCount === 1
+              ? '1 field needs attention — scroll to the highlighted row.'
+              : `${submitErrorCount} fields need attention — scroll to the highlighted rows.`}
+          </div>
+        )}
         {/* Basic Info */}
         <div>
           <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-3">Basic Information</h3>
