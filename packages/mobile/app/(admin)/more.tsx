@@ -460,89 +460,9 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
     { enabled: visible },
   );
 
-  const [gstin, setGstin] = useState('');
-  const [clientId, setClientId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [username, setUsername] = useState('');
-  const [initialized, setInitialized] = useState(false);
-
-  // Sync form fields with fetched GST settings once per modal open, and reset
-  // the guard when the modal closes. Done during render (React's "adjust state
-  // when a value changes" pattern) instead of in an effect, which would trigger
-  // an extra render pass / cascading update.
-  if (visible && gstSettings && !initialized) {
-    setInitialized(true);
-    setGstin(gstSettings.gstCredentials?.gstin || '');
-    setClientId(gstSettings.gstCredentials?.clientId || '');
-    setClientSecret(gstSettings.gstCredentials?.clientSecret || '');
-    setUsername(gstSettings.gstCredentials?.username || '');
-  }
-  if (!visible && initialized) {
-    setInitialized(false);
-  }
-
-  const modeMutation = useApiMutation<GstSettings, { mode: string }>('put', '/settings/gst/mode', {
-    invalidateKeys: [['gst-settings']],
-    successMessage: 'GST mode updated',
-  });
-
-  const credentialsMutation = useApiMutation<GstSettings, {
-    gstin: string;
-    clientId?: string;
-    clientSecret?: string;
-    username?: string;
-  }>('put', '/settings/gst/credentials', {
-    invalidateKeys: [['gst-settings']],
-    successMessage: 'GST credentials saved',
-  });
-
-  // Test-connection probe — exact two-stage check the web's "Test Connection"
-  // button runs. Per-scope so the operator can verify einvoice creds
-  // independently from ewaybill creds.
-  const [testScope, setTestScope] = useState<'einvoice' | 'ewaybill'>('einvoice');
-  const [showSecret, setShowSecret] = useState(false);
-  const testMutation = useApiMutation<
-    { authenticated: boolean; nicReachable: boolean; scope: string; message?: string },
-    undefined
-  >('post', () => `/settings/gst/credentials/${testScope}/test`, {
-    onSuccess: (data) => {
-      if (data?.authenticated && data?.nicReachable) {
-        Alert.alert('Connection OK', data?.message ?? `Auth and NIC both responding for ${testScope}.`);
-      } else if (data?.authenticated) {
-        Alert.alert('Partial', data?.message ?? `Auth succeeded but NIC did not respond for ${testScope}.`);
-      } else {
-        Alert.alert('Failed', data?.message ?? `${testScope} credentials could not authenticate.`);
-      }
-    },
-    onError: (err: unknown) => {
-      Alert.alert('Connection failed', (err as Error)?.message ?? 'Unknown error');
-    },
-  });
-
-  const handleModeChange = (mode: 'disabled' | 'sandbox' | 'live') => {
-    if (mode === 'live') {
-      Alert.alert('Switch to Live', 'Are you sure you want to enable live GST filing?', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Enable Live', style: 'destructive', onPress: () => modeMutation.mutate({ mode }) },
-      ]);
-    } else {
-      modeMutation.mutate({ mode });
-    }
-  };
-
-  const handleSaveCredentials = () => {
-    if (!gstin.trim()) {
-      Alert.alert('Validation', 'GSTIN is required.');
-      return;
-    }
-    credentialsMutation.mutate({
-      gstin: gstin.trim(),
-      clientId: clientId.trim() || undefined,
-      clientSecret: clientSecret.trim() || undefined,
-      username: username.trim() || undefined,
-    });
-  };
-
+  // Group A Step 9: GST writes are super-admin only and live on the
+  // dedicated web activation screen. Mobile renders the current mode
+  // read-only; the form / test-connection state was removed.
   const currentMode = gstSettings?.gstMode || 'disabled';
 
   const modeColors: Record<string, string> = {
@@ -570,149 +490,32 @@ function GstConfigModal({ visible, onClose }: { visible: boolean; onClose: () =>
                 <StatusBadge label={currentMode} color={modeColors[currentMode]} />
               </View>
 
-              {/* Mode Buttons */}
-              <View>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: theme.textSecondary, marginBottom: 10 }}>
-                  GST Mode
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  {(['disabled', 'sandbox', 'live'] as const).map((mode) => {
-                    const isActive = currentMode === mode;
-                    return (
-                      <TouchableOpacity
-                        key={mode}
-                        onPress={() => handleModeChange(mode)}
-                        disabled={modeMutation.isPending}
-                        style={{
-                          flex: 1,
-                          paddingVertical: 12,
-                          borderRadius: 10,
-                          borderWidth: 2,
-                          borderColor: isActive ? modeColors[mode] : theme.inputBorder,
-                          backgroundColor: isActive ? modeColors[mode] + '14' : theme.inputBg,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 13,
-                            fontWeight: '700',
-                            color: isActive ? modeColors[mode] : theme.textSecondary,
-                            textTransform: 'capitalize',
-                          }}
-                        >
-                          {mode}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* Credentials */}
-              <View>
-                <Text style={{ fontSize: 15, fontWeight: '700', color: theme.text, marginBottom: 14 }}>
-                  GSP Credentials
-                </Text>
-                <FormInput label="GSTIN *" value={gstin} onChangeText={setGstin} placeholder="22AAAAA0000A1Z5" autoCapitalize="characters" theme={theme} />
-                <FormInput label="Client ID" value={clientId} onChangeText={setClientId} placeholder="Client ID" autoCapitalize="none" theme={theme} />
-                <FormInput
-                  label="Client Secret"
-                  value={clientSecret}
-                  onChangeText={setClientSecret}
-                  placeholder="Client Secret"
-                  secureTextEntry={!showSecret}
-                  autoCapitalize="none"
-                  theme={theme}
-                />
-                <TouchableOpacity
-                  onPress={() => setShowSecret((s) => !s)}
-                  style={{ alignSelf: 'flex-end', marginTop: -8, marginBottom: 10 }}
-                >
-                  <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600' }}>
-                    {showSecret ? 'Hide secret' : 'Show secret'}
+              {/* Group A Step 9: GST writes are super-admin only and live on
+                  the web activation screen. Mobile shows the current state
+                  read-only with a pointer to the canonical path. */}
+              <View
+                style={{
+                  marginTop: 8,
+                  padding: 16,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: theme.inputBorder,
+                  backgroundColor: theme.inputBg,
+                  gap: 8,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="information-circle-outline" size={20} color={theme.textSecondary} />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text }}>
+                    Managed on web
                   </Text>
-                </TouchableOpacity>
-                <FormInput label="Username" value={username} onChangeText={setUsername} placeholder="GSP username" autoCapitalize="none" theme={theme} />
-
-                <TouchableOpacity
-                  onPress={handleSaveCredentials}
-                  disabled={credentialsMutation.isPending}
-                  style={{
-                    paddingVertical: 14,
-                    borderRadius: 10,
-                    backgroundColor: ACCENT,
-                    alignItems: 'center',
-                    marginTop: 4,
-                    opacity: credentialsMutation.isPending ? 0.6 : 1,
-                  }}
-                >
-                  {credentialsMutation.isPending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Save Credentials</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              {/* Test Connection: per-scope two-stage probe. Auth via
-                  WhiteBooks → NIC GSTINDETAILS reachability. The web
-                  surfaces this as a separate "Test Connection" CTA per
-                  scope (WI-054); we provide a scope chip selector + one
-                  button on mobile to keep the layout compact. */}
-              <View>
-                <Text style={{ fontSize: 15, fontWeight: '700', color: theme.text, marginBottom: 10 }}>
-                  Test Connection
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
-                  {(['einvoice', 'ewaybill'] as const).map((scope) => {
-                    const selected = testScope === scope;
-                    return (
-                      <TouchableOpacity
-                        key={scope}
-                        onPress={() => setTestScope(scope)}
-                        style={{
-                          flex: 1,
-                          paddingVertical: 8,
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: selected ? ACCENT : theme.inputBorder,
-                          backgroundColor: selected ? ACCENT + '14' : theme.inputBg,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: selected ? ACCENT : theme.textSecondary }}>
-                          {scope === 'einvoice' ? 'e-Invoice' : 'e-Way Bill'}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
                 </View>
-                <TouchableOpacity
-                  onPress={() => testMutation.mutate(undefined)}
-                  disabled={testMutation.isPending}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 6,
-                    paddingVertical: 12,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: ACCENT,
-                    backgroundColor: theme.bg,
-                    opacity: testMutation.isPending ? 0.6 : 1,
-                  }}
-                >
-                  {testMutation.isPending ? (
-                    <ActivityIndicator size="small" color={ACCENT} />
-                  ) : (
-                    <Ionicons name="flash-outline" size={16} color={ACCENT} />
-                  )}
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: ACCENT }}>
-                    Test {testScope === 'einvoice' ? 'e-Invoice' : 'e-Way Bill'} connection
-                  </Text>
-                </TouchableOpacity>
+                <Text style={{ fontSize: 13, lineHeight: 19, color: theme.textSecondary }}>
+                  GST mode and WhiteBooks credentials are configured through
+                  the dedicated activation screen on the web app. Sign in as
+                  super-admin → Distributors → select tenant → Configure GST.
+                  Contact your platform administrator if you need a change.
+                </Text>
               </View>
             </ScrollView>
           </KeyboardAvoidingView>
