@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/index.js';
 import { prisma } from '../lib/prisma.js';
-import { sendOtpEmail } from '../utils/email.js';
+import { sendOtpEmail, sendPasswordChangedEmail, sendPasswordResetConfirmationEmail } from '../utils/email.js';
 import type { AuthTokens, JwtPayload, UserProfile } from '@gaslink/shared';
 
 const SALT_ROUNDS = 12;
@@ -133,7 +133,7 @@ export async function refreshTokens(refreshToken: string): Promise<AuthTokens> {
 export async function changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { passwordHash: true },
+    select: { passwordHash: true, email: true, firstName: true, lastName: true },
   });
 
   if (!user) throw new AuthError('User not found', 404);
@@ -149,6 +149,16 @@ export async function changePassword(userId: string, currentPassword: string, ne
       requiresPasswordReset: false,
       refreshToken: null, // Force re-login with new password
     },
+  });
+
+  // Group B Part 6 — fire-and-forget security notification. The sender
+  // never throws, so an SMTP outage cannot break the password change
+  // itself; an audit row lands in email_logs regardless of outcome.
+  void sendPasswordChangedEmail({
+    to: user.email,
+    name: `${user.firstName} ${user.lastName}`.trim(),
+    changedAt: new Date(),
+    userId,
   });
 }
 
@@ -282,6 +292,16 @@ export async function resetPassword(resetToken: string, newPassword: string): Pr
       loginAttempts: 0,
       lockedUntil: null,
     },
+  });
+
+  // Group B Part 6 — fire-and-forget reset-complete notification. Same
+  // never-throw guarantee as changePassword; an SMTP outage cannot
+  // strand the password in a half-reset state.
+  void sendPasswordResetConfirmationEmail({
+    to: user.email,
+    name: `${user.firstName} ${user.lastName}`.trim(),
+    resetAt: new Date(),
+    userId: user.id,
   });
 }
 

@@ -41,6 +41,8 @@ export function _resetTransporter(): void {
 type EmailLogType =
   | 'welcome'
   | 'password_reset_otp'
+  | 'password_changed'
+  | 'password_reset_completed'
   | 'contact_form'
   | 'smtp_test';
 
@@ -259,6 +261,162 @@ export async function sendWelcomeEmail(input: {
     });
     return { status: 'failed', error: message };
   }
+}
+
+// ─── Password change / reset confirmations (Group B Part 6) ─────────────────
+// Two security-critical notifications: the user must know — via an
+// out-of-channel email — that their password was changed. If an attacker
+// has compromised the session and changed the password, the rightful owner
+// gets a copy of the notice and can act. Standard practice; Apple/Play
+// Store reviewers expect it during privacy-posture probes.
+//
+// Both sender functions are fire-and-forget: never throw, never block the
+// caller, always write an email_logs row regardless of outcome.
+
+function formatTimestampIST(d: Date): string {
+  // Asia/Kolkata is the production TZ (per CLAUDE.md). Format example:
+  // "10 Jun 2026, 8:42 PM IST"
+  const fmt = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(d);
+  return `${fmt} IST`;
+}
+
+function buildPasswordNoticeHtml(input: {
+  title: string;
+  greeting: string;
+  bodyHtml: string;
+  loginUrl?: string;
+}): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="520" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background-color:#1a2332;padding:24px 32px;text-align:center;">
+              <span style="font-size:24px;font-weight:800;color:#ffffff;">MyGas</span><span style="font-size:24px;font-weight:800;color:#e63946;">Link</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <h2 style="margin:0 0 8px;font-size:20px;color:#1a2332;">${input.title}</h2>
+              <p style="margin:0 0 16px;font-size:14px;color:#6b7280;">${input.greeting}</p>
+              <div style="margin:0 0 20px;font-size:14px;color:#374151;line-height:1.6;">${input.bodyHtml}</div>
+              ${input.loginUrl
+                ? `<p style="margin:0 0 16px;font-size:14px;color:#374151;">You can sign in at <a href="${input.loginUrl}" style="color:#e63946;text-decoration:none;">${input.loginUrl}</a>.</p>`
+                : ''}
+              <p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #e5e7eb;font-size:13px;color:#9ca3af;line-height:1.5;">
+                <strong>Didn't do this?</strong> Someone may have accessed your account. Contact us immediately at
+                <a href="mailto:info@mygaslink.com" style="color:#e63946;text-decoration:none;">info@mygaslink.com</a>.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f9fafb;padding:16px 32px;text-align:center;border-top:1px solid #e5e7eb;">
+              <p style="margin:0;font-size:12px;color:#9ca3af;">
+                &copy; ${new Date().getFullYear()} MyGasLink. Commercial LPG Distribution Platform.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+export async function sendPasswordChangedEmail(input: {
+  to: string;
+  name: string;
+  changedAt: Date;
+  userId?: string | null;
+}): Promise<{ status: EmailLogStatus; error?: string }> {
+  const subject = 'Your MyGasLink password was changed';
+  const baseLog = { toEmail: input.to, subject, type: 'password_changed' as const, userId: input.userId };
+
+  if (!smtpAvailable()) {
+    await writeEmailLog({ ...baseLog, status: 'skipped', errorText: 'SMTP not configured' });
+    return { status: 'skipped', error: 'SMTP not configured' };
+  }
+
+  const html = buildPasswordNoticeHtml({
+    title: 'Password changed',
+    greeting: `Hi ${escapePasswordEmailName(input.name)},`,
+    bodyHtml: `Your MyGasLink password was changed on <strong>${formatTimestampIST(input.changedAt)}</strong>. If you made this change, no further action is needed.`,
+    loginUrl: `${config.webAppUrl}/login`,
+  });
+
+  try {
+    await getTransporter().sendMail({ from: fromHeader(), to: input.to, subject, html });
+    logger.info('Password-changed email sent', { to: input.to, userId: input.userId });
+    await writeEmailLog({ ...baseLog, status: 'sent' });
+    return { status: 'sent' };
+  } catch (err) {
+    const message = (err as Error).message;
+    logger.warn(`Password-changed email failed for user ${input.userId ?? '?'}: ${message}`);
+    await writeEmailLog({ ...baseLog, status: 'failed', errorText: message });
+    return { status: 'failed', error: message };
+  }
+}
+
+export async function sendPasswordResetConfirmationEmail(input: {
+  to: string;
+  name: string;
+  resetAt: Date;
+  userId?: string | null;
+}): Promise<{ status: EmailLogStatus; error?: string }> {
+  const subject = 'Your MyGasLink password has been reset';
+  const baseLog = { toEmail: input.to, subject, type: 'password_reset_completed' as const, userId: input.userId };
+
+  if (!smtpAvailable()) {
+    await writeEmailLog({ ...baseLog, status: 'skipped', errorText: 'SMTP not configured' });
+    return { status: 'skipped', error: 'SMTP not configured' };
+  }
+
+  const html = buildPasswordNoticeHtml({
+    title: 'Password reset complete',
+    greeting: `Hi ${escapePasswordEmailName(input.name)},`,
+    bodyHtml: `Your MyGasLink password was successfully reset on <strong>${formatTimestampIST(input.resetAt)}</strong>. You can use your new password to sign in.`,
+    loginUrl: `${config.webAppUrl}/login`,
+  });
+
+  try {
+    await getTransporter().sendMail({ from: fromHeader(), to: input.to, subject, html });
+    logger.info('Password-reset-completed email sent', { to: input.to, userId: input.userId });
+    await writeEmailLog({ ...baseLog, status: 'sent' });
+    return { status: 'sent' };
+  } catch (err) {
+    const message = (err as Error).message;
+    logger.warn(`Password-reset-completed email failed for user ${input.userId ?? '?'}: ${message}`);
+    await writeEmailLog({ ...baseLog, status: 'failed', errorText: message });
+    return { status: 'failed', error: message };
+  }
+}
+
+// Names come from DB but feed into HTML — escape angle brackets / quotes
+// to keep the template literal-safe even if a user's name contains them.
+function escapePasswordEmailName(s: string): string {
+  return (s || 'there')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ─── Diagnostic — used by scripts/test-smtp.ts ───────────────────────────────
