@@ -330,6 +330,10 @@ model Distributor {
   email                   String?
   status                  DistributorStatus @default(active)
   gstMode                 GstMode           @default(disabled) @map("gst_mode")
+  // Group A: gate that allows sandbox gstMode. Only true for dist-demo and
+  // any future internal-only test tenants. Real distributors transition
+  // disabled → live without ever passing through sandbox.
+  isTestTenant            Boolean           @default(false) @map("is_test_tenant")
   // WI-108: 3-letter tenant code embedded in structured invoice/order
   // numbers (e.g. "SHD" → ISHD2526000123). Nullable: when unset the legacy
   // random INV-/ORD- format is used. Globally unique so codes never clash
