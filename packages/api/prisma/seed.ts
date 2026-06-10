@@ -61,6 +61,8 @@ async function main() {
       subscriptionPlan: 'business',
       billingTier: 'tier_2',
       gaslinkBillingEnabled: false,
+      // Group A: dev fixture — internal test tenant. Gates sandbox mode.
+      isTestTenant: true,
     },
   });
   console.log('Distributor created:', distributor.businessName);
@@ -383,6 +385,9 @@ async function main() {
       subscriptionPlan: 'business',
       billingTier: 'tier_2',
       gaslinkBillingEnabled: false,
+      // Group A: dev fixture — internal test tenant. Required so gst_mode='sandbox'
+      // baseline is valid under the new sandbox-allowlist guard.
+      isTestTenant: true,
     },
   });
   console.log('GST-enabled distributor created:', gstDist.businessName);

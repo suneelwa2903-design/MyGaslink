@@ -88,9 +88,20 @@ export async function getDistributorGstin(distributorId: string): Promise<string
 }
 
 export async function updateGstMode(distributorId: string, mode: string) {
+  // Group A: enforce sandbox allowlist. Pulled out into transitionGuards so
+  // Step 5's gstActivationService uses identical semantics.
+  const { assertSandboxAllowed } = await import('./gst/transitionGuards.js');
+  const targetMode = mode as 'disabled' | 'sandbox' | 'live';
+
+  const before = await prisma.distributor.findUniqueOrThrow({
+    where: { id: distributorId },
+    select: { isTestTenant: true, gstMode: true },
+  });
+  assertSandboxAllowed(targetMode, before.isTestTenant);
+
   return prisma.distributor.update({
     where: { id: distributorId },
-    data: { gstMode: mode as $Enums.GstMode },
+    data: { gstMode: targetMode as $Enums.GstMode },
     select: { id: true, gstMode: true },
   });
 }

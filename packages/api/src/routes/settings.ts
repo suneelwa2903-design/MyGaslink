@@ -329,6 +329,11 @@ router.put('/gst/mode',
       const result = await settingsService.updateGstMode(distributorId, req.body.mode);
       return sendSuccess(res, result);
     } catch (err) {
+      // Group A: surface transition guards as 400 with the guard's code.
+      const { GstTransitionError } = await import('../services/gst/transitionGuards.js');
+      if (err instanceof GstTransitionError) {
+        return sendError(res, err.message, 400, err.code);
+      }
       return sendError(res, (err as Error).message);
     }
   }
