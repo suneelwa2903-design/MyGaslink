@@ -81,9 +81,33 @@ export const updateOwnProfileSchema = z.object({
 
 // ─── Customer Schemas ────────────────────────────────────────────────────────
 
+// Contact phone: looser than the main `phone` helper. Contacts are secondary
+// people on a customer record (e.g. site manager, accountant) — admins enter
+// names + whatever phone shape they happen to have. Forcing the strict 10-15
+// digit, no-parens regex meant any natural format ("+91 (98765) 43210",
+// "98765.43210", or just blank with name only) silently blocked submit at the
+// client-side resolver, with no visible error. KN Murthy (Vanasthali) hit this
+// during onboarding. New rules:
+//   - phone is OPTIONAL (name alone is enough to add a contact)
+//   - if provided, accept any of: digits, spaces, hyphens, +, (), .
+//   - require at least 7 digits after stripping non-digits (so a typo'd "12"
+//     or accidental keystroke is still rejected)
+const contactPhone = z
+  .string()
+  .regex(
+    /^[+\d\s\-().]+$/,
+    'Phone number format is invalid. Use digits, spaces, or hyphens (e.g. 98765 43210)',
+  )
+  .refine((v) => v.replace(/\D/g, '').length >= 7, {
+    message: 'Phone number is too short (need at least 7 digits)',
+  })
+  .refine((v) => v.replace(/\D/g, '').length <= 15, {
+    message: 'Phone number is too long (max 15 digits)',
+  });
+
 const customerContactSchema = z.object({
   name: z.string().min(1, 'Contact name is required').max(100),
-  phone: phone,
+  phone: contactPhone.optional().or(z.literal('')),
   email: email.optional().or(z.literal('')),
   isPrimary: z.boolean().default(false),
 });

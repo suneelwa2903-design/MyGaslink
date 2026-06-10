@@ -22,7 +22,7 @@ interface CustomerUpdateData {
   shippingPincode?: string | null;
   creditPeriodDays?: number;
   transportChargePerCylinder?: number;
-  contacts?: Array<{ name: string; phone: string; email?: string | null; isPrimary?: boolean }>;
+  contacts?: Array<{ name: string; phone?: string; email?: string | null; isPrimary?: boolean }>;
   cylinderDiscounts?: Array<{ cylinderTypeId: string; discountPerUnit: number }>;
 }
 
@@ -102,7 +102,7 @@ export async function createCustomer(
     shippingPincode?: string;
     creditPeriodDays?: number;
     transportChargePerCylinder?: number;
-    contacts?: { name: string; phone: string; email?: string; isPrimary?: boolean }[];
+    contacts?: { name: string; phone?: string; email?: string; isPrimary?: boolean }[];
     cylinderDiscounts?: { cylinderTypeId: string; discountPerUnit: number }[];
   }
 ) {
@@ -144,7 +144,7 @@ export async function createCustomer(
       creditPeriodDays: data.creditPeriodDays ?? 30,
       transportChargePerCylinder: data.transportChargePerCylinder ?? 0,
       contacts: data.contacts && data.contacts.length > 0
-        ? { create: data.contacts.map(c => ({ name: c.name, phone: c.phone, email: c.email || null, isPrimary: c.isPrimary ?? false })) }
+        ? { create: data.contacts.map(c => ({ name: c.name, phone: c.phone || '', email: c.email || null, isPrimary: c.isPrimary ?? false })) }
         : undefined,
       cylinderDiscounts: data.cylinderDiscounts && data.cylinderDiscounts.length > 0
         ? { create: data.cylinderDiscounts.map(d => ({ cylinderTypeId: d.cylinderTypeId, discountPerUnit: d.discountPerUnit })) }
@@ -210,7 +210,7 @@ export async function updateCustomer(
           data: data.contacts.map((c) => ({
             customerId: id,
             name: c.name,
-            phone: c.phone,
+            phone: c.phone || '',
             email: c.email || null,
             isPrimary: c.isPrimary ?? false,
           })),

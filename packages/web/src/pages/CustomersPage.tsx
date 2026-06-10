@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -404,9 +404,24 @@ function CustomerFormModal({
 
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
 
+  // Ref + invalid-submit handler so contact errors below the fold actually
+  // surface to the admin. Before this, an invalid contact phone caused
+  // handleSubmit to silently no-op — the user saw no toast, no scroll, no
+  // banner. KN Murthy (Vanasthali) hit exactly this.
+  const contactsSectionRef = useRef<HTMLDivElement | null>(null);
+  const onInvalid = (formErrors: typeof errors) => {
+    if (formErrors.contacts) {
+      toast.error('Please fix the errors in the Contacts section before saving.');
+      contactsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+  const contactErrorCount = Array.isArray(errors.contacts)
+    ? errors.contacts.filter(Boolean).length
+    : 0;
+
   return (
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Customer' : 'New Customer'} size="xl">
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data as CreateCustomerInput))} className="space-y-6">
+      <form onSubmit={handleSubmit((data) => mutation.mutate(data as CreateCustomerInput), onInvalid)} className="space-y-6">
         {/* Basic Info */}
         <div>
           <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-3">Basic Information</h3>
@@ -493,18 +508,28 @@ function CustomerFormModal({
         </div>
 
         {/* Contacts */}
-        <div>
+        <div ref={contactsSectionRef}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-surface-900 dark:text-white">Contacts</h3>
             <Button type="button" variant="ghost" size="sm" onClick={() => contactFields.append({ name: '', phone: '', email: '', isPrimary: false })}>
               <HiOutlinePlus className="h-3 w-3" />Add Contact
             </Button>
           </div>
+          {contactErrorCount > 0 && (
+            <div
+              role="alert"
+              className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
+            >
+              {contactErrorCount === 1
+                ? '1 contact has an invalid field — see highlighted row below.'
+                : `${contactErrorCount} contacts have invalid fields — see highlighted rows below.`}
+            </div>
+          )}
           {contactFields.fields.map((field, index) => (
             <div key={field.id} className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3 p-3 bg-surface-50 dark:bg-surface-800/50 rounded-xl">
               <Input placeholder="Name" required error={errors.contacts?.[index]?.name?.message} {...register(`contacts.${index}.name`)} />
-              <Input placeholder="Phone" required error={errors.contacts?.[index]?.phone?.message} {...register(`contacts.${index}.phone`)} />
-              <Input placeholder="Email" {...register(`contacts.${index}.email`)} />
+              <Input placeholder="Phone (optional)" error={errors.contacts?.[index]?.phone?.message} {...register(`contacts.${index}.phone`)} />
+              <Input placeholder="Email" error={errors.contacts?.[index]?.email?.message} {...register(`contacts.${index}.email`)} />
               <div className="flex items-center gap-2">
                 <label className="flex items-center gap-1 text-xs text-surface-500">
                   <input type="checkbox" {...register(`contacts.${index}.isPrimary`)} className="rounded" />

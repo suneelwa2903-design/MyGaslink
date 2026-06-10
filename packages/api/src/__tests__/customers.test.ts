@@ -144,6 +144,151 @@ describe('Customers — CRUD', () => {
   });
 });
 
+// Contact phone validation was previously strict (min 10, regex without
+// parens/dots) which caused silent client-side submit blocks for natural
+// Indian phone formats. KN Murthy (Vanasthali) hit this during onboarding.
+// These tests pin the relaxed contract: phone is optional on contacts;
+// natural formats accepted; absurdly short numbers still rejected.
+describe('Customers — Contact CRUD (relaxed phone)', () => {
+  const contactsTracked: string[] = [];
+
+  afterAll(async () => {
+    await prisma.customer.deleteMany({
+      where: {
+        distributorId: 'dist-001',
+        customerName: { startsWith: 'Contact Test ' },
+      },
+    });
+  });
+
+  it('creates a customer with a valid full-shape contact', async () => {
+    const res = await request(app)
+      .post('/api/customers')
+      .set(auth(adminToken))
+      .send({
+        customerName: 'Contact Test Alpha',
+        phone: '9100001111',
+        contacts: [
+          { name: 'KN Murthy', phone: '9876543210', email: 'km@example.com', isPrimary: true },
+        ],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.data.contacts).toHaveLength(1);
+    expect(res.body.data.contacts[0].name).toBe('KN Murthy');
+    expect(res.body.data.contacts[0].phone).toBe('9876543210');
+    contactsTracked.push(res.body.data.customerId);
+  });
+
+  it('accepts phone in natural Indian format with country code, spaces, hyphens', async () => {
+    const res = await request(app)
+      .post('/api/customers')
+      .set(auth(adminToken))
+      .send({
+        customerName: 'Contact Test Beta',
+        phone: '9100002222',
+        contacts: [
+          { name: 'Site Manager', phone: '+91 98765 43210' },
+          { name: 'Accountant', phone: '+91-98765-43210' },
+          { name: 'Helper', phone: '(98765) 43210' },
+        ],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.data.contacts).toHaveLength(3);
+    contactsTracked.push(res.body.data.customerId);
+  });
+
+  it('accepts contact with name only — phone is optional', async () => {
+    const res = await request(app)
+      .post('/api/customers')
+      .set(auth(adminToken))
+      .send({
+        customerName: 'Contact Test Gamma',
+        phone: '9100003333',
+        contacts: [
+          { name: 'KN Murthy' }, // no phone, no email
+        ],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.data.contacts).toHaveLength(1);
+    expect(res.body.data.contacts[0].name).toBe('KN Murthy');
+    contactsTracked.push(res.body.data.customerId);
+  });
+
+  it('accepts contact with empty-string phone — admin clicked Add Contact and left phone blank', async () => {
+    const res = await request(app)
+      .post('/api/customers')
+      .set(auth(adminToken))
+      .send({
+        customerName: 'Contact Test Delta',
+        phone: '9100004444',
+        contacts: [
+          { name: 'Site Manager', phone: '', email: '' },
+        ],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.data.contacts).toHaveLength(1);
+    contactsTracked.push(res.body.data.customerId);
+  });
+
+  it('rejects absurdly short phone (3 digits)', async () => {
+    const res = await request(app)
+      .post('/api/customers')
+      .set(auth(adminToken))
+      .send({
+        customerName: 'Contact Test Epsilon',
+        phone: '9100005555',
+        contacts: [
+          { name: 'Bad Phone', phone: '123' },
+        ],
+      });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toMatch(/too short|invalid/i);
+  });
+
+  it('rejects contact missing required name', async () => {
+    const res = await request(app)
+      .post('/api/customers')
+      .set(auth(adminToken))
+      .send({
+        customerName: 'Contact Test Zeta',
+        phone: '9100006666',
+        contacts: [
+          { phone: '9876543210' }, // no name
+        ],
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('updates a customer to add a contact with natural-format phone', async () => {
+    const id = trackedIds[0];
+    const res = await request(app)
+      .put(`/api/customers/${id}`)
+      .set(auth(adminToken))
+      .send({
+        contacts: [
+          { name: 'Late-added Contact', phone: '+91 9876543210' },
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.data.contacts).toHaveLength(1);
+    expect(res.body.data.contacts[0].name).toBe('Late-added Contact');
+  });
+
+  it('updates a customer to add a contact with name only', async () => {
+    const id = trackedIds[0];
+    const res = await request(app)
+      .put(`/api/customers/${id}`)
+      .set(auth(adminToken))
+      .send({
+        contacts: [
+          { name: 'Name Only Contact' },
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.data.contacts).toHaveLength(1);
+  });
+});
+
 describe('Customers — Tenant Isolation', () => {
   it('cannot fetch a customer from another distributor (404)', async () => {
     // dist-002 customer (seeded as Sharma's tenant)
