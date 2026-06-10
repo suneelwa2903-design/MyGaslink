@@ -220,6 +220,11 @@ type GstCredentialRow = {
 function GstTab() {
   const queryClient = useQueryClient();
   const distributorId = useAuthStore(selectDistributorId);
+  const { user } = useAuthStore();
+  // Group A Step 7: only super_admin can edit GST mode and credentials now.
+  // distributor_admin sees the current state as read-only and a hint to
+  // contact the platform admin.
+  const canEditGst = user?.role === UserRole.SUPER_ADMIN;
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings', distributorId],
     queryFn: () => apiGet<DistributorSettings>('/settings'),
@@ -264,19 +269,33 @@ function GstTab() {
             Current: {settings?.gstMode}
           </Badge>
         </div>
-        <div className="flex gap-2">
-          {modeOptions.map((opt) => (
-            <Button
-              key={opt.value}
-              variant={settings?.gstMode === opt.value ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => modeMutation.mutate(opt.value as GstMode)}
-              loading={modeMutation.isPending}
-            >
-              {opt.label}
-            </Button>
-          ))}
-        </div>
+        {canEditGst ? (
+          <>
+            <div className="flex gap-2">
+              {modeOptions.map((opt) => (
+                <Button
+                  key={opt.value}
+                  variant={settings?.gstMode === opt.value ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => modeMutation.mutate(opt.value as GstMode)}
+                  loading={modeMutation.isPending}
+                >
+                  {opt.label}
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-surface-500 dark:text-surface-400">
+              Direct mode toggle is for super-admin emergency use. Use the
+              dedicated GST Activation screen on the distributor detail page
+              for the standard activation/rotation flow.
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-surface-600 dark:text-surface-400">
+            GST settings are managed by your platform administrator. Contact
+            support if you need to change your GST mode or credentials.
+          </p>
+        )}
       </div>
 
       {/* GST API Credentials — one card per scope (WI-042). */}
@@ -287,12 +306,14 @@ function GstTab() {
           label="e-Invoice Credentials"
           row={credByScope.get('einvoice') ?? null}
           onUpdate={() => setUpdateScope('einvoice')}
+          canEdit={canEditGst}
         />
         <GstCredentialCard
           scope="ewaybill"
           label="e-Way Bill Credentials"
           row={credByScope.get('ewaybill') ?? null}
           onUpdate={() => setUpdateScope('ewaybill')}
+          canEdit={canEditGst}
         />
       </div>
 
@@ -329,12 +350,13 @@ type TestConnectionResult = {
 };
 
 function GstCredentialCard({
-  scope, label, row, onUpdate,
+  scope, label, row, onUpdate, canEdit,
 }: {
   scope: 'einvoice' | 'ewaybill';
   label: string;
   row: GstCredentialRow | null;
   onUpdate: () => void;
+  canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
@@ -399,12 +421,14 @@ function GstCredentialCard({
             </div>
           ) : (
             <p className="text-sm text-surface-500 dark:text-surface-400">
-              Not configured. Click Update Credentials to enter the WhiteBooks {scope} credentials.
+              {canEdit
+                ? `Not configured. Click Update Credentials to enter the WhiteBooks ${scope} credentials.`
+                : `Not configured. Contact your platform administrator to set up ${scope === 'einvoice' ? 'e-Invoice' : 'e-Way Bill'} credentials.`}
             </p>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {row && (
+          {row && canEdit && (
             <Button
               size="sm"
               variant="secondary"
@@ -414,7 +438,9 @@ function GstCredentialCard({
               Test Connection
             </Button>
           )}
-          <Button size="sm" onClick={onUpdate}>Update Credentials</Button>
+          {canEdit && (
+            <Button size="sm" onClick={onUpdate}>Update Credentials</Button>
+          )}
         </div>
       </div>
 

@@ -222,7 +222,8 @@ function DistributorFormModal({
           officeCity: distributor.officeCity || '',
           officeState: distributor.officeState || '',
           officePincode: distributor.officePincode || '',
-          gstMode: distributor.gstMode,
+          // Group A Step 6: gstMode is no longer writable here. Use the
+          // GST Activation flow on the distributor detail page instead.
           status: distributor.status,
           subscriptionPlan: distributor.subscriptionPlan ?? null,
           billingTier: distributor.billingTier ?? null,
@@ -564,22 +565,15 @@ function DistributorFormModal({
           </div>
         )}
 
-        {/* ── Admin Settings (GST Mode, Status, Plan, Billing) ────── */}
+        {/* ── Admin Settings (Status, Plan, Billing) ────────────────── */}
+        {/* Group A Step 6: GST Mode is no longer editable here. Use the
+            "Configure GST" button on the distributor detail page instead. */}
         {isEdit && (
           <div>
             <h3 className="text-sm font-semibold text-surface-700 dark:text-surface-300 mb-3">
               Admin Settings
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <Select
-                label="GST Mode"
-                options={[
-                  { value: 'disabled', label: 'Disabled' },
-                  { value: 'sandbox', label: 'Sandbox (Testing)' },
-                  { value: 'live', label: 'Live (Production)' },
-                ]}
-                {...register('gstMode')}
-              />
               <Select
                 label="Status"
                 options={[
