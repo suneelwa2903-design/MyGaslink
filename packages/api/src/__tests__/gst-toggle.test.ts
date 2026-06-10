@@ -173,6 +173,62 @@ describe('GST Mode — Sandbox Allowlist (Group A Step 3)', () => {
   });
 });
 
+// Group A Step 4 — Live → Sandbox transition is permanently blocked.
+describe('GST Mode — Live to Sandbox block (Group A Step 4)', () => {
+  const adhocId = 'test-group-a-live-to-sandbox';
+
+  beforeAll(async () => {
+    // Set up as a TEST tenant in LIVE mode — the precondition for the guard.
+    await prisma.distributor.upsert({
+      where: { id: adhocId },
+      update: { gstMode: 'live', isTestTenant: true },
+      create: {
+        id: adhocId,
+        businessName: 'Group A Live-to-Sandbox Test',
+        legalName: 'Group A Live-to-Sandbox Test Pvt Ltd',
+        status: 'active',
+        gstMode: 'live',
+        isTestTenant: true,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.distributor.deleteMany({ where: { id: adhocId } });
+  });
+
+  it('blocks live → sandbox even when the tenant IS a test tenant (LIVE_TO_SANDBOX_BLOCKED)', async () => {
+    const { updateGstMode } = await import('../services/settingsService.js');
+    await expect(updateGstMode(adhocId, 'sandbox')).rejects.toMatchObject({
+      code: 'LIVE_TO_SANDBOX_BLOCKED',
+    });
+    // State unchanged.
+    const after = await prisma.distributor.findUniqueOrThrow({
+      where: { id: adhocId }, select: { gstMode: true },
+    });
+    expect(after.gstMode).toBe('live');
+  });
+
+  it('allows live → disabled (the only legitimate path out of live)', async () => {
+    const { updateGstMode } = await import('../services/settingsService.js');
+    const result = await updateGstMode(adhocId, 'disabled');
+    expect(result.gstMode).toBe('disabled');
+    // Revert for next test
+    await prisma.distributor.update({
+      where: { id: adhocId }, data: { gstMode: 'live' },
+    });
+  });
+
+  it('allows sandbox → live (the normal activation path; opposite direction is fine)', async () => {
+    await prisma.distributor.update({
+      where: { id: adhocId }, data: { gstMode: 'sandbox' },
+    });
+    const { updateGstMode } = await import('../services/settingsService.js');
+    const result = await updateGstMode(adhocId, 'live');
+    expect(result.gstMode).toBe('live');
+  });
+});
+
 // ─── GST CREDENTIALS TESTS ─────────────────────────────────────────────────
 
 describe('GST Credentials', () => {
