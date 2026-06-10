@@ -286,11 +286,12 @@ router.get('/invoices/:id',
   }
 });
 
-// GET /api/customer-portal/invoices/:id/pdf — WI-126
+// GET /api/customer-portal/invoices/:id/pdf — WI-126, gate widened in P0-2 (007d780)
 // Customer-scoped invoice PDF. The shared /api/invoices/:id/pdf is admin-only
 // and scopes by distributor (an IDOR for customers), so the portal needs its
-// own customer-scoped route. PDF is offered only for issued/partially_paid/paid
-// invoices whose linked order is delivered/modified_delivered.
+// own customer-scoped route. Gate is invoice-status only: issued /
+// partially_paid / paid. The linked order's status is NOT checked — see the
+// in-body comment at the gate for the CGST Rule 56 / opening-balance rationale.
 router.get('/invoices/:id/pdf',
   requireRole('customer'),
   async (req, res) => {
