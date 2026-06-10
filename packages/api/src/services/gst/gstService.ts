@@ -950,10 +950,6 @@ export async function cancelIrn(
     );
   }
 
-  const distributor = await prisma.distributor.findUnique({
-    where: { id: distributorId },
-    select: { email: true },
-  });
   const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   const cancelPayload = {
@@ -1008,10 +1004,6 @@ export async function cancelEwb(
   });
   if (!gstDoc?.ewbNo) throw new GstError('No e-Way Bill found for this invoice', 'NO_EWB');
 
-  const distributor = await prisma.distributor.findUnique({
-    where: { id: distributorId },
-    select: { email: true },
-  });
   const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   // WI-086 FIX: clearTokenCache removed from here — see note in cancelIrn.
@@ -1297,12 +1289,7 @@ export async function getIrnByDocDetails(
   docNo: string,
   docDate: Date,
 ): Promise<{ irn?: string; ackNo?: string; ackDate?: Date; signedQr?: string } | null> {
-  const distributor = await prisma.distributor.findUnique({
-    where: { id: distributorId },
-    select: { email: true },
-  });
-  const email =
-    (await getCredentials(distributorId, 'einvoice'))!.email;
+  const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   const dd = docDate.getUTCDate().toString().padStart(2, '0');
   const mm = (docDate.getUTCMonth() + 1).toString().padStart(2, '0');
@@ -1343,10 +1330,6 @@ export async function getIrnByDocDetails(
  * Get IRN details from portal
  */
 export async function getIrnDetails(distributorId: string, irn: string) {
-  const distributor = await prisma.distributor.findUnique({
-    where: { id: distributorId },
-    select: { email: true },
-  });
   const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   return callWithLog<IrnResponse>(
@@ -1361,10 +1344,6 @@ export async function getIrnDetails(distributorId: string, irn: string) {
  * Get EWB status
  */
 export async function getEwbStatus(distributorId: string, ewbNo: string) {
-  const distributor = await prisma.distributor.findUnique({
-    where: { id: distributorId },
-    select: { email: true },
-  });
   const email = (await getCredentials(distributorId, 'einvoice'))!.email;
 
   return callWithLog<EwbResponse>(
