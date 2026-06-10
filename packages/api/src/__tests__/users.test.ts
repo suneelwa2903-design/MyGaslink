@@ -432,6 +432,72 @@ describe('Users — Driver ↔ User FK + unlinked filter (Group B Part 3)', () =
   });
 });
 
+// Group B Part 4 — GET /api/users default-hides customer + driver roles,
+// supports role/status/search filters and sort. Verifies the staff list
+// stays clean and that opt-in flags work.
+describe('Users — Staff-only list + filters (Group B Part 4)', () => {
+  it('GET /api/users default response excludes customer + driver roles', async () => {
+    const res = await request(app)
+      .get('/api/users')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const roles = res.body.data.users.map((u: { role: string }) => u.role);
+    expect(roles).not.toContain('customer');
+    expect(roles).not.toContain('driver');
+    // sanity: at least one staff role still shows
+    expect(roles.some((r: string) => ['distributor_admin', 'finance', 'inventory'].includes(r))).toBe(true);
+  });
+
+  it('GET /api/users?includePortal=true includes customer + driver roles', async () => {
+    const res = await request(app)
+      .get('/api/users?includePortal=true')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const roles = res.body.data.users.map((u: { role: string }) => u.role);
+    // dev DB has customer-portal logins on dist-001 seeded as part of the
+    // WI122 / portal smoke seed.
+    expect(roles).toContain('customer');
+  });
+
+  it('GET /api/users?role=customer returns ONLY customer-role users', async () => {
+    const res = await request(app)
+      .get('/api/users?role=customer')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const roles: string[] = res.body.data.users.map((u: { role: string }) => u.role);
+    expect(roles.length).toBeGreaterThan(0);
+    expect(new Set(roles)).toEqual(new Set(['customer']));
+  });
+
+  it('GET /api/users?status=active returns ONLY active users', async () => {
+    const res = await request(app)
+      .get('/api/users?status=active')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const statuses: string[] = res.body.data.users.map((u: { status: string }) => u.status);
+    expect(new Set(statuses)).toEqual(new Set(['active']));
+  });
+
+  it('GET /api/users?search=bhargava finds the dist-001 admin by email', async () => {
+    const res = await request(app)
+      .get('/api/users?search=bhargava')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const emails: string[] = res.body.data.users.map((u: { email: string }) => u.email);
+    expect(emails.some((e) => e.includes('bhargava'))).toBe(true);
+  });
+
+  it('GET /api/users?sortBy=email&sortDir=asc returns alphabetical', async () => {
+    const res = await request(app)
+      .get('/api/users?sortBy=email&sortDir=asc')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const emails: string[] = res.body.data.users.map((u: { email: string }) => u.email);
+    const sorted = [...emails].sort();
+    expect(emails).toEqual(sorted);
+  });
+});
+
 describe('Users — Tenant Isolation', () => {
   it('cannot fetch a user from another distributor (404)', async () => {
     const dist2User = await prisma.user.findFirst({

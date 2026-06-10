@@ -1039,14 +1039,33 @@ function ApprovalsTab() {
 
 // ─── Users Tab ──────────────────────────────────────────────────────────────
 
+type UserSortBy = 'name' | 'email' | 'createdAt' | 'lastLoginAt';
+
 function UsersTab() {
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
+  // Group B Part 4 — filter / search / sort state. Staff-only by default;
+  // a "Portal logins" toggle reveals customer + driver rows on demand.
+  const [roleFilter, setRoleFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [search, setSearch] = useState<string>('');
+  const [sortBy, setSortBy] = useState<UserSortBy>('createdAt');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [includePortal, setIncludePortal] = useState(false);
+
+  const queryParams = {
+    role: roleFilter || undefined,
+    status: statusFilter || undefined,
+    search: search.trim() || undefined,
+    sortBy,
+    sortDir,
+    includePortal: includePortal ? 'true' : undefined,
+  };
 
   const { data: users, isLoading } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => apiGet<{ users: User[] }>('/users'),
+    queryKey: ['users', queryParams],
+    queryFn: () => apiGet<{ users: User[] }>('/users', queryParams),
     select: (data) => data.users,
   });
 
@@ -1056,9 +1075,68 @@ function UsersTab() {
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  const roleFilterOptions = [
+    { value: '', label: 'All staff roles' },
+    { value: UserRole.DISTRIBUTOR_ADMIN, label: 'Distributor Admin' },
+    { value: UserRole.FINANCE, label: 'Finance' },
+    { value: UserRole.INVENTORY, label: 'Inventory' },
+    ...(includePortal
+      ? [
+          { value: UserRole.DRIVER, label: 'Driver' },
+          { value: UserRole.CUSTOMER, label: 'Customer' },
+        ]
+      : []),
+  ];
+  const statusFilterOptions = [
+    { value: '', label: 'All statuses' },
+    { value: 'active', label: 'Active' },
+    { value: 'inactive', label: 'Inactive' },
+  ];
+
+  const toggleSort = (col: UserSortBy) => {
+    if (sortBy === col) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(col);
+      setSortDir('asc');
+    }
+  };
+  const sortIndicator = (col: UserSortBy) =>
+    sortBy === col ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1 min-w-[200px]">
+          <Input
+            placeholder="Search by name, email, or phone…"
+            value={search}
+            onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
+          />
+        </div>
+        <div className="w-44">
+          <Select
+            options={roleFilterOptions}
+            value={roleFilter}
+            onChange={(e) => setRoleFilter((e.target as HTMLSelectElement).value)}
+          />
+        </div>
+        <div className="w-36">
+          <Select
+            options={statusFilterOptions}
+            value={statusFilter}
+            onChange={(e) => setStatusFilter((e.target as HTMLSelectElement).value)}
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-surface-600 dark:text-surface-400">
+          <input
+            type="checkbox"
+            checked={includePortal}
+            onChange={(e) => setIncludePortal(e.target.checked)}
+            className="rounded"
+          />
+          Show customer / driver logins
+        </label>
         <Button onClick={() => { setEditUser(null); setFormOpen(true); }}>
           <HiOutlinePlus className="h-4 w-4" />Add User
         </Button>
@@ -1067,18 +1145,59 @@ function UsersTab() {
       {isLoading ? (
         <div className="flex justify-center py-20"><Loader size="lg" /></div>
       ) : !users?.length ? (
-        <EmptyState title="No users" action={<Button onClick={() => setFormOpen(true)}>Add User</Button>} />
+        <EmptyState
+          title={search || roleFilter || statusFilter ? 'No users match your filters' : 'No users yet'}
+          action={<Button onClick={() => setFormOpen(true)}>Add User</Button>}
+        />
       ) : (
         <div className="table-container">
           <table className="table">
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead>
+              <tr>
+                <th>
+                  <button type="button" onClick={() => toggleSort('name')} className="font-semibold">
+                    Name{sortIndicator('name')}
+                  </button>
+                </th>
+                <th>
+                  <button type="button" onClick={() => toggleSort('email')} className="font-semibold">
+                    Email{sortIndicator('email')}
+                  </button>
+                </th>
+                <th>Phone</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>
+                  <button type="button" onClick={() => toggleSort('lastLoginAt')} className="font-semibold">
+                    Last login{sortIndicator('lastLoginAt')}
+                  </button>
+                </th>
+                <th>
+                  <button type="button" onClick={() => toggleSort('createdAt')} className="font-semibold">
+                    Created{sortIndicator('createdAt')}
+                  </button>
+                </th>
+                <th>Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {users.map((user) => (
                 <tr key={user.userId}>
                   <td className="font-medium text-surface-900 dark:text-white">{user.firstName} {user.lastName}</td>
                   <td>{user.email}</td>
+                  <td>{user.phone || <span className="text-surface-400">—</span>}</td>
                   <td><Badge variant="info">{user.role.replace(/_/g, ' ')}</Badge></td>
                   <td><Badge variant={user.status === 'active' ? 'success' : 'neutral'}>{user.status}</Badge></td>
+                  <td className="text-sm text-surface-600 dark:text-surface-400">
+                    {user.lastLoginAt
+                      ? new Date(user.lastLoginAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+                      : <span className="text-surface-400">never</span>}
+                  </td>
+                  <td className="text-sm text-surface-600 dark:text-surface-400">
+                    {user.createdAt
+                      ? new Date(user.createdAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })
+                      : '—'}
+                  </td>
                   <td>
                     <div className="flex items-center gap-1">
                       <button onClick={() => { setEditUser(user); setFormOpen(true); }} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500">

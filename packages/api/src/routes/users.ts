@@ -27,9 +27,29 @@ router.get('/profile', async (req, res) => {
 });
 
 // GET /api/users - list users
+//
+// Group B Part 4 — staff-only by default. Query params:
+//   role         filter by single role (overrides default-hide of
+//                customer/driver)
+//   status       filter by active|inactive
+//   search       case-insensitive contains across firstName/lastName/
+//                email/phone
+//   sortBy       name | email | createdAt | lastLoginAt
+//   sortDir      asc | desc (default desc)
+//   includePortal=true  include customer + driver roles in the default
+//                       response (rare — typically only for a portal
+//                       roster view)
 router.get('/', requireRole('super_admin', 'distributor_admin'), async (req, res) => {
   try {
-    const users = await userService.listUsers(req.user!.distributorId, req.user!.role);
+    const q = req.query as Record<string, string | undefined>;
+    const users = await userService.listUsers(req.user!.distributorId, req.user!.role, {
+      roleFilter: q.role,
+      statusFilter: q.status,
+      search: q.search,
+      sortBy: q.sortBy as 'name' | 'email' | 'createdAt' | 'lastLoginAt' | undefined,
+      sortDir: q.sortDir === 'asc' ? 'asc' : q.sortDir === 'desc' ? 'desc' : undefined,
+      includePortal: q.includePortal === 'true' || q.includePortal === '1',
+    });
     return sendSuccess(res, { users: mapUsers(users) });
   } catch (err) {
     return sendError(res, (err as Error).message);

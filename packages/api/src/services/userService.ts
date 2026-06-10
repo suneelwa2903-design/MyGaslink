@@ -19,12 +19,86 @@ const userSelect = {
   updatedAt: true,
 } satisfies Prisma.UserSelect;
 
-export async function listUsers(distributorId: string | null, role: string) {
+// Group B Part 4 — staff Users list filters + search + sort.
+// Defaults to STAFF roles only (excludes customer + driver portal logins),
+// since the Settings → Users page is for the distributor's internal team.
+// Customer-role users are administered from the Customers section; driver-
+// role users from Fleet → Drivers. Callers that need the full list (e.g.
+// the upcoming portal-status view) opt in via `includePortal: true`.
+type ListUsersFilters = {
+  /** Filter by single role. Overrides default-hide of customer/driver. */
+  roleFilter?: string;
+  /** Filter by status (active/inactive). */
+  statusFilter?: string;
+  /** Free-text search across firstName, lastName, email, phone. */
+  search?: string;
+  /** Sort column — one of name/email/createdAt/lastLoginAt. */
+  sortBy?: 'name' | 'email' | 'createdAt' | 'lastLoginAt';
+  /** Sort direction. Defaults to desc. */
+  sortDir?: 'asc' | 'desc';
+  /** When true, include customer + driver roles in the default response. */
+  includePortal?: boolean;
+};
+
+export async function listUsers(
+  distributorId: string | null,
+  role: string,
+  filters: ListUsersFilters = {},
+) {
   const where: Prisma.UserWhereInput = { deletedAt: null };
   if (role !== 'super_admin' && distributorId) {
     where.distributorId = distributorId;
   }
-  return prisma.user.findMany({ where, select: userSelect, orderBy: { createdAt: 'desc' } });
+
+  // Role: explicit filter wins; otherwise default-hide customer/driver
+  // unless includePortal=true. Validated against the enum so the caller
+  // can't smuggle a junk value through.
+  if (filters.roleFilter) {
+    where.role = filters.roleFilter as $Enums.UserRole;
+  } else if (!filters.includePortal) {
+    where.role = { notIn: ['customer', 'driver'] as $Enums.UserRole[] };
+  }
+
+  if (filters.statusFilter) {
+    where.status = filters.statusFilter as $Enums.UserStatus;
+  }
+
+  // Search: case-insensitive contains on firstName / lastName / email / phone.
+  // Phone is matched without case-insensitive (it has no letters), so it
+  // gets its own clause to avoid the "Mode" arg landing where it doesn't apply.
+  if (filters.search) {
+    const q = filters.search.trim();
+    if (q.length > 0) {
+      where.OR = [
+        { firstName: { contains: q, mode: 'insensitive' } },
+        { lastName: { contains: q, mode: 'insensitive' } },
+        { email: { contains: q, mode: 'insensitive' } },
+        { phone: { contains: q } },
+      ];
+    }
+  }
+
+  // Sort: "name" is mapped to firstName since Prisma can't sort by a
+  // concatenation; firstName is the dominant display surface in the table.
+  const sortDir: Prisma.SortOrder = filters.sortDir ?? 'desc';
+  let orderBy: Prisma.UserOrderByWithRelationInput;
+  switch (filters.sortBy) {
+    case 'name':
+      orderBy = { firstName: sortDir };
+      break;
+    case 'email':
+      orderBy = { email: sortDir };
+      break;
+    case 'lastLoginAt':
+      orderBy = { lastLoginAt: sortDir };
+      break;
+    case 'createdAt':
+    default:
+      orderBy = { createdAt: sortDir };
+      break;
+  }
+
+  return prisma.user.findMany({ where, select: userSelect, orderBy });
 }
 
 export async function getUserById(id: string, distributorId?: string) {

@@ -85,6 +85,7 @@ export interface User {
   distributorId: string | null;
   customerId: string | null;
   requiresPasswordReset: boolean;
+  lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
