@@ -317,6 +317,59 @@ export const gstModeSchema = z.object({
   mode: z.nativeEnum(GstMode),
 });
 
+// ─── Group A: Atomic GST Activation (super-admin only) ───────────────────────
+//
+// Per-scope Layer 2 credentials. Layer 1 (client_id/client_secret) is read from
+// env vars at runtime — never accepted from a request body.
+export const gstLayer2CredentialsSchema = z.object({
+  username: z.string().min(1, 'Username is required'),
+  password: z.string().min(1, 'Password is required'),
+  email: z.string().email('Valid email required'),
+});
+
+// Reason enum — drives the audit_log details JSON. 'other' requires reasonText.
+export const gstActivationReasonSchema = z.enum([
+  'new_distributor_activation',
+  'credential_rotation',
+  'mode_change',
+  'revoke_access',
+  'other',
+]);
+
+export const gstActivationSchema = z
+  .object({
+    mode: z.enum(['live', 'sandbox']),
+    einvoice: gstLayer2CredentialsSchema,
+    // ewaybill may be the literal string 'same_as_einvoice' to copy the einvoice
+    // credentials into the ewaybill row (the common case — most taxpayers use
+    // identical NIC creds for both portals).
+    ewaybill: z.union([gstLayer2CredentialsSchema, z.literal('same_as_einvoice')]),
+    reason: gstActivationReasonSchema,
+    reasonText: z.string().max(500).optional(),
+  })
+  .refine((d) => d.reason !== 'other' || (d.reasonText && d.reasonText.length > 0), {
+    message: 'reasonText is required when reason is "other"',
+    path: ['reasonText'],
+  });
+
+export const gstDisableSchema = z
+  .object({
+    reason: gstActivationReasonSchema,
+    reasonText: z.string().max(500).optional(),
+  })
+  .refine((d) => d.reason !== 'other' || (d.reasonText && d.reasonText.length > 0), {
+    message: 'reasonText is required when reason is "other"',
+    path: ['reasonText'],
+  });
+
+// Body-creds variant for Test Connection on the activation form (creds not
+// yet saved). Body is optional — when present, used in place of DB rows.
+export const gstTestConnectionRequestSchema = z.object({
+  scope: z.enum(['einvoice', 'ewaybill']),
+  mode: z.enum(['sandbox', 'live']),
+  credentials: gstLayer2CredentialsSchema.optional(),
+});
+
 export const approvalWorkflowSchema = z.object({
   action: z.string().min(1),
   requiresApproval: z.boolean(),

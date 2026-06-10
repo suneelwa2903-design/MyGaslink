@@ -37,6 +37,7 @@ import providerCatalogRoutes from './routes/providerCatalog.js';
 import pricingRoutes from './routes/pricing.js';
 import licensesRoutes from './routes/licenses.js';
 import testHelpersRouter from './routes/testHelpers.js';
+import adminGstActivationRoutes from './routes/adminGstActivation.js';
 
 export function createApp() {
   const app = express();
@@ -91,6 +92,9 @@ export function createApp() {
 
   app.use('/api/users', authenticate, resolveDistributor, userRoutes);
   app.use('/api/distributors', authenticate, distributorRoutes);
+  // Group A: super-admin GST activation flow. No resolveDistributor — the :id
+  // path param IS the target distributor. The route handlers enforce super_admin.
+  app.use('/api/admin/distributors/:id/gst', authenticate, adminGstActivationRoutes);
   app.use('/api/customers', authenticate, resolveDistributor, requireDistributor, customerRoutes);
   app.use('/api/cylinder-types', authenticate, resolveDistributor, requireDistributor, cylinderTypeRoutes);
   app.use('/api/orders', authenticate, resolveDistributor, requireDistributor, orderRoutes);
