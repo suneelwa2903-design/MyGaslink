@@ -3,9 +3,10 @@
  *
  *   1. Positive: returns CustomerInventoryBalance rows enriched with
  *      cylinderTypeName for the customer's own tenant.
- *   2. Negative: returns 404 when the customer id belongs to another
- *      tenant — mirrors the existing pattern in this file (we don't
- *      leak tenant existence with a 403).
+ *   2. Negative: returns 403 CROSS_TENANT_ACCESS when the customer id
+ *      belongs to another tenant — matches the POST /balance-setup
+ *      pattern established in Group 4 (K7) so the read and write paths
+ *      respond identically to the same probe.
  *   3. Positive: a customer with no balances returns `{ balances: [] }`
  *      (not an error).
  *   4. Regression: POST /balance-setup still works after the GET
@@ -94,7 +95,7 @@ describe('Fix B — GET /api/customers/:id/balance', () => {
     expect(typeof res.body.data.balances[0].updatedAt).toBe('string');
   });
 
-  it('negative: dist-001 cannot read a dist-002 customer (404, no leak)', async () => {
+  it('negative: dist-001 cannot read a dist-002 customer (403 CROSS_TENANT_ACCESS)', async () => {
     await prisma.customerInventoryBalance.create({
       data: {
         customerId: dist2CustomerId, cylinderTypeId: cyl19_d1,
@@ -104,7 +105,8 @@ describe('Fix B — GET /api/customers/:id/balance', () => {
     const res = await request(app)
       .get(`/api/customers/${dist2CustomerId}/balance`)
       .set('Authorization', `Bearer ${dist1Token}`);
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('CROSS_TENANT_ACCESS');
   });
 
   it('positive: customer with no balances returns { balances: [] }', async () => {

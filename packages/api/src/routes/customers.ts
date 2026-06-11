@@ -379,8 +379,10 @@ router.post('/:id/resume-supply',
 // GET /api/customers/:id/balance — Fix B (2026-06-11)
 //
 // Read every CustomerInventoryBalance row for a customer. Tenant-scoped:
-// returns 404 (Customer not found) if the id belongs to another tenant,
-// mirroring the negative pattern used elsewhere in this file.
+// returns 403 CROSS_TENANT_ACCESS when the customer id doesn't belong to
+// the caller's tenant — matches the POST /balance-setup pattern
+// established in Group 4 (K7). The two endpoints now respond identically
+// to the same probe.
 router.get('/:id/balance',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
@@ -391,7 +393,7 @@ router.get('/:id/balance',
         where: { id: customerId, distributorId: req.user!.distributorId!, deletedAt: null },
         select: { id: true },
       });
-      if (!customer) return sendNotFound(res, 'Customer');
+      if (!customer) return sendError(res, 'Customer does not belong to this distributor', 403, 'CROSS_TENANT_ACCESS');
       const rows = await prisma.customerInventoryBalance.findMany({
         where: { customerId },
         include: { cylinderType: { select: { id: true, typeName: true } } },
