@@ -5,6 +5,9 @@ const distributorSelect = {
   id: true,
   businessName: true,
   legalName: true,
+  // Group L2 (2026-06-11): docCode is read by the create/edit form
+  // and by downstream invoice numbering.
+  docCode: true,
   gstin: true,
   address: true,
   city: true,
@@ -57,9 +60,43 @@ export async function getDistributorById(id: string) {
   });
 }
 
+export class DistributorError extends Error {
+  constructor(message: string, public statusCode: number, public code?: string) {
+    super(message);
+    this.name = 'DistributorError';
+  }
+}
+
+// Group L2 (2026-06-11): docCode case-insensitive uniqueness check. The
+// underlying column has a unique index (schema.prisma:341) but Postgres
+// unique is case-sensitive, and the Zod regex already forces uppercase,
+// so we still do a defensive case-insensitive check here so a future
+// schema relaxation doesn't silently allow collisions. excludeId lets
+// the update path skip the row being edited.
+async function assertDocCodeUnique(docCode: string, excludeId?: string) {
+  const upper = docCode.trim().toUpperCase();
+  if (!upper) return;
+  const existing = await prisma.distributor.findFirst({
+    where: {
+      docCode: { equals: upper, mode: 'insensitive' },
+      deletedAt: null,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true, businessName: true },
+  });
+  if (existing) {
+    throw new DistributorError(
+      `This document code is already in use by another distributor (${existing.businessName}).`,
+      409,
+      'DOC_CODE_CONFLICT',
+    );
+  }
+}
+
 export async function createDistributor(data: {
   businessName: string;
   legalName: string;
+  docCode?: string;
   gstin?: string;
   address?: string;
   city?: string;
@@ -81,10 +118,14 @@ export async function createDistributor(data: {
   officeState?: string;
   officePincode?: string;
 }) {
+  const docCode = data.docCode?.trim().toUpperCase() || null;
+  if (docCode) await assertDocCodeUnique(docCode);
+
   return prisma.distributor.create({
     data: {
       businessName: data.businessName,
       legalName: data.legalName,
+      docCode,
       gstin: data.gstin || null,
       address: data.address || null,
       city: data.city || null,
@@ -113,6 +154,7 @@ export async function createDistributor(data: {
 export async function updateDistributor(id: string, data: Partial<{
   businessName: string;
   legalName: string;
+  docCode: string;
   gstin: string;
   address: string;
   city: string;
@@ -139,9 +181,22 @@ export async function updateDistributor(id: string, data: Partial<{
   latitude: number;
   longitude: number;
 }>) {
+  // Group L2 (2026-06-11): normalise + uniqueness-check docCode before
+  // hitting the DB so the 409 reply happens in this service, not as a
+  // raw Postgres unique-constraint violation surfacing through Prisma.
+  const writeData: Record<string, unknown> = { ...data };
+  if (typeof data.docCode === 'string') {
+    const upper = data.docCode.trim().toUpperCase();
+    if (upper) {
+      await assertDocCodeUnique(upper, id);
+      writeData.docCode = upper;
+    } else {
+      writeData.docCode = null;
+    }
+  }
   return prisma.distributor.update({
     where: { id },
-    data: data as Prisma.DistributorUpdateInput,
+    data: writeData as Prisma.DistributorUpdateInput,
     select: distributorSelect,
   });
 }

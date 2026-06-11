@@ -204,6 +204,7 @@ function DistributorFormModal({
       ? {
           businessName: distributor.businessName,
           legalName: distributor.legalName,
+          docCode: distributor.docCode || '',
           gstin: distributor.gstin || '',
           address: distributor.address || '',
           city: distributor.city || '',
@@ -430,6 +431,25 @@ function DistributorFormModal({
             <Input label="GSTIN" className="font-mono" error={errors.gstin?.message} {...register('gstin')} readOnly={!!gstinLookupData} />
             <Input label="Phone" {...register('phone')} />
             <Input label="Email" type="email" {...register('email')} />
+            {/* Group L2 (2026-06-11) — short alphanumeric tenant code that
+                prefixes structured invoice / order numbers. Optional at
+                create time but should be set before the first invoice runs
+                (otherwise the legacy `INV-`/`ORD-` random format kicks in). */}
+            <div>
+              <Input
+                label="Document Code (e.g., VAN, SGD)"
+                placeholder="3-5 uppercase letters"
+                className="font-mono uppercase"
+                maxLength={6}
+                error={errors.docCode?.message}
+                {...register('docCode', {
+                  setValueAs: (v: string) => (v ?? '').trim().toUpperCase(),
+                })}
+              />
+              <p className="mt-1 text-xs text-surface-500">
+                Used to prefix invoice numbers e.g. <span className="font-mono">IVAN2526000001</span>. Can be set later but must be set before the first invoice.
+              </p>
+            </div>
           </div>
         </div>
 

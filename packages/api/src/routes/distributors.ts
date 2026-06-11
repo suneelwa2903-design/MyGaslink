@@ -100,7 +100,9 @@ router.post('/',
       const distributor = await distributorService.createDistributor(req.body);
       return sendCreated(res, mapDistributor(distributor));
     } catch (err) {
-      return sendError(res, (err as Error).message);
+      // Group L2: surface docCode conflict as a 409 instead of a generic 500.
+      const e = err as { statusCode?: number; code?: string; message: string };
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );
@@ -117,7 +119,8 @@ router.put('/:id',
       const distributor = await distributorService.updateDistributor(param(req.params.id), req.body);
       return sendSuccess(res, mapDistributor(distributor));
     } catch (err) {
-      return sendError(res, (err as Error).message);
+      const e = err as { statusCode?: number; code?: string; message: string };
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );

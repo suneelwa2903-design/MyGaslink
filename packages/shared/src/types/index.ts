@@ -111,6 +111,11 @@ export interface Distributor {
   distributorId: string;
   businessName: string;
   legalName: string;
+  // Group L2 (2026-06-11): 2-6 char alphanumeric code used to prefix
+  // structured invoice + order numbers (e.g. "VAN" → IVAN2526000001).
+  // Optional — distributors can exist without one and fall back to
+  // the legacy random `INV-`/`ORD-` format.
+  docCode: string | null;
   gstin: string | null;
   address: string | null;
   city: string | null;

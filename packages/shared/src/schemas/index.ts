@@ -454,9 +454,20 @@ export const contactFormSchema = z.object({
 
 // ─── Distributor Schemas ─────────────────────────────────────────────────────
 
+// Group L2 (2026-06-11): 3-letter tenant code used to prefix invoice +
+// order numbers (e.g. "VAN" → IVAN2526000001). 2–6 uppercase letters or
+// digits. Optional at create time — distributors can be created without
+// a docCode and have one assigned later, BEFORE the first invoice runs
+// (the legacy `INV-`/`ORD-` random format kicks in if docCode is unset).
+const docCode = z.string()
+  .regex(/^[A-Z0-9]{2,6}$/, 'Document code must be 2-6 uppercase letters or digits')
+  .optional()
+  .or(z.literal(''));
+
 export const createDistributorSchema = z.object({
   businessName: z.string().min(1).max(200),
   legalName: z.string().min(1).max(200),
+  docCode: docCode,
   gstin: gstin,
   address: z.string().max(500).optional(),
   city: z.string().max(100).optional(),
