@@ -899,9 +899,18 @@ export async function importOpeningBalances(
   const todayIso = today.toISOString().split('T')[0];
   const replace = opts.replaceExisting === true;
 
-  // Group 5 will wire distributor.goLiveDate in here so OB invoices get
-  // backdated to goLiveDate - 1 day. For now we honour the per-row
-  // asOfDate or fall back to today.
+  // Group 5 (2026-06-11): when the distributor has a goLiveDate set, OB
+  // invoices get backdated to goLiveDate - 1 day so they sit chronologically
+  // BEFORE the first live transaction. Per-row asOfDate still wins if both
+  // are present (operator override). Otherwise: today.
+  const dist = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { goLiveDate: true },
+  });
+  const goLiveMinus1 = dist?.goLiveDate
+    ? new Date(new Date(dist.goLiveDate).getTime() - 86400000)
+    : null;
+
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const rowNum = i + 1;
@@ -952,9 +961,12 @@ export async function importOpeningBalances(
     }
 
     // Pick the effective entry/issue/due date for this row.
+    // Precedence: per-row asOfDate > distributor.goLiveDate−1 > today.
     let entryDate = today;
     if (r.asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(r.asOfDate)) {
       entryDate = new Date(r.asOfDate);
+    } else if (goLiveMinus1) {
+      entryDate = goLiveMinus1;
     }
     const entryDateIso = entryDate.toISOString().split('T')[0];
 

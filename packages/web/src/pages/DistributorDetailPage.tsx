@@ -287,6 +287,9 @@ export default function DistributorDetailPage() {
           <InfoRow label="Suspended" value={distributor.billingSuspended ? 'Yes' : 'No'} />
           <InfoRow label="Providers" value={(distributor.providerCodes || []).join(', ') || 'None'} />
         </div>
+        <div className="mt-4 pt-4 border-t border-surface-200 dark:border-surface-700">
+          <GoLiveDateEditor distributorId={id!} initial={(distributor as Distributor & { goLiveDate?: string | null }).goLiveDate ?? null} />
+        </div>
       </div>
 
       {/* Generate Invoice Modal */}
@@ -611,6 +614,56 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-xs text-surface-500">{label}</p>
       <p className="font-medium text-surface-900 dark:text-white">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * Group 5 (2026-06-11): super-admin-only editor for distributor.goLiveDate.
+ * Drives the default `dateFrom` filter on reports + the backdate target for
+ * opening-balance invoices.
+ */
+function GoLiveDateEditor({ distributorId, initial }: { distributorId: string; initial: string | null }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(initial ?? '');
+  const save = useMutation({
+    mutationFn: () => api.put(`/distributors/${distributorId}/go-live-date`, {
+      goLiveDate: val || null,
+    }).then((r) => r.data.data as { goLiveDate: string | null }),
+    onSuccess: (r) => {
+      toast.success(r.goLiveDate ? `Go-live date set to ${r.goLiveDate}` : 'Go-live date cleared');
+      setEditing(false);
+      qc.invalidateQueries({ queryKey: ['distributor', distributorId] });
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-4 text-sm">
+        <div>
+          <p className="text-xs text-surface-500">Go Live Date <span className="text-surface-400">(set by platform admin)</span></p>
+          <p className="font-medium text-surface-900 dark:text-white">{initial ?? 'Not set'}</p>
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => { setVal(initial ?? ''); setEditing(true); }}>Edit</Button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-end gap-2 text-sm">
+      <div>
+        <label className="text-xs text-surface-500">Go Live Date</label>
+        <input
+          type="date"
+          className="input py-1.5 block"
+          value={val}
+          max={new Date().toISOString().split('T')[0]}
+          onChange={(e) => setVal(e.target.value)}
+        />
+      </div>
+      <Button size="sm" onClick={() => save.mutate()} loading={save.isPending}>Save</Button>
+      <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
     </div>
   );
 }

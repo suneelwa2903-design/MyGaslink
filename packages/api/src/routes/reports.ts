@@ -29,6 +29,23 @@ router.get('/:reportType',
       const fn = REPORTS[reportType];
       if (!fn) return sendNotFound(res, `Unknown report type: ${reportType}`);
       const filters = parseFilters(req.query);
+
+      // Group 5 (2026-06-11): when the caller didn't pass dateFrom AND the
+      // distributor has a goLiveDate set, default dateFrom to goLiveDate so
+      // legacy paper debt (opening-balance invoices issued on goLiveDate-1)
+      // doesn't dominate the dashboard view. The caller can still override
+      // explicitly to look at pre-go-live periods.
+      if (!filters.dateFrom) {
+        const { prisma } = await import('../lib/prisma.js');
+        const d = await prisma.distributor.findUnique({
+          where: { id: req.user!.distributorId! },
+          select: { goLiveDate: true },
+        });
+        if (d?.goLiveDate) {
+          filters.dateFrom = d.goLiveDate.toISOString().split('T')[0];
+        }
+      }
+
       const result = await fn(req.user!.distributorId!, filters);
 
       if (req.query.format === 'csv') {

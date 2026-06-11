@@ -8,6 +8,7 @@ import { createDistributorSchema, updateDistributorSchema } from '@gaslink/share
 import * as distributorService from '../services/distributorService.js';
 import { mapDistributor, mapDistributors } from '../utils/mappers.js';
 import { lookupGstin, geocodeAddress } from '../services/gst/gstinLookup.js';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -115,6 +116,35 @@ router.put('/:id',
       if (!existing) return sendNotFound(res, 'Distributor');
       const distributor = await distributorService.updateDistributor(param(req.params.id), req.body);
       return sendSuccess(res, mapDistributor(distributor));
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// Group 5 (2026-06-11): PUT /api/distributors/:id/go-live-date
+// Super-admin only. Sets the distributor's operational go-live date.
+// Distributor admins can READ this value via GET /api/settings.
+router.put('/:id/go-live-date',
+  requireRole('super_admin'),
+  validate(z.object({
+    goLiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  })),
+  auditLog('update', 'distributor'),
+  async (req, res) => {
+    try {
+      const { prisma } = await import('../lib/prisma.js');
+      const updated = await prisma.distributor.update({
+        where: { id: param(req.params.id) },
+        data: {
+          goLiveDate: req.body.goLiveDate ? new Date(req.body.goLiveDate) : null,
+        },
+        select: { id: true, goLiveDate: true },
+      });
+      return sendSuccess(res, {
+        distributorId: updated.id,
+        goLiveDate: updated.goLiveDate?.toISOString().split('T')[0] ?? null,
+      });
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

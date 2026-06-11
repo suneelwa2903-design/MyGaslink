@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 
 /**
  * Reports service — powers GET /api/reports/:reportType (TASK 1).
@@ -109,9 +110,29 @@ export async function salesSummary(distributorId: string, f: ReportFilters): Pro
 }
 
 // ─── Report 2 — Outstanding & Aging ──────────────────────────────────────────
-export async function outstandingAging(distributorId: string, _f: ReportFilters): Promise<ReportResult> {
+//
+// Group 5 (2026-06-11): the dateFrom/dateTo filter is now honoured (was
+// `_f` and silently ignored — confirmed empirically in K9). The window
+// applies to `issueDate` (when the invoice was created), so pre-go-live
+// opening-balance invoices are correctly excluded by default if a
+// distributor passes `dateFrom = goLiveDate`. The route layer fills
+// dateFrom from distributor.goLiveDate when the caller didn't supply one.
+export async function outstandingAging(distributorId: string, f: ReportFilters): Promise<ReportResult> {
+  const dateFrom = f?.dateFrom ? new Date(f.dateFrom) : null;
+  const dateTo = f?.dateTo ? new Date(f.dateTo) : null;
+  const invoiceWhere: Prisma.InvoiceWhereInput = {
+    distributorId,
+    outstandingAmount: { gt: 0 },
+    deletedAt: null,
+    status: { not: 'cancelled' },
+  };
+  if (dateFrom || dateTo) {
+    invoiceWhere.issueDate = {};
+    if (dateFrom) (invoiceWhere.issueDate as Prisma.DateTimeFilter).gte = dateFrom;
+    if (dateTo) (invoiceWhere.issueDate as Prisma.DateTimeFilter).lte = dateTo;
+  }
   const invoices = await prisma.invoice.findMany({
-    where: { distributorId, outstandingAmount: { gt: 0 }, deletedAt: null, status: { not: 'cancelled' } },
+    where: invoiceWhere,
     select: { customerId: true, outstandingAmount: true, dueDate: true, customer: { select: { customerName: true } } },
   });
   const lastPayments = await prisma.paymentTransaction.groupBy({

@@ -33,7 +33,7 @@ router.get('/', async (req, res) => {
       settingsService.getSettings(distributorId),
       (await import('../lib/prisma.js')).prisma.distributor.findUnique({
         where: { id: distributorId },
-        select: { gstMode: true, docCode: true },
+        select: { gstMode: true, docCode: true, goLiveDate: true },
       }),
       settingsService.getGstCredentials(distributorId, 'einvoice'),
     ]);
@@ -42,6 +42,10 @@ router.get('/', async (req, res) => {
       gstMode: distributor?.gstMode ?? null,
       gstCredentials: gstCred ?? null,
       docCode: distributor?.docCode ?? null,
+      // Group 5 (2026-06-11): exposed read-only here so distributor admins
+      // can see their go-live date. Writes go through PUT /api/distributors
+      // /:id/go-live-date (super-admin only).
+      goLiveDate: distributor?.goLiveDate?.toISOString().split('T')[0] ?? null,
       rawSettings,
     });
   } catch (err) {

@@ -345,6 +345,12 @@ model Distributor {
   billingSuspended        Boolean           @default(false) @map("billing_suspended")
   gaslinkBillingEnabled   Boolean           @default(false) @map("gaslink_billing_enabled")
   gaslinkBillingStartDate DateTime?         @map("gaslink_billing_start_date") @db.Date
+  /// Group 5 (2026-06-11): the date the distributor started operating on
+  /// MyGasLink. Used to default `dateFrom` on reports (so legacy paper
+  /// debt doesn't dominate Day-1 dashboards) and to backdate opening-
+  /// balance invoices to goLiveDate - 1 day so they sit chronologically
+  /// before the first live transaction.
+  goLiveDate              DateTime?         @map("go_live_date") @db.Date
   latitude                Float?            @map("latitude")
   longitude               Float?            @map("longitude")
 
