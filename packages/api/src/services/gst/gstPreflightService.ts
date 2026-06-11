@@ -731,6 +731,60 @@ async function preflightOne(params: {
   try {
     const isB2C = !order.customer?.gstin || order.customer.gstin === 'URP';
 
+    // Group 2 (2026-06-11): pre-dispatch stock availability gate.
+    //
+    // The dispatch path used to debit inventory without checking whether
+    // there was any stock — empirically confirmed: an order for 5 against
+    // 0 stock wrote -5 to closing_fulls with no error. For Vanasthali
+    // go-live this would corrupt every report on day 1.
+    //
+    // We sum required qty per cylinderType across the order's items and
+    // compare to the LATEST InventorySummary.closingFulls. If any type is
+    // short, we revert the order to pending_dispatch and surface
+    // INSUFFICIENT_STOCK in the existing PreflightResult envelope — so
+    // the dispatch flow's batch UI shows a per-order error row.
+    //
+    // Sits BEFORE the gstMode='disabled' branch so non-GST tenants are
+    // covered too. The order is already locked at preflight_in_progress
+    // so revertToPendingDispatch is the right release path.
+    if (process.env.INVENTORY_STOCK_GATE_BYPASS !== 'true') {
+      type Need = { qty: number; name: string };
+      const need = new Map<string, Need>();
+      for (const item of order.items) {
+        const prev = need.get(item.cylinderTypeId);
+        const name = item.cylinderType?.typeName ?? item.cylinderTypeId;
+        need.set(item.cylinderTypeId, {
+          qty: (prev?.qty ?? 0) + item.quantity,
+          name,
+        });
+      }
+      for (const [cylinderTypeId, { qty, name }] of need) {
+        const latest = await prisma.inventorySummary.findFirst({
+          where: { distributorId: distributor.id, cylinderTypeId },
+          orderBy: { summaryDate: 'desc' },
+          select: { closingFulls: true },
+        });
+        const available = latest?.closingFulls ?? 0;
+        if (available < qty) {
+          await revertToPendingDispatch(orderId);
+          const msg = `Insufficient stock for ${name}: need ${qty}, available ${available}. Record a stock receipt or update opening balance.`;
+          const pa = await createPendingAction(
+            distributor.id, orderId, 'DISPATCH_PREFLIGHT', msg,
+          );
+          return {
+            orderId,
+            orderNumber: order.orderNumber,
+            customerName,
+            mode: isB2C ? 'B2C' : 'B2B',
+            success: false,
+            errorCode: 'INSUFFICIENT_STOCK',
+            errorMessage: msg,
+            pendingActionId: pa?.id,
+          };
+        }
+      }
+    }
+
     // GST-disabled tenants: just transition to pending_delivery.
     if (distributor.gstMode === 'disabled') {
       await transitionToPendingDelivery(orderId, userId, 'GST disabled — preflight skipped', tripNumber, buildDispatchCtx(order, vehicleNumber));

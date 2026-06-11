@@ -20,6 +20,12 @@ import { afterAll, beforeEach } from 'vitest';
 // up after — this reset is the safety net for everything else.
 beforeEach(() => {
   delete process.env.INVENTORY_DISPATCH_DEBIT;
+  // Group 2 (2026-06-11): pre-dispatch stock gate. Default ON in
+  // production; OFF in tests so the existing dispatch suites
+  // (gst-preflight, dva-*, vehicle-return-bundle) which don't bother to
+  // seed opening stock keep their semantics. The G2 stock-gate tests
+  // (inventory-safety-gates.test.ts) opt back in via a beforeAll.
+  process.env.INVENTORY_STOCK_GATE_BYPASS = 'true';
 });
 
 // Group B Part 2 — neutralise SMTP for the test process so tests are

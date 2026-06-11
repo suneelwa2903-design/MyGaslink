@@ -76,6 +76,12 @@ router.post('/outgoing-empties',
 );
 
 // POST /api/inventory/initial-balance — onboarding-time opening-stock entry
+//
+// Group 2 (2026-06-11): the body now accepts an optional `replaceExisting`
+// boolean. When omitted/false, any pre-existing `initial_balance` event(s)
+// for the submitted cylinder types cause a 409 with per-type current
+// values so the web modal can prompt for confirmation. With `true`, the
+// prior events are hard-deleted before the new ones are written.
 router.post('/initial-balance',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(z.object({
@@ -84,7 +90,10 @@ router.post('/initial-balance',
       openingFulls: z.number().int().min(0),
       openingEmpties: z.number().int().min(0),
     })).min(1).max(50),
+    // Optional as-of-date picker (G2c). Backend already supported it
+    // but the prior /onboarding modal never sent it; now plumbed through.
     eventDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    replaceExisting: z.boolean().optional(),
   })),
   auditLog('initial_balance', 'inventory'),
   async (req, res) => {
@@ -94,6 +103,20 @@ router.post('/initial-balance',
       );
       return sendSuccess(res, result);
     } catch (err: unknown) {
+      if (err instanceof inventoryService.InitialBalanceConflictError) {
+        // 409 + structured payload so the UI can show "Replace [type] X→Y?"
+        // Bypasses sendError so we can attach `details` (existing values).
+        return res.status(409).json({
+          success: false,
+          data: null,
+          error: err.message,
+          code: 'OPENING_STOCK_CONFLICT',
+          details: {
+            requiresConfirmation: true,
+            conflicts: err.conflicts,
+          },
+        });
+      }
       const e = err as ServiceError;
       return sendError(res, e.message, e.statusCode || 500);
     }

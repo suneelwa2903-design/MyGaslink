@@ -405,9 +405,31 @@ export async function recordOutgoingEmpties(
 }
 
 /**
+ * Group 2 (2026-06-11): structured error thrown when a duplicate opening-
+ * stock entry is submitted without `replaceExisting`. The route handler
+ * catches it and maps to 409 + per-cylinder-type existing values so the
+ * web modal can show a confirmation dialog.
+ */
+export class InitialBalanceConflictError extends Error {
+  conflicts: { cylinderTypeId: string; fulls: number; empties: number; eventDate: string }[];
+  constructor(conflicts: InitialBalanceConflictError['conflicts']) {
+    super('Opening stock already entered. Set replaceExisting=true to override.');
+    this.name = 'InitialBalanceConflictError';
+    this.conflicts = conflicts;
+  }
+}
+
+/**
  * Record opening-stock balances (one InventoryEvent per cylinder type) as
  * the distributor's starting fulls/empties counts. Used by the onboarding
  * "Enter opening stock" flow. Skips entries where both fulls and empties are 0.
+ *
+ * Group 2 (2026-06-11): if an `initial_balance` event already exists for a
+ * given cylinder type, the call fails with InitialBalanceConflictError
+ * UNLESS `replaceExisting=true`, in which case the prior event(s) are
+ * hard-deleted before the new one is written. Empirically confirmed during
+ * Group H validation: hitting this endpoint twice with the same payload
+ * silently doubled the opening stock.
  */
 export async function recordInitialBalance(
   distributorId: string,
@@ -415,12 +437,74 @@ export async function recordInitialBalance(
   data: {
     entries: { cylinderTypeId: string; openingFulls: number; openingEmpties: number }[];
     eventDate?: string;
+    replaceExisting?: boolean;
   },
 ) {
   const eventDate = data.eventDate ? new Date(data.eventDate) : new Date();
+  const replace = data.replaceExisting === true;
+
+  // Pre-flight: enumerate any existing initial_balance events for the
+  // submitted cylinder types. Bails out with a structured error if
+  // duplicates exist and replace is off.
+  const cylinderTypeIds = data.entries.map((e) => e.cylinderTypeId);
+  const existing = await prisma.inventoryEvent.findMany({
+    where: {
+      distributorId,
+      eventType: 'initial_balance',
+      cylinderTypeId: { in: cylinderTypeIds },
+    },
+    select: {
+      id: true,
+      cylinderTypeId: true,
+      fullsChange: true,
+      emptiesChange: true,
+      eventDate: true,
+    },
+  });
+
+  if (!replace && existing.length > 0) {
+    // Aggregate per cylinderTypeId so the response carries the
+    // sum-of-current-events (in case there are legacy duplicates).
+    const aggByType = new Map<string, { fulls: number; empties: number; eventDate: string }>();
+    for (const ev of existing) {
+      const prev = aggByType.get(ev.cylinderTypeId);
+      const evDate = ev.eventDate.toISOString().split('T')[0];
+      if (prev) {
+        prev.fulls += ev.fullsChange;
+        prev.empties += ev.emptiesChange;
+        // Keep the latest eventDate for context
+        if (evDate > prev.eventDate) prev.eventDate = evDate;
+      } else {
+        aggByType.set(ev.cylinderTypeId, {
+          fulls: ev.fullsChange,
+          empties: ev.emptiesChange,
+          eventDate: evDate,
+        });
+      }
+    }
+    throw new InitialBalanceConflictError(
+      Array.from(aggByType.entries()).map(([cylinderTypeId, v]) => ({
+        cylinderTypeId, ...v,
+      })),
+    );
+  }
+
   const created: { cylinderTypeId: string; eventId: string }[] = [];
+  const replacedCount = existing.length;
+  // Track the earliest affected eventDate so we recalc summaries from
+  // there (existing event date may be older than the new eventDate).
+  let earliestRecalcDate = eventDate;
 
   await prisma.$transaction(async (tx) => {
+    if (replace && existing.length > 0) {
+      for (const ev of existing) {
+        if (ev.eventDate < earliestRecalcDate) earliestRecalcDate = ev.eventDate;
+      }
+      await tx.inventoryEvent.deleteMany({
+        where: { id: { in: existing.map((e) => e.id) } },
+      });
+    }
+
     for (const entry of data.entries) {
       const fulls = Math.max(0, Math.floor(entry.openingFulls));
       const empties = Math.max(0, Math.floor(entry.openingEmpties));
@@ -434,19 +518,30 @@ export async function recordInitialBalance(
         emptiesChange: empties,
         eventDate,
         createdBy: userId,
-        notes: 'Opening balance entry',
+        notes: replace ? 'Opening balance entry (replaced)' : 'Opening balance entry',
       });
       created.push({ cylinderTypeId: entry.cylinderTypeId, eventId: event.id });
     }
   });
 
   // Summaries are recalculated outside the transaction (they themselves use
-  // their own transaction internally).
+  // their own transaction internally). Use the earliest affected date so a
+  // replace at a later date still rebuilds correctly from the old date.
   for (const c of created) {
-    await recalculateSummariesFromDate(distributorId, c.cylinderTypeId, eventDate);
+    await recalculateSummariesFromDate(distributorId, c.cylinderTypeId, earliestRecalcDate);
+  }
+  // If a replace removed events but the new payload had only zero-zero
+  // entries, the deleted cylinder types still need a recalc.
+  if (replace) {
+    const recalcedTypeIds = new Set(created.map((c) => c.cylinderTypeId));
+    const orphanedTypeIds = Array.from(new Set(existing.map((e) => e.cylinderTypeId)))
+      .filter((id) => !recalcedTypeIds.has(id));
+    for (const cylinderTypeId of orphanedTypeIds) {
+      await recalculateSummariesFromDate(distributorId, cylinderTypeId, earliestRecalcDate);
+    }
   }
 
-  return { created: created.length };
+  return { created: created.length, replaced: replacedCount };
 }
 
 /**
