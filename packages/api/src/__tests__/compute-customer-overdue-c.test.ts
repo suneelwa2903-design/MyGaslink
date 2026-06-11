@@ -26,7 +26,6 @@ import { loginAsDistAdmin } from './helpers.js';
 const TRACK = 'FixC-Overdue';
 let distributorId: string;
 let customerId: string;
-let cyl19: string;
 
 async function cleanup() {
   await prisma.customerLedgerEntry.deleteMany({
@@ -55,10 +54,9 @@ async function cleanup() {
 beforeAll(async () => {
   const admin = await loginAsDistAdmin();
   distributorId = admin.distributorId;
-  const t19 = await prisma.cylinderType.findFirstOrThrow({
+  await prisma.cylinderType.findFirstOrThrow({
     where: { distributorId, typeName: '19 KG' }, select: { id: true },
   });
-  cyl19 = t19.id;
   await cleanup();
   const c = await prisma.customer.create({
     data: {

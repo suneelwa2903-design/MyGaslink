@@ -670,7 +670,7 @@ function EmptyBalanceImportModal({ onClose }: { onClose: () => void }) {
         </button>
         <input type="file" accept=".csv,text/csv" onChange={(e) => csv.setFile(e.target.files?.[0] ?? null)} className="text-sm" />
         <p className="text-xs text-surface-500 dark:text-surface-400">
-          Required: <code>customer_name</code> OR <code>phone</code>, plus <code>cylinder_type</code> (must match an existing type for your distributor, e.g. "19 KG") and <code>empty_quantity</code> (non-negative integer).
+          Required: <code>customer_name</code> OR <code>phone</code>, plus <code>cylinder_type</code> (must match an existing type for your distributor, e.g. &quot;19 KG&quot;) and <code>empty_quantity</code> (non-negative integer).
           Re-running the same file updates the count in place — safe to run multiple times.
         </p>
         {csv.fileName && (

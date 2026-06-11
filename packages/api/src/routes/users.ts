@@ -122,7 +122,6 @@ router.post('/',
           // re-link from Fleet → Drivers manually if needed.
           // Most likely cause: a Prisma P2025 (record not found) — driver
           // belongs to a different distributor or was deleted mid-flight.
-          // eslint-disable-next-line no-console
           console.warn(`[users] driver link failed for user ${user.id} → driver ${driverIdToLink}: ${(linkErr as Error).message}`);
         }
       }

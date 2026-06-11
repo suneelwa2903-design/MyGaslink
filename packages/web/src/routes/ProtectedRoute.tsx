@@ -38,13 +38,16 @@ export function ProtectedRoute({
     return <Navigate to="/force-password-reset" replace />;
   }
 
-  return <PostResetRedirect>
-    <ProtectedRouteInner
-      allowedRoles={allowedRoles}
-      requireDistributor={requireDistributor}
-      children={children}
-    />
-  </PostResetRedirect>;
+  return (
+    <PostResetRedirect>
+      <ProtectedRouteInner
+        allowedRoles={allowedRoles}
+        requireDistributor={requireDistributor}
+      >
+        {children}
+      </ProtectedRouteInner>
+    </PostResetRedirect>
+  );
 }
 
 // Group L4 (2026-06-11): post-force-reset landing redirect. When a

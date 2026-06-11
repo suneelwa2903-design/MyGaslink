@@ -1008,19 +1008,24 @@ function CylinderBalancesTab({ customerId }: { customerId: string }) {
   const [edits, setEdits] = useState<EditState>({});
   const [addType, setAddType] = useState<string>('');
 
-  // Hydrate `edits` from server data the first time it loads.
+  // Hydrate `edits` from server data the first time it loads. Wrapped
+  // in useEffect to satisfy React's "no ref access during render" rule —
+  // behavior is identical (one extra render with empty edits) because
+  // the TanStack Query loading state already gates the UI above.
   const editsRef = useRef(false);
-  if (balances && !editsRef.current) {
-    editsRef.current = true;
-    const seed: EditState = {};
-    for (const b of balances) {
-      seed[b.cylinderTypeId] = {
-        withCustomerQty: String(b.withCustomerQty),
-        pendingReturns: String(b.pendingReturns),
-      };
+  useEffect(() => {
+    if (balances && !editsRef.current) {
+      editsRef.current = true;
+      const seed: EditState = {};
+      for (const b of balances) {
+        seed[b.cylinderTypeId] = {
+          withCustomerQty: String(b.withCustomerQty),
+          pendingReturns: String(b.pendingReturns),
+        };
+      }
+      setEdits(seed);
     }
-    setEdits(seed);
-  }
+  }, [balances]);
 
   const usedTypeIds = new Set(Object.keys(edits));
   const availableToAdd = (cylinderTypes ?? []).filter((t) => !usedTypeIds.has(t.cylinderTypeId));
