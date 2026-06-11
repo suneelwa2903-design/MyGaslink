@@ -180,6 +180,8 @@ export async function updateDistributor(id: string, data: Partial<{
   officePincode: string;
   latitude: number;
   longitude: number;
+  // Group L5 (2026-06-11): see note in routes/distributors.ts PUT /:id.
+  isTestTenant: boolean;
 }>) {
   // Group L2 (2026-06-11): normalise + uniqueness-check docCode before
   // hitting the DB so the 409 reply happens in this service, not as a

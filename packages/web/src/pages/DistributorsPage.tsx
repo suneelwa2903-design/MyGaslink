@@ -230,6 +230,7 @@ function DistributorFormModal({
           subscriptionPlan: distributor.subscriptionPlan ?? null,
           billingTier: distributor.billingTier ?? null,
           gaslinkBillingEnabled: distributor.gaslinkBillingEnabled,
+          isTestTenant: distributor.isTestTenant ?? false,
         }
       : { businessName: '', legalName: '' },
   });
@@ -710,6 +711,32 @@ function DistributorFormModal({
                   <span className="text-sm font-medium text-surface-700 dark:text-surface-300">Enable GasLink Billing</span>
                 </label>
               </div>
+            </div>
+            {/* Group L5 (2026-06-11) — sandbox-allowlist toggle. Only flips
+                the column; doesn't change gst_mode (that goes through the
+                Group A activation flow on the distributor detail page).
+                Reserved for internal test tenants (dist-demo etc.) — real
+                distributors should leave this OFF so they cannot enter
+                sandbox mode. Route + Zod already restrict the field to
+                super_admin callers; the UI mirrors that scope.  */}
+            <div className="mt-4 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  {...register('isTestTenant')}
+                  className="rounded border-amber-400 text-amber-600 focus:ring-amber-500 h-5 w-5 mt-0.5"
+                />
+                <div>
+                  <div className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                    Test tenant (sandbox-allowlisted)
+                  </div>
+                  <p className="text-xs text-amber-800 dark:text-amber-200 mt-0.5">
+                    Allows this distributor to use the sandbox GST mode (test
+                    NIC credentials). Only enable for internal testing — real
+                    distributors should never have this on.
+                  </p>
+                </div>
+              </label>
             </div>
           </div>
         )}

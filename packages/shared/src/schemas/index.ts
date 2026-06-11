@@ -502,6 +502,13 @@ export const updateDistributorSchema = createDistributorSchema.partial().extend(
   subscriptionPlan: z.enum(['starter', 'growth', 'business', 'enterprise']).nullable().optional(),
   billingTier: z.enum(['tier_1', 'tier_2', 'tier_3', 'tier_4']).nullable().optional(),
   gaslinkBillingEnabled: z.boolean().optional(),
+  // Group L5 (2026-06-11): super-admin toggle for sandbox-allowlist
+  // status. Set this to `true` to allow the distributor to use GST
+  // sandbox mode (Group A activation flow). For real distributors leave
+  // it false — they go disabled → live directly. The route handler
+  // strips this field when the caller is NOT super_admin so an
+  // escalating distributor_admin cannot self-allowlist.
+  isTestTenant: z.boolean().optional(),
 });
 
 // ─── Filter/Query Schemas ────────────────────────────────────────────────────

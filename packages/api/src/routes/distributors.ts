@@ -116,6 +116,13 @@ router.put('/:id',
     try {
       const existing = await distributorService.getDistributorById(param(req.params.id));
       if (!existing) return sendNotFound(res, 'Distributor');
+      // Group L5 (2026-06-11): only super-admin can write isTestTenant.
+      // Route is already requireRole('super_admin') so this is defense-
+      // in-depth — covers future role expansions and makes the rule
+      // local to the field.
+      if (req.user!.role !== 'super_admin' && 'isTestTenant' in req.body) {
+        delete (req.body as Record<string, unknown>).isTestTenant;
+      }
       const distributor = await distributorService.updateDistributor(param(req.params.id), req.body);
       return sendSuccess(res, mapDistributor(distributor));
     } catch (err) {
