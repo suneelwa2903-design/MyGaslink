@@ -462,9 +462,12 @@ export async function getCustomerLedger(
       case 'invoice_entry': {
         cumulativeInvoiceAmount += delta;
         const isOB = !!inv?.isOpeningBalance;
-        // OB does NOT enter the unpaid-deliveries FIFO — keeps overdueAmount
-        // aligned with computeCustomerOverdue (which only sees Orders).
-        if (!isOB && delta > 0) {
+        // Fix C (2026-06-11): OB now ENTERS the unpaid-deliveries FIFO so
+        // summary.overdueAmount stays aligned with computeCustomerOverdue.
+        // Both functions now count opening-balance debt as overdue once
+        // it's past the customer's credit window. Pre-fix the two values
+        // disagreed by exactly the OB total.
+        if (delta > 0) {
           unpaidDeliveries.push({ date: entry.entryDate, amount: delta });
         }
 
@@ -677,6 +680,15 @@ export async function getCustomerLedger(
  * dashboard, collections, and the order-placement gate — replacing the
  * fragile invoice.status === 'overdue' flag (which only flips when the
  * supplementary markOverdueInvoices job runs).
+ *
+ * Fix C (2026-06-11): opening-balance invoices (`isOpeningBalance=true`,
+ * created by the OB CSV importer) now count toward the credit-gate
+ * overdue total. Pre-fix they were silently excluded because this
+ * function reads from Order — and OB invoices have no Order. A
+ * customer with ₹15,000 pre-go-live debt could place a new order even
+ * when their credit was fully consumed; Suneel saw this on Vanasthali
+ * dry-runs. We treat each OB invoice as a synthetic delivery dated at
+ * its issueDate so the same FIFO + credit-period logic applies.
  */
 export async function computeCustomerOverdue(
   distributorId: string,
@@ -690,7 +702,7 @@ export async function computeCustomerOverdue(
   if (!customer) return 0;
   const creditDays = customer.creditPeriodDays;
 
-  const [orders, payments] = await Promise.all([
+  const [orders, openingInvoices, payments] = await Promise.all([
     prisma.order.findMany({
       where: {
         distributorId, customerId,
@@ -699,6 +711,21 @@ export async function computeCustomerOverdue(
       },
       include: { items: true },
       orderBy: { deliveryDate: 'asc' },
+    }),
+    // Fix C: include opening-balance invoices (no Order). Use the
+    // remaining outstanding so partial payments via PaymentAllocation
+    // are already accounted for before we re-apply FIFO below.
+    prisma.invoice.findMany({
+      where: {
+        distributorId, customerId,
+        isOpeningBalance: true,
+        deletedAt: null,
+        status: { not: 'cancelled' },
+      },
+      select: {
+        issueDate: true, totalAmount: true, outstandingAmount: true,
+      },
+      orderBy: { issueDate: 'asc' },
     }),
     prisma.paymentTransaction.findMany({
       where: { distributorId, customerId, deletedAt: null },
@@ -715,6 +742,15 @@ export async function computeCustomerOverdue(
       const amount = delivered * (toNum(item.unitPrice) - toNum(item.discountPerUnit));
       if (amount > 0) deliveries.push({ date, amount });
     }
+  }
+  // Fix C: each OB invoice becomes a synthetic "delivery" so the FIFO
+  // pass below treats it identically to a real delivery. Using
+  // totalAmount keeps the bookkeeping symmetric with the deliveries
+  // branch (payments are summed separately below and FIFO-allocated
+  // against the merged list).
+  for (const ob of openingInvoices) {
+    const amount = toNum(ob.totalAmount);
+    if (amount > 0) deliveries.push({ date: ob.issueDate, amount });
   }
   deliveries.sort((a, b) => a.date.getTime() - b.date.getTime());
 

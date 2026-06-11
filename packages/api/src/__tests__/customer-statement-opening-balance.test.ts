@@ -11,10 +11,11 @@
  *      "Opening Balance b/f" row appears first, with dueAmount equal to the
  *      carry-forward and `kind: 'opening'`.
  *
- *   3. summary.overdueAmount EXCLUDES opening-balance debits — keeps it
- *      aligned with computeCustomerOverdue (Order+Payment-based, used by the
- *      dashboard and order-placement gate). OB is informational, not a
- *      credit-gating signal.
+ *   3. summary.overdueAmount INCLUDES opening-balance debits past the
+ *      customer's credit window (Fix C, 2026-06-11). Was previously
+ *      excluded so OB was informational only; the change makes the
+ *      dashboard, statement, and computeCustomerOverdue all agree, and
+ *      gates new orders for customers with pre-go-live debt.
  *
  * Plus regression: passing no range still emits every entry in chronological
  * order with the historical row shape unchanged.
@@ -235,14 +236,16 @@ describe('G1 — getCustomerLedger reads from CustomerLedgerEntry', () => {
     expect(result.summary.openingBalance).toBe(0);
   });
 
-  it('regression: opening balance does NOT enter the overdue FIFO', async () => {
-    // 30 day credit period, OB from 90 days ago — under the OLD math would
-    // count as overdue. Under G1, OB never enters unpaidDeliveries.
+  it('Fix C: opening balance past the credit window DOES count as overdue', async () => {
+    // 30-day credit period, OB issued 90 days ago. Pre-Fix-C this returned
+    // overdueAmount=0 (OB was excluded from the FIFO). Now both
+    // getCustomerLedger and computeCustomerOverdue treat it as overdue
+    // — so the dashboard, statement, and order-placement gate agree.
     const oldDate = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
     await seedOpeningBalance(50_000, oldDate);
 
     const result = await getCustomerLedger(distributorId, customerId);
-    expect(result.summary.overdueAmount).toBe(0);
+    expect(result.summary.overdueAmount).toBe(50_000);
     expect(result.summary.dueAmount).toBe(50_000);
   });
 
