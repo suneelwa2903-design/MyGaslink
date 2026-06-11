@@ -685,9 +685,17 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
         take: 1,
       },
     },
-  }) as unknown as InvoiceForPdf | null;
+  }) as unknown as (InvoiceForPdf & { isOpeningBalance?: boolean; notes?: string | null }) | null;
 
   if (!invoice) throw new Error('Invoice not found');
+
+  // Group 1 (2026-06-11): OB invoices have no items and no GST exchange —
+  // route them to a simplified "Opening Balance Certificate" template instead
+  // of the Tax Invoice template (which would render an empty items table and
+  // a misleading "Tax Invoice" title).
+  if (invoice.isOpeningBalance) {
+    return renderOpeningBalanceCertificate(invoice);
+  }
 
   const dist = invoice.distributor;
   const cust = invoice.customer;
@@ -772,6 +780,144 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
 
   doc.end();
 
+  return new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+  });
+}
+
+/**
+ * Group 1 (2026-06-11): Opening Balance Certificate.
+ *
+ * Same letterhead/footer as the Tax Invoice for branding consistency, but:
+ *  - title says "Opening Balance Certificate" (not "Tax Invoice")
+ *  - no GST Doc No, no IRN, no EWB
+ *  - no line-items table — single bordered amount box instead
+ *  - explicit disclaimer at the bottom
+ *
+ * Used by `generateInvoicePdf` when `invoice.isOpeningBalance === true`.
+ */
+async function renderOpeningBalanceCertificate(
+  invoice: InvoiceForPdf & { isOpeningBalance?: boolean; notes?: string | null },
+): Promise<Buffer> {
+  const dist = invoice.distributor;
+  const cust = invoice.customer;
+  const T = LAYOUT.THEME;
+  const F = LAYOUT.TYPO;
+
+  const sellerAddr = [dist.address, dist.city, dist.state, dist.pincode]
+    .filter(Boolean).join(', ') || '—';
+  const sellerName = dist.businessName || dist.legalName;
+
+  const buyerAddr = cust
+    ? [cust.billingAddressLine1, cust.billingAddressLine2, cust.billingCity, cust.billingState, cust.billingPincode]
+        .filter(Boolean).join(', ') || '—'
+    : '—';
+  const buyerName = cust?.businessName || cust?.customerName || 'Customer';
+  const buyerGstin = cust?.gstin && cust.gstin !== 'URP' ? cust.gstin : null;
+
+  const doc = new PDFDocument({ margin: LAYOUT.MARGIN.left, size: 'A4' });
+  const buffers: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => buffers.push(chunk));
+
+  const leftX = LAYOUT.MARGIN.left;
+  const rightMargin = A4_WIDTH - LAYOUT.MARGIN.right;
+  const contentWidth = rightMargin - leftX;
+  let y = LAYOUT.MARGIN.top;
+
+  // ── Letterhead ──
+  doc.fontSize(Math.round(F.H2 * 1.5)).fillColor(T.PRIMARY).font('Helvetica-Bold');
+  doc.text(sellerName, leftX, y, { width: 320 });
+  let leftBlockY = y + 18;
+  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
+  doc.text(sellerAddr, leftX, leftBlockY, { width: 320 }); leftBlockY += 11;
+  if (dist.gstin) {
+    doc.text(`GSTIN: ${dist.gstin}`, leftX, leftBlockY, { width: 320 });
+    leftBlockY += 11;
+  }
+  if (dist.phone) {
+    doc.text(`Phone: ${dist.phone}`, leftX, leftBlockY, { width: 320 });
+    leftBlockY += 11;
+  }
+
+  // Title on the right
+  doc.fontSize(F.H1).fillColor(T.PRIMARY).font('Helvetica-Bold');
+  const title = 'Opening Balance Certificate';
+  const titleW = doc.widthOfString(title);
+  doc.text(title, rightMargin - titleW, y, { width: titleW });
+
+  let rightY = y + F.H1 + 6;
+  doc.fontSize(F.BODY).fillColor(T.MUTED).font('Helvetica');
+  const refText = `Reference: ${invoice.invoiceNumber}`;
+  const refW = doc.widthOfString(refText);
+  doc.text(refText, rightMargin - refW, rightY, { width: refW + 10 });
+  rightY += 14;
+  const dateText = `Date: ${formatDate(invoice.issueDate)}`;
+  const dateW = doc.widthOfString(dateText);
+  doc.text(dateText, rightMargin - dateW, rightY, { width: dateW + 10 });
+  rightY += 14;
+
+  y = Math.max(leftBlockY, rightY) + 4;
+  doc.moveTo(leftX, y).lineTo(rightMargin, y)
+    .strokeColor(T.PRIMARY).lineWidth(LAYOUT.BORDER_WIDTH).stroke();
+  y += 14;
+
+  // ── Customer block ──
+  doc.fontSize(F.H2).fillColor(T.TEXT).font('Helvetica-Bold');
+  doc.text('Customer', leftX, y);
+  y += 14;
+  doc.fontSize(F.BODY).fillColor(T.TEXT).font('Helvetica-Bold');
+  doc.text(buyerName, leftX, y, { width: contentWidth });
+  y += 13;
+  doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');
+  if (buyerGstin) { doc.text(`GSTIN: ${buyerGstin}`, leftX, y, { width: contentWidth }); y += 11; }
+  if (cust?.phone) { doc.text(`Phone: ${cust.phone}`, leftX, y, { width: contentWidth }); y += 11; }
+  doc.text(buyerAddr, leftX, y, { width: contentWidth });
+  y += 22;
+
+  // ── Amount box ──
+  const boxH = 100;
+  const boxY = y;
+  drawBox(doc, leftX, boxY, contentWidth, boxH, T.PRIMARY);
+
+  // Label line
+  doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');
+  doc.text(
+    'Outstanding balance carried forward from records prior to system go-live',
+    leftX + 14, boxY + 14,
+    { width: contentWidth - 28, align: 'center' },
+  );
+
+  // Amount — large, centered
+  const amountStr = formatMoney(invoice.totalAmount);
+  doc.fontSize(28).fillColor(T.PRIMARY).font('Helvetica-Bold');
+  doc.text(amountStr, leftX, boxY + 36, { width: contentWidth, align: 'center' });
+
+  // Notes line
+  if (invoice.notes && invoice.notes.trim()) {
+    doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
+    doc.text(
+      `Notes: ${invoice.notes.trim()}`,
+      leftX + 14, boxY + boxH - 22,
+      { width: contentWidth - 28, align: 'center' },
+    );
+  }
+
+  y = boxY + boxH + 22;
+
+  // ── Disclaimer ──
+  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
+  doc.text(
+    'This document is not a tax invoice. It is a system-generated certificate of the customer’s outstanding balance carried forward from records maintained prior to MyGasLink system go-live.',
+    leftX, y,
+    { width: contentWidth, align: 'left' },
+  );
+  y += 38;
+
+  // Footer
+  drawFooter(doc, sellerName, y);
+
+  doc.end();
   return new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
     doc.on('error', reject);

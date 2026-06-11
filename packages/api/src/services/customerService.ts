@@ -617,7 +617,13 @@ export async function importOpeningBalances(
             referenceId: invoice.id,
             invoiceId: invoice.id,
             amountDelta: amount,
-            narration: `Opening balance import — ${r.notes?.trim() || 'imported'}`,
+            // Group 1 (2026-06-11): default narration is "Opening Balance b/f"
+            // (matches the carry-forward row label in the statement PDF / in-app
+            // ledger). If the CSV provides a `notes` value, append it after a
+            // separator so the operator's note still surfaces in the ledger.
+            narration: r.notes?.trim()
+              ? `Opening Balance b/f — ${r.notes.trim()}`
+              : 'Opening Balance b/f',
             entryDate: today,
             createdBy: userId,
           },

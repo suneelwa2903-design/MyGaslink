@@ -311,8 +311,17 @@ router.get('/invoices/:id/pdf',
     // status had drifted. Indian GST law (CGST Rule 56) requires 8-year
     // retention; the customer-facing app must let customers retrieve any
     // invoice they ever received.
+    //
+    // Group 1 (2026-06-11): also allow OB-flagged invoices on status
+    // 'overdue' (the importer's default — see customerService.ts:606).
+    // The PDF renderer at invoicePdfService.ts branches on
+    // isOpeningBalance and returns the "Opening Balance Certificate".
+    // Cancelled and draft OB rows are still blocked — they're not
+    // statutory artefacts (matches the P0-2 test contract).
     const allowedStatuses = ['issued', 'partially_paid', 'paid'];
-    if (!allowedStatuses.includes(invoice.status)) {
+    const isOpeningBalance = (invoice as { isOpeningBalance?: boolean }).isOpeningBalance === true;
+    const obAllowed = isOpeningBalance && invoice.status === 'overdue';
+    if (!obAllowed && !allowedStatuses.includes(invoice.status)) {
       return sendError(res, 'A PDF is not available for this invoice', 403);
     }
 

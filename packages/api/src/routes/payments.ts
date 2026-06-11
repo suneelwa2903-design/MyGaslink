@@ -98,10 +98,13 @@ router.get('/ledger/:customerId',
   async (req, res) => {
   try {
     const q = (req.validated?.query || req.query) as { dateFrom?: string; dateTo?: string };
+    const distributorId = req.user!.distributorId!;
+    const customerId = param(req.params.customerId);
+
     const entries = await prisma.customerLedgerEntry.findMany({
       where: {
-        distributorId: req.user!.distributorId!,
-        customerId: param(req.params.customerId),
+        distributorId,
+        customerId,
         ...(q.dateFrom || q.dateTo
           ? { entryDate: {
               ...(q.dateFrom ? { gte: new Date(q.dateFrom) } : {}),
@@ -109,21 +112,87 @@ router.get('/ledger/:customerId',
             } }
           : {}),
       },
-      orderBy: { entryDate: 'asc' },
+      orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
     });
-    return sendSuccess(res, entries.map((e) => ({
-      id: e.id,
-      distributorId: e.distributorId,
-      customerId: e.customerId,
-      entryType: e.entryType,
-      referenceId: e.referenceId,
-      invoiceId: e.invoiceId,
-      amountDelta: toNum(e.amountDelta),
-      narration: e.narration,
-      entryDate: e.entryDate.toISOString(),
-      createdBy: e.createdBy,
-      createdAt: e.createdAt.toISOString(),
-    })));
+
+    // Group 1 (2026-06-11): enrich invoice_entry rows with empties data so
+    // the in-app modal can show the same Empties Collected / Pending /
+    // Empties Cost columns the statement PDF has. We also flag opening-
+    // balance entries so the UI can pin the b/f row to the top.
+    const invoiceIds = Array.from(
+      new Set(entries.map((e) => e.invoiceId).filter((x): x is string => !!x)),
+    );
+    const invoices = invoiceIds.length === 0
+      ? []
+      : await prisma.invoice.findMany({
+          where: { id: { in: invoiceIds }, distributorId },
+          select: {
+            id: true,
+            isOpeningBalance: true,
+            order: {
+              select: {
+                items: {
+                  select: {
+                    cylinderTypeId: true,
+                    quantity: true,
+                    deliveredQuantity: true,
+                    emptiesCollected: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+    const invoiceMap = new Map(invoices.map((i) => [i.id, i]));
+
+    const emptyPrices = await prisma.emptyCylinderPrice.findMany({ where: { distributorId } });
+    const emptyPriceMap = new Map<string, number>(
+      emptyPrices.map((ep) => [ep.cylinderTypeId, toNum(ep.emptyCylinderPrice)] as const),
+    );
+
+    // Walk the full history once to compute the running pending-empties
+    // balance per cylinder type so each entry's `pendingEmptyCyls` reflects
+    // the state at the moment that entry posted. Matches the statement PDF.
+    const pendingPerType = new Map<string, number>();
+    const enriched = entries.map((e) => {
+      const inv = e.invoiceId ? invoiceMap.get(e.invoiceId) : null;
+      let perEntryCollected = 0;
+      let perEntryEmptiesCost = 0;
+      let perEntryPending = 0;
+
+      if (e.entryType === 'invoice_entry' && inv?.order?.items?.length) {
+        for (const it of inv.order.items) {
+          const delivered = it.deliveredQuantity ?? it.quantity;
+          const collected = it.emptiesCollected ?? 0;
+          perEntryCollected += collected;
+          const cur = pendingPerType.get(it.cylinderTypeId) ?? 0;
+          const next = Math.max(0, cur + delivered - collected);
+          pendingPerType.set(it.cylinderTypeId, next);
+          perEntryPending += next;
+          perEntryEmptiesCost += next * (emptyPriceMap.get(it.cylinderTypeId) ?? 0);
+        }
+      }
+
+      return {
+        id: e.id,
+        distributorId: e.distributorId,
+        customerId: e.customerId,
+        entryType: e.entryType,
+        referenceId: e.referenceId,
+        invoiceId: e.invoiceId,
+        amountDelta: toNum(e.amountDelta),
+        narration: e.narration,
+        entryDate: e.entryDate.toISOString(),
+        createdBy: e.createdBy,
+        createdAt: e.createdAt.toISOString(),
+        isOpeningBalance: !!inv?.isOpeningBalance,
+        emptyCylsCollected: perEntryCollected,
+        pendingEmptyCyls: perEntryPending,
+        emptyCylsCost: Math.round(perEntryEmptiesCost * 100) / 100,
+      };
+    });
+
+    return sendSuccess(res, enriched);
   } catch (err: unknown) {
     const e = err as ServiceError;
     return sendError(res, e.message, e.statusCode || 500);

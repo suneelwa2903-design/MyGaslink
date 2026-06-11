@@ -327,6 +327,12 @@ export interface Invoice {
   sgstValue: number;
   igstValue: number;
   isGaslinkBilling: boolean;
+  // Group 1 (2026-06-11): true when this invoice was created by the
+  // opening-balance CSV importer (no Order, no GST exchange). The billing
+  // list uses this to render a distinct pill, hide IRN/EWB and CN/DN
+  // affordances, and route Download to the Opening Balance Certificate
+  // template.
+  isOpeningBalance?: boolean;
   items: InvoiceItem[];
   // WI-056: list responses carry these as derived counts (Prisma _count).
   // Detail responses (GET /invoices/:id) instead carry full creditNotes /
@@ -495,6 +501,14 @@ export interface ProviderCatalogCylinderType {
   isActive: boolean;
 }
 
+export type CustomerLedgerRowKind =
+  | 'opening'
+  | 'invoice'
+  | 'payment'
+  | 'credit_note'
+  | 'debit_note'
+  | 'adjustment';
+
 export interface CustomerLedgerRow {
   orderDate: string;
   cylinderType: string;
@@ -508,6 +522,11 @@ export interface CustomerLedgerRow {
   dueAmount: number;
   creditDays: number;
   overDueAmount: number;
+  // Group 1 (2026-06-11): emitted by getCustomerLedger so the statement PDF
+  // and in-app modal can show a Narration column and treat the "Opening
+  // Balance b/f" row distinctly from regular deliveries / payments.
+  narration?: string;
+  kind?: CustomerLedgerRowKind;
 }
 
 export interface CustomerLedgerResponse {
@@ -518,6 +537,9 @@ export interface CustomerLedgerResponse {
     dueAmount: number;
     overdueAmount: number;
     emptyCylsCost: number;
+    // Group 1: when the caller passes range.from, this is the carry-forward
+    // balance the "Opening Balance b/f" row displays.
+    openingBalance?: number;
   };
 }
 
@@ -855,6 +877,16 @@ export interface LedgerEntry {
   entryDate: string;
   createdBy: string | null;
   createdAt: string;
+  // Group 1 (2026-06-11): per-entry empties fields enriched by
+  // GET /api/payments/ledger/:customerId so the in-app modal can render the
+  // same Empties Collected / Pending Empties / Empties Cost columns the
+  // statement PDF has. Populated only for invoice_entry rows whose invoice
+  // is linked to an order; null/zero otherwise. `isOpeningBalance` lets the
+  // modal pin the OB row to the top with the "Balance b/f" styling.
+  isOpeningBalance?: boolean;
+  emptyCylsCollected?: number;
+  pendingEmptyCyls?: number;
+  emptyCylsCost?: number;
 }
 
 // ─── Inventory Forecast ──────────────────────────────────────────────────────

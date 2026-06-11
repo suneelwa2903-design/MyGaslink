@@ -858,10 +858,16 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
   if (loading) return <div className="flex justify-center py-8"><Loader /></div>;
   if (!entries.length) return <EmptyState title="No ledger entries" />;
 
-  // Sort chronologically (oldest first) for running balance calculation
-  const sorted = [...entries].sort(
-    (a, b) => new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime()
-  );
+  // Group 1 (2026-06-11): pin Opening Balance rows to the top so the
+  // statement reads as "Balance b/f → period transactions → closing".
+  // Within each group, sort chronologically. The API already returns
+  // entries with an `isOpeningBalance` flag set on the linked invoice.
+  const sorted = [...entries].sort((a, b) => {
+    const aOB = a.isOpeningBalance ? 0 : 1;
+    const bOB = b.isOpeningBalance ? 0 : 1;
+    if (aOB !== bOB) return aOB - bOB;
+    return new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime();
+  });
 
   const rows: Array<LedgerEntry & { debit: number | null; credit: number | null; balance: number }> = [];
   let runningBalance = 0;
@@ -885,6 +891,9 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
               <th>Date</th>
               <th>Type</th>
               <th>Narration</th>
+              <th className="text-right">Empties Coll.</th>
+              <th className="text-right">Pending Emp.</th>
+              <th className="text-right">Empties Cost</th>
               <th className="text-right">Debit</th>
               <th className="text-right">Credit</th>
               <th className="text-right">Balance</th>
@@ -892,12 +901,34 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
           </thead>
           <tbody>
             {rows.map((row) => {
-              const badge = LEDGER_TYPE_BADGE[row.entryType] ?? { variant: 'neutral' as const, label: row.entryType };
+              const badge = row.isOpeningBalance
+                ? { variant: 'neutral' as const, label: 'Balance b/f' }
+                : LEDGER_TYPE_BADGE[row.entryType] ?? { variant: 'neutral' as const, label: row.entryType };
+              // Only invoice-type entries (non-OB) get the empties columns.
+              // The wire value carries Prisma's TS-side enum name
+              // (`invoice_entry`), not the @map'd wire form (`invoice`) — see
+              // anti-pattern #9. Accept both shapes defensively.
+              const et = row.entryType as string;
+              const showEmpties = !row.isOpeningBalance && (et === 'invoice_entry' || et === 'invoice');
               return (
-                <tr key={row.id}>
+                <tr
+                  key={row.id}
+                  className={cn(
+                    row.isOpeningBalance && 'bg-surface-50 dark:bg-surface-800/40 italic',
+                  )}
+                >
                   <td className="whitespace-nowrap">{new Date(row.entryDate).toLocaleDateString('en-IN')}</td>
                   <td><Badge variant={badge.variant}>{badge.label}</Badge></td>
                   <td className="text-surface-600 dark:text-surface-300">{row.narration || '-'}</td>
+                  <td className="text-right text-surface-600 dark:text-surface-300">
+                    {showEmpties && (row.emptyCylsCollected ?? 0) > 0 ? row.emptyCylsCollected : ''}
+                  </td>
+                  <td className="text-right text-surface-600 dark:text-surface-300">
+                    {showEmpties && (row.pendingEmptyCyls ?? 0) > 0 ? row.pendingEmptyCyls : ''}
+                  </td>
+                  <td className="text-right text-surface-600 dark:text-surface-300">
+                    {showEmpties && (row.emptyCylsCost ?? 0) > 0 ? formatCurrency(row.emptyCylsCost ?? 0) : ''}
+                  </td>
                   <td className="text-right font-medium text-red-600 dark:text-red-400">
                     {row.debit != null ? formatCurrency(row.debit) : ''}
                   </td>
@@ -917,7 +948,7 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-surface-300 dark:border-surface-600">
-              <td colSpan={3} className="font-semibold text-surface-900 dark:text-white">Totals</td>
+              <td colSpan={6} className="font-semibold text-surface-900 dark:text-white">Totals</td>
               <td className="text-right font-semibold text-red-600 dark:text-red-400">{formatCurrency(totalDebits)}</td>
               <td className="text-right font-semibold text-green-600 dark:text-green-400">{formatCurrency(totalCredits)}</td>
               <td className={cn(

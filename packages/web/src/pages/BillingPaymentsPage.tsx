@@ -307,20 +307,34 @@ function InvoicesTab() {
                     <td className={cn('font-medium', inv.outstandingAmount > 0 && 'text-red-500')}>
                       {formatCurrency(inv.outstandingAmount)}
                     </td>
-                    <td><Badge variant={INVOICE_STATUS_VARIANTS[inv.status] || 'neutral'}>{invoiceStatusLabel(inv.status)}</Badge></td>
+                    <td>
+                      {/* Group 1 (2026-06-11): OB invoices show a distinct
+                          "Opening Balance" pill instead of the regular status
+                          (which would render misleading "Overdue" from day 1
+                          per the importer's design). */}
+                      {inv.isOpeningBalance ? (
+                        <Badge variant="info">Opening Balance</Badge>
+                      ) : (
+                        <Badge variant={INVOICE_STATUS_VARIANTS[inv.status] || 'neutral'}>{invoiceStatusLabel(inv.status)}</Badge>
+                      )}
+                    </td>
                     {gstEnabled && (
                       <td>
                         {/* WI-077: B2B shows IRN + EWB pills, B2C shows EWB
                             only — B2C never gets an IRN so the old single
                             "NOT ATTEMPTED" IRN pill was misleading. Colour
                             encodes status (success=green, failed=red,
-                            not_attempted=grey, pending=yellow). */}
-                        <div className="flex gap-1">
-                          {inv.customerType === 'B2B' && (
-                            <Badge variant={IRN_VARIANTS[inv.irnStatus] || 'neutral'}>IRN</Badge>
-                          )}
-                          <Badge variant={EWB_VARIANTS[inv.ewbStatus] || 'neutral'}>EWB</Badge>
-                        </div>
+                            not_attempted=grey, pending=yellow).
+                            Group 1: OB invoices skip both pills — they're
+                            never sent to NIC. */}
+                        {!inv.isOpeningBalance && (
+                          <div className="flex gap-1">
+                            {inv.customerType === 'B2B' && (
+                              <Badge variant={IRN_VARIANTS[inv.irnStatus] || 'neutral'}>IRN</Badge>
+                            )}
+                            <Badge variant={EWB_VARIANTS[inv.ewbStatus] || 'neutral'}>EWB</Badge>
+                          </div>
+                        )}
                       </td>
                     )}
                     <td>
@@ -328,7 +342,11 @@ function InvoicesTab() {
                         <button onClick={() => setViewInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="View">
                           <HiOutlineEye className="h-4 w-4" />
                         </button>
-                        <button onClick={() => handleDownloadPdf(inv.invoiceId)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500" title="Download PDF">
+                        <button
+                          onClick={() => handleDownloadPdf(inv.invoiceId)}
+                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500"
+                          title={inv.isOpeningBalance ? 'Download Opening Balance Certificate' : 'Download PDF'}
+                        >
                           <HiOutlineDocumentArrowDown className="h-4 w-4" />
                         </button>
                         {inv.status !== InvoiceStatus.CANCELLED && inv.status !== InvoiceStatus.PAID && (
@@ -336,7 +354,7 @@ function InvoicesTab() {
                             <button onClick={() => setPayInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-accent-500" title="Record Payment">
                               <HiOutlineBanknotes className="h-4 w-4" />
                             </button>
-                            {gstEnabled && (
+                            {gstEnabled && !inv.isOpeningBalance && (
                               <>
                                 <button onClick={() => setCreditNoteInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-flame-500" title="Credit Note">
                                   <HiOutlineMinusCircle className="h-4 w-4" />

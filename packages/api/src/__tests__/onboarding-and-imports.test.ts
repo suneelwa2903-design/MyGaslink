@@ -46,11 +46,20 @@ beforeAll(async () => {
 beforeEach(async () => {
   // Wipe anything our tests create so each scenario starts clean. Order
   // matters: ledger → invoices → customers.
+  //
+  // Group 1 (2026-06-11): the importer now stamps narration with
+  // 'Opening Balance b/f' (was 'Opening balance import — …'). Match BOTH
+  // prefixes so older test runs and the new path both clean. Match by
+  // `invoice.isOpeningBalance` is the most robust signal, but
+  // CustomerLedgerEntry has no FK-traversable filter on the linked invoice
+  // when invoiceId is null, so a narration substring stays the simplest
+  // catch-all.
   await prisma.customerLedgerEntry.deleteMany({
     where: {
+      distributorId: { in: [dist1Id, dist2Id ?? '__none__'] },
       OR: [
-        { distributorId: dist1Id, narration: { contains: 'Opening balance import' } },
-        { distributorId: dist2Id ?? '__none__', narration: { contains: 'Opening balance import' } },
+        { narration: { contains: 'Opening balance import' } },
+        { narration: { contains: 'Opening Balance b/f' } },
       ],
     },
   });
@@ -69,7 +78,12 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await prisma.customerLedgerEntry.deleteMany({
-    where: { narration: { contains: 'Opening balance import' } },
+    where: {
+      OR: [
+        { narration: { contains: 'Opening balance import' } },
+        { narration: { contains: 'Opening Balance b/f' } },
+      ],
+    },
   });
   await prisma.invoice.deleteMany({
     where: { isOpeningBalance: true, customer: { customerName: { in: TRACK_NAMES } } },

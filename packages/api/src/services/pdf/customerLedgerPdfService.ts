@@ -34,17 +34,18 @@ interface Col {
 }
 
 const COLS: Col[] = [
-  { label: 'Date', width: 64, align: 'left' },
-  { label: 'Type', width: 70, align: 'left' },
-  { label: 'Delivered', width: 52, align: 'right' },
-  { label: 'Amount', width: 78, align: 'right' },
-  { label: 'Empties Coll.', width: 60, align: 'right' },
-  { label: 'Pending Emp.', width: 60, align: 'right' },
-  { label: 'Empties Cost', width: 72, align: 'right' },
-  { label: 'Total Amount', width: 82, align: 'right' },
-  { label: 'Received', width: 76, align: 'right' },
-  { label: 'Due Amount', width: 78, align: 'right' },
-  { label: 'Overdue', width: 70, align: 'right' },
+  { label: 'Date', width: 58, align: 'left' },
+  { label: 'Type', width: 64, align: 'left' },
+  { label: 'Narration', width: 110, align: 'left' },
+  { label: 'Delivered', width: 46, align: 'right' },
+  { label: 'Amount', width: 70, align: 'right' },
+  { label: 'Empties Coll.', width: 52, align: 'right' },
+  { label: 'Pending Emp.', width: 52, align: 'right' },
+  { label: 'Empties Cost', width: 64, align: 'right' },
+  { label: 'Total Amount', width: 74, align: 'right' },
+  { label: 'Received', width: 68, align: 'right' },
+  { label: 'Due Amount', width: 70, align: 'right' },
+  { label: 'Overdue', width: 60, align: 'right' },
 ];
 
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
@@ -175,6 +176,21 @@ export async function generateCustomerLedgerPdf(
   let totalCollected = 0;
   let zebra = false;
 
+  // Helper: type label per row kind (matches the new `kind` field on
+  // CustomerLedgerRow). Falls back to legacy "Payment" vs "Delivery" heuristic
+  // for safety if a row is emitted without a kind.
+  function typeLabel(row: typeof ledger.rows[number]): string {
+    switch (row.kind) {
+      case 'opening': return row.cylinderType === 'Opening Balance b/f' ? 'Balance b/f' : 'Opening';
+      case 'payment': return 'Payment';
+      case 'credit_note': return 'Credit Note';
+      case 'debit_note': return 'Debit Note';
+      case 'adjustment': return 'Adjustment';
+      case 'invoice': return 'Invoice';
+      default: return row.cylinderType === '' ? 'Payment' : 'Invoice';
+    }
+  }
+
   for (const row of ledger.rows) {
     // page break
     if (y + ROW_HEIGHT > PAGE_HEIGHT - MARGIN.bottom - 30) {
@@ -184,24 +200,41 @@ export async function generateCustomerLedgerPdf(
       zebra = false;
     }
 
-    const isPayment = row.cylinderType === '';
+    const narration = row.narration ?? row.cylinderType ?? '';
     let cells: string[];
-    if (isPayment) {
-      cells = [
-        formatDate(row.orderDate), 'Payment', '-', '', '', '', '',
-        '', formatMoney(row.receivedAmount), formatMoney(row.dueAmount), '',
-      ];
-    } else {
-      totalDelivered += row.fullCylsDelivered;
-      totalCollected += row.emptyCylsCollected;
+
+    if (row.kind === 'opening') {
+      // Carry-forward row — only Due/Total columns are meaningful.
       cells = [
         formatDate(row.orderDate),
-        row.cylinderType,
-        num(row.fullCylsDelivered),
+        typeLabel(row),
+        narration,
+        '', '', '', '', '', formatMoney(row.totalAmount), '',
+        formatMoney(row.dueAmount), '',
+      ];
+    } else if (row.kind === 'payment' || row.kind === 'credit_note') {
+      cells = [
+        formatDate(row.orderDate),
+        typeLabel(row),
+        narration,
+        '-', '', '', '', '',
+        formatMoney(row.totalAmount),
+        formatMoney(row.receivedAmount),
+        formatMoney(row.dueAmount), '',
+      ];
+    } else {
+      // invoice / debit_note / adjustment — render full detail
+      if (row.fullCylsDelivered > 0) totalDelivered += row.fullCylsDelivered;
+      if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
+      cells = [
+        formatDate(row.orderDate),
+        typeLabel(row),
+        narration || row.cylinderType,
+        row.fullCylsDelivered ? num(row.fullCylsDelivered) : '',
         formatMoney(row.amount),
-        num(row.emptyCylsCollected),
-        num(row.pendingEmptyCyls),
-        formatMoney(row.emptyCylsCost),
+        row.emptyCylsCollected ? num(row.emptyCylsCollected) : '',
+        row.pendingEmptyCyls ? num(row.pendingEmptyCyls) : '',
+        row.emptyCylsCost ? formatMoney(row.emptyCylsCost) : '',
         formatMoney(row.totalAmount),
         formatMoney(row.receivedAmount),
         formatMoney(row.dueAmount),
@@ -212,7 +245,7 @@ export async function generateCustomerLedgerPdf(
     zebra = !zebra;
   }
 
-  // ── Summary row ──
+  // ── Summary / Closing Balance row ──
   if (y + ROW_HEIGHT + 4 > PAGE_HEIGHT - MARGIN.bottom - 20) {
     doc.addPage({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
     y = MARGIN.top;
@@ -221,12 +254,26 @@ export async function generateCustomerLedgerPdf(
   doc.moveTo(MARGIN.left, y).lineTo(MARGIN.left + TABLE_WIDTH, y).strokeColor(THEME.PRIMARY).lineWidth(1).stroke();
   const s = ledger.summary;
   const summaryCells = [
-    'Total', '', num(totalDelivered), formatMoney(s.totalAmount),
+    'Total', '', '',
+    num(totalDelivered), formatMoney(s.totalAmount),
     num(totalCollected), num(Math.max(0, totalDelivered - totalCollected)),
     formatMoney(s.emptyCylsCost), formatMoney(s.totalAmount),
     formatMoney(s.receivedAmount), formatMoney(s.dueAmount), formatMoney(s.overdueAmount),
   ];
   y += drawRow(doc, y + 1, summaryCells, { bold: true });
+
+  // Final "Closing Balance" line so the reader sees the carry-forward figure
+  // explicitly, matching the format Suneel confirmed.
+  y += 4;
+  doc.font('Helvetica-Bold').fontSize(TYPO.H2).fillColor(THEME.PRIMARY);
+  doc.text(
+    `Closing Balance: ${formatMoney(s.dueAmount)} Dr`,
+    MARGIN.left + TABLE_WIDTH - 250,
+    y,
+    { width: 250, align: 'right' },
+  );
+  doc.fillColor(THEME.TEXT);
+  y += 16;
 
   // ── Footer ──
   y += 18;

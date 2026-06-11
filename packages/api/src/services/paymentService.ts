@@ -305,241 +305,334 @@ export async function allocatePayment(
   });
 }
 
+/**
+ * Group 1 (2026-06-11): rewritten to read from CustomerLedgerEntry, which
+ * is now the single source of truth across:
+ *   - in-app modal (GET /payments/ledger/:customerId)
+ *   - Customer Statement report (reportsService.customer-statement)
+ *   - Customer Statement PDF (customerLedgerPdfService — via this function)
+ *
+ * Previously this read Order + PaymentTransaction, so opening-balance entries
+ * (which have no Order) were invisible in the PDF while showing up in the
+ * modal and report — see anti-pattern #17.
+ *
+ * Per-cylinder-type empties tracking is preserved by joining each ledger
+ * entry's linked invoice → order → orderItems (for delivered qty, empties
+ * collected). Entries with no linked invoice (payments, adjustments) and
+ * opening-balance invoices (no items) emit single summary rows.
+ *
+ * `summary.overdueAmount` deliberately EXCLUDES opening-balance debits so
+ * the value stays consistent with computeCustomerOverdue (which still reads
+ * Order+Payment, the dashboard/order-gate path). Opening balance shows in
+ * `dueAmount` via the b/f row but does not count as "overdue" for credit
+ * gating purposes — pre-go-live debt is informational here, not an order
+ * blocker.
+ */
 export async function getCustomerLedger(
   distributorId: string,
   customerId: string,
   range?: { from?: string; to?: string },
 ): Promise<CustomerLedgerResponse> {
-  // 1. Get customer with credit period
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
     select: { id: true, creditPeriodDays: true },
   });
   if (!customer) throw new PaymentError('Customer not found', 404);
-
   const creditDays = customer.creditPeriodDays;
 
-  // 2. Get all delivered orders with items and cylinder type names
-  const orders = await prisma.order.findMany({
-    where: {
-      distributorId,
-      customerId,
-      status: { in: ['delivered', 'modified_delivered'] },
-      deletedAt: null,
-    },
-    include: {
-      items: {
-        include: {
-          cylinderType: { select: { id: true, typeName: true } },
+  // Pull ALL ledger entries (not range-filtered yet) so we can compute the
+  // carry-forward "Opening Balance b/f" amount from pre-range entries.
+  const allEntries = await prisma.customerLedgerEntry.findMany({
+    where: { distributorId, customerId },
+    orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  // Pre-load referenced invoices (with items + linked order items) so each
+  // invoice_entry row can render per-cylinder-type breakdown without N+1.
+  const invoiceIds = Array.from(
+    new Set(allEntries.map((e) => e.invoiceId).filter((x): x is string => !!x)),
+  );
+  const invoices = invoiceIds.length === 0
+    ? []
+    : await prisma.invoice.findMany({
+        where: { id: { in: invoiceIds } },
+        select: {
+          id: true,
+          isOpeningBalance: true,
+          orderId: true,
+          items: {
+            select: {
+              quantity: true,
+              unitPrice: true,
+              discountPerUnit: true,
+              cylinderTypeId: true,
+              cylinderType: { select: { id: true, typeName: true } },
+            },
+          },
+          order: {
+            select: {
+              items: {
+                select: {
+                  cylinderTypeId: true,
+                  quantity: true,
+                  deliveredQuantity: true,
+                  emptiesCollected: true,
+                },
+              },
+            },
+          },
         },
-      },
-    },
-    orderBy: { deliveryDate: 'asc' },
-  });
-
-  // 3. Get all payments for this customer
-  const payments = await prisma.paymentTransaction.findMany({
-    where: { distributorId, customerId, deletedAt: null },
-    orderBy: { transactionDate: 'asc' },
-  });
-
-  // 4. Get empty cylinder prices for this distributor
-  const emptyPrices = await prisma.emptyCylinderPrice.findMany({
-    where: { distributorId },
-  });
-  const emptyPriceMap = new Map<string, number>();
-  for (const ep of emptyPrices) {
-    emptyPriceMap.set(ep.cylinderTypeId, toNum(ep.emptyCylinderPrice));
-  }
-
-  // 5. Build unified timeline entries (deliveries + payments) sorted by date
-  type TimelineEntry = {
-    date: Date;
-    type: 'delivery';
-    cylinderTypeId: string;
-    cylinderTypeName: string;
-    fullCylsDelivered: number;
-    amount: number;
-    emptyCylsCollected: number;
-  } | {
-    date: Date;
-    type: 'payment';
-    amount: number;
-  };
-
-  const timeline: TimelineEntry[] = [];
-
-  for (const order of orders) {
-    const orderDate = order.deliveryDate ?? order.orderDate;
-    for (const item of order.items) {
-      const delivered = item.deliveredQuantity ?? item.quantity;
-      const collected = item.emptiesCollected ?? 0;
-      const amount = delivered * (toNum(item.unitPrice) - toNum(item.discountPerUnit));
-      timeline.push({
-        date: orderDate,
-        type: 'delivery',
-        cylinderTypeId: item.cylinderType.id,
-        cylinderTypeName: item.cylinderType.typeName,
-        fullCylsDelivered: delivered,
-        amount,
-        emptyCylsCollected: collected,
       });
+  const invoiceMap = new Map(invoices.map((i) => [i.id, i]));
+
+  const emptyPrices = await prisma.emptyCylinderPrice.findMany({ where: { distributorId } });
+  const emptyPriceMap = new Map<string, number>(
+    emptyPrices.map((ep) => [ep.cylinderTypeId, toNum(ep.emptyCylinderPrice)] as const),
+  );
+
+  const fromDate = range?.from ? new Date(range.from) : null;
+  const toDate = range?.to ? new Date(range.to) : null;
+
+  // Mutating state shared across pre-range accumulation and in-range emission.
+  let cumulativeInvoiceAmount = 0;
+  let cumulativeReceivedAmount = 0;
+  const pendingEmptiesPerType = new Map<string, number>();
+  // Only NON-OB invoice debits enter this list — preserves overdueAmount
+  // contract with computeCustomerOverdue.
+  const unpaidDeliveries: { date: Date; amount: number }[] = [];
+  const today = new Date();
+
+  function rebuildOverdueOnState(): number {
+    let overdue = 0;
+    let remaining = cumulativeReceivedAmount;
+    for (const ud of unpaidDeliveries) {
+      if (remaining >= ud.amount) { remaining -= ud.amount; continue; }
+      const unpaid = ud.amount - remaining;
+      remaining = 0;
+      const days = Math.floor((today.getTime() - ud.date.getTime()) / (1000 * 60 * 60 * 24));
+      if (days > creditDays) overdue += unpaid;
     }
+    return overdue;
   }
 
-  for (const payment of payments) {
-    timeline.push({
-      date: payment.transactionDate,
-      type: 'payment',
-      amount: toNum(payment.amount),
+  const rows: CustomerLedgerRow[] = [];
+
+  function emitRow(partial: Partial<CustomerLedgerRow> & {
+    orderDate: string; kind: CustomerLedgerRow['kind']; narration: string;
+  }): void {
+    const dueAmount = cumulativeInvoiceAmount - cumulativeReceivedAmount;
+    rows.push({
+      orderDate: partial.orderDate,
+      cylinderType: partial.cylinderType ?? '',
+      fullCylsDelivered: partial.fullCylsDelivered ?? 0,
+      amount: Math.round((partial.amount ?? 0) * 100) / 100,
+      emptyCylsCollected: partial.emptyCylsCollected ?? 0,
+      pendingEmptyCyls: partial.pendingEmptyCyls ?? 0,
+      emptyCylsCost: Math.round((partial.emptyCylsCost ?? 0) * 100) / 100,
+      totalAmount: Math.round(cumulativeInvoiceAmount * 100) / 100,
+      receivedAmount: Math.round((partial.receivedAmount ?? 0) * 100) / 100,
+      dueAmount: Math.round(dueAmount * 100) / 100,
+      creditDays,
+      overDueAmount: Math.round(rebuildOverdueOnState() * 100) / 100,
+      narration: partial.narration,
+      kind: partial.kind,
     });
   }
 
-  // Sort by date ascending
-  timeline.sort((a, b) => a.date.getTime() - b.date.getTime());
+  // Process a single CustomerLedgerEntry: mutate cumulative state and
+  // optionally emit one or more output rows.
+  function processEntry(entry: typeof allEntries[number], emit: boolean): void {
+    const delta = toNum(entry.amountDelta);
+    const inv = entry.invoiceId ? invoiceMap.get(entry.invoiceId) ?? null : null;
+    const dateStr = entry.entryDate.toISOString().split('T')[0];
 
-  // WI-092: optional date-range scoping for the customer statement PDF.
-  // When no range is supplied (the default ledger view) the timeline is
-  // used as-is, so existing callers are unaffected.
-  const fromDate = range?.from ? new Date(range.from) : null;
-  const toDate = range?.to ? new Date(range.to) : null;
-  const scopedTimeline = (fromDate || toDate)
-    ? timeline.filter((e) => {
-        if (fromDate && e.date < fromDate) return false;
-        if (toDate && e.date > toDate) return false;
-        return true;
-      })
-    : timeline;
-
-  // 6. Build ledger rows with running totals
-  const rows: CustomerLedgerRow[] = [];
-  let cumulativeInvoiceAmount = 0;
-  let cumulativeReceivedAmount = 0;
-
-  // Track pending empties per cylinder type
-  const pendingEmptiesPerType = new Map<string, number>();
-
-  // Track unpaid delivery amounts with their dates for overdue calculation
-  const unpaidDeliveries: { date: Date; amount: number }[] = [];
-
-  const today = new Date();
-
-  for (const entry of scopedTimeline) {
-    if (entry.type === 'delivery') {
-      const { cylinderTypeId, cylinderTypeName, fullCylsDelivered, amount, emptyCylsCollected } = entry;
-
-      cumulativeInvoiceAmount += amount;
-
-      // Update pending empties for this cylinder type
-      const currentPending = pendingEmptiesPerType.get(cylinderTypeId) || 0;
-      const newPending = currentPending + fullCylsDelivered - emptyCylsCollected;
-      pendingEmptiesPerType.set(cylinderTypeId, Math.max(0, newPending));
-
-      const emptyPrice = emptyPriceMap.get(cylinderTypeId) || 0;
-      const pendingEmptyCyls = pendingEmptiesPerType.get(cylinderTypeId) || 0;
-      const emptyCylsCost = pendingEmptyCyls * emptyPrice;
-
-      // Track this delivery for overdue calculation
-      unpaidDeliveries.push({ date: entry.date, amount });
-
-      // Calculate overdue: sum of unpaid deliveries where (today - deliveryDate) > creditDays
-      const dueAmount = cumulativeInvoiceAmount - cumulativeReceivedAmount;
-      let overDueAmount = 0;
-      let remainingPayments = cumulativeReceivedAmount;
-      for (const ud of unpaidDeliveries) {
-        if (remainingPayments >= ud.amount) {
-          remainingPayments -= ud.amount;
-          continue;
-        }
-        const unpaidPortion = ud.amount - remainingPayments;
-        remainingPayments = 0;
-        const daysSinceDelivery = Math.floor((today.getTime() - ud.date.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysSinceDelivery > creditDays) {
-          overDueAmount += unpaidPortion;
-        }
+    // Update pending-empties from any joined order items (BEFORE emit so
+    // the emitted row shows the post-delivery pending count, matching the
+    // legacy behaviour).
+    if (inv?.order?.items?.length) {
+      for (const it of inv.order.items) {
+        const delivered = it.deliveredQuantity ?? it.quantity;
+        const collected = it.emptiesCollected ?? 0;
+        const cur = pendingEmptiesPerType.get(it.cylinderTypeId) ?? 0;
+        pendingEmptiesPerType.set(it.cylinderTypeId, Math.max(0, cur + delivered - collected));
       }
+    }
 
-      rows.push({
-        orderDate: entry.date.toISOString().split('T')[0],
-        cylinderType: cylinderTypeName,
-        fullCylsDelivered,
-        amount: Math.round(amount * 100) / 100,
-        emptyCylsCollected,
-        pendingEmptyCyls,
-        emptyCylsCost: Math.round(emptyCylsCost * 100) / 100,
-        totalAmount: Math.round(cumulativeInvoiceAmount * 100) / 100,
-        receivedAmount: Math.round(cumulativeReceivedAmount * 100) / 100,
-        dueAmount: Math.round(dueAmount * 100) / 100,
-        creditDays,
-        overDueAmount: Math.round(overDueAmount * 100) / 100,
-      });
-    } else {
-      // Payment entry
-      cumulativeReceivedAmount += entry.amount;
-      const dueAmount = cumulativeInvoiceAmount - cumulativeReceivedAmount;
+    switch (entry.entryType) {
+      case 'invoice_entry': {
+        cumulativeInvoiceAmount += delta;
+        const isOB = !!inv?.isOpeningBalance;
+        // OB does NOT enter the unpaid-deliveries FIFO — keeps overdueAmount
+        // aligned with computeCustomerOverdue (which only sees Orders).
+        if (!isOB && delta > 0) {
+          unpaidDeliveries.push({ date: entry.entryDate, amount: delta });
+        }
 
-      // Recalculate overdue after payment
-      let overDueAmount = 0;
-      let remainingPayments = cumulativeReceivedAmount;
-      for (const ud of unpaidDeliveries) {
-        if (remainingPayments >= ud.amount) {
-          remainingPayments -= ud.amount;
-          continue;
+        if (!emit) return;
+
+        if (isOB || !inv?.items?.length) {
+          emitRow({
+            orderDate: dateStr,
+            cylinderType: isOB ? 'Opening Balance' : '',
+            amount: delta,
+            narration: entry.narration ?? (isOB ? 'Opening Balance' : 'Invoice'),
+            kind: isOB ? 'opening' : 'invoice',
+          });
+          return;
         }
-        const unpaidPortion = ud.amount - remainingPayments;
-        remainingPayments = 0;
-        const daysSinceDelivery = Math.floor((today.getTime() - ud.date.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysSinceDelivery > creditDays) {
-          overDueAmount += unpaidPortion;
+
+        // Per-cylinder-type rows so the PDF table stays readable. Empties
+        // collected come from OrderItem; revenue from InvoiceItem.
+        const orderItems = inv.order?.items ?? [];
+        type Agg = { delivered: number; collected: number; amount: number; name: string };
+        const aggByType = new Map<string, Agg>();
+        for (const it of inv.items) {
+          // InvoiceItem.cylinderTypeId is nullable in the schema (write-off /
+          // manual lines). Skip those — they carry no empties accounting and
+          // can't be aggregated by cylinder type.
+          if (!it.cylinderTypeId || !it.cylinderType) continue;
+          const cylinderTypeId = it.cylinderTypeId;
+          const oi = orderItems.find((o) => o.cylinderTypeId === cylinderTypeId);
+          const delivered = oi?.deliveredQuantity ?? oi?.quantity ?? it.quantity;
+          const collected = oi?.emptiesCollected ?? 0;
+          const lineAmount = delivered * (toNum(it.unitPrice) - toNum(it.discountPerUnit));
+          const prev = aggByType.get(cylinderTypeId);
+          if (prev) {
+            prev.delivered += delivered;
+            prev.collected += collected;
+            prev.amount += lineAmount;
+          } else {
+            aggByType.set(cylinderTypeId, {
+              delivered, collected, amount: lineAmount, name: it.cylinderType.typeName,
+            });
+          }
         }
+        for (const [typeId, agg] of aggByType) {
+          const pendingForType = pendingEmptiesPerType.get(typeId) ?? 0;
+          const emptyPrice = emptyPriceMap.get(typeId) ?? 0;
+          emitRow({
+            orderDate: dateStr,
+            cylinderType: agg.name,
+            fullCylsDelivered: agg.delivered,
+            amount: agg.amount,
+            emptyCylsCollected: agg.collected,
+            pendingEmptyCyls: pendingForType,
+            emptyCylsCost: pendingForType * emptyPrice,
+            narration: entry.narration ?? '',
+            kind: 'invoice',
+          });
+        }
+        return;
       }
-
-      rows.push({
-        orderDate: entry.date.toISOString().split('T')[0],
-        cylinderType: '',
-        fullCylsDelivered: 0,
-        amount: 0,
-        emptyCylsCollected: 0,
-        pendingEmptyCyls: 0,
-        emptyCylsCost: 0,
-        totalAmount: Math.round(cumulativeInvoiceAmount * 100) / 100,
-        receivedAmount: Math.round(entry.amount * 100) / 100,
-        dueAmount: Math.round(dueAmount * 100) / 100,
-        creditDays,
-        overDueAmount: Math.round(overDueAmount * 100) / 100,
-      });
+      case 'payment_entry': {
+        const credit = Math.abs(delta);
+        cumulativeReceivedAmount += credit;
+        if (!emit) return;
+        emitRow({
+          orderDate: dateStr,
+          receivedAmount: credit,
+          narration: entry.narration ?? 'Payment received',
+          kind: 'payment',
+        });
+        return;
+      }
+      case 'credit_note': {
+        const credit = Math.abs(delta);
+        cumulativeReceivedAmount += credit;
+        if (!emit) return;
+        emitRow({
+          orderDate: dateStr,
+          receivedAmount: credit,
+          narration: entry.narration ?? 'Credit note',
+          kind: 'credit_note',
+        });
+        return;
+      }
+      case 'debit_note': {
+        cumulativeInvoiceAmount += delta;
+        if (delta > 0) unpaidDeliveries.push({ date: entry.entryDate, amount: delta });
+        if (!emit) return;
+        emitRow({
+          orderDate: dateStr,
+          amount: delta,
+          narration: entry.narration ?? 'Debit note',
+          kind: 'debit_note',
+        });
+        return;
+      }
+      case 'adjustment': {
+        if (delta >= 0) {
+          cumulativeInvoiceAmount += delta;
+          if (delta > 0) unpaidDeliveries.push({ date: entry.entryDate, amount: delta });
+        } else {
+          cumulativeReceivedAmount += -delta;
+        }
+        if (!emit) return;
+        emitRow({
+          orderDate: dateStr,
+          amount: delta >= 0 ? delta : 0,
+          receivedAmount: delta < 0 ? -delta : 0,
+          narration: entry.narration ?? 'Adjustment',
+          kind: 'adjustment',
+        });
+        return;
+      }
     }
   }
 
-  // 7. Calculate total empty cylinder cost across all types
+  // Pass 1 — accumulate pre-range state, no emit.
+  if (fromDate) {
+    for (const entry of allEntries) {
+      if (entry.entryDate < fromDate) processEntry(entry, false);
+    }
+  }
+
+  const openingBalance = cumulativeInvoiceAmount - cumulativeReceivedAmount;
+  const showOpeningRow = !!fromDate && Math.abs(openingBalance) > 0.005;
+
+  if (showOpeningRow) {
+    // Carry-forward row — sits at the top of the period before any
+    // in-range transaction. dueAmount equals the opening balance; no
+    // debit/credit split, no per-row overdue contribution.
+    rows.push({
+      orderDate: fromDate!.toISOString().split('T')[0],
+      cylinderType: 'Opening Balance b/f',
+      fullCylsDelivered: 0,
+      amount: 0,
+      emptyCylsCollected: 0,
+      pendingEmptyCyls: 0,
+      emptyCylsCost: 0,
+      totalAmount: Math.round(cumulativeInvoiceAmount * 100) / 100,
+      receivedAmount: Math.round(cumulativeReceivedAmount * 100) / 100,
+      dueAmount: Math.round(openingBalance * 100) / 100,
+      creditDays,
+      overDueAmount: 0,
+      narration: 'Opening Balance b/f',
+      kind: 'opening',
+    });
+  }
+
+  // Pass 2 — emit in-range entries.
+  for (const entry of allEntries) {
+    const inRange =
+      (!fromDate || entry.entryDate >= fromDate) &&
+      (!toDate || entry.entryDate <= toDate);
+    if (inRange) processEntry(entry, true);
+  }
+
   let totalEmptyCylsCost = 0;
   for (const [typeId, pending] of pendingEmptiesPerType) {
-    const price = emptyPriceMap.get(typeId) || 0;
+    const price = emptyPriceMap.get(typeId) ?? 0;
     totalEmptyCylsCost += pending * price;
-  }
-
-  // 8. Calculate final overdue amount
-  let finalOverdueAmount = 0;
-  let remainingPayments = cumulativeReceivedAmount;
-  for (const ud of unpaidDeliveries) {
-    if (remainingPayments >= ud.amount) {
-      remainingPayments -= ud.amount;
-      continue;
-    }
-    const unpaidPortion = ud.amount - remainingPayments;
-    remainingPayments = 0;
-    const daysSinceDelivery = Math.floor((today.getTime() - ud.date.getTime()) / (1000 * 60 * 60 * 24));
-    if (daysSinceDelivery > creditDays) {
-      finalOverdueAmount += unpaidPortion;
-    }
   }
 
   const summary = {
     totalAmount: Math.round(cumulativeInvoiceAmount * 100) / 100,
     receivedAmount: Math.round(cumulativeReceivedAmount * 100) / 100,
     dueAmount: Math.round((cumulativeInvoiceAmount - cumulativeReceivedAmount) * 100) / 100,
-    overdueAmount: Math.round(finalOverdueAmount * 100) / 100,
+    overdueAmount: Math.round(rebuildOverdueOnState() * 100) / 100,
     emptyCylsCost: Math.round(totalEmptyCylsCost * 100) / 100,
+    openingBalance: showOpeningRow ? Math.round(openingBalance * 100) / 100 : 0,
   };
 
   return { rows, summary };
