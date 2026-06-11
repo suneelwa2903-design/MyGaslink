@@ -120,12 +120,17 @@ describe('POST /api/customers/import-csv', () => {
     expect(created.length).toBe(2);
   });
 
-  it('returns a per-row failure for duplicate phone, does not 500', async () => {
-    // First import seeds the customer
-    await request(app)
+  it('Group 3: re-import on the same phone UPDATES the matched customer (upsert behavior)', async () => {
+    // Group 3 (2026-06-11): importCustomers now upserts. A re-run with the
+    // same phone but a different name UPDATES the existing customer record
+    // (it does not fail with "duplicate phone" as the old contract did).
+    // This is the foundation of the "split/partial uploads" workflow.
+    const first = await request(app)
       .post('/api/customers/import-csv')
       .set(auth(adminToken))
       .send({ rows: [{ name: 'Import Test Alpha', phone: '9000000001' }] });
+    expect(first.body.data.created).toBe(1);
+    expect(first.body.data.updated).toBe(0);
 
     const res = await request(app)
       .post('/api/customers/import-csv')
@@ -133,9 +138,10 @@ describe('POST /api/customers/import-csv', () => {
       .send({ rows: [{ name: 'Import Test Gamma', phone: '9000000001' }] });
 
     expect(res.status).toBe(200);
-    expect(res.body.data.imported).toBe(0);
-    expect(res.body.data.failures.length).toBe(1);
-    expect(res.body.data.failures[0].reason).toMatch(/duplicate phone/i);
+    expect(res.body.data.created).toBe(0);
+    expect(res.body.data.updated).toBe(1);
+    expect(res.body.data.imported).toBe(1); // back-compat alias = created + updated
+    expect(res.body.data.failures.length).toBe(0);
   });
 
   it('tenant isolation — dist-001 admin cannot create customers under dist-002', async () => {

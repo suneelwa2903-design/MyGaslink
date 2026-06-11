@@ -39,12 +39,19 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-const CUSTOMER_TEMPLATE = 'name,phone,address,gstin,credit_period_days,customer_type\n' +
-  'Royal Kitchen Restaurant,9876543210,"123 Main Street, Hyderabad",36AABCU9603R1ZX,30,commercial\n' +
-  'Green Valley Home,9876543211,"456 Colony Road, Hyderabad",,0,domestic\n';
-const OPENING_BAL_TEMPLATE = 'customer_name,opening_balance,notes\n' +
-  'Royal Kitchen Restaurant,15000,Outstanding as of today\n' +
-  'Green Valley Home,2500,\n';
+// Group 3 (2026-06-11): expanded CSV templates.
+// Customer template now includes structured address columns + email +
+// transport charge. Single-column `address` is still accepted (back-compat)
+// and is auto-parsed into pincode/state/line1 by the importer.
+// Opening-balance template adds `phone` (fallback lookup) and `as_of_date`.
+const CUSTOMER_TEMPLATE =
+  'name,phone,address,line1,line2,city,state,pincode,gstin,email,credit_period_days,customer_type,transport_charge\n' +
+  'Royal Kitchen Restaurant,9876543210,,123 Main Street,,Hyderabad,Telangana,500001,36AABCU9603R1ZX,royal@example.com,30,commercial,15\n' +
+  'Green Valley Home,9876543211,"456 Colony Road, Hyderabad, Telangana, 500032",,,,,,,,0,domestic,\n';
+const OPENING_BAL_TEMPLATE =
+  'customer_name,phone,opening_balance,as_of_date,notes\n' +
+  'Royal Kitchen Restaurant,9876543210,15000,2026-05-31,Outstanding as of paper register\n' +
+  'Green Valley Home,9876543211,2500,,\n';
 
 function downloadCsv(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
@@ -323,24 +330,49 @@ function useCsvFile<TRow>(map: (r: Record<string, string>) => TRow | null): { ro
 }
 
 function CustomerImportModal({ onClose }: { onClose: () => void }) {
-  const csv = useCsvFile<{ name: string; phone: string; address?: string; gstin?: string; creditPeriodDays?: number; customerType?: string }>((r) => {
+  // Group 3 (2026-06-11): rich CSV — structured address columns + email
+  // + transport charge. Mapper passes the new fields straight through.
+  type CRow = {
+    name: string; phone: string;
+    address?: string; line1?: string; line2?: string; city?: string; state?: string; pincode?: string;
+    gstin?: string; email?: string; creditPeriodDays?: number; customerType?: string;
+    transportChargePerCylinder?: number;
+  };
+  const csv = useCsvFile<CRow>((r) => {
     if (!r.name && !r.phone) return null;
     const credit = r.credit_period_days?.trim();
+    const tc = r.transport_charge?.trim();
     return {
       name: r.name,
       phone: r.phone,
       address: r.address || undefined,
+      line1: r.line1 || undefined,
+      line2: r.line2 || undefined,
+      city: r.city || undefined,
+      state: r.state || undefined,
+      pincode: r.pincode || undefined,
       gstin: r.gstin || undefined,
+      email: r.email || undefined,
       creditPeriodDays: credit ? Number(credit) : undefined,
       customerType: r.customer_type || undefined,
+      transportChargePerCylinder: tc ? Number(tc) : undefined,
     };
   });
 
   const submit = useMutation({
-    mutationFn: () => apiPost<{ imported: number; failures: { row: number; reason: string }[] }>('/customers/import-csv', { rows: csv.rows }),
+    mutationFn: () =>
+      apiPost<{
+        imported: number; created: number; updated: number;
+        failures: { row: number; reason: string }[];
+      }>('/customers/import-csv', { rows: csv.rows }),
     onSuccess: (r) => {
-      if (r.failures.length === 0) toast.success(`Imported ${r.imported} customers`);
-      else toast(`Imported ${r.imported} · ${r.failures.length} failed`, { icon: '⚠️' });
+      const parts: string[] = [];
+      if (r.created > 0) parts.push(`${r.created} created`);
+      if (r.updated > 0) parts.push(`${r.updated} updated`);
+      if (r.failures.length > 0) parts.push(`${r.failures.length} failed`);
+      const msg = parts.join(' · ') || 'Nothing imported';
+      if (r.failures.length > 0) toast(msg, { icon: '⚠️' });
+      else toast.success(msg);
     },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
@@ -360,7 +392,10 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
         </button>
         <input type="file" accept=".csv,text/csv" onChange={(e) => csv.setFile(e.target.files?.[0] ?? null)} className="text-sm" />
         <p className="text-xs text-surface-500 dark:text-surface-400">
-          Required columns: name, phone. Optional: address, gstin, credit_period_days, customer_type
+          Required: <code>name</code>, <code>phone</code>. Optional address can be a single <code>address</code>
+          column (auto-parsed into pincode/state/line1) OR separate <code>line1</code>/<code>city</code>/<code>state</code>/<code>pincode</code> columns.
+          Other optional: <code>gstin</code>, <code>email</code>, <code>credit_period_days</code>, <code>customer_type</code>, <code>transport_charge</code>.
+          Re-running the same file UPDATES matched customers without overwriting fields you left blank.
         </p>
         {csv.fileName && (
           <p className="text-xs text-surface-500">{csv.fileName} · {csv.rows.length} valid row{csv.rows.length === 1 ? '' : 's'} of {csv.rawCount}</p>
@@ -368,10 +403,10 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
         {csv.rows.length > 0 && (
           <div className="table-container max-h-64 overflow-auto">
             <table className="table">
-              <thead><tr><th>Name</th><th>Phone</th><th>GSTIN</th><th>Credit days</th></tr></thead>
+              <thead><tr><th>Name</th><th>Phone</th><th>City</th><th>GSTIN</th><th>Credit days</th></tr></thead>
               <tbody>
                 {csv.rows.slice(0, 10).map((r, i) => (
-                  <tr key={i}><td>{r.name}</td><td>{r.phone}</td><td>{r.gstin || '-'}</td><td>{r.creditPeriodDays ?? '-'}</td></tr>
+                  <tr key={i}><td>{r.name}</td><td>{r.phone}</td><td>{r.city || '-'}</td><td>{r.gstin || '-'}</td><td>{r.creditPeriodDays ?? '-'}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -380,7 +415,9 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
         )}
         {submit.data && (
           <div className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 text-sm">
-            <p className="font-medium text-surface-900 dark:text-white">Imported: {submit.data.imported} · Failed: {submit.data.failures.length}</p>
+            <p className="font-medium text-surface-900 dark:text-white">
+              Created: {submit.data.created} · Updated: {submit.data.updated} · Failed: {submit.data.failures.length}
+            </p>
             {submit.data.failures.slice(0, 10).map((f, i) => (
               <p key={i} className="text-xs text-red-500 mt-1">Row {f.row}: {f.reason}</p>
             ))}
@@ -396,23 +433,44 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
 }
 
 function OpeningBalanceImportModal({ onClose }: { onClose: () => void }) {
-  const csv = useCsvFile<{ customerName?: string; phone?: string; openingBalance: number; notes?: string }>((r) => {
+  type OBRow = { customerName?: string; phone?: string; openingBalance: number; notes?: string; asOfDate?: string };
+  const csv = useCsvFile<OBRow>((r) => {
     const amt = Number(r.opening_balance);
     if (!Number.isFinite(amt)) return null;
     if (!r.customer_name && !r.phone) return null;
+    const asOfDate = r.as_of_date && /^\d{4}-\d{2}-\d{2}$/.test(r.as_of_date)
+      ? r.as_of_date : undefined;
     return {
       customerName: r.customer_name || undefined,
       phone: r.phone || undefined,
       openingBalance: amt,
       notes: r.notes || undefined,
+      asOfDate,
     };
   });
 
+  // Group 3 (2026-06-11): replace-existing toggle. OFF by default — the
+  // importer silently skips customers who already have an OB invoice, so
+  // re-running the same CSV is safe. ON deletes the prior OB + ledger
+  // entry before writing the new one.
+  const [replaceExisting, setReplaceExisting] = useState(false);
+
   const submit = useMutation({
-    mutationFn: () => apiPost<{ imported: number; failures: { row: number; reason: string }[] }>('/customers/import-opening-balances', { rows: csv.rows }),
+    mutationFn: () =>
+      apiPost<{
+        imported: number;
+        skipped: number;
+        skippedCustomers: string[];
+        failures: { row: number; reason: string }[];
+      }>('/customers/import-opening-balances', { rows: csv.rows, replaceExisting }),
     onSuccess: (r) => {
-      if (r.failures.length === 0) toast.success(`Imported ${r.imported} opening balances`);
-      else toast(`Imported ${r.imported} · ${r.failures.length} failed`, { icon: '⚠️' });
+      const parts: string[] = [];
+      if (r.imported > 0) parts.push(`${replaceExisting ? 'Replaced/imported' : 'Imported'} ${r.imported}`);
+      if (r.skipped > 0) parts.push(`skipped ${r.skipped}`);
+      if (r.failures.length > 0) parts.push(`${r.failures.length} failed`);
+      const msg = parts.join(' · ') || 'Nothing imported';
+      if (r.failures.length > 0 || r.skipped > 0) toast(msg, { icon: '⚠️' });
+      else toast.success(msg);
     },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
@@ -432,7 +490,9 @@ function OpeningBalanceImportModal({ onClose }: { onClose: () => void }) {
         </button>
         <input type="file" accept=".csv,text/csv" onChange={(e) => csv.setFile(e.target.files?.[0] ?? null)} className="text-sm" />
         <p className="text-xs text-surface-500 dark:text-surface-400">
-          Required columns: customer_name, opening_balance. Customer name must match exactly as entered in system.
+          Required: <code>customer_name</code> OR <code>phone</code>, plus <code>opening_balance</code>.
+          Optional: <code>as_of_date</code> (YYYY-MM-DD), <code>notes</code>.
+          Re-running the same file is safe — customers who already have an opening balance are skipped unless you tick Replace existing.
         </p>
         {csv.fileName && (
           <p className="text-xs text-surface-500">{csv.fileName} · {csv.rows.length} valid row{csv.rows.length === 1 ? '' : 's'} of {csv.rawCount}</p>
@@ -440,21 +500,39 @@ function OpeningBalanceImportModal({ onClose }: { onClose: () => void }) {
         {csv.rows.length > 0 && (
           <div className="table-container max-h-64 overflow-auto">
             <table className="table">
-              <thead><tr><th>Customer</th><th>Phone</th><th>Opening balance</th><th>Notes</th></tr></thead>
+              <thead><tr><th>Customer</th><th>Phone</th><th>Opening balance</th><th>As of</th><th>Notes</th></tr></thead>
               <tbody>
                 {csv.rows.slice(0, 10).map((r, i) => (
-                  <tr key={i}><td>{r.customerName ?? '-'}</td><td>{r.phone ?? '-'}</td><td>₹{r.openingBalance.toLocaleString('en-IN')}</td><td className="text-xs">{r.notes ?? '-'}</td></tr>
+                  <tr key={i}>
+                    <td>{r.customerName ?? '-'}</td>
+                    <td>{r.phone ?? '-'}</td>
+                    <td>₹{r.openingBalance.toLocaleString('en-IN')}</td>
+                    <td className="text-xs">{r.asOfDate ?? '-'}</td>
+                    <td className="text-xs">{r.notes ?? '-'}</td>
+                  </tr>
                 ))}
               </tbody>
             </table>
             {csv.rows.length > 10 && <p className="text-xs text-surface-400 p-2">… and {csv.rows.length - 10} more</p>}
           </div>
         )}
+        <label className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+          <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} />
+          <span>Replace existing opening balances (use only when correcting a previous import)</span>
+        </label>
         {submit.data && (
-          <div className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 text-sm">
-            <p className="font-medium text-surface-900 dark:text-white">Imported: {submit.data.imported} · Failed: {submit.data.failures.length}</p>
+          <div className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 text-sm space-y-1">
+            <p className="font-medium text-surface-900 dark:text-white">
+              Imported: {submit.data.imported} · Skipped: {submit.data.skipped} · Failed: {submit.data.failures.length}
+            </p>
+            {submit.data.skippedCustomers.length > 0 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Already had opening balances (skipped): {submit.data.skippedCustomers.slice(0, 8).join(', ')}
+                {submit.data.skippedCustomers.length > 8 && ` and ${submit.data.skippedCustomers.length - 8} more`}
+              </p>
+            )}
             {submit.data.failures.slice(0, 10).map((f, i) => (
-              <p key={i} className="text-xs text-red-500 mt-1">Row {f.row}: {f.reason}</p>
+              <p key={i} className="text-xs text-red-500">Row {f.row}: {f.reason}</p>
             ))}
           </div>
         )}

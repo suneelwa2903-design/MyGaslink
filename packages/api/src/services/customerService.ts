@@ -451,27 +451,146 @@ export type CustomerImportRow = {
   name: string;
   phone: string;
   address?: string;
+  // Group 3 (2026-06-11): the CSV template now accepts structured address
+  // columns. When provided, they take precedence over the auto-parse of a
+  // single `address` field.
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
   gstin?: string;
+  email?: string;
   creditPeriodDays?: number;
   customerType?: string;
+  transportChargePerCylinder?: number;
 };
 
 export type CustomerImportResult = {
+  // `imported` kept for backward compatibility (Bhargava's existing UI).
+  // New consumers should read `created`/`updated` directly.
   imported: number;
+  created: number;
+  updated: number;
   failures: Array<{ row: number; name?: string; phone?: string; reason: string }>;
 };
 
 /**
- * Bulk-create customers from CSV-parsed rows. Each row succeeds or fails
- * independently so a single bad line never aborts the batch. Returns counts +
- * per-row failures the UI can render.
+ * Group 3 (2026-06-11): tolerate Excel's "scientific notation" mangling of
+ * phone numbers. When a 10-digit Indian mobile is opened in Excel and the
+ * column auto-formats to "Number", the value lands in the CSV as e.g.
+ * `9.88E+09`. parseFloat → round → toString yields the original digits.
+ *
+ * Also strips whitespace, leading apostrophes (Excel's text-as-number
+ * escape), and `+91` country prefixes. Returns the cleaned string or null
+ * if the result is empty.
+ */
+export function normalisePhone(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let s = String(raw).trim().replace(/^'/, ''); // Excel escape apostrophe
+  if (!s) return null;
+  // Scientific notation: parseFloat → round → string. Only treat as
+  // scientific if the input actually contains 'e' / 'E'.
+  if (/[eE]/.test(s)) {
+    const n = Number(s);
+    if (Number.isFinite(n) && n > 0) s = String(Math.round(n));
+  }
+  // Strip +91 / 91- / spaces / hyphens
+  s = s.replace(/\s|-/g, '');
+  if (s.startsWith('+91')) s = s.slice(3);
+  else if (s.startsWith('91') && s.length === 12) s = s.slice(2);
+  return s || null;
+}
+
+const STATE_NAMES = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
+  'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka',
+  'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya',
+  'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim',
+  'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand',
+  'West Bengal',
+  // UTs
+  'Andaman and Nicobar Islands', 'Chandigarh',
+  'Dadra and Nagar Haveli and Daman and Diu', 'Delhi', 'Jammu and Kashmir',
+  'Ladakh', 'Lakshadweep', 'Puducherry',
+];
+
+/**
+ * Group 3 (2026-06-11): best-effort parse of a concatenated Indian address
+ * into structured components. Strategy:
+ *   - trailing 6-digit pincode regex (most reliable)
+ *   - suffix-match against known state names (case-insensitive)
+ *   - remainder → line1 (we don't try to split city out reliably because
+ *     the failure modes are too messy without an authoritative list)
+ *
+ * If parsing fails any step, the unconsumed remainder still lands in
+ * line1 so content is never silently dropped.
+ */
+export function autoParseAddress(raw: string | null | undefined): {
+  line1: string | null; city: string | null; state: string | null; pincode: string | null;
+} {
+  if (!raw || !raw.trim()) return { line1: null, city: null, state: null, pincode: null };
+  let rest = raw.trim();
+
+  // Pincode
+  let pincode: string | null = null;
+  const pinMatch = rest.match(/\b(\d{6})\b\s*$/);
+  if (pinMatch) {
+    pincode = pinMatch[1];
+    rest = rest.slice(0, pinMatch.index).replace(/[,\s]+$/, '');
+  }
+
+  // State (case-insensitive suffix match)
+  let state: string | null = null;
+  for (const s of STATE_NAMES) {
+    const re = new RegExp('(?:^|[,\\s])' + s.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&') + '\\s*$', 'i');
+    const m = rest.match(re);
+    if (m) {
+      state = s;
+      rest = rest.slice(0, m.index).replace(/[,\s]+$/, '');
+      break;
+    }
+  }
+
+  // City: take the trailing comma-segment if there's a comma in the
+  // remainder; otherwise leave city null and put everything in line1.
+  let city: string | null = null;
+  const commaIdx = rest.lastIndexOf(',');
+  if (commaIdx > 0) {
+    const tail = rest.slice(commaIdx + 1).trim();
+    if (tail) {
+      city = tail;
+      rest = rest.slice(0, commaIdx).replace(/[,\s]+$/, '');
+    }
+  }
+
+  const line1 = rest.trim() || null;
+  return { line1, city, state, pincode };
+}
+
+/**
+ * Bulk-create OR update customers from CSV-parsed rows. Each row succeeds
+ * or fails independently so a single bad line never aborts the batch.
+ *
+ * Group 3 (2026-06-11) upsert behavior:
+ *   - Match an existing customer by normalised phone first, then by
+ *     (distributorId, customerName case-insensitive).
+ *   - If matched, UPDATE only the columns whose CSV value is non-empty —
+ *     blank CSV columns never overwrite stored data. Safe to re-run the
+ *     same file (idempotent for unchanged rows) and to run a "delta"
+ *     CSV containing only the customers + fields that need updating.
+ *   - If unmatched, CREATE a new customer.
+ *
+ * Returns `{ created, updated, failures }`. `imported` is kept as
+ * `created + updated` for backward compatibility with the existing UI.
  */
 export async function importCustomers(
   distributorId: string,
   rows: CustomerImportRow[],
 ): Promise<CustomerImportResult> {
   const failures: CustomerImportResult['failures'] = [];
-  let imported = 0;
+  let created = 0;
+  let updated = 0;
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -481,44 +600,107 @@ export async function importCustomers(
       failures.push({ row: rowNum, reason: 'name is required' });
       continue;
     }
-    if (!r.phone || !r.phone.trim()) {
+    const normalisedPhone = normalisePhone(r.phone);
+    if (!normalisedPhone) {
       failures.push({ row: rowNum, name: r.name, reason: 'phone is required' });
       continue;
     }
     if (r.gstin && r.gstin.trim() && !GSTIN_REGEX.test(r.gstin.trim())) {
-      failures.push({ row: rowNum, name: r.name, phone: r.phone, reason: 'invalid GSTIN format' });
+      failures.push({ row: rowNum, name: r.name, phone: normalisedPhone, reason: 'invalid GSTIN format' });
       continue;
     }
 
     try {
-      const dupPhone = await prisma.customer.findFirst({
-        where: { distributorId, phone: r.phone.trim(), deletedAt: null },
-        select: { id: true },
-      });
-      if (dupPhone) {
-        failures.push({ row: rowNum, name: r.name, phone: r.phone, reason: 'duplicate phone — customer already exists' });
-        continue;
+      // Address columns: prefer explicit structured fields, fall back to
+      // auto-parsing the legacy single `address` column.
+      const hasStructured = !!(r.line1 || r.city || r.state || r.pincode);
+      let billingLine1 = r.line1?.trim() || null;
+      const billingLine2 = r.line2?.trim() || null;
+      let billingCity = r.city?.trim() || null;
+      let billingState = r.state?.trim() || null;
+      let billingPincode = r.pincode?.trim() || null;
+      if (!hasStructured && r.address?.trim()) {
+        const parsed = autoParseAddress(r.address);
+        billingLine1 = parsed.line1;
+        billingCity = parsed.city;
+        billingState = parsed.state;
+        billingPincode = parsed.pincode;
+      } else if (hasStructured && !billingLine1 && r.address?.trim()) {
+        // Structured columns present but line1 blank — fall back to the
+        // raw `address` value for line1 so content isn't lost.
+        billingLine1 = r.address.trim();
       }
 
-      await prisma.customer.create({
-        data: {
-          distributorId,
-          customerName: r.name.trim(),
-          phone: r.phone.trim(),
-          gstin: r.gstin?.trim() || null,
-          customerType: r.gstin && r.gstin.trim() ? 'B2B' : (r.customerType?.trim() || 'B2C'),
-          billingAddressLine1: r.address?.trim() || null,
-          creditPeriodDays: typeof r.creditPeriodDays === 'number' ? r.creditPeriodDays : 0,
-        },
+      // Upsert: try phone first (most stable identifier), then name fallback.
+      let existing = await prisma.customer.findFirst({
+        where: { distributorId, phone: normalisedPhone, deletedAt: null },
+        select: { id: true },
       });
-      imported += 1;
+      if (!existing) {
+        existing = await prisma.customer.findFirst({
+          where: {
+            distributorId,
+            deletedAt: null,
+            customerName: { equals: r.name.trim(), mode: 'insensitive' },
+          },
+          select: { id: true },
+        });
+      }
+
+      if (existing) {
+        // UPDATE — only non-blank CSV columns. Never overwrite stored
+        // data with blanks.
+        const data: Prisma.CustomerUpdateInput = {};
+        if (r.name?.trim()) data.customerName = r.name.trim();
+        if (r.phone?.trim()) data.phone = normalisedPhone;
+        if (r.gstin?.trim()) {
+          data.gstin = r.gstin.trim();
+          // Re-derive customerType when GSTIN is supplied.
+          data.customerType = 'B2B';
+        } else if (r.customerType?.trim()) {
+          data.customerType = r.customerType.trim();
+        }
+        if (r.email?.trim()) data.email = r.email.trim();
+        if (typeof r.creditPeriodDays === 'number') data.creditPeriodDays = r.creditPeriodDays;
+        if (typeof r.transportChargePerCylinder === 'number') {
+          data.transportChargePerCylinder = r.transportChargePerCylinder;
+        }
+        if (billingLine1) data.billingAddressLine1 = billingLine1;
+        if (billingLine2) data.billingAddressLine2 = billingLine2;
+        if (billingCity) data.billingCity = billingCity;
+        if (billingState) data.billingState = billingState;
+        if (billingPincode) data.billingPincode = billingPincode;
+        await prisma.customer.update({ where: { id: existing.id }, data });
+        updated += 1;
+      } else {
+        await prisma.customer.create({
+          data: {
+            distributorId,
+            customerName: r.name.trim(),
+            phone: normalisedPhone,
+            gstin: r.gstin?.trim() || null,
+            email: r.email?.trim() || null,
+            customerType: r.gstin && r.gstin.trim() ? 'B2B' : (r.customerType?.trim() || 'B2C'),
+            billingAddressLine1: billingLine1,
+            billingAddressLine2: billingLine2,
+            billingCity,
+            billingState,
+            billingPincode,
+            creditPeriodDays: typeof r.creditPeriodDays === 'number' ? r.creditPeriodDays : 0,
+            transportChargePerCylinder: typeof r.transportChargePerCylinder === 'number'
+              ? r.transportChargePerCylinder
+              : undefined,
+          } as Prisma.CustomerUncheckedCreateInput,
+        });
+        created += 1;
+      }
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : 'unknown error';
       failures.push({ row: rowNum, name: r.name, phone: r.phone, reason });
     }
   }
 
-  return { imported, failures };
+  return { imported: created + updated, created, updated, failures };
 }
 
 // ─── CSV import: opening balances ──────────────────────────────────────────
@@ -528,10 +710,18 @@ export type OpeningBalanceImportRow = {
   phone?: string;
   openingBalance: number;
   notes?: string;
+  // Group 3 (2026-06-11): per-row as-of-date (YYYY-MM-DD). When supplied,
+  // becomes the invoice's issueDate / dueDate / ledger entryDate so the
+  // statement shows the balance as carried forward from that date — not
+  // today. Distributor.goLiveDate (Group 5) takes precedence if set.
+  asOfDate?: string;
 };
 
 export type OpeningBalanceImportResult = {
   imported: number;
+  // Group 3: skipped customers when an OB already exists and replaceExisting=false.
+  skipped: number;
+  skippedCustomers: string[];
   failures: Array<{ row: number; name?: string; reason: string }>;
 };
 
@@ -549,12 +739,19 @@ export async function importOpeningBalances(
   distributorId: string,
   userId: string,
   rows: OpeningBalanceImportRow[],
+  opts: { replaceExisting?: boolean } = {},
 ): Promise<OpeningBalanceImportResult> {
   const failures: OpeningBalanceImportResult['failures'] = [];
+  const skippedCustomers: string[] = [];
   let imported = 0;
+  let skipped = 0;
   const today = new Date();
   const todayIso = today.toISOString().split('T')[0];
+  const replace = opts.replaceExisting === true;
 
+  // Group 5 will wire distributor.goLiveDate in here so OB invoices get
+  // backdated to goLiveDate - 1 day. For now we honour the per-row
+  // asOfDate or fall back to today.
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const rowNum = i + 1;
@@ -566,7 +763,7 @@ export async function importOpeningBalances(
     }
     if (amount === 0) continue; // nothing to import
 
-    let customer: { id: string } | null = null;
+    let customer: { id: string; customerName: string } | null = null;
     if (r.customerName && r.customerName.trim()) {
       customer = await prisma.customer.findFirst({
         where: {
@@ -574,32 +771,64 @@ export async function importOpeningBalances(
           deletedAt: null,
           customerName: { equals: r.customerName.trim(), mode: 'insensitive' },
         },
-        select: { id: true },
+        select: { id: true, customerName: true },
       });
     }
-    if (!customer && r.phone && r.phone.trim()) {
-      customer = await prisma.customer.findFirst({
-        where: { distributorId, deletedAt: null, phone: r.phone.trim() },
-        select: { id: true },
-      });
+    if (!customer && r.phone) {
+      const phone = normalisePhone(r.phone);
+      if (phone) {
+        customer = await prisma.customer.findFirst({
+          where: { distributorId, deletedAt: null, phone },
+          select: { id: true, customerName: true },
+        });
+      }
     }
     if (!customer) {
       failures.push({ row: rowNum, name: r.customerName, reason: 'customer not found by name or phone' });
       continue;
     }
 
+    // Group 3 (2026-06-11): idempotency guard.
+    // If an OB invoice already exists for this customer and replace is OFF,
+    // skip — the operator can re-run the same CSV without doubling balances.
+    const existingOb = await prisma.invoice.findFirst({
+      where: { distributorId, customerId: customer.id, isOpeningBalance: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (existingOb && !replace) {
+      skipped += 1;
+      skippedCustomers.push(customer.customerName);
+      continue;
+    }
+
+    // Pick the effective entry/issue/due date for this row.
+    let entryDate = today;
+    if (r.asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(r.asOfDate)) {
+      entryDate = new Date(r.asOfDate);
+    }
+    const entryDateIso = entryDate.toISOString().split('T')[0];
+
     try {
       await prisma.$transaction(async (tx) => {
-        // Use a per-call random suffix so the per-customer slug stays unique
-        // even if a customer is imported more than once across batches.
-        const invoiceNumber = `OB-${customer!.id.slice(0, 8)}-${todayIso}-${Math.random().toString(36).slice(2, 6)}`;
+        if (existingOb && replace) {
+          // Clean delete of the prior OB invoice + its ledger entry. We
+          // hard-delete because the OB invoice was a synthetic record (no
+          // GST exchange, no order). Hard-delete keeps the ledger clean
+          // when the operator is correcting a typo.
+          await tx.customerLedgerEntry.deleteMany({
+            where: { distributorId, customerId: customer!.id, invoiceId: existingOb.id },
+          });
+          await tx.invoice.delete({ where: { id: existingOb.id } });
+        }
+
+        const invoiceNumber = `OB-${customer!.id.slice(0, 8)}-${entryDateIso}-${Math.random().toString(36).slice(2, 6)}`;
         const invoice = await tx.invoice.create({
           data: {
             invoiceNumber,
             distributorId,
             customerId: customer!.id,
-            issueDate: today,
-            dueDate: today, // overdue from day 1 by design
+            issueDate: entryDate,
+            dueDate: entryDate,
             totalAmount: amount,
             outstandingAmount: amount,
             amountPaid: 0,
@@ -617,14 +846,10 @@ export async function importOpeningBalances(
             referenceId: invoice.id,
             invoiceId: invoice.id,
             amountDelta: amount,
-            // Group 1 (2026-06-11): default narration is "Opening Balance b/f"
-            // (matches the carry-forward row label in the statement PDF / in-app
-            // ledger). If the CSV provides a `notes` value, append it after a
-            // separator so the operator's note still surfaces in the ledger.
             narration: r.notes?.trim()
               ? `Opening Balance b/f — ${r.notes.trim()}`
               : 'Opening Balance b/f',
-            entryDate: today,
+            entryDate,
             createdBy: userId,
           },
         });
@@ -636,7 +861,7 @@ export async function importOpeningBalances(
     }
   }
 
-  return { imported, failures };
+  return { imported, skipped, skippedCustomers, failures };
 }
 
 // ─── Onboarding progress ───────────────────────────────────────────────────

@@ -36,9 +36,18 @@ const customerImportRowSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
   address: z.string().optional(),
+  // Group 3 (2026-06-11): structured address columns. When supplied, they
+  // take precedence over the auto-parse of the single `address` field.
+  line1: z.string().optional(),
+  line2: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  pincode: z.string().optional(),
   gstin: z.string().optional(),
+  email: z.string().optional(),
   creditPeriodDays: z.number().int().min(0).optional(),
   customerType: z.string().optional(),
+  transportChargePerCylinder: z.number().min(0).optional(),
 });
 
 router.post('/import-csv',
@@ -62,18 +71,27 @@ const openingBalanceRowSchema = z.object({
   phone: z.string().optional(),
   openingBalance: z.number(),
   notes: z.string().optional(),
+  // Group 3: optional per-row as-of-date. YYYY-MM-DD.
+  asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 }).refine((r) => !!(r.customerName?.trim() || r.phone?.trim()), {
   message: 'either customerName or phone is required',
 });
 
 router.post('/import-opening-balances',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
-  validate(z.object({ rows: z.array(openingBalanceRowSchema).min(1).max(2000) })),
+  validate(z.object({
+    rows: z.array(openingBalanceRowSchema).min(1).max(2000),
+    // Group 3 (2026-06-11): when true, existing OB invoices for matched
+    // customers are deleted before the new ones are created. Defaults to
+    // false — re-running the same CSV is then a no-op.
+    replaceExisting: z.boolean().optional(),
+  })),
   auditLog('import_opening_balances', 'customer'),
   async (req, res) => {
     try {
       const result = await customerService.importOpeningBalances(
         req.user!.distributorId!, req.user!.userId, req.body.rows,
+        { replaceExisting: req.body.replaceExisting === true },
       );
       return sendSuccess(res, result);
     } catch (err: unknown) {
