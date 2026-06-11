@@ -46,9 +46,9 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
 // and is auto-parsed into pincode/state/line1 by the importer.
 // Opening-balance template adds `phone` (fallback lookup) and `as_of_date`.
 const CUSTOMER_TEMPLATE =
-  'name,phone,address,line1,line2,city,state,pincode,gstin,email,credit_period_days,customer_type,transport_charge\n' +
-  'Royal Kitchen Restaurant,9876543210,,123 Main Street,,Hyderabad,Telangana,500001,36AABCU9603R1ZX,royal@example.com,30,commercial,15\n' +
-  'Green Valley Home,9876543211,"456 Colony Road, Hyderabad, Telangana, 500032",,,,,,,,0,domestic,\n';
+  'name,phone,business_name,address,line1,line2,city,state,pincode,gstin,email,credit_period_days,customer_type,transport_charge\n' +
+  'Royal Kitchen Restaurant,9876543210,Royal Kitchen Pvt Ltd,,123 Main Street,,Hyderabad,Telangana,500001,36AABCU9603R1ZX,royal@example.com,30,commercial,15\n' +
+  'Green Valley Home,9876543211,,"456 Colony Road, Hyderabad, Telangana, 500032",,,,,,,,0,domestic,\n';
 const OPENING_BAL_TEMPLATE =
   'customer_name,phone,opening_balance,as_of_date,notes\n' +
   'Royal Kitchen Restaurant,9876543210,15000,2026-05-31,Outstanding as of paper register\n' +
@@ -377,8 +377,11 @@ function useCsvFile<TRow>(map: (r: Record<string, string>) => TRow | null): { ro
 function CustomerImportModal({ onClose }: { onClose: () => void }) {
   // Group 3 (2026-06-11): rich CSV — structured address columns + email
   // + transport charge. Mapper passes the new fields straight through.
+  // 2026-06-11 follow-up: also accepts `business_name` for the legal /
+  // billing entity name on B2B customers.
   type CRow = {
     name: string; phone: string;
+    businessName?: string;
     address?: string; line1?: string; line2?: string; city?: string; state?: string; pincode?: string;
     gstin?: string; email?: string; creditPeriodDays?: number; customerType?: string;
     transportChargePerCylinder?: number;
@@ -390,6 +393,7 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
     return {
       name: r.name,
       phone: r.phone,
+      businessName: r.business_name || undefined,
       address: r.address || undefined,
       line1: r.line1 || undefined,
       line2: r.line2 || undefined,
@@ -439,7 +443,7 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
         <p className="text-xs text-surface-500 dark:text-surface-400">
           Required: <code>name</code>, <code>phone</code>. Optional address can be a single <code>address</code>
           column (auto-parsed into pincode/state/line1) OR separate <code>line1</code>/<code>city</code>/<code>state</code>/<code>pincode</code> columns.
-          Other optional: <code>gstin</code>, <code>email</code>, <code>credit_period_days</code>, <code>customer_type</code>, <code>transport_charge</code>.
+          Other optional: <code>business_name</code>, <code>gstin</code>, <code>email</code>, <code>credit_period_days</code>, <code>customer_type</code>, <code>transport_charge</code>.
           Re-running the same file UPDATES matched customers without overwriting fields you left blank.
         </p>
         {csv.fileName && (

@@ -35,6 +35,10 @@ router.get('/',
 const customerImportRowSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
+  // 2026-06-11: optional `business_name` column for the legal / billing
+  // entity name (typically B2B). Customer.businessName is the canonical
+  // field; `name` stays the operator-friendly contact label.
+  businessName: z.string().optional(),
   address: z.string().optional(),
   // Group 3 (2026-06-11): structured address columns. When supplied, they
   // take precedence over the auto-parse of the single `address` field.

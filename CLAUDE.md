@@ -293,6 +293,12 @@ Things in the codebase today that should NOT be copied. Fix these in future work
 
 ---
 
+## Open Items / Architectural Debt
+
+- **`CustomerInventoryBalance.pendingReturns` exists in DB + schema but is hidden from all UI as of 2026-06-11.** The column lives at [packages/api/prisma/schema.prisma:533](packages/api/prisma/schema.prisma) (with the corresponding init-migration DDL) and is wired through the shared TS type + zod schema, the service writes in [services/customerService.ts setupCustomerBalance](packages/api/src/services/customerService.ts) and [importEmptyBalances](packages/api/src/services/customerService.ts), the GET /balance route response, the web Cylinder Balances tab payload defaults, and the mobile inventory TS type. The web table column + input were removed from [CustomersPage.tsx CylinderBalancesTab](packages/web/src/pages/CustomersPage.tsx) and the mobile cell was hidden in [(admin)/inventory.tsx](packages/mobile/app/(admin)/inventory.tsx). Not currently consumed by any business logic. **Remove in a future cleanup pass** when confirmed not needed — that pass must also drop the column via migration, the zod field, the shared TS field, the 4 service-write sites, the route response field, the seed data, the K7 validate-findings probe, and the 9 assertion sites across `customer-balance-get-b.test.ts` and `empty-balances-g4.test.ts`.
+
+---
+
 ## ESLint
 
 ESLint runs clean and **blocking** in CI (`pnpm run lint`, 0 errors). The flat

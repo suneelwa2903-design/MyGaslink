@@ -203,8 +203,10 @@ export async function generateCustomerLedgerPdf(
   }
 
   for (const row of ledger.rows) {
-    // page break
-    if (y + ROW_HEIGHT > PAGE_HEIGHT - MARGIN.bottom - 30) {
+    // page break — reserve enough room for the b/f row's extra padding +
+    // separator (12px) so it doesn't get clipped at the page foot.
+    const needed = row.kind === 'opening' ? ROW_HEIGHT + 12 : ROW_HEIGHT;
+    if (y + needed > PAGE_HEIGHT - MARGIN.bottom - 30) {
       doc.addPage({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
       y = MARGIN.top;
       y += drawTableHeader(doc, y);
@@ -217,6 +219,14 @@ export async function generateCustomerLedgerPdf(
     if (row.kind === 'opening') {
       // Carry-forward row — blank Delivered/Amount, only the Total and Due
       // columns carry the carry-forward amount.
+      //
+      // 2026-06-11: previously this row drew flush against the table
+      // header above and the first invoice row below, with no separator
+      // — Suneel saw it visually merging with adjacent rows. We now
+      // bold the b/f row, draw it with 4px breathing room above,
+      // and finish with a thin divider + 4px gap below to mark the
+      // carry-forward break.
+      y += 4; // gap above
       cells = [
         formatDate(row.orderDate),
         typeLabel(row),
@@ -227,6 +237,14 @@ export async function generateCustomerLedgerPdf(
         formatMoney(row.dueAmount),
         '',
       ];
+      y += drawRow(doc, y, cells, { bold: true });
+      // Thin separator line + small gap before the in-period rows begin
+      doc.moveTo(MARGIN.left, y + 1)
+        .lineTo(MARGIN.left + TABLE_WIDTH, y + 1)
+        .strokeColor(THEME.PRIMARY).lineWidth(0.5).stroke();
+      y += 6;
+      zebra = false; // first in-period row starts un-zebraed for clarity
+      continue;
     } else if (row.kind === 'payment' || row.kind === 'credit_note') {
       cells = [
         formatDate(row.orderDate),

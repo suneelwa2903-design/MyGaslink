@@ -2617,12 +2617,12 @@ function BalancesTab() {
                 {item.withCustomerQty}
               </Text>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 11, color: t.textSecondary }}>Pending Returns</Text>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: t.orange }}>
-                {item.pendingReturns}
-              </Text>
-            </View>
+            {/*
+              2026-06-11: `pendingReturns` cell hidden per CLAUDE.md
+              "open items" — column retained in the DB + the TS type at
+              line 93 so the data still arrives over the wire, just not
+              shown.
+            */}
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 11, color: t.textSecondary }}>Missing</Text>
               <Text

@@ -492,6 +492,9 @@ export async function provisionPortalAccess(
 export type CustomerImportRow = {
   name: string;
   phone: string;
+  // 2026-06-11: optional `business_name` column for the legal / billing
+  // entity name on B2B customers. Maps to Customer.businessName.
+  businessName?: string;
   address?: string;
   // Group 3 (2026-06-11): the CSV template now accepts structured address
   // columns. When provided, they take precedence over the auto-parse of a
@@ -702,6 +705,7 @@ export async function importCustomers(
         } else if (r.customerType?.trim()) {
           data.customerType = r.customerType.trim();
         }
+        if (r.businessName?.trim()) data.businessName = r.businessName.trim();
         if (r.email?.trim()) data.email = r.email.trim();
         if (typeof r.creditPeriodDays === 'number') data.creditPeriodDays = r.creditPeriodDays;
         if (typeof r.transportChargePerCylinder === 'number') {
@@ -719,6 +723,7 @@ export async function importCustomers(
           data: {
             distributorId,
             customerName: r.name.trim(),
+            businessName: r.businessName?.trim() || null,
             phone: normalisedPhone,
             gstin: r.gstin?.trim() || null,
             email: r.email?.trim() || null,

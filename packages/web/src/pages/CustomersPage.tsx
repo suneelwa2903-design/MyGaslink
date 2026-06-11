@@ -947,11 +947,17 @@ function CylinderBalancesTab({ customerId }: { customerId: string }) {
       {rows.length > 0 && (
         <div className="table-container">
           <table className="table">
+            {/*
+              2026-06-11: `pendingReturns` is intentionally hidden from
+              the UI per CLAUDE.md "open items". The DB column, schema
+              type, and service writes are all retained; the save payload
+              below still posts a default of 0 so the backend contract is
+              unchanged. Bring the column back if/when a use case lands.
+            */}
             <thead>
               <tr>
                 <th>Cylinder type</th>
                 <th className="text-right">Empties at customer</th>
-                <th className="text-right">Pending returns</th>
                 <th className="text-right">Last updated</th>
                 <th />
               </tr>
@@ -970,13 +976,6 @@ function CylinderBalancesTab({ customerId }: { customerId: string }) {
                         type="number" min={0} className="input py-1 w-24 text-right"
                         value={v.withCustomerQty}
                         onChange={(e) => setEdits((prev) => ({ ...prev, [typeId]: { ...prev[typeId], withCustomerQty: e.target.value } }))}
-                      />
-                    </td>
-                    <td className="text-right">
-                      <input
-                        type="number" min={0} className="input py-1 w-24 text-right"
-                        value={v.pendingReturns}
-                        onChange={(e) => setEdits((prev) => ({ ...prev, [typeId]: { ...prev[typeId], pendingReturns: e.target.value } }))}
                       />
                     </td>
                     <td className="text-right text-xs text-surface-500">
