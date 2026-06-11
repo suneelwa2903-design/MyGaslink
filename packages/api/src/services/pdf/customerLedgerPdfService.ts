@@ -176,18 +176,19 @@ export async function generateCustomerLedgerPdf(
   let totalCollected = 0;
   let zebra = false;
 
-  // Helper: type label per row kind (matches the new `kind` field on
-  // CustomerLedgerRow). Falls back to legacy "Payment" vs "Delivery" heuristic
-  // for safety if a row is emitted without a kind.
+  // Customer-facing PDF — the Type column shows the cylinder type name
+  // for invoice rows ("19 KG", "425 KG"), "Payment" for credits,
+  // "Opening Balance" for the b/f row. Mirrors the legacy WI-092 PDF that
+  // customers are already used to.
   function typeLabel(row: typeof ledger.rows[number]): string {
     switch (row.kind) {
-      case 'opening': return row.cylinderType === 'Opening Balance b/f' ? 'Balance b/f' : 'Opening';
+      case 'opening': return 'Opening Balance';
       case 'payment': return 'Payment';
       case 'credit_note': return 'Credit Note';
       case 'debit_note': return 'Debit Note';
       case 'adjustment': return 'Adjustment';
-      case 'invoice': return 'Invoice';
-      default: return row.cylinderType === '' ? 'Payment' : 'Invoice';
+      case 'invoice': return row.cylinderType || 'Invoice';
+      default: return row.cylinderType === '' ? 'Payment' : (row.cylinderType || 'Invoice');
     }
   }
 
@@ -200,17 +201,21 @@ export async function generateCustomerLedgerPdf(
       zebra = false;
     }
 
-    const narration = row.narration ?? row.cylinderType ?? '';
+    const narration = row.narration ?? '';
     let cells: string[];
 
     if (row.kind === 'opening') {
-      // Carry-forward row — only Due/Total columns are meaningful.
+      // Carry-forward row — blank Delivered/Amount, only the Total and Due
+      // columns carry the carry-forward amount.
       cells = [
         formatDate(row.orderDate),
         typeLabel(row),
         narration,
-        '', '', '', '', '', formatMoney(row.totalAmount), '',
-        formatMoney(row.dueAmount), '',
+        '', '', '', '', '',
+        formatMoney(row.totalAmount),
+        '',
+        formatMoney(row.dueAmount),
+        '',
       ];
     } else if (row.kind === 'payment' || row.kind === 'credit_note') {
       cells = [
@@ -220,7 +225,8 @@ export async function generateCustomerLedgerPdf(
         '-', '', '', '', '',
         formatMoney(row.totalAmount),
         formatMoney(row.receivedAmount),
-        formatMoney(row.dueAmount), '',
+        formatMoney(row.dueAmount),
+        '',
       ];
     } else {
       // invoice / debit_note / adjustment — render full detail
@@ -229,7 +235,7 @@ export async function generateCustomerLedgerPdf(
       cells = [
         formatDate(row.orderDate),
         typeLabel(row),
-        narration || row.cylinderType,
+        narration,
         row.fullCylsDelivered ? num(row.fullCylsDelivered) : '',
         formatMoney(row.amount),
         row.emptyCylsCollected ? num(row.emptyCylsCollected) : '',

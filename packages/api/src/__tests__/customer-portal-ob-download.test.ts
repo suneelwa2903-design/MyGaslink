@@ -12,6 +12,7 @@ import request from 'supertest';
 import { prisma } from '../lib/prisma.js';
 import { createApp } from '../app.js';
 import { generateToken } from './helpers.js';
+import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
 
 let app: Express;
@@ -27,7 +28,7 @@ beforeAll(async () => {
   customerToken = generateToken({
     userId: user.id,
     email: user.email,
-    role: 'customer',
+    role: UserRole.CUSTOMER,
     distributorId: user.distributorId,
     customerId: user.customerId,
   });

@@ -35,7 +35,8 @@ let distributorId: string;
 let customerId: string;
 
 async function cleanup() {
-  // Order matters: ledger → invoices → payments → customer.
+  // Order matters: ledger → invoices (incl. their items via cascade) →
+  // payments → orderItems → orders → customer.
   await prisma.customerLedgerEntry.deleteMany({
     where: { distributorId, customer: { customerName: TRACK_CUSTOMER_NAME } },
   });
@@ -43,6 +44,10 @@ async function cleanup() {
     where: { distributorId, customer: { customerName: TRACK_CUSTOMER_NAME } },
   });
   await prisma.paymentTransaction.deleteMany({
+    where: { distributorId, customer: { customerName: TRACK_CUSTOMER_NAME } },
+  });
+  // Orders block customer delete; cascade clears their items.
+  await prisma.order.deleteMany({
     where: { distributorId, customer: { customerName: TRACK_CUSTOMER_NAME } },
   });
   await prisma.customer.deleteMany({
@@ -74,6 +79,7 @@ beforeEach(async () => {
   await prisma.customerLedgerEntry.deleteMany({ where: { distributorId, customerId } });
   await prisma.invoice.deleteMany({ where: { distributorId, customerId } });
   await prisma.paymentTransaction.deleteMany({ where: { distributorId, customerId } });
+  await prisma.order.deleteMany({ where: { distributorId, customerId } });
 });
 
 // ---- helpers --------------------------------------------------------------
@@ -172,16 +178,22 @@ async function seedPayment(amount: number, dateIso: string) {
 // ---- tests ---------------------------------------------------------------
 
 describe('G1 — getCustomerLedger reads from CustomerLedgerEntry', () => {
-  it('positive: opening-balance invoice (no Order) shows up in the timeline', async () => {
+  it('positive: opening-balance invoice (no Order) folds into the b/f row at the top', async () => {
+    // Group 1 fixup (2026-06-11): OB invoices never render in chronological
+    // order — they always collapse into the synthetic "Opening Balance b/f"
+    // row at index 0, with dueAmount = the carry-forward total.
     await seedOpeningBalance(15000, '2026-01-01');
     const result = await getCustomerLedger(distributorId, customerId);
 
     expect(result.rows.length).toBeGreaterThan(0);
-    const obRow = result.rows.find((r) => r.kind === 'opening' || r.cylinderType === 'Opening Balance');
-    expect(obRow).toBeDefined();
-    expect(obRow!.amount).toBe(15000);
+    const first = result.rows[0];
+    expect(first.kind).toBe('opening');
+    expect(first.cylinderType).toBe('Opening Balance b/f');
+    expect(first.dueAmount).toBe(15000);
+    expect(first.amount).toBe(0); // b/f has no debit/credit split
     expect(result.summary.totalAmount).toBe(15000);
     expect(result.summary.dueAmount).toBe(15000);
+    expect(result.summary.openingBalance).toBe(15000);
   });
 
   it('positive: range.from with pre-range OB emits a single "Opening Balance b/f" row at the top', async () => {
@@ -251,5 +263,92 @@ describe('G1 — getCustomerLedger reads from CustomerLedgerEntry', () => {
       emptyCylsCost: 0,
       openingBalance: 0,
     });
+  });
+
+  it('positive: multi-cylinder-type invoice emits ONE row per cylinder type with the cylinder name in cylinderType', async () => {
+    // Group 1 fixup: the customer statement PDF Type column shows the
+    // cylinder type name. The PDF render reads `row.cylinderType`, so this
+    // pin guarantees getCustomerLedger emits one row per distinct
+    // cylinderTypeId with the cylinderType.typeName populated.
+    const t19 = await prisma.cylinderType.findFirstOrThrow({
+      where: { distributorId, typeName: '19 KG' },
+      select: { id: true, typeName: true },
+    });
+    const t5 = await prisma.cylinderType.findFirstOrThrow({
+      where: { distributorId, typeName: '5 KG' },
+      select: { id: true, typeName: true },
+    });
+
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `G1-MULTI-${Math.random().toString(36).slice(2, 8)}`,
+        distributorId, customerId,
+        status: 'delivered',
+        orderDate: new Date('2026-06-15'),
+        deliveryDate: new Date('2026-06-15'),
+        items: {
+          create: [
+            { cylinderTypeId: t19.id, quantity: 2, deliveredQuantity: 2, emptiesCollected: 1, unitPrice: 1000, discountPerUnit: 0, totalPrice: 2000 },
+            { cylinderTypeId: t5.id,  quantity: 1, deliveredQuantity: 1, emptiesCollected: 0, unitPrice: 400,  discountPerUnit: 0, totalPrice: 400 },
+          ],
+        },
+      } as never,
+    });
+
+    const inv = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `G1-MULTI-INV-${Math.random().toString(36).slice(2, 8)}`,
+        distributorId, customerId, orderId: order.id,
+        issueDate: new Date('2026-06-15'),
+        dueDate: new Date('2026-06-15'),
+        totalAmount: 2400, outstandingAmount: 2400, amountPaid: 0,
+        status: 'issued', isOpeningBalance: false,
+        items: {
+          create: [
+            { cylinderTypeId: t19.id, description: '19 KG', quantity: 2, unitPrice: 1000, discountPerUnit: 0, gstRate: 18, totalPrice: 2000 },
+            { cylinderTypeId: t5.id,  description: '5 KG',  quantity: 1, unitPrice: 400,  discountPerUnit: 0, gstRate: 18, totalPrice: 400 },
+          ],
+        },
+      } as never,
+    });
+
+    await prisma.customerLedgerEntry.create({
+      data: {
+        distributorId, customerId,
+        entryType: 'invoice_entry',
+        referenceId: inv.id, invoiceId: inv.id,
+        amountDelta: 2400, narration: 'Invoice ' + inv.invoiceNumber,
+        entryDate: new Date('2026-06-15'),
+      },
+    });
+
+    const result = await getCustomerLedger(distributorId, customerId);
+    const invoiceRows = result.rows.filter((r) => r.kind === 'invoice');
+    expect(invoiceRows).toHaveLength(2);
+    const types = invoiceRows.map((r) => r.cylinderType).sort();
+    expect(types).toEqual(['19 KG', '5 KG']);
+    const t19Row = invoiceRows.find((r) => r.cylinderType === '19 KG')!;
+    expect(t19Row.fullCylsDelivered).toBe(2);
+    expect(t19Row.emptyCylsCollected).toBe(1);
+    expect(t19Row.amount).toBe(2000);
+    const t5Row = invoiceRows.find((r) => r.cylinderType === '5 KG')!;
+    expect(t5Row.fullCylsDelivered).toBe(1);
+    expect(t5Row.amount).toBe(400);
+  });
+
+  it('positive: b/f row is always at index 0 even with multiple OB invoices + in-range entries', async () => {
+    // Two OB invoices + one delivered invoice — b/f at top, in-range below.
+    await seedOpeningBalance(10000, '2026-01-01');
+    await seedOpeningBalance(5000, '2026-01-15');
+    await seedDeliveredInvoice(2000, '2026-06-15');
+
+    const result = await getCustomerLedger(distributorId, customerId);
+    expect(result.rows[0].kind).toBe('opening');
+    expect(result.rows[0].cylinderType).toBe('Opening Balance b/f');
+    expect(result.rows[0].dueAmount).toBe(15000);
+    // Subsequent rows must NOT be 'opening' kind (OBs are folded above)
+    expect(result.rows.slice(1).every((r) => r.kind !== 'opening')).toBe(true);
+    expect(result.summary.dueAmount).toBe(17000);
+    expect(result.summary.openingBalance).toBe(15000);
   });
 });

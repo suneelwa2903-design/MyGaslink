@@ -468,15 +468,22 @@ export async function getCustomerLedger(
           unpaidDeliveries.push({ date: entry.entryDate, amount: delta });
         }
 
+        // Group 1 fixup (2026-06-11): OB invoices are ALWAYS folded into
+        // the carry-forward "Opening Balance b/f" row at the top of the
+        // period — never emitted in chronological order. The importer
+        // stamps OB rows with today's entryDate which would otherwise
+        // push them to the bottom of the period view.
+        if (isOB) return;
+
         if (!emit) return;
 
-        if (isOB || !inv?.items?.length) {
+        if (!inv?.items?.length) {
           emitRow({
             orderDate: dateStr,
-            cylinderType: isOB ? 'Opening Balance' : '',
+            cylinderType: '',
             amount: delta,
-            narration: entry.narration ?? (isOB ? 'Opening Balance' : 'Invoice'),
-            kind: isOB ? 'opening' : 'invoice',
+            narration: entry.narration ?? 'Invoice',
+            kind: 'invoice',
           });
           return;
         }
@@ -580,22 +587,40 @@ export async function getCustomerLedger(
     }
   }
 
-  // Pass 1 — accumulate pre-range state, no emit.
-  if (fromDate) {
-    for (const entry of allEntries) {
-      if (entry.entryDate < fromDate) processEntry(entry, false);
-    }
+  // Pass 1 — accumulate pre-range state + ALL OB entries, no emit.
+  // Group 1 fixup: OB entries are always treated as pre-range carry-forward
+  // regardless of their entryDate, so they roll into the b/f row at the
+  // top of the period view.
+  for (const entry of allEntries) {
+    const isBeforeRange = !!fromDate && entry.entryDate < fromDate;
+    const inv = entry.invoiceId ? invoiceMap.get(entry.invoiceId) : null;
+    const isOB = entry.entryType === 'invoice_entry' && !!inv?.isOpeningBalance;
+    if (isBeforeRange || isOB) processEntry(entry, false);
   }
 
   const openingBalance = cumulativeInvoiceAmount - cumulativeReceivedAmount;
-  const showOpeningRow = !!fromDate && Math.abs(openingBalance) > 0.005;
+  const showOpeningRow = Math.abs(openingBalance) > 0.005;
 
   if (showOpeningRow) {
     // Carry-forward row — sits at the top of the period before any
     // in-range transaction. dueAmount equals the opening balance; no
     // debit/credit split, no per-row overdue contribution.
+    //
+    // Date convention: report-start − 1 day so the reader sees it's
+    // carried forward from BEFORE the period, not created on the start
+    // date. If no range was supplied, fall back to (earliest in-range
+    // entry − 1 day) or today − 1 day if there are none.
+    const firstInRange = allEntries.find((e) => {
+      const inRange = (!fromDate || e.entryDate >= fromDate) && (!toDate || e.entryDate <= toDate);
+      const isOB = e.entryType === 'invoice_entry' && !!(e.invoiceId && invoiceMap.get(e.invoiceId)?.isOpeningBalance);
+      return inRange && !isOB;
+    });
+    const bfAnchor = fromDate ?? firstInRange?.entryDate ?? new Date();
+    const bfDate = new Date(bfAnchor);
+    bfDate.setDate(bfDate.getDate() - 1);
+
     rows.push({
-      orderDate: fromDate!.toISOString().split('T')[0],
+      orderDate: bfDate.toISOString().split('T')[0],
       cylinderType: 'Opening Balance b/f',
       fullCylsDelivered: 0,
       amount: 0,
@@ -612,12 +637,16 @@ export async function getCustomerLedger(
     });
   }
 
-  // Pass 2 — emit in-range entries.
+  // Pass 2 — emit in-range, NON-OB entries. OB invoices were already
+  // accumulated into the b/f row in Pass 1; skipping them here avoids
+  // double-counting cumulativeInvoiceAmount.
   for (const entry of allEntries) {
     const inRange =
       (!fromDate || entry.entryDate >= fromDate) &&
       (!toDate || entry.entryDate <= toDate);
-    if (inRange) processEntry(entry, true);
+    const inv = entry.invoiceId ? invoiceMap.get(entry.invoiceId) : null;
+    const isOB = entry.entryType === 'invoice_entry' && !!inv?.isOpeningBalance;
+    if (inRange && !isOB) processEntry(entry, true);
   }
 
   let totalEmptyCylsCost = 0;
