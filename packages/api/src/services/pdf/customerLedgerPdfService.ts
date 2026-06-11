@@ -192,6 +192,16 @@ export async function generateCustomerLedgerPdf(
     }
   }
 
+  // Customer-facing PDF: strip the " for order ORD-..." suffix from
+  // invoiceService.ts:266 narrations so the column fits in a single line.
+  // The admin in-app ledger keeps the full verbose narration; only the
+  // customer-facing statement gets the short form.
+  function shortNarration(raw: string): string {
+    if (!raw) return '';
+    const idx = raw.indexOf(' for order');
+    return idx >= 0 ? raw.slice(0, idx) : raw;
+  }
+
   for (const row of ledger.rows) {
     // page break
     if (y + ROW_HEIGHT > PAGE_HEIGHT - MARGIN.bottom - 30) {
@@ -201,7 +211,7 @@ export async function generateCustomerLedgerPdf(
       zebra = false;
     }
 
-    const narration = row.narration ?? '';
+    const narration = shortNarration(row.narration ?? '');
     let cells: string[];
 
     if (row.kind === 'opening') {
