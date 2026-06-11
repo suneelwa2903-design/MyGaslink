@@ -242,6 +242,101 @@ export async function softDeleteUser(id: string, callerDistributorId?: string) {
   });
 }
 
+// Group L3 (2026-06-11): suspend/reactivate user.
+//
+// Suspend = reversible block. Sets status='suspended' and clears the
+// refresh token so the existing session can't survive past the next
+// access-token expiry (default 15min). On the next login attempt, the
+// auth service surfaces a specialised message:
+//   "Your account has been suspended. Contact your administrator."
+//
+// Reactivate is the inverse — flips status back to active. Login
+// resumes normally; an admin must hand the user a password if they
+// forgot it (no implicit password reset).
+//
+// Tenant isolation: distributor_admin can ONLY act on users in their
+// own tenant. Super-admin can act on any tenant. Two extra guards:
+//   1. You can't suspend yourself (lockout footgun).
+//   2. You can't suspend a super_admin (lockout-of-platform footgun;
+//      escalation if a tenant admin could nuke the SaaS owner).
+//   3. distributor_admin can't suspend ANOTHER distributor_admin in
+//      the same tenant — co-admin lockout protection. Only super-admin
+//      can suspend a distributor_admin.
+
+export class UserError extends Error {
+  constructor(message: string, public statusCode: number, public code?: string) {
+    super(message);
+    this.name = 'UserError';
+  }
+}
+
+async function assertCanModifyUser(
+  targetId: string,
+  actorId: string,
+  actorRole: string,
+  callerDistributorId: string | null,
+): Promise<{ id: string; role: $Enums.UserRole; distributorId: string | null; status: $Enums.UserStatus }> {
+  const target = await prisma.user.findFirst({
+    where: { id: targetId, deletedAt: null },
+    select: { id: true, role: true, distributorId: true, status: true },
+  });
+  if (!target) throw new UserError('User not found', 404);
+  if (target.id === actorId) {
+    throw new UserError('You cannot suspend your own account', 400, 'CANNOT_SUSPEND_SELF');
+  }
+  if (target.role === 'super_admin') {
+    throw new UserError('Super-admin accounts cannot be suspended', 403, 'CANNOT_SUSPEND_SUPER_ADMIN');
+  }
+  if (actorRole !== 'super_admin') {
+    // distributor_admin actor
+    if (target.distributorId !== callerDistributorId) {
+      throw new UserError('User not found', 404);
+    }
+    if (target.role === 'distributor_admin') {
+      throw new UserError(
+        'A distributor admin can only suspend a fellow admin via super-admin',
+        403,
+        'CANNOT_SUSPEND_PEER_ADMIN',
+      );
+    }
+  }
+  return target;
+}
+
+export async function suspendUser(
+  targetId: string,
+  actorId: string,
+  actorRole: string,
+  callerDistributorId: string | null,
+) {
+  await assertCanModifyUser(targetId, actorId, actorRole, callerDistributorId);
+  return prisma.user.update({
+    where: { id: targetId },
+    data: {
+      status: 'suspended',
+      // Wipe the refresh token so the existing session can't be renewed.
+      // The access token still works until it expires (15min default) —
+      // acceptable for a soft suspend; the next refresh attempt fails.
+      refreshToken: null,
+    },
+    select: userSelect,
+  });
+}
+
+export async function reactivateUser(
+  targetId: string,
+  actorId: string,
+  actorRole: string,
+  callerDistributorId: string | null,
+) {
+  await assertCanModifyUser(targetId, actorId, actorRole, callerDistributorId);
+  return prisma.user.update({
+    where: { id: targetId },
+    data: { status: 'active' },
+    select: userSelect,
+  });
+}
+
 // ─── Seat Limit Enforcement ──────────────────────────────────────────────────
 
 async function checkSeatAvailability(distributorId: string, role: string) {

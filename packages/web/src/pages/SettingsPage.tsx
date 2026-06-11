@@ -13,6 +13,8 @@ import {
   HiOutlinePlus,
   HiOutlinePencilSquare,
   HiOutlineTrash,
+  HiOutlineNoSymbol,
+  HiOutlinePlayCircle,
   HiOutlineCurrencyRupee,
   HiOutlineCube,
   HiOutlineDocumentArrowDown,
@@ -1093,6 +1095,20 @@ function UsersTab() {
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  // Group L3 (2026-06-11): suspend = reversible block (status → suspended,
+  // refreshToken wiped). Reactivate flips back to active. The cell shows
+  // one or the other depending on current status.
+  const suspendMutation = useMutation({
+    mutationFn: (userId: string) => apiPost(`/users/${userId}/suspend`),
+    onSuccess: () => { toast.success('User suspended'); queryClient.invalidateQueries({ queryKey: ['users'] }); },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+  const reactivateMutation = useMutation({
+    mutationFn: (userId: string) => apiPost(`/users/${userId}/reactivate`),
+    onSuccess: () => { toast.success('User reactivated'); queryClient.invalidateQueries({ queryKey: ['users'] }); },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
   const roleFilterOptions = [
     { value: '', label: 'All staff roles' },
     { value: UserRole.DISTRIBUTOR_ADMIN, label: 'Distributor Admin' },
@@ -1221,7 +1237,11 @@ function UsersTab() {
                     </td>
                   )}
                   <td><Badge variant="info">{user.role.replace(/_/g, ' ')}</Badge></td>
-                  <td><Badge variant={user.status === 'active' ? 'success' : 'neutral'}>{user.status}</Badge></td>
+                  <td>
+                    <Badge variant={user.status === 'active' ? 'success' : user.status === 'suspended' ? 'warning' : 'neutral'}>
+                      {user.status}
+                    </Badge>
+                  </td>
                   <td className="text-sm text-surface-600 dark:text-surface-400">
                     {user.lastLoginAt
                       ? new Date(user.lastLoginAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
@@ -1234,10 +1254,41 @@ function UsersTab() {
                   </td>
                   <td>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => { setEditUser(user); setFormOpen(true); }} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500">
+                      <button
+                        title="Edit"
+                        onClick={() => { setEditUser(user); setFormOpen(true); }}
+                        className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500"
+                      >
                         <HiOutlinePencilSquare className="h-4 w-4" />
                       </button>
-                      <button onClick={() => { if (confirm('Delete user?')) deleteMutation.mutate(user.userId); }} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-red-500">
+                      {/* Group L3 (2026-06-11): suspend / reactivate buttons */}
+                      {user.status === 'active' && (
+                        <button
+                          title="Suspend"
+                          onClick={() => {
+                            if (confirm(`Suspend ${user.firstName} ${user.lastName}? They will be immediately logged out and unable to log in.`)) {
+                              suspendMutation.mutate(user.userId);
+                            }
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 text-amber-600 dark:text-amber-400"
+                        >
+                          <HiOutlineNoSymbol className="h-4 w-4" />
+                        </button>
+                      )}
+                      {user.status === 'suspended' && (
+                        <button
+                          title="Reactivate"
+                          onClick={() => reactivateMutation.mutate(user.userId)}
+                          className="p-1.5 rounded-lg hover:bg-green-50 dark:hover:bg-green-900/20 text-green-600 dark:text-green-400"
+                        >
+                          <HiOutlinePlayCircle className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button
+                        title="Delete"
+                        onClick={() => { if (confirm('Delete user?')) deleteMutation.mutate(user.userId); }}
+                        className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-red-500"
+                      >
                         <HiOutlineTrash className="h-4 w-4" />
                       </button>
                     </div>

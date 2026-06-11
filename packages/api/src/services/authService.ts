@@ -43,6 +43,16 @@ export async function login(email: string, password: string): Promise<{ tokens: 
     throw new AuthError(`Account locked. Try again in ${minutesRemaining} minutes.`, 429);
   }
 
+  if (user.status === 'suspended') {
+    // Group L3 (2026-06-11): specialised message so the user knows to
+    // contact their admin (not assume it's just a deactivated stale
+    // account). Behaviour-equivalent — both branches reject login with
+    // 403; the wording is what changes.
+    throw new AuthError(
+      'Your account has been suspended. Contact your administrator.',
+      403,
+    );
+  }
   if (user.status !== 'active') {
     throw new AuthError('Account is inactive or suspended', 403);
   }

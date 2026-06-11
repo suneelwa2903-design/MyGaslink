@@ -226,4 +226,46 @@ router.delete('/:id',
   }
 );
 
+// Group L3 (2026-06-11): POST /api/users/:id/suspend, /reactivate.
+// Reversible block (status → suspended) + refresh-token wipe so the
+// existing session can't be renewed. Audit log written on both
+// transitions. Tenant + role guards live in the service.
+router.post('/:id/suspend',
+  requireRole('super_admin', 'distributor_admin'),
+  auditLog('suspend', 'user'),
+  async (req, res) => {
+    try {
+      const user = await userService.suspendUser(
+        param(req.params.id),
+        req.user!.userId,
+        req.user!.role,
+        req.user!.distributorId,
+      );
+      return sendSuccess(res, mapUser(user));
+    } catch (err) {
+      const e = err as { statusCode?: number; code?: string; message: string };
+      return sendError(res, e.message, e.statusCode || 500, e.code);
+    }
+  },
+);
+
+router.post('/:id/reactivate',
+  requireRole('super_admin', 'distributor_admin'),
+  auditLog('reactivate', 'user'),
+  async (req, res) => {
+    try {
+      const user = await userService.reactivateUser(
+        param(req.params.id),
+        req.user!.userId,
+        req.user!.role,
+        req.user!.distributorId,
+      );
+      return sendSuccess(res, mapUser(user));
+    } catch (err) {
+      const e = err as { statusCode?: number; code?: string; message: string };
+      return sendError(res, e.message, e.statusCode || 500, e.code);
+    }
+  },
+);
+
 export default router;
