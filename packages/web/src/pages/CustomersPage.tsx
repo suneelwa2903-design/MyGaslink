@@ -448,13 +448,21 @@ function CustomerFormModal({
   const isActiveGstin = !!gstinLookupStatus &&
     /^active$/i.test(gstinLookupStatus);
 
+  // Group E1 (2026-06-11): save-side warnings (duplicate GSTIN, etc.).
+  // When the API returns { ..., warnings: string[] }, we close the modal
+  // (the save succeeded) but show an amber toast for each warning so the
+  // operator sees that another customer already uses this GSTIN.
   const mutation = useMutation({
     mutationFn: (data: CreateCustomerInput) =>
       isEdit
-        ? apiPut(`/customers/${customer.customerId}`, data)
-        : apiPost('/customers', data),
-    onSuccess: () => {
+        ? apiPut<{ warnings?: string[] }>(`/customers/${customer.customerId}`, data)
+        : apiPost<{ warnings?: string[] }>('/customers', data),
+    onSuccess: (response) => {
+      const warnings = response?.warnings ?? [];
       toast.success(isEdit ? 'Customer updated' : 'Customer created');
+      for (const w of warnings) {
+        toast(w, { icon: '⚠️', duration: 6000 });
+      }
       // ['customers'] = the Customers page table.
       // ['customers-list'] = the customer dropdown the Record Payment form
       //   uses (BillingPaymentsPage) — without this, a renamed customer

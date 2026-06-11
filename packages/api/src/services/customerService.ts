@@ -116,23 +116,36 @@ export async function createCustomer(
     cylinderDiscounts?: { cylinderTypeId: string; discountPerUnit: number }[];
   }
 ) {
+  const warnings: string[] = [];
+
   // Validate GSTIN format if provided
   if (data.gstin && data.gstin.length > 0) {
     if (!GSTIN_REGEX.test(data.gstin)) {
       throw new CustomerError('Invalid GSTIN format', 400);
     }
-    // Check uniqueness within distributor
+    // Group E1 (2026-06-11): duplicate GSTIN is NO LONGER a hard 409.
+    // Multi-branch customers (same legal entity, different physical sites)
+    // legitimately share a GSTIN — Vanasthali's KINARA GRAND is the
+    // canonical example. We let the row save and surface a soft warning
+    // so the operator knows other branches exist. The IRN/EWB pipeline
+    // resolves per-customer-row already (each branch carries its own
+    // billing address into BuyerDtls — see anti-pattern note in
+    // CLAUDE.md and gstPreflightService.ts:981-991).
     const existing = await prisma.customer.findFirst({
       where: { distributorId, gstin: data.gstin, deletedAt: null },
+      select: { customerName: true },
+      orderBy: { createdAt: 'asc' },
     });
     if (existing) {
-      throw new CustomerError('A customer with this GSTIN already exists', 409);
+      warnings.push(
+        `This GSTIN is already used by "${existing.customerName}". This customer will be treated as a separate branch.`,
+      );
     }
   }
 
   const customerType = data.gstin && data.gstin.length > 0 ? 'B2B' : 'B2C';
 
-  return prisma.customer.create({
+  const customer = await prisma.customer.create({
     data: {
       distributorId,
       customerName: data.customerName,
@@ -162,6 +175,7 @@ export async function createCustomer(
     },
     include: customerInclude,
   });
+  return { customer, warnings };
 }
 
 export async function updateCustomer(
@@ -176,18 +190,28 @@ export async function updateCustomer(
   });
   if (!existing) throw new CustomerError('Customer not found', 404);
 
+  const warnings: string[] = [];
+
   // Validate GSTIN if changing
   if (data.gstin && data.gstin !== existing.gstin) {
     if (!GSTIN_REGEX.test(data.gstin)) {
       throw new CustomerError('Invalid GSTIN format', 400);
     }
+    // Group E1 (2026-06-11): see createCustomer. Duplicate GSTIN is a
+    // soft warning, not a hard block.
     const dup = await prisma.customer.findFirst({
       where: { distributorId, gstin: data.gstin, deletedAt: null, id: { not: id } },
+      select: { customerName: true },
+      orderBy: { createdAt: 'asc' },
     });
-    if (dup) throw new CustomerError('A customer with this GSTIN already exists', 409);
+    if (dup) {
+      warnings.push(
+        `This GSTIN is already used by "${dup.customerName}". This customer will be treated as a separate branch.`,
+      );
+    }
   }
 
-  return prisma.$transaction(async (tx) => {
+  const updatedCustomer = await prisma.$transaction(async (tx) => {
     // Log audit trail for changed fields
     const trackFields: (keyof CustomerUpdateData)[] = [
       'customerName', 'businessName', 'gstin', 'phone', 'email', 'transportChargePerCylinder',
@@ -270,6 +294,7 @@ export async function updateCustomer(
     });
     return updated;
   });
+  return { customer: updatedCustomer, warnings };
 }
 
 export async function softDeleteCustomer(id: string, distributorId: string) {
@@ -739,6 +764,27 @@ export async function importCustomers(
           },
           select: { id: true },
         });
+      }
+
+      // Group E1 (2026-06-11): if this row will CREATE a new customer
+      // AND another existing customer already shares the GSTIN, surface a
+      // soft warning. Multi-branch (Vanasthali's KINARA GRAND) is legal;
+      // operator just needs visibility. On UPDATE paths the GSTIN is
+      // already on the same row, so this check is skipped to avoid
+      // self-match noise.
+      if (!existing && r.gstin && r.gstin.trim()) {
+        const dupGstin = await prisma.customer.findFirst({
+          where: { distributorId, gstin: r.gstin.trim(), deletedAt: null },
+          select: { customerName: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (dupGstin) {
+          warnings.push({
+            row: rowNum,
+            name: r.name,
+            message: `GSTIN ${r.gstin.trim()} already exists on "${dupGstin.customerName}" — this customer will be treated as a separate branch`,
+          });
+        }
       }
 
       if (existing) {

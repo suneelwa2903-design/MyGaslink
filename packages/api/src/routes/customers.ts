@@ -247,8 +247,12 @@ router.post('/',
   auditLog('create', 'customer'),
   async (req, res) => {
     try {
-      const customer = await customerService.createCustomer(req.user!.distributorId!, req.body);
-      return sendCreated(res, mapCustomer(customer));
+      const result = await customerService.createCustomer(req.user!.distributorId!, req.body);
+      // Group E1 (2026-06-11): envelope now ships an optional `warnings`
+      // array alongside the Customer fields. Front-end shows them as an
+      // amber banner (soft signal that the row saved but something is
+      // worth reviewing — currently: duplicate-GSTIN multi-branch).
+      return sendCreated(res, { ...mapCustomer(result.customer), warnings: result.warnings });
     } catch (err: unknown) {
       const e = err as ServiceError;
       const status = e.statusCode || 500;
@@ -264,10 +268,10 @@ router.put('/:id',
   auditLog('update', 'customer'),
   async (req, res) => {
     try {
-      const customer = await customerService.updateCustomer(
+      const result = await customerService.updateCustomer(
         param(req.params.id), req.user!.distributorId!, req.body, req.user!.userId
       );
-      return sendSuccess(res, mapCustomer(customer));
+      return sendSuccess(res, { ...mapCustomer(result.customer), warnings: result.warnings });
     } catch (err: unknown) {
       const e = err as ServiceError;
       const status = e.statusCode || 500;
