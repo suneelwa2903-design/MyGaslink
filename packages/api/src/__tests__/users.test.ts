@@ -98,7 +98,15 @@ describe('Users — Create / update / delete (CRUD with ownership)', () => {
         firstName: 'Test',
         lastName: 'User',
         phone: '9100000333',
-        role: 'finance',
+        // Phase 4a (2026-06-12): role flipped from 'finance' to 'driver'
+        // because the new pricing tier seed caps business plan at 2
+        // finance seats. Bhargava already has 1 seeded finance user
+        // (finance@gasagency.com), so a test that creates a 2nd then
+        // tries to insert a 3rd would hit SeatLimitError before the
+        // email uniqueness check fires — making the 409 duplicate test
+        // below 500 out instead. Drivers have 8 seats on business, so
+        // the test fits comfortably under the limit.
+        role: 'driver',
         // No distributorId in body; routes/users.ts forces req.user.distributorId
         // for non-super_admin callers regardless of what's sent.
       });
@@ -133,7 +141,10 @@ describe('Users — Create / update / delete (CRUD with ownership)', () => {
         firstName: 'Dup',
         lastName: 'User',
         phone: '9100000334',
-        role: 'finance',
+        // Matches the role used in the create test above so the dupe
+        // attempt actually exercises the email uniqueness path. See the
+        // Phase 4a note in that test for the role-choice rationale.
+        role: 'driver',
       });
     expect(res.status).toBe(409);
   });

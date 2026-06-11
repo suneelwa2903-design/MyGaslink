@@ -509,7 +509,7 @@ export const createDistributorSchema = z.object({
 // callers stay functional but the field is ignored).
 export const updateDistributorSchema = createDistributorSchema.partial().extend({
   status: z.enum(['active', 'suspended', 'inactive']).optional(),
-  subscriptionPlan: z.enum(['starter', 'growth', 'business', 'enterprise']).nullable().optional(),
+  subscriptionPlan: z.enum(['starter', 'growth', 'business', 'enterprise', 'ultra']).nullable().optional(),
   billingTier: z.enum(['tier_1', 'tier_2', 'tier_3', 'tier_4']).nullable().optional(),
   gaslinkBillingEnabled: z.boolean().optional(),
   // Group L5 (2026-06-11): super-admin toggle for sandbox-allowlist

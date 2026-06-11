@@ -56,7 +56,10 @@ describe('Pricing — Tiers (super_admin)', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.data.tiers)).toBe(true);
     const planNames = res.body.data.tiers.map((t: { plan: string }) => t.plan).sort();
-    expect(planNames).toEqual(['business', 'enterprise', 'growth', 'starter']);
+    // Phase 4a (2026-06-12): Ultra tier added for distributors above 50k
+    // cylinders/month. Spec lives in prisma/seed.ts and is regression-pinned
+    // by phase4a-pricing-tiers.test.ts.
+    expect(planNames).toEqual(['business', 'enterprise', 'growth', 'starter', 'ultra']);
   });
 });
 

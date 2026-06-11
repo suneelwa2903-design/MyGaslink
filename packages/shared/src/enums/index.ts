@@ -36,6 +36,10 @@ export enum SubscriptionPlan {
   GROWTH = 'growth',
   BUSINESS = 'business',
   ENTERPRISE = 'enterprise',
+  // Phase 4a (2026-06-12): unlimited tier for distributors above 50k
+  // cylinders/month. No seat / GST-call caps — only the flat ₹24,999
+  // monthly + per-call overage on whatever isn't unlimited.
+  ULTRA = 'ultra',
 }
 
 export enum GstMode {

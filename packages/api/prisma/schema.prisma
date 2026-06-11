@@ -288,6 +288,12 @@ enum SubscriptionPlan {
   growth
   business
   enterprise
+  // Phase 4a (2026-06-12): unlimited tier for distributors operating
+  // above 50k cylinders/month. No seat caps; only a flat ₹24,999/mo
+  // base price + per-call GST overage. Pricing structure rewrite in
+  // seed.ts and tier-row updates handled separately — this enum value
+  // had to land first so SubscriptionPlan? on Distributor can accept it.
+  ultra
 
   @@map("subscription_plan")
 }
@@ -1380,8 +1386,18 @@ model PricingTier {
   inventorySeats       Int              @default(1) @map("inventory_seats")
   driverSeats          Int              @default(5) @map("driver_seats")
   gstApiCallsIncluded  Int              @default(1500) @map("gst_api_calls_included")
-  extraSeatPriceAdmin  Decimal          @default(299) @map("extra_seat_price_admin") @db.Decimal(18, 4)
-  extraSeatPriceDriver Decimal          @default(99) @map("extra_seat_price_driver") @db.Decimal(18, 4)
+  extraSeatPriceAdmin  Decimal          @default(999) @map("extra_seat_price_admin") @db.Decimal(18, 4)
+  extraSeatPriceDriver Decimal          @default(299) @map("extra_seat_price_driver") @db.Decimal(18, 4)
+  // Phase 4a (2026-06-12): per-role addon pricing. Old schema priced every
+  // overage seat at extraSeatPriceAdmin regardless of role — finance and
+  // inventory teams got over-billed when seatRequestService routed through
+  // that single column (Phase 4b fixes the service, this adds the columns).
+  extraSeatPriceFinance   Decimal       @default(499) @map("extra_seat_price_finance") @db.Decimal(18, 4)
+  extraSeatPriceInventory Decimal       @default(499) @map("extra_seat_price_inventory") @db.Decimal(18, 4)
+  extraSeatPriceCustomer  Decimal       @default(249) @map("extra_seat_price_customer") @db.Decimal(18, 4)
+  // Phase 4a: how many customer-portal logins each plan includes for free
+  // before extraSeatPriceCustomer starts charging.
+  freeCustomerLogins      Int           @default(5) @map("free_customer_logins")
   customerPortalPrice  Decimal          @default(49) @map("customer_portal_price") @db.Decimal(18, 4)
   gstApiOveragePrice   Decimal          @default(2) @map("gst_api_overage_price") @db.Decimal(18, 4)
   isActive             Boolean          @default(true) @map("is_active")

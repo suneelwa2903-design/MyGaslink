@@ -1204,85 +1204,86 @@ async function main() {
   } // end if (!bhargavaSeeded) — TRANSACTIONAL TEST DATA FOR BHARGAVA
 
   // ─── 15. Pricing Tiers ──────────────────────────────────────────────────────
+  //
+  // Phase 4a (2026-06-12): new 5-tier structure. The previous 4-tier table
+  // (Starter 4999 / Growth 8999 / Business 14999 / Enterprise 19999) is
+  // replaced with the rates Suneel approved on 2026-06-12. Per-Suneel
+  // decision: prod data is NOT migrated automatically — existing live
+  // distributors stay on their current monthly_price until a super-admin
+  // explicitly re-runs the seed against prod. The .upsert here updates dev
+  // rows on every `pnpm db:seed` so local dev always reflects the spec.
   const tierDefaults = {
     quarterlyDiscount: 5,
     halfYearlyDiscount: 10,
     yearlyDiscount: 15,
-    extraSeatPriceAdmin: 299,
-    extraSeatPriceDriver: 99,
+    // Phase 4a — per-role addon pricing. Old code used extraSeatPriceAdmin
+    // for every overage role; new schema gives each role its own column so
+    // seatRequestService (Phase 4b) can pick the correct one.
+    extraSeatPriceAdmin: 999,
+    extraSeatPriceDriver: 299,
+    extraSeatPriceFinance: 499,
+    extraSeatPriceInventory: 499,
+    extraSeatPriceCustomer: 249,
+    freeCustomerLogins: 5,
     customerPortalPrice: 49,
     gstApiOveragePrice: 2,
   };
 
-  await prisma.pricingTier.upsert({
-    where: { plan: 'starter' },
-    update: {},
-    create: {
-      plan: 'starter',
-      volumeMin: 0,
-      volumeMax: 10000,
+  // Shared upsert payload shape across all 5 plans — every plan gets a
+  // full re-write of pricing on re-seed so dev never drifts from this file.
+  const plans = [
+    {
+      plan: 'starter' as const,
+      volumeMin: 0,        volumeMax: 5000,
       monthlyPrice: 4999,
-      adminSeats: 1,
-      financeSeats: 1,
-      inventorySeats: 1,
-      driverSeats: 5,
+      adminSeats: 1, financeSeats: 1, inventorySeats: 1, driverSeats: 2,
       gstApiCallsIncluded: 1500,
-      ...tierDefaults,
     },
-  });
-
-  await prisma.pricingTier.upsert({
-    where: { plan: 'growth' },
-    update: {},
-    create: {
-      plan: 'growth',
-      volumeMin: 10001,
-      volumeMax: 30000,
-      monthlyPrice: 8999,
-      adminSeats: 2,
-      financeSeats: 2,
-      inventorySeats: 2,
-      driverSeats: 12,
+    {
+      plan: 'growth' as const,
+      volumeMin: 5001,     volumeMax: 15000,
+      monthlyPrice: 6999,
+      adminSeats: 1, financeSeats: 1, inventorySeats: 1, driverSeats: 5,
       gstApiCallsIncluded: 4000,
-      ...tierDefaults,
     },
-  });
-
-  await prisma.pricingTier.upsert({
-    where: { plan: 'business' },
-    update: {},
-    create: {
-      plan: 'business',
-      volumeMin: 30001,
-      volumeMax: 70000,
-      monthlyPrice: 14999,
-      adminSeats: 3,
-      financeSeats: 3,
-      inventorySeats: 3,
-      driverSeats: 25,
+    {
+      plan: 'business' as const,
+      volumeMin: 15001,    volumeMax: 30000,
+      monthlyPrice: 12999,
+      adminSeats: 2, financeSeats: 2, inventorySeats: 2, driverSeats: 8,
       gstApiCallsIncluded: 8000,
-      ...tierDefaults,
     },
-  });
-
-  await prisma.pricingTier.upsert({
-    where: { plan: 'enterprise' },
-    update: {},
-    create: {
-      plan: 'enterprise',
-      volumeMin: 70001,
-      volumeMax: null,
-      monthlyPrice: 19999,
-      adminSeats: 5,
-      financeSeats: 4,
-      inventorySeats: 4,
-      driverSeats: 40,
+    {
+      plan: 'enterprise' as const,
+      volumeMin: 30001,    volumeMax: 50000,
+      monthlyPrice: 18999,
+      adminSeats: 3, financeSeats: 3, inventorySeats: 3, driverSeats: 12,
       gstApiCallsIncluded: 15000,
-      ...tierDefaults,
     },
-  });
+    {
+      plan: 'ultra' as const,
+      volumeMin: 50001,    volumeMax: null,
+      monthlyPrice: 24999,
+      // Phase 4a: Ultra advertises "unlimited" seats. In DB terms that's
+      // a sentinel — pick a number high enough that seat-overage logic in
+      // seatRequestService never trips. Using 9999 here keeps the column
+      // Int (rather than nullable) and matches the order of magnitude
+      // distributors might actually onboard before churn.
+      adminSeats: 9999, financeSeats: 9999, inventorySeats: 9999, driverSeats: 9999,
+      gstApiCallsIncluded: 999999,
+    },
+  ];
 
-  console.log('Pricing tiers seeded: starter, growth, business, enterprise');
+  for (const p of plans) {
+    // Full-replace on re-seed so dev pricing always matches this file.
+    await prisma.pricingTier.upsert({
+      where: { plan: p.plan },
+      update: { ...p, ...tierDefaults },
+      create: { ...p, ...tierDefaults },
+    });
+  }
+
+  console.log('Pricing tiers seeded: starter, growth, business, enterprise, ultra (Phase 4a)');
 }
 
 main()
