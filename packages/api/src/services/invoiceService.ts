@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient, $Enums } from '@prisma/client';
-import { GST_RATES } from '@gaslink/shared';
+import { GST_RATES, deriveStateCode } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
 import { allocateNumber } from './numberingService.js';
 
@@ -169,6 +169,10 @@ export async function createInvoiceFromOrder(
         discountPerUnit: oi.discountPerUnit, // GST-inclusive
         gstRate: 18,
         totalPrice: lineTotal, // GST-inclusive, AFTER discount = (unitPrice − discountPerUnit) × qty
+        // Phase 5 (2026-06-12): GSTR-1 Table 12 (HSN summary) inputs.
+        // taxableValue = post-discount inclusive line total / (1 + 18%).
+        // uom defaults to 'NOS' in schema; left implicit here.
+        taxableValue: basePrice * qty,
       });
     } else {
       // GST disabled - no GST breakup, price is the full price
@@ -181,6 +185,8 @@ export async function createInvoiceFromOrder(
         discountPerUnit: oi.discountPerUnit,
         gstRate: 0,
         totalPrice: lineTotal,
+        // Phase 5: with gstRate=0 the taxable value equals the line total.
+        taxableValue: lineTotal,
       });
     }
   }
@@ -205,6 +211,8 @@ export async function createInvoiceFromOrder(
         discountPerUnit: 0,
         gstRate: 18,
         totalPrice: transportTotal,
+        // Phase 5: HSN 996511 (services) — taxable value pre-tax.
+        taxableValue: transportBase * totalDeliveredQty,
       });
     } else {
       invoiceItems.push({
@@ -216,6 +224,7 @@ export async function createInvoiceFromOrder(
         discountPerUnit: 0,
         gstRate: 0,
         totalPrice: transportTotal,
+        taxableValue: transportTotal,
       });
     }
   }
@@ -235,6 +244,18 @@ export async function createInvoiceFromOrder(
     }
   }
 
+  // Phase 5 (2026-06-12): GSTR-1 export columns (Tables 4/5/7).
+  //   - taxableValue: assessable amount = totalBaseAmount (already
+  //     calculated above; equals totalAmount when GST is disabled).
+  //   - placeOfSupplyCode: 2-digit state code — see deriveStateCode.
+  //   - reverseCharge: false — LPG retail is NOT reverse charge.
+  //   - customerGstinSnapshot: snapshot at issue so a future customer
+  //     GSTIN edit doesn't drift the GSTR-1 record (CLAUDE.md anti-
+  //     pattern #16-style write-time discipline).
+  const taxableValue = gstEnabled ? Math.round(totalBaseAmount * 100) / 100 : totalAmount;
+  const placeOfSupplyCode = deriveStateCode(order.customer?.gstin, order.customer?.billingState);
+  const customerGstinSnapshot = order.customer?.gstin || null;
+
   const invoice = await tx.invoice.create({
     data: {
       invoiceNumber,
@@ -249,6 +270,10 @@ export async function createInvoiceFromOrder(
       cgstValue,
       sgstValue,
       igstValue,
+      taxableValue,
+      placeOfSupplyCode,
+      reverseCharge: false,
+      customerGstinSnapshot,
       issuedBy: userId,
       items: { create: invoiceItems },
     },
@@ -299,7 +324,8 @@ export async function createManualInvoice(
   });
   const customer = await prisma.customer.findFirst({
     where: { id: data.customerId, distributorId, deletedAt: null },
-    select: { billingState: true },
+    // Phase 5: pull gstin for placeOfSupplyCode + customerGstinSnapshot.
+    select: { billingState: true, gstin: true },
   });
 
   if (!customer) throw new InvoiceError('Customer not found', 404);
@@ -335,6 +361,8 @@ export async function createManualInvoice(
       discountPerUnit: inclDiscount, // GST-inclusive
       gstRate: rate,
       totalPrice: inclLineTotal, // GST-inclusive line total
+      // Phase 5: per-line assessable amount (pre-tax) for GSTR-1 Table 12.
+      taxableValue: Math.round(exclLineTotal * 100) / 100,
     };
   });
 
@@ -361,6 +389,11 @@ export async function createManualInvoice(
         cgstValue,
         sgstValue,
         igstValue,
+        // Phase 5 (2026-06-12): GSTR-1 export columns (Tables 4/5/7).
+        taxableValue: Math.round(totalBeforeGst * 100) / 100,
+        placeOfSupplyCode: deriveStateCode(customer.gstin, customer.billingState),
+        reverseCharge: false,
+        customerGstinSnapshot: customer.gstin,
         issuedBy: userId,
         items: { create: invoiceItems },
       },
@@ -443,6 +476,18 @@ export async function createCreditNote(
     const creditNoteNumber = distributor?.docCode
       ? await allocateNumber(tx, distributorId, 'C', new Date(), distributor.docCode)
       : legacyNumber('CN');
+    // Phase 5 (2026-06-12): GSTR-1 Table 9B (Credit / Debit Notes) tax
+    // splits. The credit applies proportionally across cgst/sgst/igst on
+    // the parent invoice: ratio = creditAmount / invoiceTotal. We use the
+    // invoice's stored tax columns rather than re-deriving from items so a
+    // reissued invoice's revised splits are honoured automatically.
+    const totalInv = toNum(invoice.totalAmount);
+    const ratio = totalInv > 0 ? data.amount / totalInv : 0;
+    const cnCgst = Math.round(toNum(invoice.cgstValue) * ratio * 100) / 100;
+    const cnSgst = Math.round(toNum(invoice.sgstValue) * ratio * 100) / 100;
+    const cnIgst = Math.round(toNum(invoice.igstValue) * ratio * 100) / 100;
+    const cnTaxable = Math.round((data.amount - (cnCgst + cnSgst + cnIgst)) * 100) / 100;
+
     return tx.creditNote.create({
       data: {
         invoiceId: data.invoiceId,
@@ -451,6 +496,15 @@ export async function createCreditNote(
         reason: data.reason,
         note: data.note ?? null,
         status: 'pending_cn',
+        // Phase 5: tax splits + reason classification. reasonCode is null
+        // here because the create-CN modal doesn't capture it yet; the
+        // GSTR-1 export defaults nulls to 'C' (Correction). UI surface for
+        // explicit reasonCode lands in a follow-up.
+        taxableValue: cnTaxable,
+        cgstValue: cnCgst,
+        sgstValue: cnSgst,
+        igstValue: cnIgst,
+        reasonCode: null,
         issuedBy: userId,
       },
     });

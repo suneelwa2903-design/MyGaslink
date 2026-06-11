@@ -132,3 +132,32 @@ export const INDIAN_STATES = {
 export const INDIAN_STATE_NAMES: readonly string[] = Array.from(
   new Set(Object.values(INDIAN_STATES) as readonly string[]),
 ).sort((a, b) => a.localeCompare(b));
+
+// Phase 5 (2026-06-12): reverse map (state name → 2-digit code) used by
+// the invoiceService when writing Invoice.placeOfSupplyCode at issue
+// time. NIC's GSTR-1 schema expects a 2-digit string code, not a name.
+// Built from INDIAN_STATES so a single edit there propagates to both
+// directions; duplicates (37/38 both → "Andhra Pradesh") resolve to the
+// LOWER code, which is the canonical post-2014-split code for GSTR-1.
+export const STATE_CODE_BY_NAME: Readonly<Record<string, string>> = (() => {
+  const map: Record<string, string> = {};
+  for (const [code, name] of Object.entries(INDIAN_STATES)) {
+    if (!(name in map) || code < map[name]!) map[name] = code;
+  }
+  return map;
+})();
+
+// Phase 5 (2026-06-12): pull a 2-digit GSTR-1 state code out of a GSTIN
+// (first 2 characters) when present, else fall back to looking up the
+// billingState name via STATE_CODE_BY_NAME, else null. Returns null
+// when the inputs leave the place of supply genuinely undetermined —
+// the GSTR-1 export decides whether to drop the row, default to the
+// distributor's own state, or surface as a data-quality flag.
+export function deriveStateCode(
+  customerGstin: string | null | undefined,
+  billingState: string | null | undefined,
+): string | null {
+  if (customerGstin && /^\d{2}/.test(customerGstin)) return customerGstin.slice(0, 2);
+  if (billingState && STATE_CODE_BY_NAME[billingState]) return STATE_CODE_BY_NAME[billingState]!;
+  return null;
+}

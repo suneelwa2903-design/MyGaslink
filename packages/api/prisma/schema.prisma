@@ -998,6 +998,20 @@ model Invoice {
   cgstValue             Decimal       @default(0) @map("cgst_value") @db.Decimal(18, 4)
   sgstValue             Decimal       @default(0) @map("sgst_value") @db.Decimal(18, 4)
   igstValue             Decimal       @default(0) @map("igst_value") @db.Decimal(18, 4)
+  // Phase 5 (2026-06-12): GSTR-1 export columns. Nullable on historical
+  // rows; populated at write time for every new invoice via
+  // invoiceService.createInvoiceFromOrder. A one-shot backfill script
+  // (scripts/gstr1-backfill.ts, dry-run by default) computes these for
+  // pre-Phase-5 rows where possible.
+  //   - taxableValue: assessable amount (totalAmount / (1 + gstRate/100))
+  //   - placeOfSupplyCode: 2-digit state code (Table 4 / 5 / 7 driver)
+  //   - reverseCharge: GSTR-1 Table 4 — LPG is NOT RCM so default false
+  //   - customerGstinSnapshot: snapshot at issue time so a customer-side
+  //     GSTIN edit doesn't drift the historical GSTR-1 record
+  taxableValue          Decimal?      @map("taxable_value") @db.Decimal(18, 4)
+  placeOfSupplyCode     String?       @map("place_of_supply_code")
+  reverseCharge         Boolean       @default(false) @map("reverse_charge")
+  customerGstinSnapshot String?       @map("customer_gstin_snapshot")
   isGaslinkBilling      Boolean       @default(false) @map("is_gaslink_billing")
   isOpeningBalance      Boolean       @default(false) @map("is_opening_balance")
   // WI-037: set when a post-delivery reissue (cancel + regenerate IRN/EWB
@@ -1064,6 +1078,15 @@ model InvoiceItem {
   discountPerUnit Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
   gstRate         Float   @default(18) @map("gst_rate")
   totalPrice      Decimal @map("total_price") @db.Decimal(18, 4)
+  // Phase 5 (2026-06-12): GSTR-1 HSN summary (Table 12) inputs. Nullable
+  // on historical rows; populated at write time on every new item via
+  // invoiceService. taxableValue is the per-line assessable amount;
+  // `uom` defaults to 'NOS' (numbers) because LPG is invoiced per cylinder
+  // — the CylinderType.unit field defaults to 'KG' (cylinder capacity)
+  // which is NOT the correct GSTR-1 UQC for the LINE, just for the
+  // product spec.
+  taxableValue    Decimal? @map("taxable_value") @db.Decimal(18, 4)
+  uom             String  @default("NOS") @map("uom")
 
   invoice      Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id])
@@ -1082,6 +1105,21 @@ model CreditNote {
   note             String?
   status           CreditNoteStatus @default(pending_cn)
   issueDate        DateTime?        @map("issue_date") @db.Date
+  // Phase 5 (2026-06-12): GSTR-1 Table 9B (Credit / Debit Notes) inputs.
+  // Pre-Phase-5 CreditNotes carried only totalAmount; the tax splits and
+  // reason classification had to be re-derived at export time from the
+  // original invoice + free-text reason, which was lossy. Nullable on
+  // historical rows; populated at write time on every new credit note.
+  //   - taxableValue: assessable amount on the credit
+  //   - cgst/sgst/igst: tax components (intra-state uses cgst+sgst; inter
+  //     uses igst). Aligned with the same precision as Invoice columns.
+  //   - reasonCode: NIC GSTR-1 code — 'R'=Return, 'D'=Deficiency,
+  //     'C'=Correction. Free-text reason stays as the human-readable line.
+  taxableValue     Decimal?         @map("taxable_value") @db.Decimal(18, 4)
+  cgstValue        Decimal?         @map("cgst_value") @db.Decimal(18, 4)
+  sgstValue        Decimal?         @map("sgst_value") @db.Decimal(18, 4)
+  igstValue        Decimal?         @map("igst_value") @db.Decimal(18, 4)
+  reasonCode       String?          @map("reason_code")
   issuedBy         String?          @map("issued_by")
   approvedBy       String?          @map("approved_by")
   approvedAt       DateTime?        @map("approved_at")
