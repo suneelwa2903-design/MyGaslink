@@ -252,13 +252,21 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
             alt="MyGasLink"
             className={cn('h-11 w-11 rounded-xl object-contain shrink-0', collapsed && 'lg:h-8 lg:w-8 lg:mx-auto')}
           />
-          <div className={cn(collapsed && 'lg:hidden')}>
+          <div className={cn(collapsed && 'lg:hidden', 'min-w-0')}>
             <h1 className="text-lg font-bold text-white dark:text-slate-900 leading-tight">
               MyGasLink
             </h1>
             <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider font-medium">
               LPG Management
             </p>
+            {user?.distributorName && (
+              <p
+                className="text-[11px] text-slate-300 dark:text-slate-600 font-medium truncate mt-0.5"
+                title={user.distributorName}
+              >
+                {user.distributorName}
+              </p>
+            )}
           </div>
         </div>
 

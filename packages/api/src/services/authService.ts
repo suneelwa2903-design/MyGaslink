@@ -81,7 +81,10 @@ export async function login(
   password: string,
   ctx?: LoginHistoryContext,
 ): Promise<{ tokens: AuthTokens; user: UserProfile }> {
-  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+  const user = await prisma.user.findUnique({
+    where: { email: email.toLowerCase() },
+    include: { distributor: { select: { businessName: true } } },
+  });
 
   if (!user) {
     // Group DPDP: record the attempt even when the user doesn't exist
@@ -177,6 +180,7 @@ export async function login(
     role: user.role as UserProfile['role'],
     status: user.status as UserProfile['status'],
     distributorId: user.distributorId,
+    distributorName: user.distributor?.businessName ?? null,
     customerId: user.customerId,
     requiresPasswordReset: user.requiresPasswordReset,
   };

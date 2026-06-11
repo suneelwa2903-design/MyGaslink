@@ -25,7 +25,6 @@ import { useAuthStore } from '../../src/stores/authStore';
 import { useThemeStore, useIsDark } from '../../src/stores/themeStore';
 import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import { DateInput } from '../../src/components/ui';
-import type { UserProfile } from '@gaslink/shared';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
 // STAGE-H: Customers, Fleet, and Reports have been promoted out of this file
 // into their own (admin) tab screens. The remaining modals here are the
@@ -46,8 +45,6 @@ interface GstSettings {
     username?: string;
   } | null;
 }
-
-type AuthUserWithDistributor = UserProfile & { distributorName?: string };
 
 interface UserRecord {
   userId: string;
@@ -1724,13 +1721,10 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
 export default function AdminMoreScreen() {
   const router = useRouter();
   const theme = useMoreTheme();
-  const { user: authUser, logout } = useAuthStore();
+  const { user, logout } = useAuthStore();
   // STAGE-A A7: dark-mode toggle wiring (matches driver/more.tsx pattern).
   const dark = useIsDark();
   const toggleMode = useThemeStore((s) => s.toggleMode);
-  // The auth profile may carry a `distributorName` the backend attaches but the
-  // shared UserProfile type doesn't declare; model it as an optional extension.
-  const user: AuthUserWithDistributor | null = authUser;
 
   // Modal visibility state. STAGE-H: Customers, Fleet, and Reports are now
   // top-level tabs (app/(admin)/customers.tsx, fleet.tsx, reports.tsx), so

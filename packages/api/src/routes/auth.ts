@@ -220,6 +220,7 @@ router.get('/me', authenticate, async (req, res) => {
           id: true, email: true, firstName: true, lastName: true,
           phone: true, role: true, status: true, distributorId: true,
           customerId: true, requiresPasswordReset: true,
+          distributor: { select: { businessName: true } },
         },
       })
     );
@@ -235,6 +236,7 @@ router.get('/me', authenticate, async (req, res) => {
       role: user.role,
       status: user.status,
       distributorId: user.distributorId,
+      distributorName: user.distributor?.businessName ?? null,
       customerId: user.customerId,
       requiresPasswordReset: user.requiresPasswordReset,
     });

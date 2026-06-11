@@ -67,6 +67,11 @@ export interface UserProfile {
   role: UserRole;
   status: UserStatus;
   distributorId: string | null;
+  // Distributor.businessName joined at /auth/me + login time so the web
+  // sidebar and mobile header can show tenant context without an extra
+  // fetch. null for super_admin (who isn't pinned to one tenant) and for
+  // any user whose distributorId is null.
+  distributorName: string | null;
   customerId: string | null;
   requiresPasswordReset: boolean;
 }

@@ -48,11 +48,6 @@ function roleLabel(role: string | undefined | null): string {
   return ROLE_LABELS[role] ?? role.replace(/_/g, ' ');
 }
 
-// STAGE-E: the backend may attach `distributorName` to the profile payload
-// even though the shared UserProfile interface (packages/shared/src/types/index.ts:61)
-// doesn't declare it. Model it as an optional extension rather than `any`.
-type AuthUserWithDistributor = UserProfile & { distributorName?: string };
-
 export interface ProfileScreenProps {
   accent: string;
 }
@@ -60,8 +55,7 @@ export interface ProfileScreenProps {
 export function ProfileScreen({ accent }: ProfileScreenProps) {
   const { colors, dark } = useTheme();
   const router = useRouter();
-  const { user: authUser, setUser } = useAuthStore();
-  const user: AuthUserWithDistributor | null = authUser;
+  const { user, setUser } = useAuthStore();
 
   const [firstName, setFirstName] = useState(user?.firstName ?? '');
   const [lastName, setLastName] = useState(user?.lastName ?? '');

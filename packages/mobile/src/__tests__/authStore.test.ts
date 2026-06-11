@@ -52,6 +52,7 @@ describe('authStore', () => {
       role: 'driver' as const,
       status: 'active' as const,
       distributorId: 'dist-1',
+      distributorName: 'Test Distributor',
       customerId: null,
       requiresPasswordReset: false,
     };
