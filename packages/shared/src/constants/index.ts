@@ -12,6 +12,17 @@ export const GST_DEFAULT_UOM = 'NOS'; // Numbers
 
 export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
+// Phase 3 (2026-06-12): IFSC + UPI handle format checks. RBI IFSC spec is
+// fixed: 4 uppercase letters (bank code) + "0" (reserved) + 6 alphanumeric
+// characters (branch code). Lowercase IFSC is invalid — the UI auto-uppercases
+// on input so this regex matches what the user actually sees. UPI handle
+// follows NPCI's de-facto pattern: a user portion of letters/digits with
+// `.`/`-`/`_` separators, an `@`, and a provider/bank slug of letters only
+// (e.g. `gasagency@hdfc`, `acme.ltd@axisbank`). Length caps mirror NPCI's
+// 50-char user-side + 64-char total guidance.
+export const IFSC_REGEX = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+export const UPI_REGEX = /^[a-zA-Z0-9.\-_]{2,50}@[a-zA-Z]{2,20}$/;
+
 // ─── Inventory Constants ─────────────────────────────────────────────────────
 
 export const INVENTORY_THRESHOLD_LEVELS = {

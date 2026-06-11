@@ -3,7 +3,7 @@ import {
   UserRole, PaymentMethod, OrderStatus, InvoiceStatus,
   CustomerStatus, GstMode, AccountabilityType,
 } from '../enums/index.js';
-import { GSTIN_REGEX } from '../constants/index.js';
+import { GSTIN_REGEX, IFSC_REGEX, UPI_REGEX } from '../constants/index.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -490,6 +490,16 @@ export const createDistributorSchema = z.object({
   officeCity: z.string().max(100).optional(),
   officeState: z.string().max(100).optional(),
   officePincode: pincode,
+  // Phase 3 (2026-06-12): bank + UPI payment details rendered on invoice
+  // and customer-ledger PDFs. All optional. IFSC + UPI format-checked only
+  // when non-empty (legacy data + the Settings "leave blank" path stay
+  // valid). The IFSC field is auto-uppercased client-side; this regex
+  // matches what the user actually submits after that transform.
+  bankName: z.string().max(100).optional().or(z.literal('')),
+  bankAccountNumber: z.string().max(30).optional().or(z.literal('')),
+  bankBranchName: z.string().max(100).optional().or(z.literal('')),
+  ifscCode: z.string().regex(IFSC_REGEX, 'Invalid IFSC code format (expected 11 characters, e.g. HDFC0001234)').optional().or(z.literal('')),
+  upiId: z.string().regex(UPI_REGEX, 'Invalid UPI ID format (expected e.g. gasagency@hdfc)').optional().or(z.literal('')),
 });
 
 // Group A Step 6: gstMode is intentionally absent from updateDistributorSchema.

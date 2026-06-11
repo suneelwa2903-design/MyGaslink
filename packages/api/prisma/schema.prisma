@@ -368,6 +368,20 @@ model Distributor {
   officeState   String? @map("office_state")
   officePincode String? @map("office_pincode")
 
+  // Phase 3 (2026-06-11): bank + UPI payment details surfaced on invoice
+  // and customer-ledger PDFs so end customers know where to pay. All
+  // optional — PDFs render the "Payment Details" block only when
+  // `bankAccountNumber` AND `ifscCode` are both present (UPI line is
+  // appended only when `upiId` is also set). IFSC format enforced at
+  // input boundary via shared regex; structure not enforced at the DB
+  // level so import paths can recover gracefully from malformed legacy
+  // data without a migration.
+  bankName          String? @map("bank_name")
+  bankAccountNumber String? @map("bank_account_number")
+  bankBranchName    String? @map("bank_branch_name")
+  ifscCode          String? @map("ifsc_code")
+  upiId             String? @map("upi_id")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")

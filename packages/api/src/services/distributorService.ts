@@ -35,6 +35,12 @@ const distributorSelect = {
   officeCity: true,
   officeState: true,
   officePincode: true,
+  // Phase 3 (2026-06-12): bank + UPI payment details for invoice + ledger PDFs.
+  bankName: true,
+  bankAccountNumber: true,
+  bankBranchName: true,
+  ifscCode: true,
+  upiId: true,
   // Group A: surfaced to the GST Activation page so the sandbox option is
   // disabled in the UI when the tenant is not allowlisted.
   isTestTenant: true,
@@ -117,6 +123,11 @@ export async function createDistributor(data: {
   officeCity?: string;
   officeState?: string;
   officePincode?: string;
+  bankName?: string;
+  bankAccountNumber?: string;
+  bankBranchName?: string;
+  ifscCode?: string;
+  upiId?: string;
 }) {
   const docCode = data.docCode?.trim().toUpperCase() || null;
   if (docCode) await assertDocCodeUnique(docCode);
@@ -146,6 +157,14 @@ export async function createDistributor(data: {
       officeCity: data.officeCity || null,
       officeState: data.officeState || null,
       officePincode: data.officePincode || null,
+      // Phase 3 — bank + UPI: empty strings normalised to null so the
+      // PDF "Payment Details" guard (account + ifsc must both be non-
+      // null) reads cleanly.
+      bankName: data.bankName || null,
+      bankAccountNumber: data.bankAccountNumber || null,
+      bankBranchName: data.bankBranchName || null,
+      ifscCode: data.ifscCode ? data.ifscCode.trim().toUpperCase() : null,
+      upiId: data.upiId || null,
     },
     select: distributorSelect,
   });
@@ -182,6 +201,12 @@ export async function updateDistributor(id: string, data: Partial<{
   longitude: number;
   // Group L5 (2026-06-11): see note in routes/distributors.ts PUT /:id.
   isTestTenant: boolean;
+  // Phase 3 (2026-06-12): bank + UPI payment details.
+  bankName: string;
+  bankAccountNumber: string;
+  bankBranchName: string;
+  ifscCode: string;
+  upiId: string;
 }>) {
   // Group L2 (2026-06-11): normalise + uniqueness-check docCode before
   // hitting the DB so the 409 reply happens in this service, not as a
@@ -195,6 +220,19 @@ export async function updateDistributor(id: string, data: Partial<{
     } else {
       writeData.docCode = null;
     }
+  }
+  // Phase 3 (2026-06-12): normalise bank fields — IFSC auto-uppercased,
+  // empty strings written as NULL so the PDF render guard
+  // (`bankAccountNumber && ifscCode`) reads consistently. The route layer
+  // already Zod-validates non-empty values; here we only normalise.
+  for (const k of ['bankName', 'bankAccountNumber', 'bankBranchName', 'upiId'] as const) {
+    if (typeof data[k] === 'string') {
+      writeData[k] = (data[k] as string).trim() || null;
+    }
+  }
+  if (typeof data.ifscCode === 'string') {
+    const ifsc = data.ifscCode.trim().toUpperCase();
+    writeData.ifscCode = ifsc || null;
   }
   return prisma.distributor.update({
     where: { id },

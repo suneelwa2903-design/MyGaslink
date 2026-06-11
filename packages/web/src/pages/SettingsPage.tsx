@@ -202,7 +202,119 @@ function GeneralTab() {
           <Button type="button" onClick={handleSaveDocCode} loading={docCodeMutation.isPending}>Save Code</Button>
         </div>
       </div>
+
+      {/* Phase 3: bank + UPI payment details surfaced on invoice + ledger PDFs */}
+      <PaymentDetailsSection settings={settings} />
     </div>
+  );
+}
+
+// ─── Payment Details Section (Phase 3) ────────────────────────────────────────
+//
+// Renders 5 inputs (bank name / account number / branch / IFSC / UPI) and
+// saves through PUT /api/settings/payment-details. The PDF render path in
+// invoicePdfService and customerLedgerPdfService only emits the "Payment
+// Details" block when `bankAccountNumber && ifscCode` are both non-empty,
+// so partial entries are safe — they just don't render.
+function PaymentDetailsSection({ settings }: { settings: DistributorSettings | undefined }) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({
+    bankName: '',
+    bankAccountNumber: '',
+    bankBranchName: '',
+    ifscCode: '',
+    upiId: '',
+  });
+  // Sync state from server values once they load (and on subsequent
+  // settings refetches after save).
+  useEffect(() => {
+    if (settings) {
+      setForm({
+        bankName: settings.bankName ?? '',
+        bankAccountNumber: settings.bankAccountNumber ?? '',
+        bankBranchName: settings.bankBranchName ?? '',
+        ifscCode: settings.ifscCode ?? '',
+        upiId: settings.upiId ?? '',
+      });
+    }
+  }, [settings]);
+
+  const mutation = useMutation({
+    mutationFn: (data: typeof form) => apiPut('/settings/payment-details', data),
+    onSuccess: () => {
+      toast.success('Payment details saved');
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Light client-side check to give a friendly error without a round trip.
+    // Server enforces the same regex; this is UX, not security.
+    if (form.ifscCode && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(form.ifscCode)) {
+      toast.error('Invalid IFSC code (expected format: HDFC0001234)');
+      return;
+    }
+    if (form.upiId && !/^[a-zA-Z0-9.\-_]{2,50}@[a-zA-Z]{2,20}$/.test(form.upiId)) {
+      toast.error('Invalid UPI ID (expected format: gasagency@hdfc)');
+      return;
+    }
+    mutation.mutate(form);
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="border-t border-surface-200 dark:border-surface-700 pt-6 space-y-3"
+    >
+      <h3 className="font-semibold text-surface-900 dark:text-white">Payment Details</h3>
+      <p className="text-sm text-surface-500 dark:text-surface-400">
+        Shown on invoice and customer-statement PDFs so customers know where to
+        pay. Leave blank to hide the section from PDFs.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Input
+          label="Bank Name"
+          value={form.bankName}
+          placeholder="HDFC Bank"
+          onChange={(e) => setForm((f) => ({ ...f, bankName: e.target.value }))}
+        />
+        <Input
+          label="Account Number"
+          value={form.bankAccountNumber}
+          placeholder="1234567890123"
+          onChange={(e) => setForm((f) => ({ ...f, bankAccountNumber: e.target.value }))}
+        />
+        <Input
+          label="Branch Name"
+          value={form.bankBranchName}
+          placeholder="Banjara Hills"
+          onChange={(e) => setForm((f) => ({ ...f, bankBranchName: e.target.value }))}
+        />
+        <Input
+          label="IFSC Code"
+          value={form.ifscCode}
+          placeholder="HDFC0001234"
+          maxLength={11}
+          // Auto-uppercase + strip illegal chars on the way in. Keeps the
+          // visible value consistent with what the regex actually expects.
+          onChange={(e) =>
+            setForm((f) => ({
+              ...f,
+              ifscCode: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 11),
+            }))
+          }
+        />
+        <Input
+          label="UPI ID"
+          value={form.upiId}
+          placeholder="gasagency@hdfc"
+          onChange={(e) => setForm((f) => ({ ...f, upiId: e.target.value }))}
+        />
+      </div>
+      <Button type="submit" loading={mutation.isPending}>Save Payment Details</Button>
+    </form>
   );
 }
 

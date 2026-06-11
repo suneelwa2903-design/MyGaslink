@@ -147,6 +147,15 @@ export interface Distributor {
   officeCity: string | null;
   officeState: string | null;
   officePincode: string | null;
+  // Phase 3 (2026-06-12): bank + UPI payment details rendered on invoice
+  // and customer-ledger PDFs. All nullable. The PDFs check
+  // `bankAccountNumber && ifscCode` before emitting the "Payment Details"
+  // block; UPI line is appended only when `upiId` is also set.
+  bankName: string | null;
+  bankAccountNumber: string | null;
+  bankBranchName: string | null;
+  ifscCode: string | null;
+  upiId: string | null;
   // Group A: gate that allows sandbox gstMode. Only dist-demo + internal test
   // tenants have this true; production distributors transition disabled → live
   // without ever passing through sandbox.
@@ -828,6 +837,18 @@ export interface DistributorSettings {
   // WI-108: 3-letter tenant code that activates structured invoice/order
   // numbering. null when not yet set (legacy random format in use).
   docCode?: string | null;
+  // Group 5 (2026-06-11): operational go-live date, read-only here. Writes
+  // go through PUT /api/distributors/:id/go-live-date (super-admin only).
+  goLiveDate?: string | null;
+  // Phase 3 (2026-06-12): bank + UPI payment details surfaced from
+  // GET /api/settings so the General tab Payment Details section can
+  // render + prefill. Writes go through PUT /api/settings/payment-details
+  // (distributor_admin + super_admin).
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankBranchName?: string | null;
+  ifscCode?: string | null;
+  upiId?: string | null;
 }
 
 export interface GstCredentials {

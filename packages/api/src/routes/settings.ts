@@ -4,7 +4,7 @@ import { requireRole } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
-import { gstCredentialsSchema, gstModeSchema, approvalWorkflowSchema } from '@gaslink/shared';
+import { gstCredentialsSchema, gstModeSchema, approvalWorkflowSchema, IFSC_REGEX, UPI_REGEX } from '@gaslink/shared';
 import * as settingsService from '../services/settingsService.js';
 import { z } from 'zod';
 
@@ -33,7 +33,18 @@ router.get('/', async (req, res) => {
       settingsService.getSettings(distributorId),
       (await import('../lib/prisma.js')).prisma.distributor.findUnique({
         where: { id: distributorId },
-        select: { gstMode: true, docCode: true, goLiveDate: true },
+        select: {
+          gstMode: true,
+          docCode: true,
+          goLiveDate: true,
+          // Phase 3 (2026-06-12): bank + UPI surfaced so the Settings page
+          // can render the Payment Details section and prefill the inputs.
+          bankName: true,
+          bankAccountNumber: true,
+          bankBranchName: true,
+          ifscCode: true,
+          upiId: true,
+        },
       }),
       settingsService.getGstCredentials(distributorId, 'einvoice'),
     ]);
@@ -46,6 +57,12 @@ router.get('/', async (req, res) => {
       // can see their go-live date. Writes go through PUT /api/distributors
       // /:id/go-live-date (super-admin only).
       goLiveDate: distributor?.goLiveDate?.toISOString().split('T')[0] ?? null,
+      // Phase 3 (2026-06-12): bank + UPI for the Payment Details section.
+      bankName: distributor?.bankName ?? null,
+      bankAccountNumber: distributor?.bankAccountNumber ?? null,
+      bankBranchName: distributor?.bankBranchName ?? null,
+      ifscCode: distributor?.ifscCode ?? null,
+      upiId: distributor?.upiId ?? null,
       rawSettings,
     });
   } catch (err) {
@@ -79,6 +96,41 @@ router.put('/doc-code',
         select: { docCode: true },
       });
       return sendSuccess(res, updated);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// Phase 3 (2026-06-12): bank + UPI payment details. Open to
+// distributor_admin (so they can self-service their own bank info) AND
+// super_admin (cross-tenant edits when onboarding). Validation lives in
+// the local Zod schema below — IFSC and UPI are checked only when
+// non-empty. Empty strings clear the field (write as NULL via service
+// normalisation in distributorService.updateDistributor).
+router.put('/payment-details',
+  requireRole('super_admin', 'distributor_admin'),
+  validate(z.object({
+    bankName: z.string().max(100).optional().or(z.literal('')),
+    bankAccountNumber: z.string().max(30).optional().or(z.literal('')),
+    bankBranchName: z.string().max(100).optional().or(z.literal('')),
+    ifscCode: z.string().regex(IFSC_REGEX, 'Invalid IFSC code format (expected 11 characters, e.g. HDFC0001234)').optional().or(z.literal('')),
+    upiId: z.string().regex(UPI_REGEX, 'Invalid UPI ID format (expected e.g. gasagency@hdfc)').optional().or(z.literal('')),
+  })),
+  auditLog('update', 'distributor'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId;
+      if (!distributorId) return sendError(res, 'Distributor ID required', 400, 'NO_DISTRIBUTOR_SELECTED');
+      const distributorService = await import('../services/distributorService.js');
+      const updated = await distributorService.updateDistributor(distributorId, req.body);
+      return sendSuccess(res, {
+        bankName: updated.bankName,
+        bankAccountNumber: updated.bankAccountNumber,
+        bankBranchName: updated.bankBranchName,
+        ifscCode: updated.ifscCode,
+        upiId: updated.upiId,
+      });
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

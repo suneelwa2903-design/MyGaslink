@@ -41,6 +41,12 @@ interface InvoiceForPdf {
     pincode: string | null;
     phone: string | null;
     email: string | null;
+    // Phase 3 (2026-06-12): bank + UPI rendered in the Bill From block.
+    bankName: string | null;
+    bankAccountNumber: string | null;
+    bankBranchName: string | null;
+    ifscCode: string | null;
+    upiId: string | null;
   };
   customer: {
     customerName: string;
@@ -284,7 +290,21 @@ function drawHeader(
 
 function drawParties(
   doc: PDFKit.PDFDocument,
-  seller: { name: string; gstin: string | null; phone: string | null; address: string },
+  seller: {
+    name: string;
+    gstin: string | null;
+    phone: string | null;
+    address: string;
+    // Phase 3 (2026-06-12): payment details. Block renders only when
+    // bankAccountNumber AND ifscCode are both non-empty (the minimum
+    // info a customer needs to actually transfer). UPI line appended
+    // only when upiId is also non-empty.
+    bankName?: string | null;
+    bankAccountNumber?: string | null;
+    bankBranchName?: string | null;
+    ifscCode?: string | null;
+    upiId?: string | null;
+  },
   buyer: { name: string; gstin: string | null; phone: string | null; address: string },
   startY: number,
 ): number {
@@ -312,6 +332,28 @@ function drawParties(
   fromY += 12;
   doc.text(`Phone: ${seller.phone || '\u2014'}`, leftX + pad, fromY, { width: columnWidth - pad * 2 });
   fromY += 12;
+  // Phase 3: Payment Details block. Compact \u2014 keeps the parties row from
+  // ballooning past one page on long invoices.
+  if (seller.bankAccountNumber && seller.ifscCode) {
+    fromY += 4;
+    doc.font('Helvetica-Bold').fillColor(T.PRIMARY);
+    doc.text('Payment Details', leftX + pad, fromY, { width: columnWidth - pad * 2 });
+    fromY += 12;
+    doc.font('Helvetica').fillColor(T.MUTED);
+    const bankLine = seller.bankBranchName
+      ? `Bank: ${seller.bankName ?? ''}, ${seller.bankBranchName}`.replace(/^Bank: , /, 'Bank: ')
+      : `Bank: ${seller.bankName ?? '\u2014'}`;
+    doc.text(bankLine, leftX + pad, fromY, { width: columnWidth - pad * 2 });
+    fromY += 12;
+    doc.text(`A/C: ${seller.bankAccountNumber}`, leftX + pad, fromY, { width: columnWidth - pad * 2 });
+    fromY += 12;
+    doc.text(`IFSC: ${seller.ifscCode}`, leftX + pad, fromY, { width: columnWidth - pad * 2 });
+    fromY += 12;
+    if (seller.upiId) {
+      doc.text(`UPI: ${seller.upiId}`, leftX + pad, fromY, { width: columnWidth - pad * 2 });
+      fromY += 12;
+    }
+  }
   const billFromH = fromY - startY + pad;
 
   // Bill To
@@ -703,7 +745,19 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
 
   // Build seller/buyer data
   const sellerAddr = [dist.address, dist.city, dist.state, dist.pincode].filter(Boolean).join(', ') || '\u2014';
-  const seller = { name: dist.businessName || dist.legalName, gstin: dist.gstin, phone: dist.phone, address: sellerAddr };
+  const seller = {
+    name: dist.businessName || dist.legalName,
+    gstin: dist.gstin,
+    phone: dist.phone,
+    address: sellerAddr,
+    // Phase 3 (2026-06-12): pass through bank + UPI; drawParties decides
+    // whether to render the Payment Details block.
+    bankName: dist.bankName,
+    bankAccountNumber: dist.bankAccountNumber,
+    bankBranchName: dist.bankBranchName,
+    ifscCode: dist.ifscCode,
+    upiId: dist.upiId,
+  };
 
   const buyerAddr = cust
     ? [cust.billingAddressLine1, cust.billingAddressLine2, cust.billingCity, cust.billingState, cust.billingPincode].filter(Boolean).join(', ') || '\u2014'

@@ -104,6 +104,11 @@ export async function generateCustomerLedgerPdf(
     select: {
       businessName: true, legalName: true, gstin: true,
       address: true, city: true, state: true, pincode: true, phone: true,
+      // Phase 3 (2026-06-12): payment details for the "Pay To" block
+      // emitted under the letterhead. Block renders only when
+      // bankAccountNumber AND ifscCode are non-empty.
+      bankName: true, bankAccountNumber: true, bankBranchName: true,
+      ifscCode: true, upiId: true,
     },
   });
   if (!distributor) throw new Error('Distributor not found');
@@ -129,6 +134,26 @@ export async function generateCustomerLedgerPdf(
   doc.text(sellerAddr, MARGIN.left, leftY, { width: 400 }); leftY += 11;
   doc.text(`GSTIN: ${distributor.gstin || '—'}   Phone: ${distributor.phone || '—'}`, MARGIN.left, leftY, { width: 400 });
   leftY += 11;
+
+  // Phase 3 (2026-06-12): Pay To block — only when bank details are set.
+  // Compact 1-2 line variant since the landscape header has limited
+  // vertical room before the rule.
+  if (distributor.bankAccountNumber && distributor.ifscCode) {
+    const bankBranch = distributor.bankBranchName ? `, ${distributor.bankBranchName}` : '';
+    const bankPrefix = distributor.bankName ?? '—';
+    doc.font('Helvetica-Bold').fontSize(TYPO.CAPTION).fillColor(THEME.PRIMARY);
+    doc.text(
+      `Pay To: ${bankPrefix}${bankBranch}`,
+      MARGIN.left, leftY, { width: 400 },
+    );
+    leftY += 11;
+    doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+    const payToLine = distributor.upiId
+      ? `A/C: ${distributor.bankAccountNumber}   IFSC: ${distributor.ifscCode}   UPI: ${distributor.upiId}`
+      : `A/C: ${distributor.bankAccountNumber}   IFSC: ${distributor.ifscCode}`;
+    doc.text(payToLine, MARGIN.left, leftY, { width: 500 });
+    leftY += 11;
+  }
 
   // Title (right)
   doc.font('Helvetica-Bold').fontSize(TYPO.H1).fillColor(THEME.PRIMARY);
