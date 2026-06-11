@@ -1031,38 +1031,89 @@ export async function importOpeningBalances(
 export async function getOnboardingProgress(distributorId: string) {
   const [
     cylinderTypeCount,
+    cylinderPriceCount,
     driverCount,
+    // Group 6 (2026-06-11): count drivers that ALSO have a User login.
+    // A driver row without a User can't actually sign in to the mobile app
+    // — the old check was misleading.
+    driverWithLoginCount,
     customerCount,
     initialBalanceCount,
     openingBalanceImportCount,
+    emptyBalanceCount,
     gstCredentialCount,
     orderCount,
+    deliveredOrderCount,
     inventoryEventCount,
+    distributor,
     dismissedSetting,
   ] = await Promise.all([
     prisma.cylinderType.count({ where: { distributorId, isActive: true } }),
+    prisma.cylinderPrice.count({ where: { distributorId } }),
     prisma.driver.count({ where: { distributorId, deletedAt: null } }),
+    prisma.user.count({
+      where: { distributorId, role: 'driver', status: 'active', deletedAt: null },
+    }),
     prisma.customer.count({ where: { distributorId, deletedAt: null } }),
     prisma.inventoryEvent.count({ where: { distributorId, eventType: 'initial_balance' } }),
     prisma.invoice.count({
       where: { distributorId, deletedAt: null, isOpeningBalance: true },
     }),
+    prisma.customerInventoryBalance.count({
+      where: { customer: { distributorId, deletedAt: null } },
+    }),
     prisma.gstCredential.count({ where: { distributorId } }),
     prisma.order.count({ where: { distributorId, deletedAt: null } }),
+    prisma.order.count({
+      where: { distributorId, deletedAt: null, status: { in: ['delivered', 'modified_delivered'] } },
+    }),
     prisma.inventoryEvent.count({ where: { distributorId } }),
+    prisma.distributor.findUnique({
+      where: { id: distributorId },
+      select: { docCode: true, goLiveDate: true, godownAddress: true },
+    }),
     prisma.distributorSetting.findUnique({
       where: { distributorId_settingKey: { distributorId, settingKey: 'dismissedOnboarding' } },
     }),
   ]);
 
   const dismissed = dismissedSetting?.settingValue === true;
+  const docCodeSet = !!distributor?.docCode?.trim();
+  const goLiveDateSet = !!distributor?.goLiveDate;
+  const godownAddressSet = !!distributor?.godownAddress?.trim();
 
+  // Group 6 (2026-06-11): the checklist now mirrors what a paper-
+  // distributor like Vanasthali actually needs on Day-0. Several previous
+  // checks were misleading:
+  //   - "cylinder_types" was green when types existed even without prices,
+  //     so a distributor could "complete" the step but no order could be
+  //     placed because pricing wasn't set.
+  //   - "drivers" counted Driver rows, but a Driver without a User has no
+  //     way to sign into the mobile app — the step was passing while
+  //     drivers couldn't actually deliver.
+  //   - "opening_empties", "doc_code", "go_live_date" were not surfaced at
+  //     all — gaps confirmed in the K-audit.
   const steps = [
-    { key: 'cylinder_types', label: 'Add cylinder types and prices', done: cylinderTypeCount > 0, link: '/app/settings?tab=cylinders' },
-    { key: 'drivers', label: 'Add your drivers and vehicles', done: driverCount > 0, link: '/app/fleet' },
+    {
+      key: 'cylinder_types',
+      label: 'Add cylinder types and prices',
+      done: cylinderTypeCount > 0 && cylinderPriceCount > 0,
+      link: '/app/settings?tab=cylinders',
+    },
+    {
+      key: 'drivers',
+      label: 'Add drivers and create their logins',
+      done: driverCount > 0 && driverWithLoginCount > 0,
+      link: '/app/fleet',
+    },
     { key: 'customers', label: 'Add your customers', done: customerCount > 0, link: '/app/customers' },
     { key: 'opening_stock', label: 'Enter opening stock balance', done: initialBalanceCount > 0, link: '/app/inventory' },
     { key: 'opening_balances', label: 'Import customer opening balances (CSV)', done: openingBalanceImportCount > 0, link: '/app/settings?tab=onboarding' },
+    { key: 'opening_empties', label: 'Import opening empty cylinders per customer (CSV)', done: emptyBalanceCount > 0, link: '/app/settings?tab=onboarding' },
+    { key: 'doc_code', label: 'Set your 3-letter invoice code', done: docCodeSet, link: '/app/settings' },
+    { key: 'godown_address', label: 'Set your godown / warehouse address', done: godownAddressSet, link: '/app/settings' },
+    { key: 'go_live_date', label: 'Go-live date (set by platform admin)', done: goLiveDateSet, optional: true, link: '/app/settings' },
+    { key: 'test_order', label: 'Complete at least one delivery end-to-end', done: deliveredOrderCount > 0, optional: true, link: '/app/orders' },
     { key: 'gst', label: 'Configure GST (optional)', done: gstCredentialCount > 0, optional: true, link: '/app/settings?tab=gst' },
   ];
 
