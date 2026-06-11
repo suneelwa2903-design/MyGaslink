@@ -1429,6 +1429,36 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
     },
   );
 
+  // Phase 6b (2026-06-12): bring the L3 Suspend / Reactivate web action
+  // to the admin mobile app. Web added these in commit 912a68e but mobile
+  // still showed only the legacy Deactivate (DELETE) button. Suspend +
+  // Reactivate are softer + reversible — Suspend flips status to
+  // 'suspended' so login shows a clear support message; Reactivate flips
+  // back to 'active'. The DELETE button remains for permanent removal.
+  const suspendMutation = useApiMutation<unknown, { userId: string }>(
+    'post',
+    (vars) => `/users/${vars.userId}/suspend`,
+    {
+      invalidateKeys: [['users']],
+      successMessage: 'User suspended',
+      onError: (err: unknown) => {
+        Alert.alert('Could not suspend user', (err as Error)?.message ?? 'Unknown error');
+      },
+    },
+  );
+
+  const reactivateMutation = useApiMutation<unknown, { userId: string }>(
+    'post',
+    (vars) => `/users/${vars.userId}/reactivate`,
+    {
+      invalidateKeys: [['users']],
+      successMessage: 'User reactivated',
+      onError: (err: unknown) => {
+        Alert.alert('Could not reactivate user', (err as Error)?.message ?? 'Unknown error');
+      },
+    },
+  );
+
   const resetForm = () => {
     setFormFirst('');
     setFormLast('');
@@ -1479,6 +1509,46 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
           text: 'Deactivate',
           style: 'destructive',
           onPress: () => deleteMutation.mutate({ userId: u.userId }),
+        },
+      ],
+    );
+  };
+
+  // Phase 6b: confirmation dialogs for the Suspend / Reactivate buttons.
+  // Same self-action guard as Deactivate so an admin can't lock themselves
+  // out of the app.
+  const handleSuspend = (u: UserRecord) => {
+    if (u.userId === selfUserId) {
+      Alert.alert('Not allowed', 'You cannot suspend your own account.');
+      return;
+    }
+    if (u.role === 'super_admin') {
+      Alert.alert('Not allowed', 'Super-admin accounts cannot be suspended.');
+      return;
+    }
+    Alert.alert(
+      'Suspend user?',
+      `Suspend ${u.firstName} ${u.lastName}? They will be unable to log in until you reactivate them. Their data is preserved.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Suspend',
+          style: 'destructive',
+          onPress: () => suspendMutation.mutate({ userId: u.userId }),
+        },
+      ],
+    );
+  };
+
+  const handleReactivate = (u: UserRecord) => {
+    Alert.alert(
+      'Reactivate user?',
+      `Reactivate ${u.firstName} ${u.lastName}? They will be able to log in again immediately.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reactivate',
+          onPress: () => reactivateMutation.mutate({ userId: u.userId }),
         },
       ],
     );
@@ -1611,6 +1681,13 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
                         <Text style={{ fontSize: 12, color: theme.textMuted }}>{item.email}</Text>
                       </View>
                       <StatusBadge label={item.role?.replace(/_/g, ' ')} color={roleColors[item.role] || '#3b82f6'} />
+                      {/* Phase 6b: explicit Suspended badge so admins
+                          spot the locked-out accounts at a glance — the
+                          earlier check (status === 'active') treated
+                          everything else as a generic "Inactive". */}
+                      {item.status === 'suspended' && (
+                        <StatusBadge label="Suspended" color="#f97316" />
+                      )}
                       <TouchableOpacity
                         onPress={() => beginEdit(item)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1618,6 +1695,32 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
                       >
                         <Ionicons name="create-outline" size={18} color={ACCENT} />
                       </TouchableOpacity>
+                      {/* Phase 6b: Suspend / Reactivate toggle. The two
+                          icons swap based on item.status so an admin
+                          can flip the same row in either direction
+                          without opening a menu. The legacy DELETE
+                          (trash) button stays as the permanent-removal
+                          escape hatch. */}
+                      {item.status === 'suspended' ? (
+                        <TouchableOpacity
+                          onPress={() => handleReactivate(item)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          style={{ padding: 4 }}
+                          accessibilityLabel="Reactivate user"
+                        >
+                          <Ionicons name="play-circle-outline" size={20} color="#16a34a" />
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          onPress={() => handleSuspend(item)}
+                          disabled={isSelf || item.role === 'super_admin'}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          style={{ padding: 4, opacity: (isSelf || item.role === 'super_admin') ? 0.3 : 1 }}
+                          accessibilityLabel="Suspend user"
+                        >
+                          <Ionicons name="pause-circle-outline" size={20} color="#f97316" />
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity
                         onPress={() => handleDeactivate(item)}
                         disabled={isSelf}

@@ -99,7 +99,10 @@ export default function LoginScreen() {
       setUser(result.user);
 
       if (result.user.requiresPasswordReset) {
-        Alert.alert('Password Reset Required', 'Please change your password on the web app first.');
+        // Phase 6i (2026-06-12): in-app force-password-reset flow. Pre-
+        // Phase-6i this bounced the user to the web app — broken in the
+        // field for drivers who only have the mobile app installed.
+        router.replace('/(auth)/force-password-reset');
         return;
       }
 

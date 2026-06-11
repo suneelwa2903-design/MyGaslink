@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, TouchableOpacity, Modal, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, TouchableOpacity, Modal, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
+import { api, getErrorMessage } from '../../src/lib/api';
 import { useTheme, formatINR } from '../../src/theme';
 import { Card, Badge, MetricCard, EmptyState, SelectField } from '../../src/components/ui';
 import type { Invoice } from '@gaslink/shared';
@@ -208,6 +211,40 @@ function InvoiceDetailModal({
   const badgeVariant = invoiceStatusVariant(invoice?.status || '');
   const sectionBg = dark ? colors.inputBg : '#f8fafc';
 
+  // Phase 6a (2026-06-12): per-invoice PDF download from the finance app.
+  // Mirrors the customer-portal pattern at packages/mobile/app/(customer)/
+  // invoices.tsx — arraybuffer → cache file → OS share sheet. Finance
+  // staff hits the tenant-scoped /invoices/:id/pdf endpoint (not the
+  // customer-portal-scoped one — the customer route enforces a
+  // customerId match that finance roles wouldn't pass).
+  const [downloading, setDownloading] = useState(false);
+  const handleDownloadPdf = async () => {
+    if (!invoice) return;
+    setDownloading(true);
+    try {
+      const res = await api.get(`/invoices/${invoice.invoiceId}/pdf`, {
+        responseType: 'arraybuffer',
+      });
+      const bytes = new Uint8Array(res.data);
+      const file = new File(Paths.cache, `invoice-${invoice.invoiceNumber}.pdf`);
+      try { file.create(); } catch { /* already exists, fine */ }
+      file.write(bytes);
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: `Invoice ${invoice.invoiceNumber}`,
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (err) {
+      Alert.alert('Could not download invoice', getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen">
       <SafeAreaProvider>
@@ -227,7 +264,25 @@ function InvoiceDetailModal({
             <Ionicons name="close" size={26} color={colors.text} />
           </TouchableOpacity>
           <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>Invoice Detail</Text>
-          <View style={{ width: 26 }} />
+          {/* Phase 6a: PDF download — only after the invoice has loaded.
+              While loading we keep the same 26px spacer as the original
+              layout so the title stays optically centred. */}
+          {invoice ? (
+            <TouchableOpacity
+              onPress={handleDownloadPdf}
+              disabled={downloading}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel="Download invoice PDF"
+            >
+              {downloading ? (
+                <ActivityIndicator size="small" color={accent.red} />
+              ) : (
+                <Ionicons name="download-outline" size={26} color={colors.text} />
+              )}
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 26 }} />
+          )}
         </View>
 
         {isLoading || !invoice ? (
