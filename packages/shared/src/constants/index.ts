@@ -110,3 +110,14 @@ export const INDIAN_STATES = {
   '37': 'Andhra Pradesh (New)',
   '38': 'Ladakh',
 } as const;
+
+// Group D1 (2026-06-11): sorted, de-duplicated list of state NAMES for the
+// state-dropdown UI on customer / distributor forms. INDIAN_STATES above is
+// keyed by 2-digit GST code (37 + 38 both alias "Andhra Pradesh" in
+// practice); we want the user-facing dropdown to show each name exactly
+// once, alphabetised. Daman & Diu / Dadra & Nagar Haveli were merged into
+// "Dadra & Nagar Haveli and Daman & Diu" in 2026; keeping both legacy names
+// in the dropdown so legacy GSTIN-lookup state values still find a match.
+export const INDIAN_STATE_NAMES: readonly string[] = Array.from(
+  new Set(Object.values(INDIAN_STATES) as readonly string[]),
+).sort((a, b) => a.localeCompare(b));

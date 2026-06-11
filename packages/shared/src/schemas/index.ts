@@ -22,6 +22,13 @@ const email = z.string().trim().toLowerCase().email();
 const gstin = z.string().regex(GSTIN_REGEX, 'Invalid GSTIN format').optional().or(z.literal(''));
 const positiveNumber = z.number().positive();
 const nonNegativeNumber = z.number().min(0);
+// Group D1 (2026-06-11): 6-digit Indian pincode helper. Addresses remain
+// optional everywhere they're already optional — blank passes; only a
+// non-empty value that isn't exactly six digits is rejected. Mobile already
+// enforces the same shape client-side (packages/mobile/src/screens/
+// CustomerForm.tsx:70); web was relying on `max(10)` which silently let
+// "5000" / "abc123" / "500034 " through.
+const pincode = z.string().regex(/^\d{6}$/, 'Pincode must be exactly 6 digits').optional().or(z.literal(''));
 
 // ─── Auth Schemas ────────────────────────────────────────────────────────────
 
@@ -142,12 +149,12 @@ export const createCustomerSchema = z.object({
   billingAddressLine2: z.string().max(500).optional(),
   billingCity: z.string().max(100).optional(),
   billingState: z.string().max(100).optional(),
-  billingPincode: z.string().max(10).optional(),
+  billingPincode: pincode,
   shippingAddressLine1: z.string().max(500).optional(),
   shippingAddressLine2: z.string().max(500).optional(),
   shippingCity: z.string().max(100).optional(),
   shippingState: z.string().max(100).optional(),
-  shippingPincode: z.string().max(10).optional(),
+  shippingPincode: pincode,
   creditPeriodDays: z.number().int().min(0).max(365).default(30),
   // Optional inward transport charge, ₹ per delivered cylinder (GST-inclusive). 0 = none.
   transportChargePerCylinder: z.number().min(0).max(100000).default(0),
@@ -454,7 +461,7 @@ export const createDistributorSchema = z.object({
   address: z.string().max(500).optional(),
   city: z.string().max(100).optional(),
   state: z.string().max(100).optional(),
-  pincode: z.string().max(10).optional(),
+  pincode: pincode,
   phone: phone.optional(),
   email: email.optional(),
   providerCodes: z.array(z.string()).optional(),
@@ -464,14 +471,14 @@ export const createDistributorSchema = z.object({
   godownAddress: z.string().max(500).optional(),
   godownCity: z.string().max(100).optional(),
   godownState: z.string().max(100).optional(),
-  godownPincode: z.string().max(10).optional(),
+  godownPincode: pincode,
   godownLatitude: z.number().optional(),
   godownLongitude: z.number().optional(),
   // Office address
   officeAddress: z.string().max(500).optional(),
   officeCity: z.string().max(100).optional(),
   officeState: z.string().max(100).optional(),
-  officePincode: z.string().max(10).optional(),
+  officePincode: pincode,
 });
 
 // Group A Step 6: gstMode is intentionally absent from updateDistributorSchema.

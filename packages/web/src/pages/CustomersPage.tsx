@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useFieldArray, type Resolver } from 'react-hook-form';
+import { useForm, useFieldArray, Controller, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -25,9 +25,10 @@ import {
   createCustomerSchema,
   type CreateCustomerInput,
   UserRole,
+  INDIAN_STATE_NAMES,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { Button, Input, Select, Combobox, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { useAuthStore, selectRole } from '@/stores/authStore';
 import { cn } from '@/lib/cn';
 
@@ -348,6 +349,45 @@ function CustomerFormModal({
   const contactFields = useFieldArray({ control, name: 'contacts' });
   const discountFields = useFieldArray({ control, name: 'cylinderDiscounts' });
 
+  // Group D1 (2026-06-11): state-name list for Combobox, memoised so the
+  // option array identity is stable across renders.
+  const stateOptions = useMemo(
+    () => INDIAN_STATE_NAMES.map((n: string) => ({ value: n, label: n })),
+    [],
+  );
+
+  // Group D1: "Shipping address same as billing address" toggle.
+  // Auto-enabled on edit when all 5 shipping fields are non-empty AND
+  // exactly equal to their billing counterparts. Default OFF on create
+  // (many commercial customers have different delivery addresses).
+  const detectSameAddress = (c: Customer | undefined): boolean => {
+    if (!c) return false;
+    const billing = [c.billingAddressLine1, c.billingAddressLine2, c.billingCity, c.billingState, c.billingPincode];
+    const shipping = [c.shippingAddressLine1, c.shippingAddressLine2, c.shippingCity, c.shippingState, c.shippingPincode];
+    // All non-empty and pairwise equal.
+    if (billing.some((v) => !v) || shipping.some((v) => !v)) return false;
+    return billing.every((v, i) => v === shipping[i]);
+  };
+  const [shippingSameAsBilling, setShippingSameAsBilling] = useState<boolean>(() => detectSameAddress(customer));
+
+  // When the toggle is ON, mirror billing → shipping for the 5 fields.
+  // We watch the billing values so a subsequent edit to billing propagates
+  // immediately while the toggle stays on.
+  const billingLine1 = watch('billingAddressLine1');
+  const billingLine2 = watch('billingAddressLine2');
+  const billingCity = watch('billingCity');
+  const billingStateValue = watch('billingState');
+  const billingPincodeValue = watch('billingPincode');
+  useEffect(() => {
+    if (!shippingSameAsBilling) return;
+    const opts = { shouldDirty: true } as const;
+    setValue('shippingAddressLine1', billingLine1 || '', opts);
+    setValue('shippingAddressLine2', billingLine2 || '', opts);
+    setValue('shippingCity', billingCity || '', opts);
+    setValue('shippingState', billingStateValue || '', opts);
+    setValue('shippingPincode', billingPincodeValue || '', opts);
+  }, [shippingSameAsBilling, billingLine1, billingLine2, billingCity, billingStateValue, billingPincodeValue, setValue]);
+
   // ─── WI-040: GSTIN autofill ─────────────────────────────────────────────
   // Click "Fetch Details" → call /distributors/gstin-lookup/:gstin → fill
   // business name + billing address fields. Phone is preserved (NIC data
@@ -561,20 +601,87 @@ function CustomerFormModal({
             <Input label="Address Line 1" {...register('billingAddressLine1')} />
             <Input label="Address Line 2" {...register('billingAddressLine2')} />
             <Input label="City" {...register('billingCity')} />
-            <Input label="State" {...register('billingState')} />
-            <Input label="Pincode" {...register('billingPincode')} />
+            <Controller
+              control={control}
+              name="billingState"
+              render={({ field }) => (
+                <Combobox
+                  label="State"
+                  options={stateOptions}
+                  value={field.value || ''}
+                  onChange={field.onChange}
+                  placeholder="Type to search…"
+                  error={errors.billingState?.message}
+                  strict
+                />
+              )}
+            />
+            <Input
+              label="Pincode"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="6 digits"
+              error={errors.billingPincode?.message}
+              {...register('billingPincode')}
+            />
           </div>
         </div>
 
         {/* Shipping Address */}
         <div>
-          <h3 className="text-sm font-semibold text-surface-900 dark:text-white mb-3">Shipping Address</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-surface-900 dark:text-white">Shipping Address</h3>
+            <label className="flex items-center gap-2 text-xs text-surface-600 dark:text-surface-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={shippingSameAsBilling}
+                onChange={(e) => setShippingSameAsBilling(e.target.checked)}
+                className="rounded border-surface-300 text-brand-600 focus:ring-brand-500"
+              />
+              Shipping address same as billing address
+            </label>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input label="Address Line 1" {...register('shippingAddressLine1')} />
-            <Input label="Address Line 2" {...register('shippingAddressLine2')} />
-            <Input label="City" {...register('shippingCity')} />
-            <Input label="State" {...register('shippingState')} />
-            <Input label="Pincode" {...register('shippingPincode')} />
+            <Input
+              label="Address Line 1"
+              disabled={shippingSameAsBilling}
+              {...register('shippingAddressLine1')}
+            />
+            <Input
+              label="Address Line 2"
+              disabled={shippingSameAsBilling}
+              {...register('shippingAddressLine2')}
+            />
+            <Input
+              label="City"
+              disabled={shippingSameAsBilling}
+              {...register('shippingCity')}
+            />
+            <Controller
+              control={control}
+              name="shippingState"
+              render={({ field }) => (
+                <Combobox
+                  label="State"
+                  options={stateOptions}
+                  value={field.value || ''}
+                  onChange={field.onChange}
+                  placeholder="Type to search…"
+                  error={errors.shippingState?.message}
+                  disabled={shippingSameAsBilling}
+                  strict
+                />
+              )}
+            />
+            <Input
+              label="Pincode"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="6 digits"
+              disabled={shippingSameAsBilling}
+              error={errors.shippingPincode?.message}
+              {...register('shippingPincode')}
+            />
           </div>
         </div>
 

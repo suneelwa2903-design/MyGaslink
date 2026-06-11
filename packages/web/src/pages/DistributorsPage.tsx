@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
@@ -18,9 +18,10 @@ import {
   createDistributorSchema,
   updateDistributorSchema,
   type UpdateDistributorInput,
+  INDIAN_STATE_NAMES,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { Button, Input, Select, Combobox, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 
 const PROVIDER_CODES = ['IOCL', 'HPCL', 'BPCL', 'GOGAS', 'SUPERGAS', 'TOTALGAS', 'OTHERS'] as const;
 
@@ -197,7 +198,7 @@ function DistributorFormModal({
   const [officeSameAsRegistered, setOfficeSameAsRegistered] = useState(false);
   const [selectedProviders, setSelectedProviders] = useState<string[]>(distributor?.providerCodes || []);
 
-  const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<UpdateDistributorInput>({
+  const { register, handleSubmit, setValue, watch, control, formState: { errors } } = useForm<UpdateDistributorInput>({
     resolver: zodResolver(isEdit ? updateDistributorSchema : createDistributorSchema),
     defaultValues: distributor
       ? {
@@ -237,6 +238,12 @@ function DistributorFormModal({
   const regCity = watch('city');
   const regState = watch('state');
   const regPincode = watch('pincode');
+
+  // Group D1 (2026-06-11): memoised state-options for the Combobox.
+  const stateOptions = useMemo(
+    () => INDIAN_STATE_NAMES.map((n: string) => ({ value: n, label: n })),
+    [],
+  );
 
   const gstinLookup = useMutation({
     mutationFn: (gstin: string) =>
@@ -436,8 +443,30 @@ function DistributorFormModal({
               <Input label="Address" error={errors.address?.message} {...register('address')} />
             </div>
             <Input label="City" error={errors.city?.message} {...register('city')} />
-            <Input label="State" error={errors.state?.message} {...register('state')} readOnly={!!gstinLookupData} />
-            <Input label="Pincode" error={errors.pincode?.message} {...register('pincode')} />
+            <Controller
+              control={control}
+              name="state"
+              render={({ field }) => (
+                <Combobox
+                  label="State"
+                  options={stateOptions}
+                  value={field.value || ''}
+                  onChange={field.onChange}
+                  placeholder="Type to search…"
+                  error={errors.state?.message}
+                  disabled={!!gstinLookupData}
+                  strict
+                />
+              )}
+            />
+            <Input
+              label="Pincode"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="6 digits"
+              error={errors.pincode?.message}
+              {...register('pincode')}
+            />
           </div>
         </div>
 
@@ -466,8 +495,31 @@ function DistributorFormModal({
               />
             </div>
             <Input label="City" {...register('godownCity')} disabled={godownSameAsRegistered} />
-            <Input label="State" {...register('godownState')} disabled={godownSameAsRegistered} />
-            <Input label="Pincode" {...register('godownPincode')} disabled={godownSameAsRegistered} />
+            <Controller
+              control={control}
+              name="godownState"
+              render={({ field }) => (
+                <Combobox
+                  label="State"
+                  options={stateOptions}
+                  value={field.value || ''}
+                  onChange={field.onChange}
+                  placeholder="Type to search…"
+                  error={errors.godownState?.message}
+                  disabled={godownSameAsRegistered}
+                  strict
+                />
+              )}
+            />
+            <Input
+              label="Pincode"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="6 digits"
+              error={errors.godownPincode?.message}
+              {...register('godownPincode')}
+              disabled={godownSameAsRegistered}
+            />
             <div className="flex items-end">
               <Button
                 type="button"
@@ -508,8 +560,31 @@ function DistributorFormModal({
               />
             </div>
             <Input label="City" {...register('officeCity')} disabled={officeSameAsRegistered} />
-            <Input label="State" {...register('officeState')} disabled={officeSameAsRegistered} />
-            <Input label="Pincode" {...register('officePincode')} disabled={officeSameAsRegistered} />
+            <Controller
+              control={control}
+              name="officeState"
+              render={({ field }) => (
+                <Combobox
+                  label="State"
+                  options={stateOptions}
+                  value={field.value || ''}
+                  onChange={field.onChange}
+                  placeholder="Type to search…"
+                  error={errors.officeState?.message}
+                  disabled={officeSameAsRegistered}
+                  strict
+                />
+              )}
+            />
+            <Input
+              label="Pincode"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="6 digits"
+              error={errors.officePincode?.message}
+              {...register('officePincode')}
+              disabled={officeSameAsRegistered}
+            />
           </div>
         </div>
 
