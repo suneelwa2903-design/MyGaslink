@@ -1,7 +1,11 @@
 import { prisma } from '../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 import type { $Enums } from '@prisma/client';
-import { GSTIN_REGEX } from '@gaslink/shared';
+import { GSTIN_REGEX, INDIAN_STATE_NAMES } from '@gaslink/shared';
+
+// Group D2 (2026-06-11): case-insensitive lookup so a CSV value like
+// "telangana" or "TELANGANA" matches "Telangana" without a warning.
+const STATE_NAMES_LOWER = new Set(INDIAN_STATE_NAMES.map((s) => s.toLowerCase()));
 
 /** Loosely-validated customer update payload (validation runs in the route's Zod schema). */
 interface CustomerUpdateData {
@@ -504,6 +508,16 @@ export type CustomerImportRow = {
   city?: string;
   state?: string;
   pincode?: string;
+  // Group D2 (2026-06-11): optional shipping address columns. Absent →
+  // delivery uses the billing address. Present → customer ships to a
+  // separate location (chain stores, commercial sites with central
+  // billing). No auto-parse fallback: shipping needs an EXPLICIT signal
+  // because the legacy `address` field is interpreted as billing-only.
+  shippingLine1?: string;
+  shippingLine2?: string;
+  shippingCity?: string;
+  shippingState?: string;
+  shippingPincode?: string;
   gstin?: string;
   email?: string;
   creditPeriodDays?: number;
@@ -518,6 +532,10 @@ export type CustomerImportResult = {
   created: number;
   updated: number;
   failures: Array<{ row: number; name?: string; phone?: string; reason: string }>;
+  // Group D2 (2026-06-11): soft warnings — the row WAS imported, but
+  // something is worth surfacing to the operator. State-name doesn't
+  // match the INDIAN_STATE_NAMES list, etc. Empty when nothing flagged.
+  warnings: Array<{ row: number; name?: string; message: string }>;
 };
 
 /**
@@ -634,6 +652,7 @@ export async function importCustomers(
   rows: CustomerImportRow[],
 ): Promise<CustomerImportResult> {
   const failures: CustomerImportResult['failures'] = [];
+  const warnings: CustomerImportResult['warnings'] = [];
   let created = 0;
   let updated = 0;
 
@@ -676,6 +695,36 @@ export async function importCustomers(
         billingLine1 = r.address.trim();
       }
 
+      // Group D2 (2026-06-11): shipping address columns. No auto-parse
+      // fallback — only the explicit shipping_* columns populate these
+      // fields. Blank → leave NULL (delivery flows still fall back to
+      // billing through their own logic).
+      const shippingLine1 = r.shippingLine1?.trim() || null;
+      const shippingLine2 = r.shippingLine2?.trim() || null;
+      const shippingCity = r.shippingCity?.trim() || null;
+      const shippingState = r.shippingState?.trim() || null;
+      const shippingPincode = r.shippingPincode?.trim() || null;
+
+      // Group D2 (2026-06-11): state-name validation. Stores as-is
+      // regardless (content is never silently dropped) but pushes a
+      // warning so the operator can see which rows look misspelt or
+      // outside the 37-state list. Case-insensitive match — "telangana"
+      // and "TELANGANA" both pass.
+      if (billingState && !STATE_NAMES_LOWER.has(billingState.toLowerCase())) {
+        warnings.push({
+          row: rowNum,
+          name: r.name,
+          message: `billing state "${billingState}" is not in the standard 37-state list — stored as-is`,
+        });
+      }
+      if (shippingState && !STATE_NAMES_LOWER.has(shippingState.toLowerCase())) {
+        warnings.push({
+          row: rowNum,
+          name: r.name,
+          message: `shipping state "${shippingState}" is not in the standard 37-state list — stored as-is`,
+        });
+      }
+
       // Upsert: try phone first (most stable identifier), then name fallback.
       let existing = await prisma.customer.findFirst({
         where: { distributorId, phone: normalisedPhone, deletedAt: null },
@@ -716,6 +765,13 @@ export async function importCustomers(
         if (billingCity) data.billingCity = billingCity;
         if (billingState) data.billingState = billingState;
         if (billingPincode) data.billingPincode = billingPincode;
+        // Group D2 (2026-06-11): only overwrite shipping fields when the
+        // CSV provided a non-empty value (same rule as billing).
+        if (shippingLine1) data.shippingAddressLine1 = shippingLine1;
+        if (shippingLine2) data.shippingAddressLine2 = shippingLine2;
+        if (shippingCity) data.shippingCity = shippingCity;
+        if (shippingState) data.shippingState = shippingState;
+        if (shippingPincode) data.shippingPincode = shippingPincode;
         await prisma.customer.update({ where: { id: existing.id }, data });
         updated += 1;
       } else {
@@ -733,6 +789,11 @@ export async function importCustomers(
             billingCity,
             billingState,
             billingPincode,
+            shippingAddressLine1: shippingLine1,
+            shippingAddressLine2: shippingLine2,
+            shippingCity,
+            shippingState,
+            shippingPincode,
             creditPeriodDays: typeof r.creditPeriodDays === 'number' ? r.creditPeriodDays : 0,
             transportChargePerCylinder: typeof r.transportChargePerCylinder === 'number'
               ? r.transportChargePerCylinder
@@ -747,7 +808,7 @@ export async function importCustomers(
     }
   }
 
-  return { imported: created + updated, created, updated, failures };
+  return { imported: created + updated, created, updated, failures, warnings };
 }
 
 // ─── CSV import: empty-cylinder opening balances (Group 4) ────────────────

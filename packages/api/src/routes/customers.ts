@@ -47,6 +47,14 @@ const customerImportRowSchema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   pincode: z.string().optional(),
+  // Group D2 (2026-06-11): optional shipping address columns. Absent →
+  // delivery uses the billing address. Present → customer ships to a
+  // separate location.
+  shippingLine1: z.string().optional(),
+  shippingLine2: z.string().optional(),
+  shippingCity: z.string().optional(),
+  shippingState: z.string().optional(),
+  shippingPincode: z.string().optional(),
   gstin: z.string().optional(),
   email: z.string().optional(),
   creditPeriodDays: z.number().int().min(0).optional(),

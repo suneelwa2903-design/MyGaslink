@@ -45,10 +45,14 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
 // transport charge. Single-column `address` is still accepted (back-compat)
 // and is auto-parsed into pincode/state/line1 by the importer.
 // Opening-balance template adds `phone` (fallback lookup) and `as_of_date`.
+// Group D2 (2026-06-11): shipping address columns added. Optional —
+// when shipping_* are absent, billing values are still used for delivery
+// flows; when present, the customer ships to a separate location (common
+// for chain stores / commercial customers with a central billing office).
 const CUSTOMER_TEMPLATE =
-  'name,phone,business_name,address,line1,line2,city,state,pincode,gstin,email,credit_period_days,customer_type,transport_charge\n' +
-  'Royal Kitchen Restaurant,9876543210,Royal Kitchen Pvt Ltd,,123 Main Street,,Hyderabad,Telangana,500001,36AABCU9603R1ZX,royal@example.com,30,commercial,15\n' +
-  'Green Valley Home,9876543211,,"456 Colony Road, Hyderabad, Telangana, 500032",,,,,,,,0,domestic,\n';
+  'name,phone,business_name,address,line1,line2,city,state,pincode,shipping_line1,shipping_line2,shipping_city,shipping_state,shipping_pincode,gstin,email,credit_period_days,customer_type,transport_charge\n' +
+  'Royal Kitchen Restaurant,9876543210,Royal Kitchen Pvt Ltd,,123 Main Street,,Hyderabad,Telangana,500001,,,,,,36AABCU9603R1ZX,royal@example.com,30,commercial,15\n' +
+  'Green Valley Home,9876543211,,"456 Colony Road, Hyderabad, Telangana, 500032",,,,,,,,,,,,,0,domestic,\n';
 const OPENING_BAL_TEMPLATE =
   'customer_name,phone,opening_balance,as_of_date,notes\n' +
   'Royal Kitchen Restaurant,9876543210,15000,2026-05-31,Outstanding as of paper register\n' +
@@ -169,7 +173,7 @@ export function OnboardingTab() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="p-4 rounded-xl border border-surface-200 dark:border-surface-700">
             <p className="font-medium text-surface-900 dark:text-white">Import customers</p>
-            <p className="text-xs text-surface-500 mt-1">CSV with columns: name, phone, address, gstin, credit_period_days, customer_type</p>
+            <p className="text-xs text-surface-500 mt-1">CSV: name, phone, address (auto-parsed) or line1/city/state/pincode, optional shipping_*, business_name, gstin, email, credit_period_days, customer_type</p>
             <div className="flex gap-2 mt-3">
               <Button variant="ghost" size="sm" onClick={() => downloadCsv('customers-template.csv', CUSTOMER_TEMPLATE)}>Download template</Button>
               <Button size="sm" onClick={() => setImporter('customers')}>Upload CSV</Button>
@@ -383,6 +387,8 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
     name: string; phone: string;
     businessName?: string;
     address?: string; line1?: string; line2?: string; city?: string; state?: string; pincode?: string;
+    // Group D2 (2026-06-11): optional shipping address columns.
+    shippingLine1?: string; shippingLine2?: string; shippingCity?: string; shippingState?: string; shippingPincode?: string;
     gstin?: string; email?: string; creditPeriodDays?: number; customerType?: string;
     transportChargePerCylinder?: number;
   };
@@ -400,6 +406,11 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
       city: r.city || undefined,
       state: r.state || undefined,
       pincode: r.pincode || undefined,
+      shippingLine1: r.shipping_line1 || undefined,
+      shippingLine2: r.shipping_line2 || undefined,
+      shippingCity: r.shipping_city || undefined,
+      shippingState: r.shipping_state || undefined,
+      shippingPincode: r.shipping_pincode || undefined,
       gstin: r.gstin || undefined,
       email: r.email || undefined,
       creditPeriodDays: credit ? Number(credit) : undefined,
@@ -408,20 +419,28 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
     };
   });
 
+  const [importWarnings, setImportWarnings] = useState<Array<{ row: number; name?: string; message: string }>>([]);
   const submit = useMutation({
     mutationFn: () =>
       apiPost<{
         imported: number; created: number; updated: number;
         failures: { row: number; reason: string }[];
+        // Group D2 (2026-06-11): soft warnings (row imported but
+        // something worth flagging — non-standard state, future E1
+        // duplicate-GSTIN signal, etc.).
+        warnings: { row: number; name?: string; message: string }[];
       }>('/customers/import-csv', { rows: csv.rows }),
     onSuccess: (r) => {
       const parts: string[] = [];
       if (r.created > 0) parts.push(`${r.created} created`);
       if (r.updated > 0) parts.push(`${r.updated} updated`);
       if (r.failures.length > 0) parts.push(`${r.failures.length} failed`);
+      if (r.warnings && r.warnings.length > 0) parts.push(`${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'}`);
       const msg = parts.join(' · ') || 'Nothing imported';
       if (r.failures.length > 0) toast(msg, { icon: '⚠️' });
+      else if (r.warnings && r.warnings.length > 0) toast(msg, { icon: '⚠️' });
       else toast.success(msg);
+      setImportWarnings(r.warnings || []);
     },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
@@ -443,9 +462,18 @@ function CustomerImportModal({ onClose }: { onClose: () => void }) {
         <p className="text-xs text-surface-500 dark:text-surface-400">
           Required: <code>name</code>, <code>phone</code>. Optional address can be a single <code>address</code>
           column (auto-parsed into pincode/state/line1) OR separate <code>line1</code>/<code>city</code>/<code>state</code>/<code>pincode</code> columns.
+          Optional shipping override (chain stores / commercial sites): <code>shipping_line1</code>/<code>shipping_line2</code>/<code>shipping_city</code>/<code>shipping_state</code>/<code>shipping_pincode</code>.
           Other optional: <code>business_name</code>, <code>gstin</code>, <code>email</code>, <code>credit_period_days</code>, <code>customer_type</code>, <code>transport_charge</code>.
           Re-running the same file UPDATES matched customers without overwriting fields you left blank.
         </p>
+        {importWarnings.length > 0 && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200 space-y-1 max-h-40 overflow-auto">
+            <p className="font-semibold">{importWarnings.length} row warning{importWarnings.length === 1 ? '' : 's'} — imported, please review:</p>
+            {importWarnings.map((w, i) => (
+              <p key={i}>Row {w.row}{w.name ? ` (${w.name})` : ''}: {w.message}</p>
+            ))}
+          </div>
+        )}
         {csv.fileName && (
           <p className="text-xs text-surface-500">{csv.fileName} · {csv.rows.length} valid row{csv.rows.length === 1 ? '' : 's'} of {csv.rawCount}</p>
         )}
