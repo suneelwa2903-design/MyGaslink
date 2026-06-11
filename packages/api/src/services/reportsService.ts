@@ -289,30 +289,80 @@ export async function inventoryMovement(distributorId: string, f: ReportFilters)
 }
 
 // ─── Report 6 — Customer Statement ───────────────────────────────────────────
+//
+// Fix D (2026-06-11): mirrors the PDF behaviour from G1 fixup. Always
+// emit an explicit "Opening Balance b/f" row at the top whenever there
+// is non-zero pre-range debt OR any opening-balance invoice exists for
+// the customer (regardless of when it was imported). OB entries that
+// happen to fall inside [from, to] are FOLDED into the b/f row instead
+// of appearing as confusing `invoice_entry` rows — the same fold pattern
+// keeps the report aligned with the PDF and the in-app modal.
 export async function customerStatement(distributorId: string, f: ReportFilters): Promise<ReportResult> {
   if (!f.customerId) throw Object.assign(new Error('customerId is required for the Customer Statement report'), { statusCode: 400 });
   const { from, to } = range(f);
-  const entries = await prisma.customerLedgerEntry.findMany({
-    where: { distributorId, customerId: f.customerId, entryDate: { gte: from, lte: to } },
+
+  // All ledger entries for the customer (entire history, not just range)
+  // so we can fold every OB entry into the b/f row irrespective of date.
+  const allEntries = await prisma.customerLedgerEntry.findMany({
+    where: { distributorId, customerId: f.customerId },
     orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
   });
-  // Opening balance = sum of amountDelta before `from`
-  const prior = await prisma.customerLedgerEntry.aggregate({
-    where: { distributorId, customerId: f.customerId, entryDate: { lt: from } },
-    _sum: { amountDelta: true },
-  });
-  let running = num(prior._sum.amountDelta);
-  const rows = entries.map((e) => {
+
+  // Preload referenced invoices once to identify OB entries cheaply.
+  const invoiceIds = Array.from(
+    new Set(allEntries.map((e) => e.invoiceId).filter((x): x is string => !!x)),
+  );
+  const obIds = invoiceIds.length === 0
+    ? new Set<string>()
+    : new Set(
+        (await prisma.invoice.findMany({
+          where: { id: { in: invoiceIds }, isOpeningBalance: true },
+          select: { id: true },
+        })).map((i) => i.id),
+      );
+
+  // Carry-forward = pre-range entries + every OB entry (even if in-range).
+  let carryForward = 0;
+  for (const e of allEntries) {
+    const isOB = !!(e.invoiceId && obIds.has(e.invoiceId));
+    if (isOB || e.entryDate < from) carryForward += num(e.amountDelta);
+  }
+
+  const rows: Array<{
+    date: string; type: string; narration: string;
+    debit: number | string; credit: number | string; balance: number;
+  }> = [];
+
+  if (Math.abs(carryForward) > 0.005) {
+    // b/f date = `from − 1 day` so the reader sees it pre-period.
+    const bfDate = new Date(from.getTime() - 86400000);
+    rows.push({
+      date: dayKey(bfDate),
+      type: 'opening',
+      narration: 'Opening Balance b/f',
+      debit: carryForward > 0 ? +carryForward.toFixed(2) : 0,
+      credit: carryForward < 0 ? +(-carryForward).toFixed(2) : 0,
+      balance: +carryForward.toFixed(2),
+    });
+  }
+
+  let running = carryForward;
+  for (const e of allEntries) {
+    const inRange = e.entryDate >= from && e.entryDate <= to;
+    if (!inRange) continue;
+    const isOB = !!(e.invoiceId && obIds.has(e.invoiceId));
+    if (isOB) continue; // already folded into b/f above
     running += num(e.amountDelta);
-    return {
+    rows.push({
       date: dayKey(new Date(e.entryDate)),
       type: e.entryType.replace(/_entry$/, ''),
       narration: e.narration ?? '',
       debit: num(e.amountDelta) > 0 ? num(e.amountDelta) : 0,
       credit: num(e.amountDelta) < 0 ? -num(e.amountDelta) : 0,
       balance: +running.toFixed(2),
-    };
-  });
+    });
+  }
+
   return {
     columns: [
       { key: 'date', label: 'Date' }, { key: 'type', label: 'Type' }, { key: 'narration', label: 'Narration' },
