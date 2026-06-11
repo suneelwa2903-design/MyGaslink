@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Button, Loader, Modal } from '@/components/ui';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
+import { cn } from '@/lib/cn';
 
 type Step = { key: string; label: string; done: boolean; optional?: boolean; link: string };
 type Progress = { steps: Step[]; requiredDoneCount: number; requiredTotal: number; show: boolean };
@@ -107,12 +108,10 @@ export function OnboardingTab() {
         </div>
         <div className="space-y-2">
           {progress.steps.map((s, i) => {
-            // Steps that have a dedicated modal on this very tab open it
-            // directly instead of navigating — otherwise the step's link
-            // ('/app/settings?tab=onboarding') just reloads this same page
-            // and the click feels dead.
-            const isStock = s.key === 'opening_stock';
-            const isOpeningBalances = s.key === 'opening_balances';
+            // Fix E (2026-06-11): every step has an actionable destination.
+            // Steps with a dedicated modal on this very tab open it directly.
+            // The super-admin-only `go_live_date` step shows a non-clickable
+            // tooltip instead of a dead navigation.
             const inner = (
               <>
                 <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${s.done ? 'bg-accent-500 text-white' : 'bg-surface-200 dark:bg-surface-700 text-surface-500'}`}>
@@ -125,13 +124,42 @@ export function OnboardingTab() {
               </>
             );
             const className = 'flex items-center gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 hover:bg-surface-100 dark:hover:bg-surface-700/50 transition-colors text-left w-full';
-            if (isStock) {
+
+            // Modal-on-this-tab steps
+            if (s.key === 'opening_stock') {
               return <button key={s.key} type="button" onClick={() => setOpeningStockOpen(true)} className={className}>{inner}</button>;
             }
-            if (isOpeningBalances) {
+            if (s.key === 'opening_balances') {
               return <button key={s.key} type="button" onClick={() => setImporter('opening-balances')} className={className}>{inner}</button>;
             }
-            return <a key={s.key} href={s.link} className={className}>{inner}</a>;
+            if (s.key === 'opening_empties') {
+              return <button key={s.key} type="button" onClick={() => setImporter('empty-balances')} className={className}>{inner}</button>;
+            }
+
+            // Super-admin-only: clicking does nothing actionable for KN —
+            // show a tooltip and DO NOT navigate.
+            if (s.key === 'go_live_date') {
+              return (
+                <div
+                  key={s.key}
+                  className={cn(className, 'cursor-default')}
+                  title="Contact your platform administrator (mygaslink.com support) to set your go-live date."
+                >
+                  {inner}
+                </div>
+              );
+            }
+
+            // Smart link overrides for steps where the backend's single
+            // `link` field doesn't cover both failure shapes (e.g. types
+            // exist but prices don't; drivers exist but logins don't).
+            let href = s.link;
+            if (s.key === 'cylinder_types') href = '/app/settings?tab=prices';
+            if (s.key === 'drivers') href = '/app/users';
+            if (s.key === 'doc_code' || s.key === 'godown_address') href = '/app/settings?tab=general';
+            if (s.key === 'test_order') href = '/app/orders';
+
+            return <a key={s.key} href={href} className={className}>{inner}</a>;
           })}
         </div>
       </div>
