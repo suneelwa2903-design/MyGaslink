@@ -38,6 +38,14 @@ type ListUsersFilters = {
   sortDir?: 'asc' | 'desc';
   /** When true, include customer + driver roles in the default response. */
   includePortal?: boolean;
+  /**
+   * Group L1 (2026-06-11): explicit tenant scope. Super-admin can pass a
+   * distributorId here to filter the Users list to a single tenant
+   * WITHOUT touching the global X-Distributor-Id selector. Ignored for
+   * non-super_admin callers (their list is always scoped to their own
+   * distributor via the caller's JWT).
+   */
+  distributorIdFilter?: string;
 };
 
 export async function listUsers(
@@ -48,6 +56,10 @@ export async function listUsers(
   const where: Prisma.UserWhereInput = { deletedAt: null };
   if (role !== 'super_admin' && distributorId) {
     where.distributorId = distributorId;
+  } else if (role === 'super_admin' && filters.distributorIdFilter) {
+    // Group L1 (2026-06-11): super-admin opt-in scope, independent of
+    // the global tenant selector.
+    where.distributorId = filters.distributorIdFilter;
   }
 
   // Role: explicit filter wins; otherwise default-hide ONLY customer-role
@@ -101,7 +113,15 @@ export async function listUsers(
       break;
   }
 
-  return prisma.user.findMany({ where, select: userSelect, orderBy });
+  // Group L1 (2026-06-11): include the distributor's businessName so the
+  // super-admin Users table can render a per-row "Distributor" column
+  // even when the list is unscoped (cross-tenant). One extra column on
+  // the join, no extra round-trip.
+  return prisma.user.findMany({
+    where,
+    select: { ...userSelect, distributor: { select: { id: true, businessName: true } } },
+    orderBy,
+  });
 }
 
 export async function getUserById(id: string, distributorId?: string) {

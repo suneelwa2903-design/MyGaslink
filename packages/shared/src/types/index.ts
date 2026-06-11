@@ -88,6 +88,10 @@ export interface User {
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // Group L1 (2026-06-11): nested distributor record when the API
+  // includes it (super-admin Users list). Optional so non-list responses
+  // (e.g. /auth/me, single-user GET) don't break.
+  distributor?: { id: string; businessName: string } | null;
 }
 
 export interface CreateUserRequest {

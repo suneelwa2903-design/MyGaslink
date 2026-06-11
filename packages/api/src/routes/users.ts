@@ -49,6 +49,10 @@ router.get('/', requireRole('super_admin', 'distributor_admin'), async (req, res
       sortBy: q.sortBy as 'name' | 'email' | 'createdAt' | 'lastLoginAt' | undefined,
       sortDir: q.sortDir === 'asc' ? 'asc' : q.sortDir === 'desc' ? 'desc' : undefined,
       includePortal: q.includePortal === 'true' || q.includePortal === '1',
+      // Group L1 (2026-06-11): super-admin only. Filters the list to a
+      // single tenant without touching the global selector. The service
+      // ignores it for non-super_admin callers.
+      distributorIdFilter: q.distributorId,
     });
     return sendSuccess(res, { users: mapUsers(users) });
   } catch (err) {

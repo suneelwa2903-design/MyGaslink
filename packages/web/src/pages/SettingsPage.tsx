@@ -1043,6 +1043,8 @@ type UserSortBy = 'name' | 'email' | 'createdAt' | 'lastLoginAt';
 
 function UsersTab() {
   const queryClient = useQueryClient();
+  const { user: currentUser } = useAuthStore();
+  const isSuperAdmin = currentUser?.role === UserRole.SUPER_ADMIN;
   const [formOpen, setFormOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   // Group B Part 4 — filter / search / sort state. Staff-only by default;
@@ -1053,6 +1055,20 @@ function UsersTab() {
   const [sortBy, setSortBy] = useState<UserSortBy>('createdAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [includePortal, setIncludePortal] = useState(false);
+  // Group L1 (2026-06-11): super-admin only — scope the Users list to one
+  // distributor without changing the global X-Distributor-Id selector.
+  // Empty string means "all tenants" (the prior cross-tenant behavior).
+  const [distributorFilter, setDistributorFilter] = useState<string>('');
+
+  // Load distributors for the filter dropdown. Super-admin only — keeps
+  // the round-trip out of every other role's session.
+  const { data: distributors } = useQuery({
+    queryKey: ['distributors-for-users-filter'],
+    queryFn: () => apiGet<{ distributors: Array<{ distributorId: string; businessName: string }> }>('/distributors'),
+    select: (d) => d.distributors,
+    enabled: isSuperAdmin,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const queryParams = {
     role: roleFilter || undefined,
@@ -1061,6 +1077,8 @@ function UsersTab() {
     sortBy,
     sortDir,
     includePortal: includePortal ? 'true' : undefined,
+    // Group L1: only super-admin can scope. Server ignores it for others.
+    distributorId: isSuperAdmin && distributorFilter ? distributorFilter : undefined,
   };
 
   const { data: users, isLoading } = useQuery({
@@ -1135,6 +1153,18 @@ function UsersTab() {
           />
           Show customer portal logins
         </label>
+        {isSuperAdmin && (
+          <div className="w-56">
+            <Select
+              options={[
+                { value: '', label: 'All distributors' },
+                ...((distributors ?? []).map((d) => ({ value: d.distributorId, label: d.businessName }))),
+              ]}
+              value={distributorFilter}
+              onChange={(e) => setDistributorFilter((e.target as HTMLSelectElement).value)}
+            />
+          </div>
+        )}
         <Button onClick={() => { setEditUser(null); setFormOpen(true); }}>
           <HiOutlinePlus className="h-4 w-4" />Add User
         </Button>
@@ -1163,6 +1193,7 @@ function UsersTab() {
                   </button>
                 </th>
                 <th>Phone</th>
+                {isSuperAdmin && <th>Distributor</th>}
                 <th>Role</th>
                 <th>Status</th>
                 <th>
@@ -1184,6 +1215,11 @@ function UsersTab() {
                   <td className="font-medium text-surface-900 dark:text-white">{user.firstName} {user.lastName}</td>
                   <td>{user.email}</td>
                   <td>{user.phone || <span className="text-surface-400">—</span>}</td>
+                  {isSuperAdmin && (
+                    <td className="text-sm text-surface-600 dark:text-surface-400">
+                      {user.distributor?.businessName ?? <span className="text-surface-400">—</span>}
+                    </td>
+                  )}
                   <td><Badge variant="info">{user.role.replace(/_/g, ' ')}</Badge></td>
                   <td><Badge variant={user.status === 'active' ? 'success' : 'neutral'}>{user.status}</Badge></td>
                   <td className="text-sm text-surface-600 dark:text-surface-400">
