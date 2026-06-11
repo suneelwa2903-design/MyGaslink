@@ -395,10 +395,50 @@ export async function resumeSupply(customerId: string, distributorId: string, pe
   });
 }
 
+/**
+ * Group 4 (2026-06-11): setupCustomerBalance now requires `distributorId`
+ * and verifies the target customer belongs to the caller's tenant before
+ * touching any row. Empirically confirmed in K7 validation:
+ *
+ *   POST /api/customers/:id/balance-setup
+ *
+ * with a dist-001 admin token and a dist-002 customer id returned 200 and
+ * wrote the row. CVSS-medium IDOR. Fix: tenant-scoped existence check on
+ * Customer, return a structured CrossTenantError so the route can map to
+ * 403 with CROSS_TENANT_ACCESS instead of leaking via 404.
+ */
+export class CrossTenantError extends Error {
+  constructor(message = 'Customer does not belong to this distributor') {
+    super(message);
+    this.name = 'CrossTenantError';
+  }
+}
+
 export async function setupCustomerBalance(
   customerId: string,
+  distributorId: string,
   balances: { cylinderTypeId: string; withCustomerQty: number; pendingReturns: number }[]
 ) {
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, distributorId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!customer) throw new CrossTenantError();
+
+  // Also pin: every cylinderTypeId in the payload must belong to the
+  // same distributor — otherwise a dist-001 admin could attach a
+  // dist-002 type's id to one of their own customers.
+  if (balances.length > 0) {
+    const typeIds = Array.from(new Set(balances.map((b) => b.cylinderTypeId)));
+    const types = await prisma.cylinderType.findMany({
+      where: { id: { in: typeIds }, distributorId },
+      select: { id: true },
+    });
+    if (types.length !== typeIds.length) {
+      throw new CrossTenantError('One or more cylinder types do not belong to this distributor');
+    }
+  }
+
   return prisma.$transaction(async (tx) => {
     for (const b of balances) {
       await tx.customerInventoryBalance.upsert({
@@ -415,7 +455,9 @@ export async function setupCustomerBalance(
         },
       });
     }
-    return prisma.customerInventoryBalance.findMany({
+    // Read via `tx` so the just-upserted rows are visible. The old code
+    // used the outer `prisma` client and silently returned pre-tx state.
+    return tx.customerInventoryBalance.findMany({
       where: { customerId },
       include: { cylinderType: { select: { typeName: true } } },
     });
@@ -701,6 +743,114 @@ export async function importCustomers(
   }
 
   return { imported: created + updated, created, updated, failures };
+}
+
+// ─── CSV import: empty-cylinder opening balances (Group 4) ────────────────
+
+export type EmptyBalanceImportRow = {
+  customerName?: string;
+  phone?: string;
+  cylinderType: string;
+  emptyQuantity: number;
+};
+
+export type EmptyBalanceImportResult = {
+  imported: number;
+  updated: number;
+  failures: Array<{ row: number; name?: string; reason: string }>;
+};
+
+/**
+ * Group 4 (2026-06-11): bulk-import per-customer opening empty cylinder
+ * counts so a paper distributor like Vanasthali can seed "who holds how
+ * many empties" before going live. Looks up customer by name (case-
+ * insensitive) then phone fallback, looks up cylinder type by exact
+ * typeName for the distributor, then upserts CustomerInventoryBalance.
+ * Idempotent: re-running the same CSV updates in place.
+ */
+export async function importEmptyBalances(
+  distributorId: string,
+  rows: EmptyBalanceImportRow[],
+): Promise<EmptyBalanceImportResult> {
+  const failures: EmptyBalanceImportResult['failures'] = [];
+  let imported = 0;
+  let updated = 0;
+
+  // Preload distributor's cylinder types by typeName for fast lookup.
+  const types = await prisma.cylinderType.findMany({
+    where: { distributorId, isActive: true },
+    select: { id: true, typeName: true },
+  });
+  const typeByName = new Map(types.map((t) => [t.typeName.toLowerCase(), t.id]));
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rowNum = i + 1;
+    const qty = Math.floor(Number(r.emptyQuantity));
+
+    if (!r.cylinderType?.trim()) {
+      failures.push({ row: rowNum, name: r.customerName, reason: 'cylinder_type is required' });
+      continue;
+    }
+    if (!Number.isFinite(qty) || qty < 0) {
+      failures.push({ row: rowNum, name: r.customerName, reason: 'empty_quantity must be a non-negative integer' });
+      continue;
+    }
+
+    const cylinderTypeId = typeByName.get(r.cylinderType.trim().toLowerCase());
+    if (!cylinderTypeId) {
+      failures.push({
+        row: rowNum, name: r.customerName,
+        reason: `cylinder type "${r.cylinderType}" not found for this distributor`,
+      });
+      continue;
+    }
+
+    let customer: { id: string } | null = null;
+    if (r.customerName?.trim()) {
+      customer = await prisma.customer.findFirst({
+        where: {
+          distributorId, deletedAt: null,
+          customerName: { equals: r.customerName.trim(), mode: 'insensitive' },
+        },
+        select: { id: true },
+      });
+    }
+    if (!customer && r.phone) {
+      const phone = normalisePhone(r.phone);
+      if (phone) {
+        customer = await prisma.customer.findFirst({
+          where: { distributorId, deletedAt: null, phone },
+          select: { id: true },
+        });
+      }
+    }
+    if (!customer) {
+      failures.push({ row: rowNum, name: r.customerName, reason: 'customer not found by name or phone' });
+      continue;
+    }
+
+    try {
+      const existing = await prisma.customerInventoryBalance.findUnique({
+        where: { customerId_cylinderTypeId: { customerId: customer.id, cylinderTypeId } },
+        select: { id: true },
+      });
+      await prisma.customerInventoryBalance.upsert({
+        where: { customerId_cylinderTypeId: { customerId: customer.id, cylinderTypeId } },
+        create: {
+          customerId: customer.id, cylinderTypeId,
+          withCustomerQty: qty, pendingReturns: 0,
+        },
+        update: { withCustomerQty: qty },
+      });
+      if (existing) updated += 1; else imported += 1;
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : 'unknown error';
+      failures.push({ row: rowNum, name: r.customerName, reason });
+    }
+  }
+
+  return { imported, updated, failures };
 }
 
 // ─── CSV import: opening balances ──────────────────────────────────────────

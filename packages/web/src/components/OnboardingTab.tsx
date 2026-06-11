@@ -52,6 +52,14 @@ const OPENING_BAL_TEMPLATE =
   'customer_name,phone,opening_balance,as_of_date,notes\n' +
   'Royal Kitchen Restaurant,9876543210,15000,2026-05-31,Outstanding as of paper register\n' +
   'Green Valley Home,9876543211,2500,,\n';
+// Group 4 (2026-06-11): per-customer opening empty cylinder counts.
+// cylinder_type must match an existing CylinderType.typeName for this
+// distributor (e.g. "19 KG", "5 KG").
+const EMPTY_BAL_TEMPLATE =
+  'customer_name,phone,cylinder_type,empty_quantity\n' +
+  'Royal Kitchen Restaurant,9876543210,19 KG,3\n' +
+  'Royal Kitchen Restaurant,9876543210,5 KG,1\n' +
+  'Green Valley Home,9876543211,19 KG,2\n';
 
 function downloadCsv(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
@@ -76,7 +84,7 @@ export function OnboardingTab() {
     onError: (e) => toast.error(getErrorMessage(e)),
   });
 
-  const [importer, setImporter] = useState<'customers' | 'opening-balances' | null>(null);
+  const [importer, setImporter] = useState<'customers' | 'opening-balances' | 'empty-balances' | null>(null);
   const [openingStockOpen, setOpeningStockOpen] = useState(false);
 
   if (isLoading) return <div className="flex justify-center py-10"><Loader /></div>;
@@ -141,10 +149,18 @@ export function OnboardingTab() {
           </div>
           <div className="p-4 rounded-xl border border-surface-200 dark:border-surface-700">
             <p className="font-medium text-surface-900 dark:text-white">Import opening balances</p>
-            <p className="text-xs text-surface-500 mt-1">CSV with columns: customer_name, phone, opening_balance, notes</p>
+            <p className="text-xs text-surface-500 mt-1">CSV with columns: customer_name, phone, opening_balance, as_of_date, notes</p>
             <div className="flex gap-2 mt-3">
               <Button variant="ghost" size="sm" onClick={() => downloadCsv('opening-balances-template.csv', OPENING_BAL_TEMPLATE)}>Download template</Button>
               <Button size="sm" onClick={() => setImporter('opening-balances')}>Upload CSV</Button>
+            </div>
+          </div>
+          <div className="p-4 rounded-xl border border-surface-200 dark:border-surface-700">
+            <p className="font-medium text-surface-900 dark:text-white">Import empty cylinders held by customers</p>
+            <p className="text-xs text-surface-500 mt-1">CSV with columns: customer_name, phone, cylinder_type, empty_quantity</p>
+            <div className="flex gap-2 mt-3">
+              <Button variant="ghost" size="sm" onClick={() => downloadCsv('empty-balances-template.csv', EMPTY_BAL_TEMPLATE)}>Download template</Button>
+              <Button size="sm" onClick={() => setImporter('empty-balances')}>Upload CSV</Button>
             </div>
           </div>
         </div>
@@ -152,6 +168,7 @@ export function OnboardingTab() {
 
       {importer === 'customers' && <CustomerImportModal onClose={() => { setImporter(null); qc.invalidateQueries({ queryKey: ['onboarding-progress'] }); }} />}
       {importer === 'opening-balances' && <OpeningBalanceImportModal onClose={() => { setImporter(null); qc.invalidateQueries({ queryKey: ['onboarding-progress'] }); }} />}
+      {importer === 'empty-balances' && <EmptyBalanceImportModal onClose={() => { setImporter(null); qc.invalidateQueries({ queryKey: ['onboarding-progress'] }); }} />}
       {openingStockOpen && <OpeningStockModal onClose={() => { setOpeningStockOpen(false); qc.invalidateQueries({ queryKey: ['onboarding-progress'] }); }} />}
     </div>
   );
@@ -539,6 +556,97 @@ function OpeningBalanceImportModal({ onClose }: { onClose: () => void }) {
         <div className="flex justify-end gap-3">
           <Button variant="secondary" onClick={onClose}>Close</Button>
           <Button onClick={() => submit.mutate()} loading={submit.isPending} disabled={csv.rows.length === 0}>Import {csv.rows.length} balance{csv.rows.length === 1 ? '' : 's'}</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function EmptyBalanceImportModal({ onClose }: { onClose: () => void }) {
+  // Group 4 (2026-06-11): per-customer empty cylinder opening counts.
+  type ERow = { customerName?: string; phone?: string; cylinderType: string; emptyQuantity: number };
+  const csv = useCsvFile<ERow>((r) => {
+    if (!r.cylinder_type || !r.empty_quantity) return null;
+    if (!r.customer_name && !r.phone) return null;
+    const qty = Number(r.empty_quantity);
+    if (!Number.isFinite(qty) || qty < 0) return null;
+    return {
+      customerName: r.customer_name || undefined,
+      phone: r.phone || undefined,
+      cylinderType: r.cylinder_type,
+      emptyQuantity: Math.floor(qty),
+    };
+  });
+
+  const submit = useMutation({
+    mutationFn: () => apiPost<{
+      imported: number; updated: number;
+      failures: { row: number; reason: string }[];
+    }>('/customers/import-empty-balances', { rows: csv.rows }),
+    onSuccess: (r) => {
+      const parts: string[] = [];
+      if (r.imported > 0) parts.push(`${r.imported} created`);
+      if (r.updated > 0) parts.push(`${r.updated} updated`);
+      if (r.failures.length > 0) parts.push(`${r.failures.length} failed`);
+      const msg = parts.join(' · ') || 'Nothing imported';
+      if (r.failures.length > 0) toast(msg, { icon: '⚠️' });
+      else toast.success(msg);
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  return (
+    <Modal open onClose={onClose} title="Import empty cylinders held by customers" size="lg">
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => downloadCsv('empty-balances-template.csv', EMPTY_BAL_TEMPLATE)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline"
+        >
+          <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+          </svg>
+          Download CSV template
+        </button>
+        <input type="file" accept=".csv,text/csv" onChange={(e) => csv.setFile(e.target.files?.[0] ?? null)} className="text-sm" />
+        <p className="text-xs text-surface-500 dark:text-surface-400">
+          Required: <code>customer_name</code> OR <code>phone</code>, plus <code>cylinder_type</code> (must match an existing type for your distributor, e.g. "19 KG") and <code>empty_quantity</code> (non-negative integer).
+          Re-running the same file updates the count in place — safe to run multiple times.
+        </p>
+        {csv.fileName && (
+          <p className="text-xs text-surface-500">{csv.fileName} · {csv.rows.length} valid row{csv.rows.length === 1 ? '' : 's'} of {csv.rawCount}</p>
+        )}
+        {csv.rows.length > 0 && (
+          <div className="table-container max-h-64 overflow-auto">
+            <table className="table">
+              <thead><tr><th>Customer</th><th>Phone</th><th>Cylinder type</th><th>Empties</th></tr></thead>
+              <tbody>
+                {csv.rows.slice(0, 10).map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.customerName ?? '-'}</td>
+                    <td>{r.phone ?? '-'}</td>
+                    <td>{r.cylinderType}</td>
+                    <td>{r.emptyQuantity}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {csv.rows.length > 10 && <p className="text-xs text-surface-400 p-2">… and {csv.rows.length - 10} more</p>}
+          </div>
+        )}
+        {submit.data && (
+          <div className="p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 text-sm">
+            <p className="font-medium text-surface-900 dark:text-white">
+              Created: {submit.data.imported} · Updated: {submit.data.updated} · Failed: {submit.data.failures.length}
+            </p>
+            {submit.data.failures.slice(0, 10).map((f, i) => (
+              <p key={i} className="text-xs text-red-500 mt-1">Row {f.row}: {f.reason}</p>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-end gap-3">
+          <Button variant="secondary" onClick={onClose}>Close</Button>
+          <Button onClick={() => submit.mutate()} loading={submit.isPending} disabled={csv.rows.length === 0}>Import {csv.rows.length} row{csv.rows.length === 1 ? '' : 's'}</Button>
         </div>
       </div>
     </Modal>

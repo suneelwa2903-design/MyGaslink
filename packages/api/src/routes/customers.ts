@@ -65,6 +65,33 @@ router.post('/import-csv',
   }
 );
 
+// POST /api/customers/import-empty-balances — Group 4 (2026-06-11)
+const emptyBalanceRowSchema = z.object({
+  customerName: z.string().optional(),
+  phone: z.string().optional(),
+  cylinderType: z.string().min(1),
+  emptyQuantity: z.number().int().min(0),
+}).refine((r) => !!(r.customerName?.trim() || r.phone?.trim()), {
+  message: 'either customerName or phone is required',
+});
+
+router.post('/import-empty-balances',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  validate(z.object({ rows: z.array(emptyBalanceRowSchema).min(1).max(5000) })),
+  auditLog('import_empty_balances', 'customer'),
+  async (req, res) => {
+    try {
+      const result = await customerService.importEmptyBalances(
+        req.user!.distributorId!, req.body.rows,
+      );
+      return sendSuccess(res, result);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  }
+);
+
 // POST /api/customers/import-opening-balances
 const openingBalanceRowSchema = z.object({
   customerName: z.string().optional(),
@@ -350,15 +377,26 @@ router.post('/:id/resume-supply',
 );
 
 // POST /api/customers/:id/balance-setup
+//
+// Group 4 (2026-06-11): the service now requires distributorId so the
+// CrossTenantError path returns 403 with CROSS_TENANT_ACCESS instead of
+// silently writing to another distributor's customer (K7 in the audit).
 router.post('/:id/balance-setup',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   validate(customerBalanceSetupSchema.omit({ customerId: true })),
   auditLog('balance_setup', 'customer'),
   async (req, res) => {
     try {
-      const balances = await customerService.setupCustomerBalance(param(req.params.id), req.body.balances);
+      const balances = await customerService.setupCustomerBalance(
+        param(req.params.id),
+        req.user!.distributorId!,
+        req.body.balances,
+      );
       return sendSuccess(res, balances);
     } catch (err) {
+      if (err instanceof customerService.CrossTenantError) {
+        return sendError(res, err.message, 403, 'CROSS_TENANT_ACCESS');
+      }
       return sendError(res, (err as Error).message);
     }
   }
