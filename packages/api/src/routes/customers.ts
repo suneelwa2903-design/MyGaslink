@@ -376,6 +376,43 @@ router.post('/:id/resume-supply',
   }
 );
 
+// GET /api/customers/:id/balance — Fix B (2026-06-11)
+//
+// Read every CustomerInventoryBalance row for a customer. Tenant-scoped:
+// returns 404 (Customer not found) if the id belongs to another tenant,
+// mirroring the negative pattern used elsewhere in this file.
+router.get('/:id/balance',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const { prisma } = await import('../lib/prisma.js');
+      const customerId = param(req.params.id);
+      const customer = await prisma.customer.findFirst({
+        where: { id: customerId, distributorId: req.user!.distributorId!, deletedAt: null },
+        select: { id: true },
+      });
+      if (!customer) return sendNotFound(res, 'Customer');
+      const rows = await prisma.customerInventoryBalance.findMany({
+        where: { customerId },
+        include: { cylinderType: { select: { id: true, typeName: true } } },
+        orderBy: { cylinderType: { typeName: 'asc' } },
+      });
+      return sendSuccess(res, {
+        balances: rows.map((r) => ({
+          cylinderTypeId: r.cylinderTypeId,
+          cylinderTypeName: r.cylinderType.typeName,
+          withCustomerQty: r.withCustomerQty,
+          pendingReturns: r.pendingReturns,
+          missingQty: r.missingQty,
+          updatedAt: r.lastUpdated.toISOString(),
+        })),
+      });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
 // POST /api/customers/:id/balance-setup
 //
 // Group 4 (2026-06-11): the service now requires distributorId so the

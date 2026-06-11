@@ -657,7 +657,7 @@ function CustomerDetailModal({
   onClose: () => void;
   customer: Customer;
 }) {
-  const [tab, setTab] = useState<'orders' | 'invoices' | 'payments' | 'ledger'>('orders');
+  const [tab, setTab] = useState<'orders' | 'invoices' | 'payments' | 'ledger' | 'balances'>('orders');
 
   const { data: orders, isLoading: ordersLoading } = useQuery({
     queryKey: ['customer-orders', customer.customerId],
@@ -711,6 +711,7 @@ function CustomerDetailModal({
     { key: 'invoices' as const, label: 'Invoices' },
     { key: 'payments' as const, label: 'Payments' },
     { key: 'ledger' as const, label: 'Ledger' },
+    { key: 'balances' as const, label: 'Cylinder Balances' },
   ];
 
   return (
@@ -837,6 +838,10 @@ function CustomerDetailModal({
             <LedgerTab entries={ledgerEntries ?? []} loading={ledgerLoading} />
           </div>
         )}
+
+        {tab === 'balances' && (
+          <CylinderBalancesTab customerId={customer.customerId} />
+        )}
       </div>
     </Modal>
   );
@@ -853,6 +858,181 @@ const LEDGER_TYPE_BADGE: Record<string, { variant: 'info' | 'success' | 'warning
   debit_note: { variant: 'danger', label: 'Debit Note' },
   adjustment: { variant: 'neutral', label: 'Adjustment' },
 };
+
+// Fix B (2026-06-11): per-customer cylinder balances view.
+//
+// Reads from GET /api/customers/:id/balance (tenant-scoped) and writes
+// back through POST /api/customers/:id/balance-setup. The write endpoint
+// is the same one we tenant-isolated in Group 4 (K7) — only the caller's
+// own tenant can mutate.
+type CylinderBalance = {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  withCustomerQty: number;
+  pendingReturns: number;
+  missingQty: number;
+  updatedAt: string;
+};
+
+function CylinderBalancesTab({ customerId }: { customerId: string }) {
+  const qc = useQueryClient();
+  const distributorId = useAuthStore(selectRole) === 'super_admin' ? null : null;
+  const { data: balances, isLoading: balancesLoading } = useQuery({
+    queryKey: ['customer-balances', customerId],
+    queryFn: () => apiGet<{ balances: CylinderBalance[] }>(`/customers/${customerId}/balance`).then((r) => r.balances),
+  });
+  const { data: cylinderTypes } = useQuery({
+    queryKey: ['cylinder-types-active'],
+    queryFn: () => apiGet<{ cylinderTypes: CylinderType[] }>('/cylinder-types').then((r) => r.cylinderTypes),
+  });
+  void distributorId; // kept for future tenant-aware additions
+
+  // Local edit state keyed on cylinderTypeId so the operator can edit
+  // every row in one shot and Save once.
+  type EditState = Record<string, { withCustomerQty: string; pendingReturns: string }>;
+  const [edits, setEdits] = useState<EditState>({});
+  const [addType, setAddType] = useState<string>('');
+
+  // Hydrate `edits` from server data the first time it loads.
+  const editsRef = useRef(false);
+  if (balances && !editsRef.current) {
+    editsRef.current = true;
+    const seed: EditState = {};
+    for (const b of balances) {
+      seed[b.cylinderTypeId] = {
+        withCustomerQty: String(b.withCustomerQty),
+        pendingReturns: String(b.pendingReturns),
+      };
+    }
+    setEdits(seed);
+  }
+
+  const usedTypeIds = new Set(Object.keys(edits));
+  const availableToAdd = (cylinderTypes ?? []).filter((t) => !usedTypeIds.has(t.cylinderTypeId));
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = {
+        balances: Object.entries(edits).map(([cylinderTypeId, v]) => ({
+          cylinderTypeId,
+          withCustomerQty: Math.max(0, Math.floor(Number(v.withCustomerQty) || 0)),
+          pendingReturns: Math.max(0, Math.floor(Number(v.pendingReturns) || 0)),
+        })),
+      };
+      return apiPost<CylinderBalance[]>(`/customers/${customerId}/balance-setup`, payload);
+    },
+    onSuccess: () => {
+      toast.success('Opening cylinder balances saved');
+      editsRef.current = false; // re-hydrate from fresh server data
+      qc.invalidateQueries({ queryKey: ['customer-balances', customerId] });
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  if (balancesLoading) return <div className="flex justify-center py-8"><Loader /></div>;
+
+  const rows = Object.entries(edits);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-surface-500 dark:text-surface-400">
+        Set how many empty cylinders this customer currently holds — used by the daily
+        deliveries to reconcile what is returned. Blank rows are skipped.
+      </p>
+
+      {rows.length === 0 && availableToAdd.length === 0 && (
+        <EmptyState title="No cylinder types available" />
+      )}
+
+      {rows.length > 0 && (
+        <div className="table-container">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Cylinder type</th>
+                <th className="text-right">Empties at customer</th>
+                <th className="text-right">Pending returns</th>
+                <th className="text-right">Last updated</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([typeId, v]) => {
+                const meta = balances?.find((b) => b.cylinderTypeId === typeId);
+                const typeName = meta?.cylinderTypeName
+                  ?? (cylinderTypes ?? []).find((t) => t.cylinderTypeId === typeId)?.typeName
+                  ?? typeId.slice(0, 8);
+                return (
+                  <tr key={typeId}>
+                    <td className="font-medium">{typeName}</td>
+                    <td className="text-right">
+                      <input
+                        type="number" min={0} className="input py-1 w-24 text-right"
+                        value={v.withCustomerQty}
+                        onChange={(e) => setEdits((prev) => ({ ...prev, [typeId]: { ...prev[typeId], withCustomerQty: e.target.value } }))}
+                      />
+                    </td>
+                    <td className="text-right">
+                      <input
+                        type="number" min={0} className="input py-1 w-24 text-right"
+                        value={v.pendingReturns}
+                        onChange={(e) => setEdits((prev) => ({ ...prev, [typeId]: { ...prev[typeId], pendingReturns: e.target.value } }))}
+                      />
+                    </td>
+                    <td className="text-right text-xs text-surface-500">
+                      {meta?.updatedAt ? new Date(meta.updatedAt).toLocaleDateString('en-IN') : '—'}
+                    </td>
+                    <td className="text-right">
+                      <button
+                        type="button"
+                        className="text-xs text-red-500 hover:underline"
+                        onClick={() => setEdits((prev) => {
+                          const next = { ...prev };
+                          delete next[typeId];
+                          return next;
+                        })}
+                      >Remove</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {availableToAdd.length > 0 && (
+        <div className="flex items-end gap-2">
+          <div>
+            <label className="label">Add cylinder type</label>
+            <Select
+              value={addType}
+              onChange={(e) => setAddType(e.target.value)}
+              placeholder="Select type…"
+              options={availableToAdd.map((t) => ({
+                value: t.cylinderTypeId,
+                label: `${t.typeName} (${t.capacity}${t.unit})`,
+              }))}
+            />
+          </div>
+          <Button
+            variant="secondary"
+            disabled={!addType}
+            onClick={() => {
+              if (!addType) return;
+              setEdits((prev) => ({ ...prev, [addType]: { withCustomerQty: '0', pendingReturns: '0' } }));
+              setAddType('');
+            }}
+          >+ Add row</Button>
+        </div>
+      )}
+
+      <div className="flex justify-end">
+        <Button onClick={() => save.mutate()} loading={save.isPending} disabled={rows.length === 0}>Save</Button>
+      </div>
+    </div>
+  );
+}
 
 function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: boolean }) {
   if (loading) return <div className="flex justify-center py-8"><Loader /></div>;
