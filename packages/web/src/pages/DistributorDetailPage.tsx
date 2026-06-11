@@ -357,6 +357,12 @@ function GenerateInvoiceModal({ distributorId, distributor, lastCycleEndDate, on
     return d.toISOString().split('T')[0];
   });
   const [addOns, setAddOns] = useState<AddOn[]>([]);
+  // Phase 4b (2026-06-12): ad-hoc discount applied to the generated cycle.
+  // Empty string = no discount; non-empty number = applied. Reason is
+  // required when amount > 0 (both the route schema and the local
+  // pre-submit check enforce this).
+  const [discountAmount, setDiscountAmount] = useState<string>('');
+  const [discountReason, setDiscountReason] = useState<string>('');
 
   // Fetch pricing tiers
   const { data: tiersData } = useQuery({
@@ -415,12 +421,25 @@ function GenerateInvoiceModal({ distributorId, distributor, lastCycleEndDate, on
   });
 
   const generateMutation = useMutation({
-    mutationFn: () => apiPost('/billing/generate', {
-      distributorId,
-      periodType,
-      periodStartDate: startDate,
-      periodEndDate: endDate,
-    }),
+    mutationFn: () => {
+      // Phase 4b (2026-06-12): build the request body with the optional
+      // discount fields only when the user actually entered an amount.
+      // Empty string + 0 both omit the fields so the server's optional
+      // schema doesn't see a stray null or 0 that would inflate the
+      // payload shape and the audit log.
+      const body: Record<string, unknown> = {
+        distributorId,
+        periodType,
+        periodStartDate: startDate,
+        periodEndDate: endDate,
+      };
+      const amt = parseFloat(discountAmount);
+      if (!Number.isNaN(amt) && amt > 0) {
+        body.discountAmount = amt;
+        body.discountReason = discountReason.trim();
+      }
+      return apiPost('/billing/generate', body);
+    },
     onSuccess: () => {
       toast.success('Invoice generated successfully');
       queryClient.invalidateQueries({ queryKey: ['billing-cycles-dist', distributorId] });
@@ -431,6 +450,14 @@ function GenerateInvoiceModal({ distributorId, distributor, lastCycleEndDate, on
   });
 
   async function handleGenerate() {
+    // Phase 4b: surface the discount-without-reason error before we even
+    // POST, so the user gets feedback in the dialog they're already
+    // looking at rather than seeing a generic toast.
+    const amt = parseFloat(discountAmount);
+    if (!Number.isNaN(amt) && amt > 0 && !discountReason.trim()) {
+      toast.error('Reason is required when a discount is applied');
+      return;
+    }
     // First update the plan if changed
     if (plan !== distributor.subscriptionPlan) {
       await updatePlanMutation.mutateAsync();
@@ -534,6 +561,40 @@ function GenerateInvoiceModal({ distributorId, distributor, lastCycleEndDate, on
               </div>
             </div>
           )}
+
+          {/* Phase 4b: ad-hoc discount inputs. Reason is required when amount > 0. */}
+          <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-4 space-y-2">
+            <label className="block text-sm font-semibold text-surface-700 dark:text-surface-300">Discount (optional)</label>
+            <p className="text-xs text-surface-500 dark:text-surface-400">
+              Apply a one-off discount (₹, excl. GST) — promo waiver, partial-month
+              proration, support credit, etc. Reason becomes the invoice line label.
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">Amount (₹)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={discountAmount}
+                  placeholder="0"
+                  onChange={(e) => setDiscountAmount(e.target.value)}
+                  className="input"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">Reason</label>
+                <input
+                  type="text"
+                  value={discountReason}
+                  placeholder="Loyalty waiver, partial month..."
+                  maxLength={500}
+                  onChange={(e) => setDiscountReason(e.target.value)}
+                  className="input"
+                />
+              </div>
+            </div>
+          </div>
 
           {/* Cost Preview */}
           {costPreview && (

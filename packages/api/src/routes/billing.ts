@@ -53,7 +53,16 @@ router.post('/generate',
     periodType: z.enum(['monthly', 'quarterly', 'half_yearly', 'yearly']),
     periodStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     periodEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  })),
+    // Phase 4b (2026-06-12): optional ad-hoc discount. Used for promotional
+    // first-cycle waivers, partial-month proration, support-credit refunds,
+    // etc. Reason is required when amount is non-zero so the audit trail is
+    // intelligible. Upper bound (<= subtotal) is enforced in the service.
+    discountAmount: z.number().min(0).optional(),
+    discountReason: z.string().max(500).optional(),
+  }).refine(
+    (d) => !d.discountAmount || d.discountAmount === 0 || (d.discountReason && d.discountReason.trim().length > 0),
+    { message: 'discountReason is required when discountAmount is non-zero', path: ['discountReason'] },
+  )),
   auditLog('generate', 'billing_cycle'),
   async (req, res) => {
     try {

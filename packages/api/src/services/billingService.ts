@@ -64,6 +64,14 @@ export async function generateBillingCycle(
     periodType: string;
     periodStartDate: string;
     periodEndDate: string;
+    // Phase 4b (2026-06-12): optional ad-hoc discount applied to the
+    // subtotal BEFORE GST is computed (the line item carries its own
+    // 18% GST line so the customer ledger nets out correctly). The
+    // route guarantees reason is non-empty when amount > 0; the service
+    // additionally caps amount at the subtotal (so a clumsy ₹50,000
+    // discount on a ₹10,000 bill never produces a negative grand total).
+    discountAmount?: number;
+    discountReason?: string;
   }
 ) {
   const distributor = await prisma.distributor.findUnique({
@@ -79,7 +87,16 @@ export async function generateBillingCycle(
   if (!distributor) throw new BillingError('Distributor not found', 404);
   if (!distributor.gaslinkBillingEnabled) throw new BillingError('GasLink billing is not enabled for this distributor', 400);
   if (!distributor.subscriptionPlan && !distributor.billingTier) throw new BillingError('No subscription plan or billing tier assigned', 400);
-  if (!distributor.billingTier) throw new BillingError('Cannot generate billing cycle without a billing tier assigned', 400);
+  // Phase 4b (2026-06-12): the legacy billingTier requirement is dropped
+  // when a subscriptionPlan is set. The two fields were redundant — every
+  // BillingCycle row gets a billingTier value derived from the plan via
+  // SUBSCRIPTION_TO_BILLING_TIER below — but the old gate forced both to
+  // be populated, blocking distributors who had only ever been assigned
+  // a subscriptionPlan (which is the new path; billingTier is kept only
+  // for back-compat with rows created pre-WI-009).
+  if (!distributor.billingTier && !distributor.subscriptionPlan) {
+    throw new BillingError('Cannot generate billing cycle without a billing tier or subscription plan assigned', 400);
+  }
 
   // Check for existing cycle in same period
   const existing = await prisma.billingCycle.findFirst({
@@ -304,12 +321,40 @@ export async function generateBillingCycle(
     });
   }
 
+  // Phase 4b (2026-06-12): ad-hoc discount (super-admin promotional waiver,
+  // partial-month proration, support credit). Capped at the running subtotal
+  // so a typo can't produce a negative grand total. Reason is required by
+  // the route schema when amount > 0.
+  if (data.discountAmount && data.discountAmount > 0) {
+    const runningSubtotal = items.reduce((sum, i) => sum + toNum(i.lineTotalExclGst), 0);
+    const capped = Math.min(data.discountAmount, runningSubtotal);
+    const adhocGst = capped * gstRate / 100;
+    items.push({
+      itemType: 'period_discount',
+      description: `Discount: ${data.discountReason ?? 'ad-hoc'}`,
+      quantity: 1,
+      unitPriceExclGst: -capped,
+      gstRate,
+      lineTotalExclGst: -capped,
+      lineGstAmount: -adhocGst,
+      lineTotalInclGst: -(capped + adhocGst),
+    });
+  }
+
   const totalExclGst = items.reduce((sum, i) => sum + toNum(i.lineTotalExclGst), 0);
   const totalGst = items.reduce((sum, i) => sum + toNum(i.lineGstAmount), 0);
   const totalInclGst = totalExclGst + totalGst;
 
   const dueDate = new Date(data.periodEndDate);
   dueDate.setDate(dueDate.getDate() + BILLING_GRACE_PERIOD_DAYS);
+
+  // Phase 4b (2026-06-12): derive a billingTier when the distributor only
+  // has a subscriptionPlan set. BillingCycle.billingTier is non-nullable in
+  // schema.prisma; pre-Phase-4b that combination produced a Prisma error
+  // because the create wrote null. Mapping below picks a sensible legacy
+  // tier so reports keyed by billingTier stay coherent.
+  const effectiveBillingTier =
+    distributor.billingTier ?? deriveBillingTierFromPlan(distributor.subscriptionPlan);
 
   return prisma.billingCycle.create({
     data: {
@@ -318,7 +363,7 @@ export async function generateBillingCycle(
       periodStartDate: new Date(data.periodStartDate),
       periodEndDate: new Date(data.periodEndDate),
       billingStatus: 'invoice_generated',
-      billingTier: distributor.billingTier,
+      billingTier: effectiveBillingTier,
       totalAmountExclGst: Math.round(totalExclGst * 100) / 100,
       totalGstAmount: Math.round(totalGst * 100) / 100,
       totalAmountInclGst: Math.round(totalInclGst * 100) / 100,
@@ -327,6 +372,21 @@ export async function generateBillingCycle(
     },
     include: billingCycleInclude,
   });
+}
+
+// Phase 4b (2026-06-12): one-way map subscriptionPlan → billingTier used
+// when a distributor was migrated onto the plan column directly (no
+// billingTier ever assigned). Ordering follows monthly_price ascending so
+// existing reports that pivot by billingTier still bucket correctly.
+function deriveBillingTierFromPlan(plan: $Enums.SubscriptionPlan | null): $Enums.BillingTier {
+  switch (plan) {
+    case 'starter':    return 'tier_1';
+    case 'growth':     return 'tier_2';
+    case 'business':   return 'tier_3';
+    case 'enterprise': return 'tier_4';
+    case 'ultra':      return 'tier_4';
+    default:           return 'tier_1';
+  }
 }
 
 /**

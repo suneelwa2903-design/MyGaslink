@@ -2,6 +2,33 @@ import { prisma } from '../lib/prisma.js';
 import type { Prisma, $Enums } from '@prisma/client';
 import { toNum } from '../utils/decimal.js';
 
+// Phase 4b (2026-06-12): per-role overage price picker. The PricingTier
+// columns (per Phase 4a) carry distinct values for each role; this maps
+// the seat request's requested role to the matching column.
+//
+// Roles that fall outside the per-role table (e.g. super_admin) get the
+// admin overage price as the historical fallback — though in practice
+// super_admin seats are never billed because that role is platform-side,
+// not tenant-side.
+type SeatPricingRow = {
+  extraSeatPriceAdmin: Prisma.Decimal;
+  extraSeatPriceDriver: Prisma.Decimal;
+  extraSeatPriceFinance: Prisma.Decimal;
+  extraSeatPriceInventory: Prisma.Decimal;
+  extraSeatPriceCustomer: Prisma.Decimal;
+};
+
+function pickPerRoleSeatPrice(role: string, tier: SeatPricingRow): number {
+  switch (role) {
+    case 'driver':            return toNum(tier.extraSeatPriceDriver);
+    case 'finance':           return toNum(tier.extraSeatPriceFinance);
+    case 'inventory':         return toNum(tier.extraSeatPriceInventory);
+    case 'customer':          return toNum(tier.extraSeatPriceCustomer);
+    case 'distributor_admin':
+    default:                  return toNum(tier.extraSeatPriceAdmin);
+  }
+}
+
 export async function createSeatRequest(data: {
   distributorId: string;
   requestedRole: string;
@@ -50,7 +77,14 @@ export async function approveSeatRequest(requestId: string, approvedBy: string, 
       where: { plan: distributor.subscriptionPlan },
     });
     if (tier) {
-      pricePerMonth = request.requestedRole === 'driver' ? toNum(tier.extraSeatPriceDriver) : toNum(tier.extraSeatPriceAdmin);
+      // Phase 4b (2026-06-12): pick the correct per-role overage column.
+      // Pre-Phase-4a there were only Admin + Driver overage prices, so
+      // finance + inventory + customer all silently fell through to
+      // extraSeatPriceAdmin (₹999) — overcharging finance / inventory
+      // (real price ₹499) and undercharging in some edge cases.
+      // Phase 4a added the missing columns; this routes each role to its
+      // own price.
+      pricePerMonth = pickPerRoleSeatPrice(request.requestedRole, tier);
     }
   }
 

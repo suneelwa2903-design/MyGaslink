@@ -4,6 +4,7 @@ import { Sentry } from './lib/sentry.js';
 import { prisma } from './lib/prisma.js';
 import { createApp } from './app.js';
 import { startOverdueInvoicesCron } from './jobs/overdueInvoicesJob.js';
+import { startBillingCron } from './jobs/billingCron.js';
 
 // ─── Validate Environment ────────────────────────────────────────────────────
 
@@ -54,6 +55,10 @@ const server = app.listen(port, host, () => {
   // WI-132: schedule the daily overdue-invoice sweep. Non-blocking — only
   // registers the cron; first run is the next midnight.
   startOverdueInvoicesCron();
+  // Phase 4b (2026-06-12): schedule the monthly SaaS billing sweep that
+  // marks BillingCycle rows overdue + raises pending actions for expiring
+  // subscriptions. Runs 00:05 IST on the 1st of every month.
+  startBillingCron();
 });
 
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
