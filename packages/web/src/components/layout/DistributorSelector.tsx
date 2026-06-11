@@ -4,6 +4,7 @@ import { apiGet } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { Distributor } from '@gaslink/shared';
 import { UserRole } from '@gaslink/shared';
+import { shouldInvalidateOnDistributorSwitch } from './distributorSwitch';
 
 export function DistributorSelector() {
   const { user, selectedDistributorId, setSelectedDistributorId } = useAuthStore();
@@ -25,13 +26,17 @@ export function DistributorSelector() {
     }
   }, [distributors, selectedDistributorId, setSelectedDistributorId, isSuperAdmin]);
 
-  // Reset (clear cache + refetch) all queries when distributor changes so no stale data is shown
+  // Invalidate (don't reset) tenant-scoped caches when a super-admin switches
+  // distributors. invalidateQueries keeps the previous data on screen until
+  // the new fetch lands, avoiding the empty-state flicker that resetQueries
+  // produced. The shouldInvalidateOnDistributorSwitch helper centralises the
+  // rule — see distributorSwitch.ts for the super-admin-only / null→X logic.
   useEffect(() => {
-    if (selectedDistributorId && prevDistributorId.current && selectedDistributorId !== prevDistributorId.current) {
-      queryClient.resetQueries({ predicate: (query) => query.queryKey[0] !== 'distributors-list' });
+    if (shouldInvalidateOnDistributorSwitch(prevDistributorId.current, selectedDistributorId, isSuperAdmin)) {
+      queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== 'distributors-list' });
     }
     prevDistributorId.current = selectedDistributorId;
-  }, [selectedDistributorId, queryClient]);
+  }, [selectedDistributorId, isSuperAdmin, queryClient]);
 
   if (isLoading) {
     return (
