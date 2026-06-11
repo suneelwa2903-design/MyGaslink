@@ -163,9 +163,16 @@ export async function resolveDistributor(req: Request, res: Response, next: Next
     req.user.distributorId = distributor.id;
     req.distributor = distributor;
 
-    // Forensic audit: log every super_admin tenant switch (header-driven).
-    // Non-blocking — never raise if logging fails.
+    // Group DPDP (2026-06-11): persist super-admin tenant switches to
+    // audit_logs so the SaaS owner can audit which tenants a super-
+    // admin actually looked at. Previously this only went to Winston
+    // (logBusinessEvent), so there was no DB record. Fire-and-forget —
+    // a write failure never blocks the request. Idempotency: every
+    // request that includes a new X-Distributor-Id header writes one
+    // row; if a super-admin sits on the same tenant across many
+    // requests no extra row is written by other middlewares.
     if (isSuperAdminSwitch) {
+      // Best-effort Winston log (legacy).
       try {
         logBusinessEvent({
           action: 'super_admin_tenant_switch',
@@ -176,9 +183,23 @@ export async function resolveDistributor(req: Request, res: Response, next: Next
           requestId: req.requestId,
           details: { ip: req.ip },
         });
-      } catch {
-        // best-effort — already covered by global error handler if anything else fails
-      }
+      } catch { /* best-effort */ }
+
+      // DB persistence — captures IP + user-agent for forensic
+      // correlation. Wrapped in its own try/catch so a transient DB
+      // hiccup never breaks tenant switching.
+      void prisma.auditLog.create({
+        data: {
+          userId: req.user.userId,
+          distributorId: distributor.id,
+          action: 'tenant_switch',
+          entityType: 'distributor',
+          entityId: distributor.id,
+          details: { previousDistributorId: req.user.distributorId } as object,
+          ipAddress: req.ip,
+          userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+        },
+      }).catch(() => { /* fire-and-forget */ });
     }
   }
 

@@ -438,6 +438,7 @@ model User {
   auditLogs             AuditLog[]
   driverAssignments     DriverAssignment[] @relation("AssignedBy")
   cancelledGstDocuments GstDocument[]      @relation("CancelledGstDocuments")
+  loginHistory          LoginHistory[]
 
   @@index([email])
   @@index([distributorId])
@@ -1562,6 +1563,38 @@ model AuditLog {
   @@index([userId, createdAt(sort: Desc)])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+// Group DPDP (2026-06-11): per-attempt login history. Captures every
+// login attempt (success and failure) plus password resets so a tenant
+// admin can answer "who accessed this account, from which IP, and when".
+// Required by India's DPDP Act §43 (record-keeping for personal-data
+// access events) and routinely requested by Apple App Review for
+// consumer-facing apps.
+//
+// userId is NULLABLE on purpose: a brute-force attempt against an
+// email that DOESN'T exist still produces a row (with the attempted
+// email stored in failReason) so the "spray-and-pray" pattern is
+// visible. A non-null userId always FKs back to users.
+//
+// Writes are fire-and-forget at the call site — a row that fails to
+// persist must never block the auth response. See authService.login.
+model LoginHistory {
+  id            String   @id @default(uuid()) @map("login_history_id")
+  userId        String?  @map("user_id")
+  distributorId String?  @map("distributor_id")
+  success       Boolean
+  failReason    String?  @map("fail_reason")
+  ipAddress     String?  @map("ip_address")
+  userAgent     String?  @map("user_agent")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([distributorId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("login_history")
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────

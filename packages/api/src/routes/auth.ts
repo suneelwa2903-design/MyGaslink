@@ -36,7 +36,12 @@ const refreshLimiter = rateLimit({
 router.post('/login', loginLimiter, validate(loginSchema), async (req, res) => {
   try {
     const { email, password } = req.body;
-    const result = await authService.login(email, password);
+    // Group DPDP (2026-06-11): pass IP + user-agent through to the
+    // service so every login_history row is forensically useful.
+    const result = await authService.login(email, password, {
+      ipAddress: req.ip,
+      userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+    });
 
     logBusinessEvent({
       action: 'user.login',

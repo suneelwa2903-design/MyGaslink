@@ -38,6 +38,7 @@ import pricingRoutes from './routes/pricing.js';
 import licensesRoutes from './routes/licenses.js';
 import testHelpersRouter from './routes/testHelpers.js';
 import adminGstActivationRoutes from './routes/adminGstActivation.js';
+import loginHistoryRoutes from './routes/loginHistory.js';
 
 export function createApp() {
   const app = express();
@@ -95,6 +96,10 @@ export function createApp() {
   // Group A: super-admin GST activation flow. No resolveDistributor — the :id
   // path param IS the target distributor. The route handlers enforce super_admin.
   app.use('/api/admin/distributors/:id/gst', authenticate, adminGstActivationRoutes);
+  // Group DPDP (2026-06-11): super-admin maintenance endpoints for the
+  // login_history table. Currently exposes /purge-old; a scheduled job
+  // should replace this in a follow-up sprint.
+  app.use('/api/admin/login-history', loginHistoryRoutes);
   app.use('/api/customers', authenticate, resolveDistributor, requireDistributor, customerRoutes);
   app.use('/api/cylinder-types', authenticate, resolveDistributor, requireDistributor, cylinderTypeRoutes);
   app.use('/api/orders', authenticate, resolveDistributor, requireDistributor, orderRoutes);

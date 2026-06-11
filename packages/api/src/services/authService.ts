@@ -4,7 +4,53 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config/index.js';
 import { prisma } from '../lib/prisma.js';
 import { sendOtpEmail, sendPasswordChangedEmail, sendPasswordResetConfirmationEmail } from '../utils/email.js';
+import { logger } from '../utils/logger.js';
 import type { AuthTokens, JwtPayload, UserProfile } from '@gaslink/shared';
+
+// Group DPDP (2026-06-11): per-attempt login_history writes.
+//
+// Every login attempt (success + failure) and every password reset
+// gets one row so a tenant admin can answer "who accessed this
+// account, from which IP, and when". Required by DPDP §43.
+//
+// Writes are fire-and-forget — a row that fails to persist must never
+// block the auth response. On failure, the helper logs to Winston and
+// returns. userId is NULLABLE in the schema so a brute-force attempt
+// against an unknown email still produces a row (failReason carries
+// the attempted email for forensic correlation).
+export type LoginHistoryFailReason =
+  | 'USER_NOT_FOUND'
+  | 'INVALID_PASSWORD'
+  | 'ACCOUNT_LOCKED'
+  | 'ACCOUNT_SUSPENDED'
+  | 'ACCOUNT_INACTIVE'
+  | 'PASSWORD_RESET';
+export interface LoginHistoryContext {
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+async function recordLoginAttempt(args: {
+  userId: string | null;
+  distributorId: string | null;
+  success: boolean;
+  failReason?: LoginHistoryFailReason | string | null;
+  ctx?: LoginHistoryContext;
+}) {
+  try {
+    await prisma.loginHistory.create({
+      data: {
+        userId: args.userId,
+        distributorId: args.distributorId,
+        success: args.success,
+        failReason: args.failReason ?? null,
+        ipAddress: args.ctx?.ipAddress ?? null,
+        userAgent: args.ctx?.userAgent ?? null,
+      },
+    });
+  } catch (err) {
+    logger.warn('login_history write failed', { err: (err as Error).message });
+  }
+}
 
 const SALT_ROUNDS = 12;
 
@@ -30,15 +76,32 @@ export function verifyRefreshToken(token: string): JwtPayload {
   return jwt.verify(token, config.jwt.refreshSecret) as JwtPayload;
 }
 
-export async function login(email: string, password: string): Promise<{ tokens: AuthTokens; user: UserProfile }> {
+export async function login(
+  email: string,
+  password: string,
+  ctx?: LoginHistoryContext,
+): Promise<{ tokens: AuthTokens; user: UserProfile }> {
   const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
 
   if (!user) {
+    // Group DPDP: record the attempt even when the user doesn't exist
+    // (userId stays null; we put the attempted email in failReason for
+    // forensic correlation against the IP).
+    void recordLoginAttempt({
+      userId: null,
+      distributorId: null,
+      success: false,
+      failReason: `USER_NOT_FOUND:${email.toLowerCase()}`,
+      ctx,
+    });
     throw new AuthError('Invalid email or password', 401);
   }
 
   // Check lockout
   if (user.lockedUntil && user.lockedUntil > new Date()) {
+    void recordLoginAttempt({
+      userId: user.id, distributorId: user.distributorId, success: false, failReason: 'ACCOUNT_LOCKED', ctx,
+    });
     const minutesRemaining = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
     throw new AuthError(`Account locked. Try again in ${minutesRemaining} minutes.`, 429);
   }
@@ -48,12 +111,18 @@ export async function login(email: string, password: string): Promise<{ tokens: 
     // contact their admin (not assume it's just a deactivated stale
     // account). Behaviour-equivalent — both branches reject login with
     // 403; the wording is what changes.
+    void recordLoginAttempt({
+      userId: user.id, distributorId: user.distributorId, success: false, failReason: 'ACCOUNT_SUSPENDED', ctx,
+    });
     throw new AuthError(
       'Your account has been suspended. Contact your administrator.',
       403,
     );
   }
   if (user.status !== 'active') {
+    void recordLoginAttempt({
+      userId: user.id, distributorId: user.distributorId, success: false, failReason: 'ACCOUNT_INACTIVE', ctx,
+    });
     throw new AuthError('Account is inactive or suspended', 403);
   }
 
@@ -68,6 +137,9 @@ export async function login(email: string, password: string): Promise<{ tokens: 
       data: { loginAttempts: attempts, lockedUntil: lockout },
     });
 
+    void recordLoginAttempt({
+      userId: user.id, distributorId: user.distributorId, success: false, failReason: 'INVALID_PASSWORD', ctx,
+    });
     throw new AuthError('Invalid email or password', 401);
   }
 
@@ -90,6 +162,10 @@ export async function login(email: string, password: string): Promise<{ tokens: 
       lastLoginAt: new Date(),
       refreshToken: tokens.refreshToken,
     },
+  });
+
+  void recordLoginAttempt({
+    userId: user.id, distributorId: user.distributorId, success: true, ctx,
   });
 
   const profile: UserProfile = {
@@ -312,6 +388,15 @@ export async function resetPassword(resetToken: string, newPassword: string): Pr
     name: `${user.firstName} ${user.lastName}`.trim(),
     resetAt: new Date(),
     userId: user.id,
+  });
+
+  // Group DPDP (2026-06-11): mark the reset itself in login_history so
+  // a tenant admin can see "this account had its password reset on
+  // this date" alongside actual login events. success=true (the reset
+  // itself succeeded) + failReason='PASSWORD_RESET' disambiguates it
+  // from a regular login.
+  void recordLoginAttempt({
+    userId: user.id, distributorId: user.distributorId, success: true, failReason: 'PASSWORD_RESET',
   });
 }
 
