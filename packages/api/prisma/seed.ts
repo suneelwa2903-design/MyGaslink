@@ -59,7 +59,12 @@ async function main() {
       gstMode: 'disabled',
       providerCodes: ['IOCL'],
       subscriptionPlan: 'business',
-      billingTier: 'tier_2',
+      // 9-issues Issue 8 (2026-06-12): Business plan maps to tier_3
+      // per billingService.deriveBillingTierFromPlan. The original
+      // seed wrote tier_2 here — vestigial from the pre-Phase-4a
+      // 4-tier table where Business was index 2. Phase 4a renamed
+      // the tiers but didn't update the seed literals.
+      billingTier: 'tier_3',
       gaslinkBillingEnabled: false,
       // Group A: dev fixture — internal test tenant. Gates sandbox mode.
       isTestTenant: true,
@@ -383,7 +388,10 @@ async function main() {
       docCode: 'SHD',
       providerCodes: ['HPCL'],
       subscriptionPlan: 'business',
-      billingTier: 'tier_2',
+      // 9-issues Issue 8 (2026-06-12): see note on Bhargava above —
+      // Business plan maps to tier_3 (per
+      // billingService.deriveBillingTierFromPlan), not tier_2.
+      billingTier: 'tier_3',
       gaslinkBillingEnabled: false,
       // Group A: dev fixture — internal test tenant. Required so gst_mode='sandbox'
       // baseline is valid under the new sandbox-allowlist guard.
@@ -1225,7 +1233,13 @@ async function main() {
     extraSeatPriceInventory: 499,
     extraSeatPriceCustomer: 249,
     freeCustomerLogins: 5,
-    customerPortalPrice: 49,
+    // 9-issues Issue 4 (2026-06-12): bumped from ₹49 to ₹249 per
+    // Suneel's locked pricing. The original Phase 4a seed-update
+    // refreshed monthlyPrice + seat counts + tier rename but kept
+    // customerPortalPrice at the legacy ₹49 from the original
+    // Phase 4-pre seed. Existing BillingItem snapshots stay at
+    // ₹49 (historical / audit-immutable); new cycles render ₹249.
+    customerPortalPrice: 249,
     gstApiOveragePrice: 2,
   };
 

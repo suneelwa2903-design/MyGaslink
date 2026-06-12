@@ -100,7 +100,8 @@ async function main(): Promise<void> {
       docCode: 'DMO',
       providerCodes: ['HPCL'],
       subscriptionPlan: 'business',
-      billingTier: 'tier_2',
+      // 9-issues Issue 8 (2026-06-12): Business plan maps to tier_3.
+      billingTier: 'tier_3',
       gaslinkBillingEnabled: false,
     },
   });
