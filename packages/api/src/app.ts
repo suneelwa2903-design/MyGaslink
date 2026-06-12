@@ -40,6 +40,7 @@ import testHelpersRouter from './routes/testHelpers.js';
 import adminGstActivationRoutes from './routes/adminGstActivation.js';
 import loginHistoryRoutes from './routes/loginHistory.js';
 import razorpayWebhookRoutes from './routes/razorpayWebhook.js';
+import razorpayCustomerWebhookRoutes from './routes/razorpayCustomerWebhook.js';
 
 export function createApp() {
   const app = express();
@@ -78,7 +79,10 @@ export function createApp() {
   app.use(express.json({
     limit: '10mb',
     verify: (req, _res, buf) => {
-      if (req.url?.startsWith('/api/billing/webhooks/')) {
+      // Capture raw body on every webhook route. Phase E:
+      // /api/billing/webhooks/razorpay. Phase F:
+      // /api/customer-portal/webhooks/razorpay/:distributorId.
+      if (req.url?.startsWith('/api/billing/webhooks/') || req.url?.startsWith('/api/customer-portal/webhooks/')) {
         (req as unknown as { rawBody: Buffer }).rawBody = buf;
       }
     },
@@ -105,6 +109,11 @@ export function createApp() {
   // gate. MUST be mounted BEFORE /api/billing so the authenticate
   // middleware on the billing router doesn't claim the route first.
   app.use('/api/billing/webhooks/razorpay', razorpayWebhookRoutes);
+  // Phase F (2026-06-12): per-distributor Razorpay webhook. Same
+  // rationale + mounting order — must precede the authenticated
+  // /api/customer-portal mount. Distributor id is in the path so the
+  // handler can look up that tenant's webhook secret.
+  app.use('/api/customer-portal/webhooks/razorpay', razorpayCustomerWebhookRoutes);
 
   // ─── Protected Routes ───────────────────────────────────────────────────────
 

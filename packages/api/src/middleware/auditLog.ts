@@ -52,7 +52,16 @@ export function auditLog(action: string, entityType: string) {
 function sanitizeForLog(body: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!body) return undefined;
   const sanitized = { ...body };
-  const sensitiveFields = ['password', 'currentPassword', 'newPassword', 'confirmPassword', 'clientSecret', 'token', 'refreshToken'];
+  const sensitiveFields = [
+    'password', 'currentPassword', 'newPassword', 'confirmPassword',
+    'clientSecret', 'token', 'refreshToken',
+    // Phase F (2026-06-12): Razorpay credentials + handler signature.
+    // The secret + webhook secret arrive in PUT /distributors/:id body
+    // when a super-admin configures per-distributor payments; the
+    // signature arrives on every /verify-payment call (Phase E + F).
+    // None of these should land in the audit_logs details JSON.
+    'razorpayKeySecret', 'razorpayWebhookSecret', 'razorpaySignature',
+  ];
   for (const field of sensitiveFields) {
     if (field in sanitized) {
       sanitized[field] = '[REDACTED]';

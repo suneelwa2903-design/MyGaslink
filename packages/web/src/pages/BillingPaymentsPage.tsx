@@ -532,7 +532,20 @@ function PaymentsTab() {
                     <td>{new Date(payment.transactionDate).toLocaleDateString('en-IN')}</td>
                     <td className="font-medium text-surface-900 dark:text-white">{payment.customerName}</td>
                     <td className="font-medium">{formatCurrency(payment.amount)}</td>
-                    <td><Badge variant="neutral">{payment.paymentMethod.replace(/_/g, ' ')}</Badge></td>
+                    <td>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant="neutral">{payment.paymentMethod.replace(/_/g, ' ')}</Badge>
+                        {/* Phase F (2026-06-12): Razorpay badge on
+                            payments that came through the customer-
+                            portal Pay Now flow. razorpayPaymentId
+                            being non-null is the binding indicator —
+                            mapPayment surfaces it; razorpaySignature
+                            is stripped by the same mapper. */}
+                        {(payment as { razorpayPaymentId?: string }).razorpayPaymentId && (
+                          <Badge variant="info">Razorpay</Badge>
+                        )}
+                      </div>
+                    </td>
                     <td className="text-xs">{payment.referenceNumber || '-'}</td>
                     <td>{formatCurrency(payment.allocatedAmount)}</td>
                     <td className={payment.unallocatedAmount > 0 ? 'text-amber-500 font-medium' : ''}>

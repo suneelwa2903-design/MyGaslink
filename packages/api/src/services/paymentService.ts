@@ -66,7 +66,7 @@ export async function listPayments(
 
 export async function createPayment(
   distributorId: string,
-  userId: string,
+  userId: string | null,
   data: {
     customerId: string;
     amount: number;
@@ -74,6 +74,19 @@ export async function createPayment(
     referenceNumber?: string;
     transactionDate: string;
     allocations?: { invoiceId: string; amount: number }[];
+    // Phase F (2026-06-12): when the payment came from the customer-
+    // portal Razorpay "Pay Now" flow, the route passes the forensic
+    // ids through here. The service writes them onto the
+    // PaymentTransaction row but doesn't otherwise change behaviour —
+    // allocation logic + ledger update + invoice flip are identical
+    // to a manually-recorded payment. razorpaySignature is stored
+    // for audit / dispute investigation; mappers/utils never surface
+    // it in API responses.
+    razorpay?: {
+      razorpayOrderId: string;
+      razorpayPaymentId: string;
+      razorpaySignature: string;
+    };
   }
 ) {
   // Validate customer belongs to distributor
@@ -93,6 +106,9 @@ export async function createPayment(
         transactionDate: new Date(data.transactionDate),
         allocationStatus: 'unallocated',
         receivedBy: userId,
+        razorpayOrderId: data.razorpay?.razorpayOrderId ?? null,
+        razorpayPaymentId: data.razorpay?.razorpayPaymentId ?? null,
+        razorpaySignature: data.razorpay?.razorpaySignature ?? null,
       },
     });
 

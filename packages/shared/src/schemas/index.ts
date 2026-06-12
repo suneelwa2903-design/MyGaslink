@@ -519,6 +519,17 @@ export const updateDistributorSchema = createDistributorSchema.partial().extend(
   // strips this field when the caller is NOT super_admin so an
   // escalating distributor_admin cannot self-allowlist.
   isTestTenant: z.boolean().optional(),
+  // Phase F (2026-06-12): super-admin sets the distributor's Razorpay
+  // credentials for the customer-portal "Pay Now" flow. The route
+  // handler strips these fields when the caller is NOT super_admin
+  // (a distributor_admin self-configuring their own Razorpay would
+  // bypass the per-tenant onboarding review). Format checks are
+  // light — Razorpay key id starts with rzp_ but we don't bind to
+  // test/live here, leaving that as a deployment-time decision.
+  razorpayEnabled: z.boolean().optional(),
+  razorpayKeyId: z.string().max(100).optional().or(z.literal('')),
+  razorpayKeySecret: z.string().max(200).optional().or(z.literal('')),
+  razorpayWebhookSecret: z.string().max(200).optional().or(z.literal('')),
 });
 
 // ─── Filter/Query Schemas ────────────────────────────────────────────────────

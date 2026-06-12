@@ -399,6 +399,15 @@ type PaymentInput = PaymentRow & {
 export function mapPayment(p: PaymentInput | null | undefined): MappedRecord | null | undefined {
   if (!p) return p;
   const mapped = renameId(p, 'paymentId');
+  // Phase F (2026-06-12): the Razorpay signature is forensic-only and
+  // MUST NOT be returned in any API response. The mapper is the
+  // single chokepoint that every payment route goes through, so
+  // strip it here once instead of remembering at each call site.
+  // razorpayOrderId + razorpayPaymentId are safe to surface (public
+  // ids the customer already has from their Razorpay receipt).
+  if ('razorpaySignature' in mapped) {
+    delete mapped.razorpaySignature;
+  }
   if (p.customer) {
     mapped.customerName = p.customer.customerName ?? 'Deleted Customer';
     mapped.customer = mapCustomer(p.customer);

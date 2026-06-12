@@ -123,6 +123,16 @@ router.put('/:id',
       if (req.user!.role !== 'super_admin' && 'isTestTenant' in req.body) {
         delete (req.body as Record<string, unknown>).isTestTenant;
       }
+      // Phase F (2026-06-12): same defense-in-depth for the Razorpay
+      // credentials. Only super-admin can write them. Strips the four
+      // fields cleanly when a non-super-admin somehow lands here.
+      if (req.user!.role !== 'super_admin') {
+        const body = req.body as Record<string, unknown>;
+        delete body.razorpayEnabled;
+        delete body.razorpayKeyId;
+        delete body.razorpayKeySecret;
+        delete body.razorpayWebhookSecret;
+      }
       const distributor = await distributorService.updateDistributor(param(req.params.id), req.body);
       return sendSuccess(res, mapDistributor(distributor));
     } catch (err) {

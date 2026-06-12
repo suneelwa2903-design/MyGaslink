@@ -1,10 +1,20 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { param } from '../utils/params.js';
 import { requireRole } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
 import * as portalService from '../services/customerPortalService.js';
+import * as paymentService from '../services/paymentService.js';
+import {
+  createRazorpayOrder,
+  verifyHandlerSignature,
+  isMockKey,
+  type RazorpayCreds,
+} from '../services/razorpayService.js';
+import { prisma } from '../lib/prisma.js';
+import { logger } from '../utils/logger.js';
 import { mapCustomer, mapOrder, mapOrders, mapInvoices, mapCustomerInvoiceDetail, mapPayment, mapPayments } from '../utils/mappers.js';
 import { z } from 'zod';
 
@@ -459,5 +469,217 @@ router.get('/distributor',
     return sendError(res, (err as Error).message);
   }
 });
+
+// ─── Phase F: Razorpay customer-portal payments ─────────────────────────────
+//
+// Per-distributor model: each tenant configures their own Razorpay
+// account; money flows direct from customer to distributor (GasLink
+// never touches it). This is the key Phase E→F difference.
+//
+// Three endpoints:
+//   POST /invoices/:id/create-payment-order  — customer authenticated
+//   POST /invoices/:id/verify-payment        — customer authenticated
+//   (webhook lives at /api/customer-portal/webhooks/razorpay/:distributorId
+//    in razorpayCustomerWebhook.ts — mounted BEFORE the authenticated
+//    customer-portal router so Razorpay can post to it.)
+//
+// Tenant isolation: routes resolve the distributor from the invoice
+// (NOT the request body), then use distributor.razorpayKeyId /
+// razorpayKeySecret as the SDK credentials. Cross-distributor reuse
+// is structurally impossible — the customer's JWT pins their
+// distributorId, and we verify the invoice belongs to that
+// distributorId before any Razorpay call.
+
+const customerPaymentLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 30 : 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, data: null, error: 'Too many payment requests', code: 'RATE_LIMITED' },
+});
+
+/**
+ * Resolve the distributor's Razorpay credentials. Returns null when
+ * the tenant has not enabled Razorpay (or has not configured all
+ * three fields). Routes handle null by returning 400
+ * RAZORPAY_NOT_ENABLED.
+ */
+async function getDistributorRazorpayCreds(distributorId: string): Promise<RazorpayCreds | null> {
+  const dist = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { razorpayEnabled: true, razorpayKeyId: true, razorpayKeySecret: true },
+  });
+  if (!dist || !dist.razorpayEnabled || !dist.razorpayKeyId || !dist.razorpayKeySecret) {
+    return null;
+  }
+  return { keyId: dist.razorpayKeyId, keySecret: dist.razorpayKeySecret };
+}
+
+const createCustomerPaymentOrderSchema = z.object({
+  // Customer specifies the amount they want to pay. Allows partial
+  // payments (e.g., paying ₹500 against a ₹2,000 invoice). Server
+  // bounds to (0, outstandingAmount].
+  amount: z.number().positive(),
+});
+
+// POST /api/customer-portal/invoices/:id/create-payment-order
+router.post('/invoices/:id/create-payment-order',
+  customerPaymentLimiter,
+  requireRole('customer'),
+  validate(createCustomerPaymentOrderSchema),
+  auditLog('create_payment_order', 'invoice'),
+  async (req, res) => {
+    try {
+      if (!req.user!.customerId) return sendError(res, 'No customer linked to this account', 400);
+      const invoiceId = param(req.params.id);
+
+      const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, distributorId: req.user!.distributorId!, deletedAt: null },
+        select: {
+          id: true, invoiceNumber: true, customerId: true,
+          outstandingAmount: true, totalAmount: true,
+        },
+      });
+      if (!invoice) return sendNotFound(res, 'Invoice not found');
+
+      // Cross-customer guard: the customer pays only their own invoices.
+      if (invoice.customerId !== req.user!.customerId) {
+        return sendError(res, 'Invoice does not belong to this customer', 403, 'CROSS_CUSTOMER_ACCESS');
+      }
+
+      const outstanding = Number(invoice.outstandingAmount);
+      if (outstanding <= 0) {
+        return sendError(res, 'Invoice has no outstanding balance', 400, 'ALREADY_PAID');
+      }
+      const amount = Number(req.body.amount);
+      if (amount <= 0 || amount > outstanding) {
+        return sendError(
+          res,
+          `Amount must be between ₹1 and ₹${outstanding.toFixed(2)}`,
+          400,
+          'AMOUNT_OUT_OF_BOUNDS',
+        );
+      }
+
+      const creds = await getDistributorRazorpayCreds(req.user!.distributorId!);
+      if (!creds) {
+        return sendError(res, 'Online payments are not enabled for this distributor', 400, 'RAZORPAY_NOT_ENABLED');
+      }
+
+      const order = await createRazorpayOrder(creds, {
+        amountInPaise: Math.round(amount * 100),
+        // receipt uses invoiceId so the webhook can reverse-look-up.
+        receipt: invoice.id,
+        notes: {
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          customerId: invoice.customerId,
+          distributorId: req.user!.distributorId!,
+        },
+      });
+
+      return sendCreated(res, {
+        razorpayOrderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: creds.keyId,                  // public key — frontend needs it
+        mock: isMockKey(creds.keyId),         // dev fallback indicator
+        invoiceNumber: invoice.invoiceNumber,
+      });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      logger.error('customer-portal create-payment-order failed', {
+        invoiceId: req.params.id,
+        err: (err as Error).message,
+      });
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// POST /api/customer-portal/invoices/:id/verify-payment
+const verifyCustomerPaymentSchema = z.object({
+  razorpayOrderId: z.string().min(1),
+  razorpayPaymentId: z.string().min(1),
+  razorpaySignature: z.string().min(1),
+  amount: z.number().positive(),
+});
+
+router.post('/invoices/:id/verify-payment',
+  customerPaymentLimiter,
+  requireRole('customer'),
+  validate(verifyCustomerPaymentSchema),
+  auditLog('verify_payment', 'invoice'),
+  async (req, res) => {
+    try {
+      if (!req.user!.customerId) return sendError(res, 'No customer linked to this account', 400);
+      const invoiceId = param(req.params.id);
+      const { razorpayOrderId, razorpayPaymentId, razorpaySignature, amount } = req.body;
+
+      const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, distributorId: req.user!.distributorId!, deletedAt: null },
+        select: {
+          id: true, invoiceNumber: true, customerId: true,
+          outstandingAmount: true,
+        },
+      });
+      if (!invoice) return sendNotFound(res, 'Invoice not found');
+      if (invoice.customerId !== req.user!.customerId) {
+        return sendError(res, 'Invoice does not belong to this customer', 403, 'CROSS_CUSTOMER_ACCESS');
+      }
+
+      // Idempotency: if the same razorpayPaymentId already has a row,
+      // return success without re-creating. Defends the verify +
+      // webhook race the same way the Phase E idempotency check does
+      // but on the payment row rather than on a status field.
+      const existing = await prisma.paymentTransaction.findFirst({
+        where: { razorpayPaymentId, distributorId: req.user!.distributorId! },
+      });
+      if (existing) {
+        return sendSuccess(res, { alreadyPaid: true, payment: mapPayment(existing) });
+      }
+
+      const creds = await getDistributorRazorpayCreds(req.user!.distributorId!);
+      if (!creds) {
+        return sendError(res, 'Online payments are not enabled for this distributor', 400, 'RAZORPAY_NOT_ENABLED');
+      }
+
+      const signatureValid = verifyHandlerSignature(creds, razorpayOrderId, razorpayPaymentId, razorpaySignature);
+      if (!signatureValid) {
+        return sendError(res, 'Invalid payment signature', 400, 'INVALID_SIGNATURE');
+      }
+
+      // Route the recording through paymentService.createPayment so
+      // allocation + ledger + invoice-flip logic stays in one place
+      // (anti-pattern #N: don't duplicate the payment recording
+      // logic). The shared service writes the forensic ids in the
+      // same transaction.
+      const payment = await paymentService.createPayment(
+        req.user!.distributorId!,
+        null, // userId — customer-initiated, no staff user
+        {
+          customerId: req.user!.customerId,
+          amount,
+          paymentMethod: 'upi', // Razorpay-classified method may be
+                                // updated later; default to upi for
+                                // the most common case.
+          referenceNumber: razorpayPaymentId,
+          transactionDate: new Date().toISOString().slice(0, 10),
+          allocations: [{ invoiceId: invoice.id, amount }],
+          razorpay: { razorpayOrderId, razorpayPaymentId, razorpaySignature },
+        },
+      );
+
+      return sendSuccess(res, { payment: mapPayment(payment) });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      logger.error('customer-portal verify-payment failed', {
+        invoiceId: req.params.id,
+        err: (err as Error).message,
+      });
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
 
 export default router;

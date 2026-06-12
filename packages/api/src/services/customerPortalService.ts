@@ -708,6 +708,11 @@ export async function getMyDistributorInfo(distributorId: string) {
       city: true,
       state: true,
       pincode: true,
+      // Phase F (2026-06-12): the customer-portal InvoicesPage gates
+      // its Pay Now button on this flag. razorpayKeySecret + the
+      // webhook secret are NEVER selected here (defense in depth —
+      // the customer-side endpoint must never expose secrets).
+      razorpayEnabled: true,
     },
   });
 }

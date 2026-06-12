@@ -44,6 +44,13 @@ const distributorSelect = {
   // Group A: surfaced to the GST Activation page so the sandbox option is
   // disabled in the UI when the tenant is not allowlisted.
   isTestTenant: true,
+  // Phase F (2026-06-12): Razorpay PUBLIC fields. razorpayKeySecret +
+  // razorpayWebhookSecret are DELIBERATELY excluded — the secrets are
+  // never returned in any API response. The select-here chokepoint
+  // is the binding rule (mirrors getGstCredentials posture from
+  // settingsService).
+  razorpayEnabled: true,
+  razorpayKeyId: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.DistributorSelect;
@@ -207,6 +214,14 @@ export async function updateDistributor(id: string, data: Partial<{
   bankBranchName: string;
   ifscCode: string;
   upiId: string;
+  // Phase F (2026-06-12): per-distributor Razorpay configuration.
+  // Stripped by the route handler for non-super-admin callers (same
+  // pattern as isTestTenant) so distributor_admins can't bypass
+  // super-admin onboarding review.
+  razorpayEnabled: boolean;
+  razorpayKeyId: string;
+  razorpayKeySecret: string;
+  razorpayWebhookSecret: string;
 }>) {
   // Group L2 (2026-06-11): normalise + uniqueness-check docCode before
   // hitting the DB so the 409 reply happens in this service, not as a

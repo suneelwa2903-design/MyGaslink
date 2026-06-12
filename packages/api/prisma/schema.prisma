@@ -388,6 +388,20 @@ model Distributor {
   ifscCode          String? @map("ifsc_code")
   upiId             String? @map("upi_id")
 
+  // Phase F (2026-06-12): per-distributor Razorpay credentials for the
+  // customer-portal "Pay Now" flow. razorpayEnabled is the
+  // super-admin gate; the two secret fields are PLAINTEXT (accepted
+  // risk — see CLAUDE.md "Accepted security risks", coordinated
+  // encryption pass is the v1.1 plan covering this column plus
+  // gst_credentials.client_secret + .password). Per-distributor model
+  // is intentional: customer payments flow direct to the distributor's
+  // Razorpay account, NOT through GasLink. Webhook secret is the
+  // distributor's own (registered in their Razorpay dashboard).
+  razorpayEnabled       Boolean @default(false) @map("razorpay_enabled")
+  razorpayKeyId         String? @map("razorpay_key_id")
+  razorpayKeySecret     String? @map("razorpay_key_secret")
+  razorpayWebhookSecret String? @map("razorpay_webhook_secret")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -1165,6 +1179,13 @@ model PaymentTransaction {
   allocationStatus PaymentAllocationStatus @default(unallocated) @map("allocation_status")
   receivedBy       String?                 @map("received_by")
   notes            String?
+  // Phase F (2026-06-12): forensic Razorpay fields when this payment
+  // came from the customer-portal Pay Now flow. NULL on manually
+  // recorded payments. razorpaySignature stored for audit / dispute
+  // investigation, NEVER returned in any API response.
+  razorpayOrderId   String?                @map("razorpay_order_id")
+  razorpayPaymentId String?                @map("razorpay_payment_id")
+  razorpaySignature String?                @map("razorpay_signature")
   createdAt        DateTime                @default(now()) @map("created_at")
   updatedAt        DateTime                @updatedAt @map("updated_at")
   deletedAt        DateTime?               @map("deleted_at")
@@ -1175,6 +1196,7 @@ model PaymentTransaction {
 
   @@index([distributorId, customerId, createdAt(sort: Desc)])
   @@index([distributorId, transactionDate])
+  @@index([razorpayOrderId])
   @@map("payment_transactions")
 }
 
