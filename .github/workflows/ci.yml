@@ -192,13 +192,14 @@ jobs:
           script: |
             cd /opt/gaslink
             git pull origin develop
-            # Same self-healing wipe as the production block below — see
-            # comment there for the rationale (non-pty pnpm 9 install drift).
+            # Same self-healing wipe + NODE_ENV=development as the production
+            # block below — see comments there for the rationale.
             rm -rf node_modules packages/api/node_modules packages/web/node_modules packages/mobile/node_modules packages/shared/node_modules
-            pnpm install --frozen-lockfile
-            pnpm --filter @gaslink/api run db:generate
+            NODE_ENV=development pnpm install --frozen-lockfile --config.confirmModulesPurge=false
+            pnpm --filter @gaslink/api exec prisma generate
             pnpm --filter @gaslink/api run db:migrate:prod
-            pnpm --filter @gaslink/api run build
+            pnpm --filter @gaslink/shared build
+            pnpm --filter @gaslink/api build
             pm2 restart gaslink-api || pm2 start packages/api/dist/server.js --name gaslink-api
 
   deploy-production:
@@ -295,13 +296,28 @@ jobs:
             # deterministic clean install every deploy. ~30s slower; worth it
             # for the self-healing property.
             rm -rf node_modules packages/api/node_modules packages/web/node_modules packages/mobile/node_modules packages/shared/node_modules
-            pnpm install --frozen-lockfile
+            # NODE_ENV=production is set in the EC2 shell (used at runtime by
+            # the api). Under that, `pnpm install` skips devDependencies — so
+            # @types/express, @types/jsonwebtoken, etc. never land on disk
+            # and the next `tsc` build fails with TS7016 across every typed
+            # import (proven by CI run 27410917268 after the wipe started
+            # working). Forcing NODE_ENV=development scoped to the install
+            # ensures dev deps install; the env reverts immediately after.
+            # `--config.confirmModulesPurge=false` belt-and-braces: even if
+            # the wipe above is interrupted, this flag prevents the non-pty
+            # interactive prompt that historically left things in a half-
+            # written state.
+            NODE_ENV=development pnpm install --frozen-lockfile --config.confirmModulesPurge=false
+            # `prisma generate` must run after install (it writes into the
+            # freshly-installed @prisma/client) AND before any tsc build that
+            # imports `Prisma` / `$Enums` from @prisma/client. Explicit `exec`
+            # call (vs the wrapper script) avoids any indirection.
+            pnpm --filter @gaslink/api exec prisma generate
+            pnpm --filter @gaslink/api run db:migrate:prod
             # api build (tsc) consumes @gaslink/shared dist; rebuild on every
             # deploy so stale source can't ship stale types.
             pnpm --filter @gaslink/shared build
-            pnpm --filter @gaslink/api run db:generate
-            pnpm --filter @gaslink/api run db:migrate:prod
-            pnpm --filter @gaslink/api run build
+            pnpm --filter @gaslink/api build
             # Group A Step 11 — write the WhiteBooks Layer 1 env vars into
             # /etc/environment so they survive PM2 restarts AND systemd
             # resurrect on reboot. Idempotent: each line is replaced if the
