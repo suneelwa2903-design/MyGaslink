@@ -30,7 +30,16 @@ jobs:
       # model types (otherwise query results are `any` → TS7006 implicit-any).
       # No DB needed for `prisma generate`.
       - run: pnpm --filter @gaslink/api run db:generate
-      - run: pnpm run typecheck
+      # Typecheck per package — same exit-code-propagation reasoning as
+      # the Lint step below (pnpm 9's `-r run` aggregates exits to 0 even
+      # when one package fails). Bash `&&` chain ensures the first per-
+      # package failure fails the job.
+      - name: Typecheck
+        run: |
+          pnpm --filter @gaslink/shared run typecheck
+          pnpm --filter @gaslink/api run typecheck
+          pnpm --filter @gaslink/web run typecheck
+          pnpm --filter @gaslink/mobile run typecheck
       # Lint per package with explicit exit-code propagation. The root
       # `pnpm -r run lint` returns exit 0 even when individual packages
       # fail (pnpm 9 aggregation quirk) — see CLAUDE.md anti-pattern
