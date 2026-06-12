@@ -160,6 +160,14 @@ export interface Distributor {
   // tenants have this true; production distributors transition disabled → live
   // without ever passing through sandbox.
   isTestTenant?: boolean;
+  // Phase F (2026-06-12) — per-distributor Razorpay configuration. Only
+  // the PUBLIC fields are present on this wire type; key_secret +
+  // webhook_secret are NEVER returned in any API response (see
+  // distributorSelect in distributorService.ts). The boolean flag gates
+  // the customer-portal Pay Now button; razorpayKeyId is shown in the
+  // super-admin edit form so they can see WHICH key is configured.
+  razorpayEnabled?: boolean;
+  razorpayKeyId?: string | null;
   createdAt: string;
   updatedAt: string;
 }

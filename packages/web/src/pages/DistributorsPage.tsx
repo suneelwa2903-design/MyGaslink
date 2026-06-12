@@ -22,6 +22,7 @@ import {
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Combobox, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { useAuthStore, selectIsSuperAdmin } from '@/stores/authStore';
 
 const PROVIDER_CODES = ['IOCL', 'HPCL', 'BPCL', 'GOGAS', 'SUPERGAS', 'TOTALGAS', 'OTHERS'] as const;
 
@@ -198,6 +199,25 @@ function DistributorFormModal({
   const [officeSameAsRegistered, setOfficeSameAsRegistered] = useState(false);
   const [selectedProviders, setSelectedProviders] = useState<string[]>(distributor?.providerCodes || []);
 
+  // 9-issues Issue 5 (2026-06-12): Phase F backend was fully wired but
+  // the super-admin UI section was never built. These three local
+  // states power the toggle + two secret inputs. Loading: if the
+  // distributor already has razorpayEnabled=true, the toggle starts
+  // ON and the secret inputs show a "•••••••• (set; leave blank to
+  // keep)" placeholder — the API never returns the secrets, so the
+  // edit form can't pre-fill them.
+  const isSuperAdmin = useAuthStore(selectIsSuperAdmin);
+  const [razorpayEnabled, setRazorpayEnabled] = useState(distributor?.razorpayEnabled ?? false);
+  const [razorpayKeyId, setRazorpayKeyId] = useState(distributor?.razorpayKeyId ?? '');
+  const [razorpayKeySecret, setRazorpayKeySecret] = useState('');
+  const [razorpayWebhookSecret, setRazorpayWebhookSecret] = useState('');
+  // True when the distributor already had secrets configured before
+  // this edit session. Drives the placeholder hint and the
+  // "don't-overwrite-with-empty" behaviour on submit. Inferred from
+  // razorpayEnabled (which only flips true once a key id + secrets
+  // were ever set).
+  const hadExistingRazorpaySecrets = !!distributor?.razorpayEnabled;
+
   const { register, handleSubmit, setValue, watch, control, formState: { errors } } = useForm<UpdateDistributorInput>({
     resolver: zodResolver(isEdit ? updateDistributorSchema : createDistributorSchema),
     defaultValues: distributor
@@ -363,13 +383,34 @@ function DistributorFormModal({
   }
 
   const onSubmit = (data: UpdateDistributorInput) => {
-    const payload = {
+    const payload: UpdateDistributorInput & Record<string, unknown> = {
       ...data,
       providerCodes: selectedProviders,
       // Convert empty strings to null for nullable fields
       subscriptionPlan: data.subscriptionPlan || null,
       billingTier: data.billingTier || null,
     };
+    // 9-issues Issue 5 (2026-06-12): merge Razorpay fields. Only
+    // super-admin can write them (defense-in-depth — the route also
+    // strips them for non-super-admin per Phase F). Empty secret
+    // strings are deliberately NOT sent so they don't overwrite the
+    // server-side stored secret (the API never returns it; the user
+    // saw a placeholder `••••••••` and didn't retype). New key_id
+    // always goes through (it's public; harmless to overwrite).
+    if (isSuperAdmin) {
+      payload.razorpayEnabled = razorpayEnabled;
+      // Zod accepts string or '' for razorpayKeyId — pass '' when
+      // cleared so the server's empty-string branch normalises it
+      // (mirrors the bank-details handling). Null would fail the
+      // `.optional().or(z.literal(''))` shape.
+      payload.razorpayKeyId = razorpayKeyId.trim();
+      if (razorpayKeySecret.trim().length > 0) {
+        payload.razorpayKeySecret = razorpayKeySecret.trim();
+      }
+      if (razorpayWebhookSecret.trim().length > 0) {
+        payload.razorpayWebhookSecret = razorpayWebhookSecret.trim();
+      }
+    }
     mutation.mutate(payload);
   };
 
@@ -776,6 +817,80 @@ function DistributorFormModal({
             ))}
           </div>
         </div>
+
+        {/* ── 9-issues Issue 5: Razorpay Settings (super-admin only) ── */}
+        {isSuperAdmin && (
+          <div className="space-y-3 border-t border-surface-200 dark:border-surface-700 pt-4">
+            <div>
+              <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">
+                Razorpay Settings (Online Payments)
+              </h3>
+              <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">
+                These are the distributor&apos;s own Razorpay credentials. Customer payments flow
+                direct to <em>their</em> Razorpay account — GasLink never touches the money.
+              </p>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={razorpayEnabled}
+                onChange={(e) => setRazorpayEnabled(e.target.checked)}
+                className="rounded border-surface-300 text-brand-600 focus:ring-brand-500"
+              />
+              <span className="text-sm font-medium text-surface-900 dark:text-surface-100">
+                Enable online payments for this distributor
+              </span>
+            </label>
+
+            {razorpayEnabled && (
+              <div className="space-y-3 pl-6">
+                <div>
+                  <label className="block text-xs font-medium text-surface-700 dark:text-surface-300 mb-1">
+                    Razorpay Key ID
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="rzp_test_… or rzp_live_…"
+                    value={razorpayKeyId}
+                    onChange={(e) => setRazorpayKeyId(e.target.value)}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-800 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-surface-700 dark:text-surface-300 mb-1">
+                    Razorpay Key Secret
+                  </label>
+                  <input
+                    type="password"
+                    placeholder={hadExistingRazorpaySecrets ? '•••••••• (set; leave blank to keep)' : 'rzp_secret_…'}
+                    value={razorpayKeySecret}
+                    onChange={(e) => setRazorpayKeySecret(e.target.value)}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-800 px-3 py-2 text-sm font-mono"
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-surface-700 dark:text-surface-300 mb-1">
+                    Razorpay Webhook Secret
+                  </label>
+                  <input
+                    type="password"
+                    placeholder={hadExistingRazorpaySecrets ? '•••••••• (set; leave blank to keep)' : 'webhook_secret_…'}
+                    value={razorpayWebhookSecret}
+                    onChange={(e) => setRazorpayWebhookSecret(e.target.value)}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-800 px-3 py-2 text-sm font-mono"
+                    autoComplete="new-password"
+                  />
+                </div>
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  ⚠ Secrets are stored plaintext at rest (matching the gst_credentials posture).
+                  See CLAUDE.md → Accepted security risks for the v1.1 coordinated encryption plan.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Actions ──────────────────────────────────────────────── */}
         <div className="flex justify-end gap-3 pt-4 border-t border-surface-200 dark:border-surface-700">
