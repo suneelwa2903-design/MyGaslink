@@ -196,7 +196,13 @@ describe('GSTIN lookup tenant isolation (Group A regression — gstinLookup.ts:1
   it('Test 1: live tenant with email=NULL must use OWN credentials (Layer 1 env), NOT dist-demo', async () => {
     // Simulate a 2-row DB: Vanasthali (email=null, live) + dist-demo (email NOT null, sandbox).
     // findFirst respects the WHERE clause that the code passes.
-    vi.mocked(prisma.gstCredential.findFirst).mockImplementation(async (args) => {
+    // Cast to `any` — Prisma's mock function generic return type
+    // (Prisma__GstCredentialClient<…>) is more complex than a plain
+    // Promise; vitest's mockImplementation can't satisfy it without
+    // duplicating the entire Prisma generic chain. Test-file only.
+    (vi.mocked(prisma.gstCredential.findFirst) as unknown as {
+      mockImplementation: (fn: (args: unknown) => Promise<unknown>) => void;
+    }).mockImplementation(async (args: unknown) => {
       const where = (args as { where?: Record<string, unknown> }).where;
       return applyWhere([ROW_VANASTHALI, ROW_DIST_DEMO], where)[0] ?? null;
     });
@@ -215,7 +221,13 @@ describe('GSTIN lookup tenant isolation (Group A regression — gstinLookup.ts:1
   });
 
   it('Test 2: sandbox tenant with email NOT NULL must still route to sandbox (no regression)', async () => {
-    vi.mocked(prisma.gstCredential.findFirst).mockImplementation(async (args) => {
+    // Cast to `any` — Prisma's mock function generic return type
+    // (Prisma__GstCredentialClient<…>) is more complex than a plain
+    // Promise; vitest's mockImplementation can't satisfy it without
+    // duplicating the entire Prisma generic chain. Test-file only.
+    (vi.mocked(prisma.gstCredential.findFirst) as unknown as {
+      mockImplementation: (fn: (args: unknown) => Promise<unknown>) => void;
+    }).mockImplementation(async (args: unknown) => {
       const where = (args as { where?: Record<string, unknown> }).where;
       return applyWhere([ROW_VANASTHALI, ROW_DIST_DEMO], where)[0] ?? null;
     });
@@ -229,7 +241,13 @@ describe('GSTIN lookup tenant isolation (Group A regression — gstinLookup.ts:1
   });
 
   it('Test 3: cross-tenant isolation — live tenant lookup must NEVER use sandbox tenant credentials', async () => {
-    vi.mocked(prisma.gstCredential.findFirst).mockImplementation(async (args) => {
+    // Cast to `any` — Prisma's mock function generic return type
+    // (Prisma__GstCredentialClient<…>) is more complex than a plain
+    // Promise; vitest's mockImplementation can't satisfy it without
+    // duplicating the entire Prisma generic chain. Test-file only.
+    (vi.mocked(prisma.gstCredential.findFirst) as unknown as {
+      mockImplementation: (fn: (args: unknown) => Promise<unknown>) => void;
+    }).mockImplementation(async (args: unknown) => {
       const where = (args as { where?: Record<string, unknown> }).where;
       return applyWhere([ROW_VANASTHALI, ROW_DIST_DEMO], where)[0] ?? null;
     });
