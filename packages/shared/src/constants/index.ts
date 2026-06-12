@@ -133,6 +133,30 @@ export const INDIAN_STATE_NAMES: readonly string[] = Array.from(
   new Set(Object.values(INDIAN_STATES) as readonly string[]),
 ).sort((a, b) => a.localeCompare(b));
 
+// Phase D (2026-06-12): local-TZ today helper. Returns YYYY-MM-DD for
+// TODAY in the process's local timezone, NOT UTC. The codebase had ~40
+// sites doing `new Date().toISOString().split('T')[0]` — the UTC
+// equivalent — for date defaults on forms that POST to APIs validating
+// against local-TZ midnight (CLAUDE.md anti-pattern #21). Between 18:30
+// UTC and 23:59 UTC the UTC date lags one day behind IST, so every user
+// filling in a date filter or submitting a new order between midnight
+// and 05:30 IST got yesterday's date silently substituted. Hidden for
+// months because failing tests were mislabeled as flakes (see commit
+// 53cb40c).
+//
+// Use this in any TS code (server, web, mobile, tests) that needs the
+// calendar date IN THE USER'S TIMEZONE — which is almost always what
+// you want. The test-suite helper at packages/api/src/__tests__/
+// helpers.ts > today() is the same impl, kept duplicated only because
+// tests can't easily import from @gaslink/shared without a build cycle.
+export function localTodayISO(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // Phase 5 (2026-06-12): reverse map (state name → 2-digit code) used by
 // the invoiceService when writing Invoice.placeOfSupplyCode at issue
 // time. NIC's GSTR-1 schema expects a 2-digit string code, not a name.

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
-import { loginAsDistAdmin, loginAsFinance, loginAsInventory, generateToken } from './helpers.js';
+import { loginAsDistAdmin, loginAsFinance, loginAsInventory, generateToken, today } from './helpers.js';
 import { prisma } from '../lib/prisma.js';
 import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
@@ -102,20 +102,56 @@ describe('Role-Based Access Control', () => {
 
   it('should allow inventory to access inventory endpoints', async () => {
     const { token } = await loginAsInventory();
-    const today = new Date().toISOString().split('T')[0];
+    // Phase C (2026-06-12): use the local-TZ helper, NOT raw UTC. Raw
+    // `new Date().toISOString().split('T')[0]` fails the IST-midnight
+    // window because the API parses the date and queries summaries by
+    // local-TZ summary_date — same anti-pattern that bit customer-
+    // portal.test.ts pre-4300e07. Phase D adds a CI grep guard.
     const res = await request(app)
-      .get(`/api/inventory/summary/${today}`)
+      .get(`/api/inventory/summary/${today()}`)
       .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
+
+    // Phase C — assertions on response BODY, not just status. The
+    // pre-Phase-C version of this test only checked status === 200, so
+    // a route that returned 200 with the wrong-day data, an empty
+    // envelope, or a different shape would all silently pass and let
+    // bugs ship. Pin: response is a success envelope, data is an array,
+    // and (when non-empty) each row carries the columns the inventory
+    // mobile screen reads (cylinderTypeName + openingFulls + closing
+    // Fulls + closingEmpties). Empty array is acceptable — fresh
+    // tenant or no summaries yet for today — but malformed rows are
+    // not.
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    if (res.body.data.length > 0) {
+      const row = res.body.data[0];
+      expect(typeof row.cylinderTypeName).toBe('string');
+      expect(typeof row.openingFulls).toBe('number');
+      expect(typeof row.openingEmpties).toBe('number');
+      expect(typeof row.closingFulls).toBe('number');
+      expect(typeof row.closingEmpties).toBe('number');
+    }
   });
 
   it('should allow finance to access inventory summary (WI-088)', async () => {
     const { token } = await loginAsFinance();
-    const today = new Date().toISOString().split('T')[0];
+    // Phase C — same local-TZ + body-shape strengthening as the
+    // inventory test above. Finance's read access (added in WI-088) is
+    // the explicit subject here; the body assertion guarantees finance
+    // doesn't accidentally start getting a different / smaller payload.
     const res = await request(app)
-      .get(`/api/inventory/summary/${today}`)
+      .get(`/api/inventory/summary/${today()}`)
       .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    if (res.body.data.length > 0) {
+      const row = res.body.data[0];
+      expect(typeof row.cylinderTypeName).toBe('string');
+      expect(typeof row.closingFulls).toBe('number');
+      expect(typeof row.closingEmpties).toBe('number');
+    }
   });
 
   it('should allow finance to access payments', async () => {

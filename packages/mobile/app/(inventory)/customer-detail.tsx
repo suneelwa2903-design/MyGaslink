@@ -50,7 +50,7 @@ interface BalanceResponse {
 }
 
 export default function InventoryCustomerDetailScreen() {
-  const { dark, colors } = useTheme();
+  const { colors } = useTheme();
   const router = useRouter();
   const { customerId } = useLocalSearchParams<{ customerId: string }>();
 

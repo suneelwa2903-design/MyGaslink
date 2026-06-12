@@ -17,6 +17,7 @@ import {
   type CreateOrderInput,
   orderStatusLabel,
   orderStatusVariant,
+  localTodayISO,
 } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -186,7 +187,9 @@ function CustomerCreateOrderModal({ open, onClose, cylinderTypes, customerId }: 
     resolver: zodResolver(createOrderSchema),
     defaultValues: {
       customerId,
-      deliveryDate: new Date().toISOString().split('T')[0],
+      // Phase D (2026-06-12): local TZ — customerPortalService.ts
+      // validates deliveryDate against local-TZ midnight.
+      deliveryDate: localTodayISO(),
       specialInstructions: '',
       items: [{ cylinderTypeId: '', quantity: 1 }],
     },

@@ -41,6 +41,7 @@ import {
   invoiceStatusLabel,
   noteStatusLabel,
   type StatusVariant,
+  localTodayISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
@@ -1322,7 +1323,7 @@ function PayInvoiceModal({ open, onClose, invoice }: { open: boolean; onClose: (
       amount: invoice.outstandingAmount,
       paymentMethod: PaymentMethod.CASH as string,
       referenceNumber: '',
-      transactionDate: new Date().toISOString().split('T')[0],
+      transactionDate: localTodayISO(), // Phase D: local TZ
     },
   });
 
@@ -1389,7 +1390,7 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
       amount: 0,
       paymentMethod: PaymentMethod.CASH,
       referenceNumber: '',
-      transactionDate: new Date().toISOString().split('T')[0],
+      transactionDate: localTodayISO(), // Phase D: local TZ
       allocations: [],
     },
   });

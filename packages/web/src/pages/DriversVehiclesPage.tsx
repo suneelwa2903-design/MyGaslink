@@ -17,6 +17,7 @@ import {
   VehicleStatus,
   ASSIGNMENT_STATUS_VARIANTS,
   assignmentStatusLabel,
+  localTodayISO,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -305,7 +306,8 @@ function AssignmentModal({ open, onClose, drivers, vehicles }: { open: boolean; 
   const queryClient = useQueryClient();
 
   const { register, handleSubmit } = useForm({
-    defaultValues: { driverId: '', vehicleId: '', assignmentDate: new Date().toISOString().split('T')[0] },
+    // Phase D (2026-06-12): local TZ.
+    defaultValues: { driverId: '', vehicleId: '', assignmentDate: localTodayISO() },
   });
 
   const mutation = useMutation({

@@ -7,6 +7,7 @@ import { sendSuccess, sendError, sendCreated } from '../utils/apiResponse.js';
 import {
   incomingFullsSchema, outgoingEmptiesSchema, manualAdjustmentSchema,
   cancelledStockReturnSchema,
+  localTodayISO,
 } from '@gaslink/shared';
 import * as inventoryService from '../services/inventoryService.js';
 import { mapInventorySummaries, mapInventoryEvent, mapInventoryEvents } from '../utils/mappers.js';
@@ -21,7 +22,10 @@ router.get('/summary',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
   async (req, res) => {
   try {
-    const date = new Date().toISOString().split('T')[0];
+    // Phase D (2026-06-12): local TZ, not UTC. Server runs with
+    // TZ=Asia/Kolkata so this aligns with the inventory_summaries.
+    // summary_date column which is keyed by local-TZ midnight.
+    const date = localTodayISO();
     const summaries = await inventoryService.getInventorySummary(req.user!.distributorId!, date);
     return sendSuccess(res, mapInventorySummaries(summaries));
   } catch (err) {

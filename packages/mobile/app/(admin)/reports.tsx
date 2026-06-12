@@ -110,9 +110,16 @@ function fmtCell(value: ReportCellValue, money?: boolean): string {
 // always had. The wrapper at (inventory)/reports.tsx imports the
 // named `ReportsScreen` and renders it with the whitelist.
 export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) {
-  const visibleReports = allowedKeys
-    ? REPORTS.filter((r) => allowedKeys.includes(r.key))
-    : REPORTS;
+  // Phase B + Phase D fix: memoise the filtered list so React Compiler /
+  // useMemo-dependency-tracking sees a stable identity per render. A
+  // plain `allowedKeys ? REPORTS.filter(...) : REPORTS` returns a new
+  // array each render which trips
+  // `react-compiler/skip-existing-memoization` for downstream useMemos
+  // that read it.
+  const visibleReports = useMemo(
+    () => (allowedKeys ? REPORTS.filter((r) => allowedKeys.includes(r.key)) : REPORTS),
+    [allowedKeys],
+  );
   const initialKey = visibleReports[0]?.key ?? 'sales-summary';
   const { colors } = useTheme();
 

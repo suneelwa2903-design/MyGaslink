@@ -27,6 +27,7 @@ import {
   createDebitNoteSchema,
   type CreateDebitNoteInput,
   PaymentMethod,
+  localTodayISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
@@ -715,7 +716,8 @@ function PayInvoiceModal({ open, onClose, invoice }: { open: boolean; onClose: (
       amount: invoice.outstandingAmount,
       paymentMethod: PaymentMethod.CASH as string,
       referenceNumber: '',
-      transactionDate: new Date().toISOString().split('T')[0],
+      // Phase D (2026-06-12): local TZ.
+      transactionDate: localTodayISO(),
     },
   });
 

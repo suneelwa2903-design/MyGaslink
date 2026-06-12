@@ -8,6 +8,7 @@ import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiR
 import { z } from 'zod';
 import * as assignmentService from '../services/assignmentService.js';
 import { mapAssignment, mapAssignments } from '../utils/mappers.js';
+import { localTodayISO } from '@gaslink/shared';
 
 const router = Router();
 
@@ -16,7 +17,10 @@ router.get('/vehicle-mappings',
   requireRole('distributor_admin', 'super_admin', 'finance', 'inventory'),
   async (req: Request, res: Response) => {
     try {
-      const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
+      // Phase D (2026-06-12): local-TZ fallback. Vehicle mappings are
+      // keyed by local-TZ assignment_date; UTC default would return
+      // yesterday's mappings between 00:00 and 05:30 IST.
+      const date = (req.query.date as string) || localTodayISO();
       const result = await assignmentService.getRecommendedMappings(req.user!.distributorId!, date);
       return sendSuccess(res, result);
     } catch (err: unknown) {

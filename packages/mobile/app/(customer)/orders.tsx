@@ -12,7 +12,7 @@ import { Button, Badge, EmptyState, DateInput, todayLocalIso } from '../../src/c
 import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
-import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant, localTodayISO } from '@gaslink/shared';
 
 interface CylinderType {
   id: string;
@@ -37,10 +37,21 @@ type CommitmentPrompt = {
 };
 
 // WI-125: customers may pick today or tomorrow only (future orders parked).
-function todayISO() { return new Date().toISOString().split('T')[0]; }
+// Phase D (2026-06-12): switched to local-TZ via shared localTodayISO so the
+// customer-side delivery-date defaults align with the server's local-TZ
+// validation (customerPortalService setHours(0,0,0,0)). Pre-Phase-D
+// these used UTC and silently sent yesterday's date between 00:00 and
+// 05:30 IST — same root cause as 4300e07 + commit 53cb40c.
+function todayISO() { return localTodayISO(); }
 function tomorrowISO() {
-  const d = new Date(); d.setDate(d.getDate() + 1);
-  return d.toISOString().split('T')[0];
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+  // (Old UTC form preserved here in case bisect lands on this line:
+  //  return d.toISOString().split('T')[0];)
 }
 // Sensible default: after 2pm a same-day delivery is unlikely, so default to
 // tomorrow; otherwise today.

@@ -8,6 +8,7 @@ import {
   createOrderSchema, updateOrderSchema, deliveryConfirmationSchema,
   assignDriverSchema, bulkAssignDriverSchema, orderFilterSchema,
   returnsOnlyOrderSchema, returnsConfirmationSchema,
+  localTodayISO,
 } from '@gaslink/shared';
 import * as orderService from '../services/orderService.js';
 import { preflightDispatch, preflightAddToTrip, PreflightError } from '../services/gst/gstPreflightService.js';
@@ -122,7 +123,8 @@ router.get('/in-transit',
   async (req, res) => {
     try {
       const distributorId = req.user!.distributorId!;
-      const dateParam = (req.query.date as string | undefined) ?? new Date().toISOString().split('T')[0];
+      // Phase D (2026-06-12): local-TZ default — see localTodayISO docs.
+      const dateParam = (req.query.date as string | undefined) ?? localTodayISO();
       const targetDate = new Date(dateParam);
 
       // Every DVA in flight today, scoped to (distributor, date,

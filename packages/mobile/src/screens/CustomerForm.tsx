@@ -1225,7 +1225,7 @@ function StatePickerField({
             ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.divider, marginHorizontal: 16 }} />}
             ListEmptyComponent={
               <Text style={{ padding: 24, textAlign: 'center', color: colors.textMuted }}>
-                No states match "{filter}"
+                No states match &quot;{filter}&quot;
               </Text>
             }
           />

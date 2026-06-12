@@ -9,6 +9,7 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
 import { Card, Badge, MetricCard, Button, EmptyState } from '../../src/components/ui';
 import type { Payment, Customer } from '@gaslink/shared';
+import { localTodayISO } from '@gaslink/shared';
 
 const PAYMENT_METHODS = ['cash', 'cheque', 'online', 'upi', 'bank_transfer'] as const;
 type PaymentMethod = (typeof PAYMENT_METHODS)[number];
@@ -304,7 +305,8 @@ function RecordPaymentModal({ visible, dark, colors, accent, onClose, onSuccess 
       paymentMethod: method,
       referenceNumber: reference.trim() || undefined,
       notes: notes.trim() || undefined,
-      transactionDate: new Date().toISOString().split('T')[0],
+      // Phase D (2026-06-12): local TZ — see localTodayISO docs.
+      transactionDate: localTodayISO(),
     });
   };
 

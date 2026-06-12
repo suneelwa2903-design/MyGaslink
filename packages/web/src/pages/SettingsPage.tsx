@@ -225,18 +225,31 @@ function PaymentDetailsSection({ settings }: { settings: DistributorSettings | u
     ifscCode: '',
     upiId: '',
   });
-  // Sync state from server values once they load (and on subsequent
-  // settings refetches after save).
+  // Phase 3 → Phase D fix (2026-06-12): sync server values into form
+  // state ONCE per settings-identity change, and only when the values
+  // actually differ from current form state. Previously this called
+  // setForm unconditionally on every effect run, triggering the
+  // `react-hooks/incompatible-library` "cascading renders" lint error
+  // — flagged but masked by `pnpm -r run lint`'s exit-code aggregation
+  // until Phase D wired the lint script to fail on it. Using a ref
+  // guards against the cascade: skip the sync if the same settings
+  // object (or one with identical values) is processed twice.
+  const syncedSettingsRef = useRef<DistributorSettings | null>(null);
   useEffect(() => {
-    if (settings) {
-      setForm({
-        bankName: settings.bankName ?? '',
-        bankAccountNumber: settings.bankAccountNumber ?? '',
-        bankBranchName: settings.bankBranchName ?? '',
-        ifscCode: settings.ifscCode ?? '',
-        upiId: settings.upiId ?? '',
-      });
-    }
+    if (!settings) return;
+    if (syncedSettingsRef.current === settings) return;
+    syncedSettingsRef.current = settings;
+    const next = {
+      bankName: settings.bankName ?? '',
+      bankAccountNumber: settings.bankAccountNumber ?? '',
+      bankBranchName: settings.bankBranchName ?? '',
+      ifscCode: settings.ifscCode ?? '',
+      upiId: settings.upiId ?? '',
+    };
+    setForm((cur) => {
+      const same = (Object.keys(next) as (keyof typeof next)[]).every((k) => cur[k] === next[k]);
+      return same ? cur : next;
+    });
   }, [settings]);
 
   const mutation = useMutation({

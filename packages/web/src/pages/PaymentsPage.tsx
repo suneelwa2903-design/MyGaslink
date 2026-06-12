@@ -17,6 +17,7 @@ import {
   PaymentAllocationStatus,
   createPaymentSchema,
   type CreatePaymentInput,
+  localTodayISO,
 } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
@@ -214,7 +215,8 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
       amount: 0,
       paymentMethod: PaymentMethod.CASH,
       referenceNumber: '',
-      transactionDate: new Date().toISOString().split('T')[0],
+      // Phase D (2026-06-12): local TZ.
+      transactionDate: localTodayISO(),
       allocations: [],
     },
   });

@@ -36,6 +36,7 @@ import {
   ORDER_STATUS_LABELS,
   orderStatusLabel,
   orderStatusVariant,
+  localTodayISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole, selectDistributorId } from '@/stores/authStore';
@@ -482,7 +483,8 @@ function CreateOrderModal({
     resolver: zodResolver(createOrderSchema),
     defaultValues: {
       customerId: '',
-      deliveryDate: new Date().toISOString().split('T')[0],
+      // Phase D (2026-06-12): local TZ.
+      deliveryDate: localTodayISO(),
       specialInstructions: '',
       items: [{ cylinderTypeId: '', quantity: 1 }],
     },
@@ -1113,7 +1115,8 @@ function ReturnsOrderModal({
     resolver: zodResolver(returnsOnlyOrderSchema),
     defaultValues: {
       customerId: '',
-      scheduledDate: new Date().toISOString().split('T')[0],
+      // Phase D (2026-06-12): local TZ.
+      scheduledDate: localTodayISO(),
       specialInstructions: '',
       items: [{ cylinderTypeId: '', expectedQuantity: 1 }],
     },
