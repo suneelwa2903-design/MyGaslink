@@ -1,12 +1,13 @@
 /**
  * Group L4 (2026-06-11) — onboarding-progress wire-shape guard.
  *
- * The web's PostResetRedirect (packages/web/src/routes/ProtectedRoute.tsx)
- * compares `progress.requiredDoneCount < progress.requiredTotal` to decide
- * whether to redirect a newly re-logged-in distributor_admin to the
- * Onboarding tab. If those field names or their numeric shape ever
- * drift, the frontend silently never redirects (we just see the empty
- * Analytics dashboard again). This test pins the contract.
+ * Originally written to pin the contract consumed by the now-removed
+ * web `PostResetRedirect` (deleted 2026-06-12 — CLAUDE.md anti-pattern
+ * #22). The endpoint is still consumed by the OnboardingCard on the
+ * Settings page and by the dashboard onboarding banner, both of which
+ * read `progress.requiredDoneCount / requiredTotal` and `progress.show`.
+ * If those field names or their numeric shape drift, those consumers
+ * silently render empty. This test pins the contract.
  *
  * Anti-pattern #9 ref: "API response type-annotated as one shape but
  * route returns another."

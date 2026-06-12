@@ -1,17 +1,6 @@
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
-import { apiGet } from '@/lib/api';
 import { UserRole } from '@gaslink/shared';
-
-// Group L4 (2026-06-11): onboarding progress shape returned by
-// GET /api/customers/onboarding/progress (see customerService.ts
-// getOnboardingProgress).
-type OnboardingProgress = {
-  requiredTotal: number;
-  requiredDoneCount: number;
-  show: boolean;
-};
 
 interface ProtectedRouteProps {
   allowedRoles?: UserRole[];
@@ -38,48 +27,22 @@ export function ProtectedRoute({
     return <Navigate to="/force-password-reset" replace />;
   }
 
+  // CLAUDE.md anti-pattern #22 (2026-06-12): the previous Group L4
+  // `PostResetRedirect` wrapper intercepted distributor_admins on
+  // /app/analytics and forced them to /app/settings?tab=onboarding
+  // whenever the onboarding checklist had any required step pending.
+  // That turned a guide into a gate — a months-old distributor with
+  // 9/10 required steps complete still got bounced. Removed entirely.
+  // Onboarding remains as the OnboardingCard on Settings and the
+  // banner on the dashboard; both are nudges, not blockers.
   return (
-    <PostResetRedirect>
-      <ProtectedRouteInner
-        allowedRoles={allowedRoles}
-        requireDistributor={requireDistributor}
-      >
-        {children}
-      </ProtectedRouteInner>
-    </PostResetRedirect>
+    <ProtectedRouteInner
+      allowedRoles={allowedRoles}
+      requireDistributor={requireDistributor}
+    >
+      {children}
+    </ProtectedRouteInner>
   );
-}
-
-// Group L4 (2026-06-11): post-force-reset landing redirect. When a
-// distributor_admin completes their first password change, the existing
-// flow logs them out (ForcePasswordResetPage:32-34) and they land on
-// /app/analytics after re-login. For a brand-new tenant that page is
-// an empty zero-data dashboard — the Onboarding checklist is the
-// productive destination. This wrapper checks role + path + onboarding
-// progress and redirects once to /app/settings?tab=onboarding when the
-// checklist is incomplete. Only fires for the analytics path so any
-// other deliberate navigation (e.g. distributor_admin visits /app/
-// settings directly) is left alone.
-function PostResetRedirect({ children }: { children: React.ReactNode }) {
-  const { user } = useAuthStore();
-  const location = useLocation();
-  const isDistributorAdmin = user?.role === UserRole.DISTRIBUTOR_ADMIN;
-  // Trigger ONLY on the default-landing route. Manual navigation to
-  // other tabs is respected; nothing else is hijacked.
-  const isAnalyticsLanding = location.pathname === '/app/analytics' || location.pathname === '/app/analytics/';
-  const shouldCheck = isDistributorAdmin && isAnalyticsLanding;
-
-  const { data: progress, isLoading } = useQuery({
-    queryKey: ['onboarding-progress', user?.distributorId],
-    queryFn: () => apiGet<OnboardingProgress>('/customers/onboarding/progress'),
-    enabled: shouldCheck && !!user?.distributorId,
-    staleTime: 30 * 1000,
-  });
-
-  if (shouldCheck && !isLoading && progress && progress.requiredDoneCount < progress.requiredTotal) {
-    return <Navigate to="/app/settings?tab=onboarding" replace />;
-  }
-  return <>{children}</>;
 }
 
 function ProtectedRouteInner({
