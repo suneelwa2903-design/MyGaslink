@@ -16,7 +16,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { generateToken, getSeedData } from './helpers.js';
+import { generateToken } from './helpers.js';
 import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
 
