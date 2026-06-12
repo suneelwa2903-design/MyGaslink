@@ -2383,11 +2383,19 @@ function SubscriptionTab() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-bold text-surface-900 dark:text-white">{fmt(cycle.totalAmountInclGst)}</span>
-                    {/* Phase E (2026-06-12): Pay Now button. Shown for
-                        pending_payment + overdue_billing cycles only —
-                        paid cycles get no button. Disabled while a
-                        verify call is in flight to avoid double-submit. */}
-                    {(cycle.billingStatus === 'pending_payment' || cycle.billingStatus === 'overdue_billing') && (
+                    {/* Phase E (2026-06-12): Pay Now button. 9-issues
+                        Issue 3 fix: also include `invoice_generated` —
+                        that's the natural-flow status right after the
+                        billing invoice is generated, and the distributor
+                        already owes the money at that point. The earlier
+                        pending_payment / overdue_billing only gate
+                        delayed the button until a separate state
+                        transition that doesn't always happen
+                        automatically. Paid + suspended cycles still get
+                        no button. */}
+                    {(cycle.billingStatus === 'pending_payment' ||
+                      cycle.billingStatus === 'overdue_billing' ||
+                      cycle.billingStatus === 'invoice_generated') && (
                       <Button
                         size="sm"
                         variant="primary"

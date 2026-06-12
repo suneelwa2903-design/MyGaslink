@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { requireRole } from '../middleware/auth.js';
-import { sendSuccess, sendError, sendCreated } from '../utils/apiResponse.js';
+import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
 import * as pricingService from '../services/pricingService.js';
 import * as gstApiTracker from '../services/gstApiTracker.js';
 import * as seatRequestService from '../services/seatRequestService.js';
 import { generateBillingInvoicePdf } from '../services/pdf/billingInvoicePdfService.js';
 import { validate } from '../middleware/validate.js';
 import { param } from '../utils/params.js';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 
 const router = Router();
@@ -132,17 +133,35 @@ router.put('/seat-requests/:id/reject', requireRole('super_admin'), async (req, 
   }
 });
 
-// GET /api/pricing/billing-invoice/:cycleId - download billing invoice PDF
-router.get('/billing-invoice/:cycleId', requireRole('super_admin'), async (req, res) => {
-  try {
-    const cycleId = param(req.params.cycleId);
-    const pdf = await generateBillingInvoicePdf(cycleId);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="gaslink-invoice-${cycleId.slice(-6)}.pdf"`);
-    res.send(pdf);
-  } catch (err) {
-    return sendError(res, (err as Error).message);
-  }
-});
+// GET /api/pricing/billing-invoice/:cycleId — download billing invoice PDF.
+// 9-issues Issue 2 (2026-06-12): widened from super_admin only to also
+// allow distributor_admin so distributors can self-serve their own
+// invoices for accounting. Tenant guard inside the handler enforces
+// that a distributor_admin can ONLY download cycles belonging to their
+// own distributor (super_admin bypasses — intentional cross-tenant
+// capability).
+router.get('/billing-invoice/:cycleId',
+  requireRole('super_admin', 'distributor_admin'),
+  async (req, res) => {
+    try {
+      const cycleId = param(req.params.cycleId);
+      const cycle = await prisma.billingCycle.findUnique({
+        where: { id: cycleId },
+        select: { id: true, distributorId: true },
+      });
+      if (!cycle) return sendNotFound(res, 'Billing cycle not found');
+      // Tenant isolation gate — same posture as Phase E verify-payment.
+      if (req.user!.role !== 'super_admin' && cycle.distributorId !== req.user!.distributorId) {
+        return sendError(res, 'Billing cycle does not belong to this distributor', 403, 'CROSS_TENANT_ACCESS');
+      }
+      const pdf = await generateBillingInvoicePdf(cycleId);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="gaslink-invoice-${cycleId.slice(-6)}.pdf"`);
+      res.send(pdf);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
 
 export default router;

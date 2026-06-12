@@ -120,6 +120,21 @@ export function DashboardLayout() {
 
             {/* Distributor selector — only for super admin on distributor-scoped pages */}
             {showDistributorSelector && <DistributorSelector />}
+            {/* Tenant name label — 9-issues fix (2026-06-12). Replaces the
+                Phase 2 sidebar third-line render. Shown only when the
+                DistributorSelector isn't already filling this slot (super-
+                admin gets the selector; everyone else gets the static
+                name). Desktop only — `hidden lg:block` keeps the mobile
+                header tight. Truncated so long businessNames don't bleed
+                into the right cluster. */}
+            {user?.distributorName && !showDistributorSelector && (
+              <span
+                className="hidden lg:block text-sm font-medium text-surface-700 dark:text-surface-200 truncate max-w-[240px]"
+                title={user.distributorName}
+              >
+                {user.distributorName}
+              </span>
+            )}
           </div>
 
           {/* Right: controls */}

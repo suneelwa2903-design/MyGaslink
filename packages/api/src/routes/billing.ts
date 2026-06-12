@@ -207,10 +207,18 @@ router.post('/cycles/:id/create-payment-order',
         return sendError(res, 'Billing cycle does not belong to this distributor', 403, 'CROSS_TENANT_ACCESS');
       }
 
-      if (cycle.billingStatus !== 'pending_payment' && cycle.billingStatus !== 'overdue_billing') {
+      // 9-issues Issue 3 (2026-06-12): widened from
+      // pending_payment | overdue_billing to also include
+      // invoice_generated — that's the post-issue status the
+      // distributor lands on before a separate payment-cycle
+      // transition that doesn't always happen automatically. Mirror
+      // of the web Pay Now gate at SettingsPage.tsx. Paid, suspended,
+      // and pending_generation cycles still 400.
+      const payableStatuses = new Set(['pending_payment', 'overdue_billing', 'invoice_generated']);
+      if (!payableStatuses.has(cycle.billingStatus)) {
         return sendError(
           res,
-          `Cycle is in status "${cycle.billingStatus}" — only pending or overdue cycles can be paid.`,
+          `Cycle is in status "${cycle.billingStatus}" — only pending, overdue, or generated cycles can be paid.`,
           400,
           'CYCLE_NOT_PAYABLE',
         );

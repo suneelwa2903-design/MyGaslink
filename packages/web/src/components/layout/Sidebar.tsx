@@ -259,14 +259,11 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
             <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider font-medium">
               LPG Management
             </p>
-            {user?.distributorName && (
-              <p
-                className="text-[11px] text-slate-300 dark:text-slate-600 font-medium truncate mt-0.5"
-                title={user.distributorName}
-              >
-                {user.distributorName}
-              </p>
-            )}
+            {/* Phase 2 → 9-issues fix (2026-06-12): tenant name moved to
+                the top header bar (DashboardLayout) — see that file. The
+                sidebar was showing it as a third line, but the header is
+                more visible and avoids duplicating context. The grep
+                guard at sidebarTenantName.test.ts was updated alongside. */}
           </div>
         </div>
 

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { HiOutlineEye } from 'react-icons/hi2';
+import { HiOutlineEye, HiOutlineDocumentArrowDown } from 'react-icons/hi2';
 import toast from 'react-hot-toast';
 import type { Invoice, PaginationMeta } from '@gaslink/shared';
 import { InvoiceStatus, invoiceStatusLabel, invoiceStatusVariant } from '@gaslink/shared';
-import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Select, Modal, Badge, Loader, EmptyState, Input } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -257,8 +257,40 @@ export default function CustomerInvoicesPage() {
                             Pay Now
                           </Button>
                         )}
-                        <button onClick={() => setViewInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500">
+                        <button onClick={() => setViewInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="View invoice">
                           <HiOutlineEye className="h-4 w-4" />
+                        </button>
+                        {/* 9-issues Issue 6b (2026-06-12): customer-side
+                            invoice PDF download. The endpoint already
+                            exists at GET /customer-portal/invoices/:id
+                            /pdf (Phase 0 work) — gated to invoice owner,
+                            allows issued / partially_paid / paid + OB-
+                            overdue. UI side was the missing piece.
+                            Uses the same blob-download pattern as
+                            SettingsPage.tsx handleDownload. */}
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await api.get(
+                                `/customer-portal/invoices/${inv.invoiceId}/pdf`,
+                                { responseType: 'blob' },
+                              );
+                              const url = window.URL.createObjectURL(
+                                new Blob([res.data], { type: 'application/pdf' }),
+                              );
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `invoice-${inv.invoiceNumber}.pdf`;
+                              a.click();
+                              window.URL.revokeObjectURL(url);
+                            } catch (err) {
+                              toast.error(getErrorMessage(err) || 'Failed to download invoice');
+                            }
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500"
+                          title="Download PDF"
+                        >
+                          <HiOutlineDocumentArrowDown className="h-4 w-4" />
                         </button>
                       </div>
                     </td>
