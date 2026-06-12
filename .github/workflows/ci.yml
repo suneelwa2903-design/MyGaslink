@@ -192,6 +192,9 @@ jobs:
           script: |
             cd /opt/gaslink
             git pull origin develop
+            # Same self-healing wipe as the production block below — see
+            # comment there for the rationale (non-pty pnpm 9 install drift).
+            rm -rf node_modules packages/api/node_modules packages/web/node_modules packages/mobile/node_modules packages/shared/node_modules
             pnpm install --frozen-lockfile
             pnpm --filter @gaslink/api run db:generate
             pnpm --filter @gaslink/api run db:migrate:prod
@@ -279,6 +282,19 @@ jobs:
             # Auth inline (server's remote is tokenless; PAT lives only in
             # this CI step's memory, never persisted on disk).
             git pull https://x-access-token:${{ secrets.GH_PAT }}@github.com/suneelwa2903-design/MyGaslink.git main
+            # appleboy/ssh-action runs commands without a pty. Under pnpm 9,
+            # if node_modules has drifted (e.g. a transitive that landed in
+            # the lockfile but wasn't installed last time), `pnpm install`
+            # surfaces an interactive "remove and reinstall? (Y/n)" prompt.
+            # In a non-pty session that prompt auto-resolves to "true" but
+            # the actual reinstall has historically been left in a half-
+            # written state — the most visible symptom was the EC2 tsc
+            # erroring with `Cannot find module 'razorpay'` even though the
+            # package was in the lockfile (CI runs 27392542918, 27392376912,
+            # 27410236601). Wiping node_modules before install forces a
+            # deterministic clean install every deploy. ~30s slower; worth it
+            # for the self-healing property.
+            rm -rf node_modules packages/api/node_modules packages/web/node_modules packages/mobile/node_modules packages/shared/node_modules
             pnpm install --frozen-lockfile
             # api build (tsc) consumes @gaslink/shared dist; rebuild on every
             # deploy so stale source can't ship stale types.
