@@ -50,6 +50,7 @@ import {
   Platform,
   Switch,
   Modal,
+  FlatList,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -58,6 +59,7 @@ import { useApiQuery } from '../hooks/useApi';
 import { useTheme, type ThemeColors } from '../theme';
 import { SelectField } from '../components/ui';
 import type { CylinderType, Customer as SharedCustomer } from '@gaslink/shared';
+import { INDIAN_STATE_NAMES } from '@gaslink/shared';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -704,10 +706,9 @@ export function CustomerForm({
             colors={colors}
           />
           <FieldLabel label="State" colors={colors} />
-          <Field
+          <StatePickerField
             value={form.billingState}
-            onChangeText={(t) => set('billingState', t)}
-            placeholder="State"
+            onChange={(t) => set('billingState', t)}
             colors={colors}
           />
           <FieldLabel label="Pincode" colors={colors} />
@@ -763,10 +764,9 @@ export function CustomerForm({
                 colors={colors}
               />
               <FieldLabel label="State" colors={colors} />
-              <Field
+              <StatePickerField
                 value={form.shippingState}
-                onChangeText={(t) => set('shippingState', t)}
-                placeholder="State"
+                onChange={(t) => set('shippingState', t)}
                 colors={colors}
               />
               <FieldLabel label="Pincode" colors={colors} />
@@ -1135,5 +1135,102 @@ function Field({
         marginBottom: 12,
       }}
     />
+  );
+}
+
+// Phase 7 (2026-06-12): state picker for the customer form's billingState
+// + shippingState. Replaces the previous free-text TextInput which let
+// users type any string (including "Telangaaana" / "TS" / "telegana").
+// Web shipped a dropdown for this in commit 61392d8; mobile gets parity.
+//
+// Implemented as a modal + FlatList rather than a native Picker so we
+// don't need to add `@react-native-picker/picker` as a dependency. The
+// list also includes a search-as-you-type filter since 37 entries on a
+// small touch surface is awkward to scroll.
+function StatePickerField({
+  value,
+  onChange,
+  colors,
+}: {
+  value: string;
+  onChange: (state: string) => void;
+  colors: ThemeColors;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const filtered = filter
+    ? INDIAN_STATE_NAMES.filter((s) => s.toLowerCase().includes(filter.toLowerCase()))
+    : INDIAN_STATE_NAMES;
+
+  return (
+    <>
+      <TouchableOpacity
+        onPress={() => { setFilter(''); setOpen(true); }}
+        style={{
+          backgroundColor: colors.inputBg,
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 10,
+          paddingHorizontal: 14,
+          paddingVertical: 12,
+          marginBottom: 12,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+        accessibilityLabel="Pick a state"
+      >
+        <Text style={{ fontSize: 15, color: value ? colors.text : colors.textMuted }}>
+          {value || 'Select state'}
+        </Text>
+        <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
+      </TouchableOpacity>
+      <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
+        <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: colors.bg }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>Pick a state</Text>
+            <TouchableOpacity onPress={() => setOpen(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Ionicons name="close" size={24} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+          <TextInput
+            value={filter}
+            onChangeText={setFilter}
+            placeholder="Search states"
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="words"
+            style={{
+              backgroundColor: colors.inputBg,
+              borderWidth: 1,
+              borderColor: colors.inputBorder,
+              borderRadius: 10,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              fontSize: 15,
+              color: colors.text,
+              margin: 12,
+            }}
+          />
+          <FlatList
+            data={filtered}
+            keyExtractor={(s) => s}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                onPress={() => { onChange(item); setOpen(false); }}
+                style={{ paddingHorizontal: 16, paddingVertical: 14, backgroundColor: item === value ? colors.inputBg : 'transparent' }}
+              >
+                <Text style={{ fontSize: 15, color: colors.text, fontWeight: item === value ? '700' : '400' }}>{item}</Text>
+              </TouchableOpacity>
+            )}
+            ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.divider, marginHorizontal: 16 }} />}
+            ListEmptyComponent={
+              <Text style={{ padding: 24, textAlign: 'center', color: colors.textMuted }}>
+                No states match "{filter}"
+              </Text>
+            }
+          />
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 }

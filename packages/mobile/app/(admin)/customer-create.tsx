@@ -18,6 +18,7 @@
  * Edit flows reuse the SAME shared form body via CustomerFormModal (see
  * more.tsx EditCustomerInlineModal and customer-detail.tsx EditCustomerModal).
  */
+import { Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useApiMutation } from '../../src/hooks/useApi';
 import { useAuthStore } from '../../src/stores/authStore';
@@ -25,16 +26,39 @@ import { CustomerForm, type CustomerFormSubmit } from '../../src/screens/Custome
 import { ACCENT } from '../../src/theme';
 import type { Customer } from '@gaslink/shared';
 
+// Phase 7 (2026-06-12): the server returns `warnings: string[]` on
+// successful create/update when the row was accepted but something is
+// worth a heads-up — the canonical case is E1 (multi-branch customer
+// with the same GSTIN as an existing record). Mobile previously dropped
+// these on the floor; web showed them as a soft amber toast.
+type CustomerWithWarnings = Customer & { warnings?: string[] };
+
 export default function AdminCustomerCreateScreen() {
   const router = useRouter();
   const role = useAuthStore((s) => s.user?.role);
   const canEditTransport = role === 'super_admin' || role === 'distributor_admin';
 
-  const createMutation = useApiMutation<Customer, CustomerFormSubmit>('post', '/customers', {
+  const createMutation = useApiMutation<CustomerWithWarnings, CustomerFormSubmit>('post', '/customers', {
     invalidateKeys: [['customers'], ['customers-list']],
-    successMessage: 'Customer created',
-    onSuccess: () => {
-      router.back();
+    // Suppress the generic "Customer created" toast — we surface a more
+    // informative one below depending on whether warnings came back.
+    onSuccess: (data) => {
+      const warnings = data?.warnings ?? [];
+      if (warnings.length > 0) {
+        // Single combined alert so the user explicitly acknowledges the
+        // soft warning before being routed back to the list. Web uses an
+        // amber toast that auto-dismisses; on mobile a modal alert is
+        // more visible against a scrollable form.
+        Alert.alert(
+          'Customer created — please review',
+          warnings.join('\n\n'),
+          [{ text: 'OK', onPress: () => router.back() }],
+        );
+      } else {
+        Alert.alert('Success', 'Customer created', [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
+      }
     },
   });
 

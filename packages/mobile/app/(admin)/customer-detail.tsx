@@ -592,6 +592,52 @@ export default function AdminCustomerDetailScreen() {
 
   const renderLedgerRow = ({ item }: { item: LedgerEntry }) => {
     const positive = item.amountDelta >= 0;
+    // Phase 8 (2026-06-12): opening-balance rows get muted/italic
+    // styling + the "Opening Balance b/f" label (matches the PDF
+    // statement convention) so they're visually distinct from
+    // in-period transactions.
+    if (item.isOpeningBalance) {
+      return (
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: C.tabBg,
+              borderColor: C.cardBorder,
+              borderLeftWidth: 3,
+              borderLeftColor: C.textMuted,
+            },
+          ]}
+        >
+          <View style={styles.rowBetween}>
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text
+                style={[
+                  styles.cardTitle,
+                  { color: C.textSecondary, fontStyle: 'italic' },
+                ]}
+              >
+                Opening Balance b/f
+              </Text>
+              <Text style={[styles.metaLine, { color: C.textMuted }]}>
+                {new Date(item.entryDate).toLocaleDateString('en-IN')}
+              </Text>
+            </View>
+            <Text
+              style={{
+                fontSize: 15,
+                fontWeight: '700',
+                color: C.text,
+                fontStyle: 'italic',
+              }}
+            >
+              {positive ? '+' : ''}
+              {formatINR(item.amountDelta)}
+            </Text>
+          </View>
+        </View>
+      );
+    }
     return (
       <View style={[styles.card, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
         <View style={styles.rowBetween}>
@@ -742,7 +788,19 @@ export default function AdminCustomerDetailScreen() {
     }
 
     // ledger
-    const ledger = ledgerEntries ?? [];
+    // Phase 8 (2026-06-12): pin opening-balance rows to the top of the
+    // list so the "b/f" stays in front of any in-period transactions
+    // regardless of the API's chronological order. The server returns
+    // entries ordered by entryDate ASC, but a customer with no prior
+    // in-period rows would otherwise see their carry-forward row at the
+    // bottom — confusing because every paper ledger and the PDF
+    // statement put it at the top.
+    const ledger = (() => {
+      const all = ledgerEntries ?? [];
+      const opening = all.filter((e) => e.isOpeningBalance);
+      const rest = all.filter((e) => !e.isOpeningBalance);
+      return [...opening, ...rest];
+    })();
     const filterBar = (
       <View
         style={{
