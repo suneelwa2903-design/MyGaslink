@@ -150,16 +150,23 @@ export async function lookupGstin(
   gstin: string,
   distributorId: string,
 ): Promise<GstinDetails> {
-  // Prefer the caller's own tenant credentials — but only if they're
-  // (a) marked valid and (b) carry a real email. The 2026-05-16
-  // outage was caused by a NULL-email row silently falling back to
-  // 'info@mygaslink.com' which production WhiteBooks rejected.
+  // Prefer the caller's own tenant credentials. Originally WI-058
+  // required `email: { not: null }` to prevent the 2026-05-16 outage
+  // where a leaked NULL-email row served as fallback for everyone.
+  // Group A (late May 2026) then moved Layer 1 (client_id/secret/
+  // email) to env vars and the activation flow now writes the row
+  // with `email = NULL` by design — the real email comes from env at
+  // call time. The email filter therefore excludes every Group-A-
+  // activated live tenant and silently routes their lookups through
+  // whatever distributor still has email != null (dist-demo). Fixed
+  // 2026-06-12: drop the email filter. The downstream resolver at
+  // line 180 still throws NO_GASLINK_EMAIL when neither Layer 1 env
+  // nor the row provides one — that's the real guard, not the where.
   const ownRow = await prisma.gstCredential.findFirst({
     where: {
       distributorId,
       scope: 'einvoice',
       isValid: true,
-      email: { not: null },
     },
     include: { distributor: { select: { gstMode: true } } },
   });
@@ -195,13 +202,15 @@ export async function lookupGstin(
 
   if (!creds) {
     // Fallback path — only when the caller's tenant has no einvoice
-    // credentials at all. Tighter `where` clauses here than the
-    // historical bug so a leaked/invalid row can never hijack.
+    // credentials at all. The `email: { not: null }` filter that
+    // used to live here was the same Group A trap as on line 162.
+    // Removed 2026-06-12. `isValid: true` still prevents leaked test
+    // rows from winning, and downstream resolution throws cleanly if
+    // both Layer 1 env and the row's email column are empty.
     const fallbackCred = await prisma.gstCredential.findFirst({
       where: {
         scope: 'einvoice',
         isValid: true,
-        email: { not: null },
       },
       orderBy: { lastValidated: 'desc' },
       include: { distributor: { select: { id: true, gstMode: true } } },
