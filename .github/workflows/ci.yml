@@ -31,7 +31,19 @@ jobs:
       # No DB needed for `prisma generate`.
       - run: pnpm --filter @gaslink/api run db:generate
       - run: pnpm run typecheck
-      - run: pnpm run lint
+      # Lint per package with explicit exit-code propagation. The root
+      # `pnpm -r run lint` returns exit 0 even when individual packages
+      # fail (pnpm 9 aggregation quirk) — see CLAUDE.md anti-pattern
+      # #21 sibling discussion. Calling each package separately means
+      # ANY per-package failure fails the job. The check:tz step at the
+      # end is the Phase D TZ-pattern guard.
+      - name: Lint
+        run: |
+          pnpm --filter @gaslink/shared run lint
+          pnpm --filter @gaslink/api run lint
+          pnpm --filter @gaslink/web run lint
+          pnpm --filter @gaslink/mobile run lint
+          pnpm run check:tz
 
   test:
     runs-on: ubuntu-latest

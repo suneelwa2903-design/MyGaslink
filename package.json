@@ -16,7 +16,7 @@
     "build": "pnpm -r run build",
     "build:api": "pnpm --filter @gaslink/api run build",
     "build:web": "pnpm --filter @gaslink/web run build",
-    "lint": "pnpm -r run lint && pnpm run check:tz",
+    "lint": "pnpm --filter @gaslink/shared run lint && pnpm --filter @gaslink/api run lint && pnpm --filter @gaslink/web run lint && pnpm --filter @gaslink/mobile run lint && pnpm run check:tz",
     "check:tz": "bash packages/api/scripts/check-tz-patterns.sh",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",

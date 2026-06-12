@@ -6,6 +6,16 @@ import { authenticate } from '../middleware/auth.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 import * as authService from '../services/authService.js';
 import { logBusinessEvent } from '../utils/logger.js';
+import { z } from 'zod';
+
+// Pre-Razorpay security sweep (2026-06-12): the /refresh endpoint was
+// the only auth route without a Zod gate. Pre-fix the handler did a
+// manual `if (!refreshToken)` check; that's defensive but inconsistent
+// and accepts arbitrary body shapes. Now matches the same validate(...)
+// pattern every other auth route uses.
+const refreshSchema = z.object({
+  refreshToken: z.string().min(1, 'Refresh token is required'),
+});
 
 const router = Router();
 
@@ -63,13 +73,9 @@ router.post('/login', loginLimiter, validate(loginSchema), async (req, res) => {
  * POST /api/auth/refresh
  * Public — exchange refresh token for new token pair
  */
-router.post('/refresh', refreshLimiter, async (req, res) => {
+router.post('/refresh', refreshLimiter, validate(refreshSchema), async (req, res) => {
   try {
     const { refreshToken } = req.body;
-    if (!refreshToken) {
-      return sendError(res, 'Refresh token required', 400);
-    }
-
     const tokens = await authService.refreshTokens(refreshToken);
     return sendSuccess(res, { tokens });
   } catch (err) {
