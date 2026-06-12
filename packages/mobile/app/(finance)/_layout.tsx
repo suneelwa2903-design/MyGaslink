@@ -18,6 +18,16 @@ const TAB_CONFIG: {
   { name: 'collections', title: 'Collections', iconOutline: 'cash-outline', iconFilled: 'cash' },
   { name: 'more', title: 'More', iconOutline: 'grid-outline', iconFilled: 'grid' },
   { name: 'profile', title: 'Profile', iconOutline: 'person-outline', iconFilled: 'person', href: null },
+  // Phase A (2026-06-12): the finance role gets read-only orders + full
+  // customers + the same 7 reports admin has, reached from the More tab.
+  // Hidden from the tab bar with href: null to keep the bottom bar at the
+  // mobile-mandated 5-tab limit. Mounting them under (finance) is required
+  // so navigation stays inside this layout — re-routing into (admin) would
+  // surface the admin tab bar mid-flow.
+  { name: 'orders', title: 'Orders', iconOutline: 'clipboard-outline', iconFilled: 'clipboard', href: null },
+  { name: 'customers', title: 'Customers', iconOutline: 'people-outline', iconFilled: 'people', href: null },
+  { name: 'customer-detail', title: 'Customer', iconOutline: 'person-outline', iconFilled: 'person', href: null },
+  { name: 'reports', title: 'Reports', iconOutline: 'analytics-outline', iconFilled: 'analytics', href: null },
 ];
 
 export default function FinanceLayout() {

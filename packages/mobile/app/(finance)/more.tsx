@@ -34,6 +34,28 @@ export default function FinanceMoreScreen() {
   };
 
   const menuItems: MenuItem[] = [
+    // Phase A (2026-06-12): read-only Orders + full Customers + the same
+    // 7 Reports admin has. All three live under the finance route group
+    // — see _layout.tsx for the route entries (hidden via href: null so
+    // the bottom tab bar stays at 5).
+    {
+      icon: 'clipboard-outline',
+      label: 'Orders',
+      subtitle: 'View order list and status (read-only)',
+      onPress: () => router.push('/(finance)/orders'),
+    },
+    {
+      icon: 'people-outline',
+      label: 'Customers',
+      subtitle: 'Browse customer accounts, ledgers, invoices',
+      onPress: () => router.push('/(finance)/customers'),
+    },
+    {
+      icon: 'analytics-outline',
+      label: 'Reports',
+      subtitle: 'Sales, aging, GST, performance and more',
+      onPress: () => router.push('/(finance)/reports'),
+    },
     {
       icon: 'person-outline',
       label: 'Profile',
