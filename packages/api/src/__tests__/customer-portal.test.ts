@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
-import { generateToken, loginAsDistAdmin } from './helpers.js';
+import { generateToken, loginAsDistAdmin, today } from './helpers.js';
 import { prisma } from '../lib/prisma.js';
 import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
@@ -148,7 +148,15 @@ describe('Customer Portal - Orders', () => {
       .post('/api/customer-portal/orders')
       .set(auth(customerToken))
       .send({
-        deliveryDate: new Date().toISOString().split('T')[0],
+        // TZ fix (2026-06-12): use the local-TZ helpers.today() instead of
+        // UTC `new Date().toISOString().split('T')[0]`. The API validates
+        // deliveryDate against local-TZ midnight (customerPortalService.ts
+        // setHours(0,0,0,0)). Between 18:30 UTC and 23:59 UTC the UTC
+        // calendar date lags one day behind IST, so the UTC string fails
+        // the "today / tomorrow" guard with a 400 — deterministic, not a
+        // flake. The same fix landed in helpers.ts and customer-portal-
+        // order-modify.test.ts in commit 4300e07 but skipped this file.
+        deliveryDate: today(),
         items: [{ cylinderTypeId: cyl.id, quantity: 2 }],
       });
 
