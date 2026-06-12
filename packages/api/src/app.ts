@@ -39,6 +39,7 @@ import licensesRoutes from './routes/licenses.js';
 import testHelpersRouter from './routes/testHelpers.js';
 import adminGstActivationRoutes from './routes/adminGstActivation.js';
 import loginHistoryRoutes from './routes/loginHistory.js';
+import razorpayWebhookRoutes from './routes/razorpayWebhook.js';
 
 export function createApp() {
   const app = express();
@@ -70,7 +71,18 @@ export function createApp() {
     message: { success: false, data: null, error: 'Too many requests', code: 'RATE_LIMITED' },
   }));
 
-  app.use(express.json({ limit: '10mb' }));
+  // Phase E (2026-06-12): capture rawBody on /api/billing/webhooks/*
+  // so the Razorpay webhook handler can run HMAC over the exact bytes
+  // Razorpay sent. JSON.stringify(req.body) re-encoded would differ
+  // (whitespace, key ordering) and break signature verification.
+  app.use(express.json({
+    limit: '10mb',
+    verify: (req, _res, buf) => {
+      if (req.url?.startsWith('/api/billing/webhooks/')) {
+        (req as unknown as { rawBody: Buffer }).rawBody = buf;
+      }
+    },
+  }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   app.use((req, _res, next) => {
@@ -88,6 +100,11 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/health', healthRoutes);
   app.use('/api/contact', contactRoutes);
+  // Phase E (2026-06-12): Razorpay webhook. Public — Razorpay calls
+  // this from their server, no JWT possible. Signature is the only
+  // gate. MUST be mounted BEFORE /api/billing so the authenticate
+  // middleware on the billing router doesn't claim the route first.
+  app.use('/api/billing/webhooks/razorpay', razorpayWebhookRoutes);
 
   // ─── Protected Routes ───────────────────────────────────────────────────────
 

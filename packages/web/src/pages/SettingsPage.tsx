@@ -2107,9 +2107,59 @@ function CylinderConfigTab() {
 
 // ─── Subscription Tab (Distributor Admin) ───────────────────────────────────
 
+// Phase E (2026-06-12): Razorpay checkout.js loader — singleton promise
+// so navigating between Settings tabs (or opening multiple Pay Now
+// modals) doesn't reload the 50KB script. Anah's exact pattern.
+let razorpayScriptPromise: Promise<boolean> | null = null;
+function loadRazorpayScript(): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  if ((window as Window & { Razorpay?: unknown }).Razorpay) return Promise.resolve(true);
+  if (!razorpayScriptPromise) {
+    razorpayScriptPromise = new Promise<boolean>((resolve) => {
+      const s = document.createElement('script');
+      s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      s.async = true;
+      s.onload = () => resolve(true);
+      s.onerror = () => resolve(false);
+      document.body.appendChild(s);
+    });
+  }
+  return razorpayScriptPromise;
+}
+
+interface RazorpayCheckoutHandler {
+  (response: {
+    razorpay_order_id?: string;
+    razorpay_payment_id?: string;
+    razorpay_signature?: string;
+  }): void | Promise<void>;
+}
+
+interface RazorpayInstance {
+  open: () => void;
+  on: (event: string, cb: (resp: { error?: { description?: string } }) => void) => void;
+}
+
+interface RazorpayWindow extends Window {
+  Razorpay?: new (opts: {
+    key: string;
+    amount: number;
+    currency: string;
+    name: string;
+    description: string;
+    order_id: string;
+    handler: RazorpayCheckoutHandler;
+    prefill?: { name?: string; email?: string; contact?: string };
+    theme?: { color?: string };
+    modal?: { ondismiss?: () => void };
+  }) => RazorpayInstance;
+}
+
 function SubscriptionTab() {
   const distributorId = useAuthStore(selectDistributorId);
+  const queryClient = useQueryClient();
   const fmt = (n: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
+  const [payingCycleId, setPayingCycleId] = useState<string | null>(null);
 
   const { data: billingData, isLoading } = useQuery({
     queryKey: ['my-billing-cycles', distributorId],
@@ -2136,6 +2186,110 @@ function SubscriptionTab() {
       a.href = url; a.download = `gaslink-invoice-${cycleId.slice(-6)}.pdf`; a.click();
       window.URL.revokeObjectURL(url);
     } catch { toast.error('Failed to download invoice'); }
+  };
+
+  // Phase E (2026-06-12): Pay Now flow. Replicates the Anah checkout
+  // sequence:
+  //   1. POST /create-payment-order → returns razorpayOrderId + amount
+  //      + keyId. Server has already persisted the orderId on the cycle.
+  //   2. If the order is `mock: true` (dev / no real Razorpay creds),
+  //      skip the modal entirely — directly call /verify-payment with
+  //      dummy ids. The server's mock-mode signature check accepts them.
+  //   3. Real mode: load checkout.js (singleton promise), open the
+  //      Razorpay modal, and let its `handler` callback fire
+  //      verify-payment.
+  //   4. On verify success → toast + refetch the cycle list.
+  // Errors surfaced via toast; cycle state never advances on failure.
+  const verifyMutation = useMutation({
+    mutationFn: (vars: { cycleId: string; razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string }) =>
+      apiPost(`/billing/cycles/${vars.cycleId}/verify-payment`, {
+        razorpayOrderId: vars.razorpayOrderId,
+        razorpayPaymentId: vars.razorpayPaymentId,
+        razorpaySignature: vars.razorpaySignature,
+      }),
+    onSuccess: () => {
+      toast.success('Payment successful — your subscription is active.');
+      queryClient.invalidateQueries({ queryKey: ['my-billing-cycles', distributorId] });
+      setPayingCycleId(null);
+    },
+    onError: (e: unknown) => {
+      toast.error(getErrorMessage(e) || 'Payment verification failed');
+      setPayingCycleId(null);
+    },
+  });
+
+  const handlePayNow = async (cycle: { cycleId: string; totalAmountInclGst: number; periodStartDate: string; periodEndDate: string }) => {
+    setPayingCycleId(cycle.cycleId);
+    try {
+      const orderResp = await apiPost<{
+        razorpayOrderId: string;
+        amount: number;
+        currency: string;
+        keyId: string;
+        mock?: boolean;
+      }>(`/billing/cycles/${cycle.cycleId}/create-payment-order`, {});
+
+      // Mock mode short-circuit (Anah-equivalent: `mock_rzp_` prefix
+      // skips the modal). Test fixture creds locally and on first prod
+      // deploy before the real RAZORPAY_KEY_SECRET is set.
+      if (orderResp.mock || orderResp.razorpayOrderId.startsWith('mock_rzp_')) {
+        await verifyMutation.mutateAsync({
+          cycleId: cycle.cycleId,
+          razorpayOrderId: orderResp.razorpayOrderId,
+          razorpayPaymentId: `mock_pay_${cycle.cycleId}`,
+          razorpaySignature: 'mock_signature',
+        });
+        return;
+      }
+
+      const loaded = await loadRazorpayScript();
+      const RZP = (window as RazorpayWindow).Razorpay;
+      if (!loaded || !RZP) {
+        toast.error('Unable to load Razorpay checkout. Please try again.');
+        setPayingCycleId(null);
+        return;
+      }
+
+      const startStr = new Date(cycle.periodStartDate).toLocaleDateString('en-IN');
+      const endStr = new Date(cycle.periodEndDate).toLocaleDateString('en-IN');
+      const rz = new RZP({
+        key: orderResp.keyId,
+        amount: orderResp.amount,
+        currency: orderResp.currency,
+        name: 'MyGasLink',
+        description: `Subscription ${startStr} — ${endStr}`,
+        order_id: orderResp.razorpayOrderId,
+        handler: async (response) => {
+          try {
+            await verifyMutation.mutateAsync({
+              cycleId: cycle.cycleId,
+              razorpayOrderId: response.razorpay_order_id || '',
+              razorpayPaymentId: response.razorpay_payment_id || '',
+              razorpaySignature: response.razorpay_signature || '',
+            });
+          } catch {
+            // mutation onError already toasted.
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setPayingCycleId(null);
+            toast('Payment cancelled', { icon: 'ℹ️' });
+          },
+        },
+        theme: { color: '#1e40af' },
+      });
+
+      rz.on('payment.failed', (resp) => {
+        setPayingCycleId(null);
+        toast.error(resp.error?.description || 'Payment failed. Please retry.');
+      });
+
+      rz.open();
+    } catch (err) {
+      setPayingCycleId(null);
+      toast.error(getErrorMessage(err) || 'Could not start payment');
+    }
   };
 
   if (isLoading) return <div className="flex justify-center py-10"><Loader size="lg" /></div>;
@@ -2229,6 +2383,20 @@ function SubscriptionTab() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-bold text-surface-900 dark:text-white">{fmt(cycle.totalAmountInclGst)}</span>
+                    {/* Phase E (2026-06-12): Pay Now button. Shown for
+                        pending_payment + overdue_billing cycles only —
+                        paid cycles get no button. Disabled while a
+                        verify call is in flight to avoid double-submit. */}
+                    {(cycle.billingStatus === 'pending_payment' || cycle.billingStatus === 'overdue_billing') && (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => handlePayNow(cycle)}
+                        disabled={payingCycleId === cycle.cycleId || verifyMutation.isPending}
+                      >
+                        {payingCycleId === cycle.cycleId ? 'Processing…' : 'Pay Now'}
+                      </Button>
+                    )}
                     <button onClick={() => handleDownload(cycle.cycleId)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="Download Invoice">
                       <HiOutlineDocumentArrowDown className="h-4 w-4" />
                     </button>

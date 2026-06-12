@@ -1374,6 +1374,20 @@ model BillingCycle {
   invoiceId          String?           @map("invoice_id")
   dueDate            DateTime?         @map("due_date") @db.Date
   suspendDate        DateTime?         @map("suspend_date") @db.Date
+  // Phase E (2026-06-12): Razorpay subscription payments. Populated when
+  // the distributor pays via the Subscription tab "Pay Now" button.
+  // razorpayOrderId is set at create-payment-order time; the rest land
+  // when verify-payment or the webhook handler confirms capture.
+  // Unit conventions: signature is the HMAC string verified server-side
+  // (stored for audit / dispute investigation, never returned in any
+  // API response); paid_at is wall-clock capture time, NOT due_date;
+  // payment_method is Razorpay's classification (`upi` | `card` |
+  // `netbanking` | `wallet` | `emi`).
+  razorpayOrderId    String?           @map("razorpay_order_id")
+  razorpayPaymentId  String?           @map("razorpay_payment_id")
+  razorpaySignature  String?           @map("razorpay_signature")
+  paidAt             DateTime?         @map("paid_at")
+  paymentMethod      String?           @map("payment_method")
   createdAt          DateTime          @default(now()) @map("created_at")
   updatedAt          DateTime          @updatedAt @map("updated_at")
 
@@ -1382,6 +1396,7 @@ model BillingCycle {
 
   @@index([distributorId, periodStartDate])
   @@index([billingStatus])
+  @@index([razorpayOrderId])
   @@map("gaslink_billing_cycles")
 }
 

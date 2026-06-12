@@ -1,10 +1,19 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { param } from '../utils/params.js';
 import { requireRole } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
 import * as billingService from '../services/billingService.js';
+import {
+  createRazorpayOrder,
+  verifyHandlerSignature,
+  isMockKey,
+  type RazorpayCreds,
+} from '../services/razorpayService.js';
+import { prisma } from '../lib/prisma.js';
+import { logger } from '../utils/logger.js';
 import { mapBillingCycle, mapBillingCycles } from '../utils/mappers.js';
 import { z } from 'zod';
 
@@ -144,6 +153,192 @@ router.post('/mark-overdue',
       return sendError(res, (err as Error).message);
     }
   }
+);
+
+// ─── Phase E: Razorpay subscription payments ─────────────────────────────────
+//
+// Three endpoints, each Anah-pattern verbatim:
+//   POST /cycles/:id/create-payment-order  — distributor_admin
+//   POST /cycles/:id/verify-payment        — distributor_admin
+//   POST /webhooks/razorpay                — public (Razorpay calls it)
+//
+// Credentials come from GasLink's own env vars (Phase E single account):
+//   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET
+// Mock mode triggers when keyId.includes('mock') OR the secret is unset.
+// Tests rely on this — leave RAZORPAY_KEY_ID=rzp_test_mock in CI env.
+
+function getGaslinkRazorpayCreds(): RazorpayCreds {
+  return {
+    keyId: process.env.RAZORPAY_KEY_ID ?? 'rzp_test_mock',
+    keySecret: process.env.RAZORPAY_KEY_SECRET ?? '',
+  };
+}
+
+// Per-IP limiter on the payment-creation + verification endpoints. The
+// global 1000/15min cap (app.ts) is too loose for a payment surface;
+// per-IP 60/15min is generous for a single user clicking through
+// checkout but kills any abuse vector. Webhook is unauthenticated and
+// gets its own limiter below.
+const paymentLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 60 : 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, data: null, error: 'Too many payment requests', code: 'RATE_LIMITED' },
+});
+
+// POST /api/billing/cycles/:id/create-payment-order
+// Auth: distributor_admin paying for THEIR OWN distributor's cycle.
+// Tenant isolation: the cycle's distributorId must match req.user!.distributorId.
+// Cycle must be in pending or overdue status (paid cycles cannot be re-paid).
+router.post('/cycles/:id/create-payment-order',
+  paymentLimiter,
+  requireRole('distributor_admin', 'super_admin'),
+  auditLog('create_payment_order', 'billing_cycle'),
+  async (req, res) => {
+    try {
+      const cycleId = param(req.params.id);
+      const cycle = await prisma.billingCycle.findUnique({ where: { id: cycleId } });
+      if (!cycle) return sendNotFound(res, 'Billing cycle not found');
+
+      // Tenant isolation (anti-pattern #1 + #13 prep). Super_admin
+      // bypass is intentional — they pay on behalf of any tenant.
+      if (req.user!.role !== 'super_admin' && cycle.distributorId !== req.user!.distributorId) {
+        return sendError(res, 'Billing cycle does not belong to this distributor', 403, 'CROSS_TENANT_ACCESS');
+      }
+
+      if (cycle.billingStatus !== 'pending_payment' && cycle.billingStatus !== 'overdue_billing') {
+        return sendError(
+          res,
+          `Cycle is in status "${cycle.billingStatus}" — only pending or overdue cycles can be paid.`,
+          400,
+          'CYCLE_NOT_PAYABLE',
+        );
+      }
+
+      const creds = getGaslinkRazorpayCreds();
+      const amountInPaise = Math.round(Number(cycle.totalAmountInclGst) * 100);
+      const order = await createRazorpayOrder(creds, {
+        amountInPaise,
+        receipt: cycle.id,
+        notes: {
+          cycleId: cycle.id,
+          distributorId: cycle.distributorId,
+          periodType: cycle.periodType,
+          periodStartDate: cycle.periodStartDate.toISOString().slice(0, 10),
+          periodEndDate: cycle.periodEndDate.toISOString().slice(0, 10),
+        },
+      });
+
+      // Persist the orderId so the verify endpoint + webhook can find
+      // the row. update (not updateMany) — single row, known PK.
+      await prisma.billingCycle.update({
+        where: { id: cycle.id },
+        data: { razorpayOrderId: order.id },
+      });
+
+      return sendCreated(res, {
+        razorpayOrderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        // key_id is public — required by the frontend checkout modal.
+        // Never return key_secret here (or anywhere else).
+        keyId: creds.keyId,
+        // Surface mock flag so the web/mobile frontend can short-
+        // circuit to verify-payment without actually opening the
+        // Razorpay modal during local dev.
+        mock: isMockKey(creds.keyId),
+      });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      logger.error('create-payment-order failed', {
+        cycleId: req.params.id,
+        err: (err as Error).message,
+      });
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// POST /api/billing/cycles/:id/verify-payment
+// Synchronous verification from the Razorpay checkout `handler` callback.
+// Idempotent: a cycle already in paid status returns success without
+// re-processing (matches Anah's posture; defends against the webhook +
+// handler-callback double-confirm race).
+const verifyPaymentSchema = z.object({
+  razorpayOrderId: z.string().min(1),
+  razorpayPaymentId: z.string().min(1),
+  razorpaySignature: z.string().min(1),
+});
+
+router.post('/cycles/:id/verify-payment',
+  paymentLimiter,
+  requireRole('distributor_admin', 'super_admin'),
+  validate(verifyPaymentSchema),
+  auditLog('verify_payment', 'billing_cycle'),
+  async (req, res) => {
+    try {
+      const cycleId = param(req.params.id);
+      const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
+
+      const cycle = await prisma.billingCycle.findUnique({ where: { id: cycleId } });
+      if (!cycle) return sendNotFound(res, 'Billing cycle not found');
+
+      // Tenant isolation — same gate as create-payment-order.
+      if (req.user!.role !== 'super_admin' && cycle.distributorId !== req.user!.distributorId) {
+        return sendError(res, 'Billing cycle does not belong to this distributor', 403, 'CROSS_TENANT_ACCESS');
+      }
+
+      // Idempotency: paid cycles return success without re-processing.
+      // The webhook may have landed first; the handler may have racing
+      // tabs. Either way the user should see "Payment confirmed".
+      if (cycle.billingStatus === 'paid_billing') {
+        return sendSuccess(res, { alreadyPaid: true, billingCycle: mapBillingCycle(cycle) });
+      }
+
+      // Order ID cross-check — defends against an attacker passing a
+      // valid signature for cycle A while claiming to confirm cycle B.
+      if (!cycle.razorpayOrderId || cycle.razorpayOrderId !== razorpayOrderId) {
+        return sendError(res, 'Order id mismatch', 400, 'ORDER_ID_MISMATCH');
+      }
+
+      const creds = getGaslinkRazorpayCreds();
+      const signatureValid = verifyHandlerSignature(creds, razorpayOrderId, razorpayPaymentId, razorpaySignature);
+      if (!signatureValid) {
+        return sendError(res, 'Invalid payment signature', 400, 'INVALID_SIGNATURE');
+      }
+
+      // Mark paid. Reuses billingService.markBillingPaid so the
+      // suspended → active flip + transaction semantics stay in one
+      // place. Then layer in the Razorpay forensic fields.
+      const updated = await prisma.$transaction(async (tx) => {
+        const row = await tx.billingCycle.update({
+          where: { id: cycle.id },
+          data: {
+            billingStatus: 'paid_billing',
+            razorpayPaymentId,
+            razorpaySignature,
+            paidAt: new Date(),
+          },
+        });
+        // Mirror markBillingPaid's unsuspend behaviour.
+        await tx.distributor.update({
+          where: { id: cycle.distributorId },
+          data: { billingSuspended: false },
+        });
+        return row;
+      });
+
+      return sendSuccess(res, { billingCycle: mapBillingCycle(updated) });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      logger.error('verify-payment failed', {
+        cycleId: req.params.id,
+        err: (err as Error).message,
+      });
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
 );
 
 export default router;
