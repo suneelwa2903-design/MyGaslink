@@ -23,7 +23,10 @@ beforeAll(async () => {
     data: {
       gaslinkBillingEnabled: true,
       subscriptionPlan: 'business',
-      billingTier: 'tier_2',
+      // 9-issues Issue 8 (2026-06-12): Business plan maps to tier_3, not
+      // tier_2 (deriveBillingTierFromPlan in billingService). Was tier_2
+      // here — stale carry-over from the pre-Phase-4a 4-tier table.
+      billingTier: 'tier_3',
       billingSuspended: false,
     },
   });
@@ -140,7 +143,8 @@ describe('Billing — List & detail', () => {
     // Create a cycle on dist-002 first.
     await prisma.distributor.update({
       where: { id: 'dist-002' },
-      data: { gaslinkBillingEnabled: true, subscriptionPlan: 'business', billingTier: 'tier_2' },
+      // 9-issues Issue 8: Business plan → tier_3.
+      data: { gaslinkBillingEnabled: true, subscriptionPlan: 'business', billingTier: 'tier_3' },
     });
     const dist2Cycle = await prisma.billingCycle.create({
       data: {
@@ -148,7 +152,8 @@ describe('Billing — List & detail', () => {
         periodType: 'monthly',
         periodStartDate: new Date('2026-02-01'),
         periodEndDate: new Date('2026-02-28'),
-        billingTier: 'tier_2',
+        // 9-issues Issue 8: matches the distributor's billingTier above.
+        billingTier: 'tier_3',
         totalAmountExclGst: 0,
         totalGstAmount: 0,
         totalAmountInclGst: 0,
