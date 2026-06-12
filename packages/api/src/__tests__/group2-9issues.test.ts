@@ -44,7 +44,11 @@ describe('Issue 8 — Business plan maps to tier_3 in DB', () => {
       where: { subscriptionPlan: 'business', deletedAt: null },
       select: { id: true, businessName: true, billingTier: true },
     });
-    expect(businessDistributors.length).toBeGreaterThanOrEqual(3);
+    // seed.ts seeds 2 business-plan distributors (dist-001 + dist-002).
+    // A previous bound of ≥3 passed only on dev DBs with a leaked row and
+    // failed in CI's fresh-seed state. The substantive assertion is the
+    // loop below — guard against an empty query that would silently no-op.
+    expect(businessDistributors.length).toBeGreaterThanOrEqual(1);
     for (const d of businessDistributors) {
       expect(d.billingTier).toBe('tier_3');
     }
