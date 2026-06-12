@@ -135,25 +135,13 @@ export async function generateCustomerLedgerPdf(
   doc.text(`GSTIN: ${distributor.gstin || '—'}   Phone: ${distributor.phone || '—'}`, MARGIN.left, leftY, { width: 400 });
   leftY += 11;
 
-  // Phase 3 (2026-06-12): Pay To block — only when bank details are set.
-  // Compact 1-2 line variant since the landscape header has limited
-  // vertical room before the rule.
-  if (distributor.bankAccountNumber && distributor.ifscCode) {
-    const bankBranch = distributor.bankBranchName ? `, ${distributor.bankBranchName}` : '';
-    const bankPrefix = distributor.bankName ?? '—';
-    doc.font('Helvetica-Bold').fontSize(TYPO.CAPTION).fillColor(THEME.PRIMARY);
-    doc.text(
-      `Pay To: ${bankPrefix}${bankBranch}`,
-      MARGIN.left, leftY, { width: 400 },
-    );
-    leftY += 11;
-    doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
-    const payToLine = distributor.upiId
-      ? `A/C: ${distributor.bankAccountNumber}   IFSC: ${distributor.ifscCode}   UPI: ${distributor.upiId}`
-      : `A/C: ${distributor.bankAccountNumber}   IFSC: ${distributor.ifscCode}`;
-    doc.text(payToLine, MARGIN.left, leftY, { width: 500 });
-    leftY += 11;
-  }
+  // Phase 3 → 9-issues Issue 7 (2026-06-12): the Pay To block USED to
+  // live here below the letterhead, left-aligned. Suneel asked for it
+  // right-aligned beside the customer name/details block instead, with
+  // the account holder name (auto-filled from distributor.businessName)
+  // as the first line. Render happens below — see the matching block
+  // after the customer details at the line marked
+  // "Pay To block (9-issues Issue 7)".
 
   // Title (right)
   doc.font('Helvetica-Bold').fontSize(TYPO.H1).fillColor(THEME.PRIMARY);
@@ -166,6 +154,10 @@ export async function generateCustomerLedgerPdf(
 
   // ── Customer details ──
   const custName = customer.businessName || customer.customerName;
+  // Capture the Y where the customer block starts — the Pay To block
+  // renders right-aligned starting at the same Y so the two blocks
+  // sit side-by-side (9-issues Issue 7).
+  const customerBlockStartY = y;
   doc.font('Helvetica-Bold').fontSize(TYPO.H2).fillColor(THEME.TEXT);
   doc.text(custName, MARGIN.left, y); y += 14;
   doc.font('Helvetica').fontSize(TYPO.LABEL).fillColor(THEME.MUTED);
@@ -175,6 +167,44 @@ export async function generateCustomerLedgerPdf(
     MARGIN.left, y,
   );
   y += 14;
+
+  // ── Pay To block (9-issues Issue 7) ──
+  // Right-aligned beside the customer details block, starting at the
+  // same Y so the two blocks visually balance. Account holder name
+  // (auto-filled from distributor.businessName) is the first line so
+  // the customer can confirm WHO they're paying. Renders only when
+  // bank account + IFSC are both set — UPI line is appended only when
+  // upiId is also set. Same gating as the prior Phase 3 block.
+  if (distributor.bankAccountNumber && distributor.ifscCode) {
+    const payToWidth = 250;
+    const payToX = rightEdge - payToWidth;
+    let payToY = customerBlockStartY;
+    doc.font('Helvetica-Bold').fontSize(TYPO.CAPTION).fillColor(THEME.PRIMARY);
+    doc.text('Pay To:', payToX, payToY, { width: payToWidth, align: 'right' });
+    payToY += 11;
+    doc.font('Helvetica-Bold').fontSize(TYPO.CAPTION).fillColor(THEME.TEXT);
+    doc.text(distributor.businessName || distributor.legalName || '—', payToX, payToY, {
+      width: payToWidth, align: 'right',
+    });
+    payToY += 11;
+    doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+    const branchSuffix = distributor.bankBranchName ? `, ${distributor.bankBranchName}` : '';
+    const bankLine = `${distributor.bankName ?? '—'}${branchSuffix}`;
+    doc.text(bankLine, payToX, payToY, { width: payToWidth, align: 'right' });
+    payToY += 11;
+    doc.text(`A/C: ${distributor.bankAccountNumber}`, payToX, payToY, {
+      width: payToWidth, align: 'right',
+    });
+    payToY += 11;
+    const lastLine = distributor.upiId
+      ? `IFSC: ${distributor.ifscCode}   UPI: ${distributor.upiId}`
+      : `IFSC: ${distributor.ifscCode}`;
+    doc.text(lastLine, payToX, payToY, { width: payToWidth, align: 'right' });
+    payToY += 11;
+    // Push the main cursor down if the Pay To block ended below the
+    // current y so the table headers don't overlap.
+    y = Math.max(y, payToY);
+  }
 
   // Period
   if (range?.from || range?.to) {
