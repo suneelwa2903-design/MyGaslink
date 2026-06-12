@@ -1,12 +1,10 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import toast from 'react-hot-toast';
-import { HiOutlineEye, HiOutlineDocumentArrowDown } from 'react-icons/hi2';
+import { HiOutlineEye } from 'react-icons/hi2';
 import type { Payment, PaginationMeta } from '@gaslink/shared';
 import { PaymentAllocationStatus } from '@gaslink/shared';
-import { api, apiGet } from '@/lib/api';
-import { useAuthStore } from '@/stores/authStore';
+import { apiGet } from '@/lib/api';
 import { Button, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 
 const ALLOCATION_VARIANTS: Record<string, 'success' | 'warning' | 'neutral'> = {
@@ -23,30 +21,11 @@ export default function CustomerPaymentsPage() {
   const { t } = useTranslation();
   const [page, setPage] = useState(1);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
-  const customerId = useAuthStore((s) => s.user?.customerId);
-  const [stmtFrom, setStmtFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
-  });
-  const [stmtTo, setStmtTo] = useState(() => new Date().toISOString().split('T')[0]);
 
-  const handleDownloadStatement = async () => {
-    if (!customerId) return;
-    try {
-      const resp = await api.get(`/customers/${customerId}/ledger/pdf`, {
-        params: { from: stmtFrom, to: stmtTo },
-        responseType: 'blob',
-      });
-      const url = window.URL.createObjectURL(resp.data);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'statement.pdf';
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } catch {
-      toast.error('Failed to download statement');
-    }
-  };
+  // 3-fix bundle Fix 2 (2026-06-12): Download Statement + date range pickers
+  // were moved to the customer Dashboard so the Payments screen is purely
+  // a payment history list. The endpoint (/customers/:id/ledger/pdf) and
+  // mobile behaviour mirror this — see DashboardPage.tsx for the new home.
 
   const { data, isLoading } = useQuery({
     queryKey: ['customer-payments', page],
@@ -58,21 +37,9 @@ export default function CustomerPaymentsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-900 dark:text-white">{t('customerPortal.payments.title')}</h1>
-          <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">{t('customerPortal.payments.subtitle')}</p>
-        </div>
-        {customerId && (
-          <div className="flex flex-wrap items-end gap-2">
-            <input type="date" value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} className="input py-2" />
-            <input type="date" value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} className="input py-2" />
-            <Button variant="secondary" onClick={handleDownloadStatement}>
-              <HiOutlineDocumentArrowDown className="h-4 w-4" />
-              Download Statement
-            </Button>
-          </div>
-        )}
+      <div>
+        <h1 className="text-2xl font-bold text-surface-900 dark:text-white">{t('customerPortal.payments.title')}</h1>
+        <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">{t('customerPortal.payments.subtitle')}</p>
       </div>
 
       {isLoading ? (
@@ -101,7 +68,7 @@ export default function CustomerPaymentsPage() {
                     <td className="font-medium text-surface-900 dark:text-white">{formatCurrency(p.amount)}</td>
                     <td><Badge variant="neutral">{t(`enums.paymentMethod.${p.paymentMethod}`, p.paymentMethod.replace(/_/g, ' '))}</Badge></td>
                     <td className="text-xs">{p.referenceNumber || '-'}</td>
-                    <td>{formatCurrency(p.allocatedAmount)}</td>
+                    <td>{formatCurrency(p.allocatedAmount ?? 0)}</td>
                     <td><Badge variant={ALLOCATION_VARIANTS[p.allocationStatus] || 'neutral'}>{t(`enums.paymentAllocationStatus.${p.allocationStatus}`, p.allocationStatus.replace(/_/g, ' '))}</Badge></td>
                     <td>
                       <button onClick={() => setViewPayment(p)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500">

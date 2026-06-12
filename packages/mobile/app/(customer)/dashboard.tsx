@@ -1,8 +1,12 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { MetricCard, Card, DateInput, MIN_DATE_FLOOR, todayLocalIso } from '../../src/components/ui';
+import { MetricCard, Card, Button, DateInput, MIN_DATE_FLOOR, todayLocalIso } from '../../src/components/ui';
+import { useAuthStore } from '../../src/stores/authStore';
+import { api, getErrorMessage } from '../../src/lib/api';
 import { useTheme, formatINR } from '../../src/theme';
 
 // Uniform height so all four Current Status cards line up regardless of content.
@@ -34,6 +38,51 @@ export default function CustomerDashboardScreen() {
   // Activity date range — defaults to the current month (1st → today).
   const [fromDate, setFromDate] = useState(firstOfMonth);
   const [toDate, setToDate] = useState(todayLocalIso);
+
+  // 3-fix bundle Fix 2/3 (2026-06-12): Customer Ledger Statement download was
+  // moved off the Payments screen onto this Dashboard. Endpoint mirrors web:
+  // GET /customers/:id/ledger/pdf — customer role allowed, own-only. Driver
+  // trip-sheet pattern: arraybuffer → expo-file-system cache → OS share sheet.
+  // Defaults to the last 30 days (independent of the "This Period" range above
+  // so the activity view and the statement window can move independently).
+  const customerId = useAuthStore((s) => s.user?.customerId);
+  const [stmtFrom, setStmtFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [stmtTo, setStmtTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadStatement = async () => {
+    if (!customerId) {
+      Alert.alert('Unavailable', 'No customer is linked to this account.');
+      return;
+    }
+    setDownloading(true);
+    try {
+      const res = await api.get(`/customers/${customerId}/ledger/pdf`, {
+        params: { from: stmtFrom, to: stmtTo },
+        responseType: 'arraybuffer',
+      });
+      const bytes = new Uint8Array(res.data);
+      const file = new File(Paths.cache, `statement-${Date.now()}.pdf`);
+      try { file.create(); } catch { /* already exists, fine */ }
+      file.write(bytes);
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+        return;
+      }
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Customer Ledger Statement',
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (err) {
+      Alert.alert('Could not download statement', getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const { data, isLoading, refetch } = useApiQuery<CustomerDashboard>(
     ['customer-dashboard', fromDate, toDate],
@@ -149,6 +198,40 @@ export default function CustomerDashboardScreen() {
             <MetricCard title="Payments Made" value={formatINR(data?.paymentsReceived)} color={accent.green} minHeight={CARD_MIN_HEIGHT} />
           </View>
         </View>
+
+        {/* ── Customer Statement (moved from Payments) ── */}
+        <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 16 }}>
+          Customer Statement
+        </Text>
+        <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: -4 }}>
+          Download your ledger (orders, invoices, payments) for a date range.
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <DateInput
+              label="From"
+              value={stmtFrom}
+              onChange={setStmtFrom}
+              minDate={MIN_DATE_FLOOR}
+              maxDate={stmtTo || todayLocalIso()}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <DateInput
+              label="To"
+              value={stmtTo}
+              onChange={setStmtTo}
+              minDate={stmtFrom || MIN_DATE_FLOOR}
+              maxDate={todayLocalIso()}
+            />
+          </View>
+        </View>
+        <Button
+          title={downloading ? 'Preparing statement…' : 'Download Statement (PDF)'}
+          onPress={handleDownloadStatement}
+          loading={downloading}
+          variant="secondary"
+        />
       </ScrollView>
     </SafeAreaView>
   );

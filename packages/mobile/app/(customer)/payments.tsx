@@ -1,14 +1,10 @@
 import { useState } from 'react';
-import { View, Text, FlatList, RefreshControl, Alert } from 'react-native';
+import { View, Text, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { Button, EmptyState, MetricCard, DateInput, MIN_DATE_FLOOR, todayLocalIso } from '../../src/components/ui';
+import { EmptyState, MetricCard } from '../../src/components/ui';
 import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
-import { useAuthStore } from '../../src/stores/authStore';
-import { api, getErrorMessage } from '../../src/lib/api';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Payment } from '@gaslink/shared';
 
@@ -44,55 +40,10 @@ export default function CustomerPaymentsScreen() {
 
   const totalPaid = payments.reduce((sum, p) => sum + (p.amount ?? 0), 0);
 
-  // ── Statement PDF (WI-093) ──────────────────────────────────────────────
-  // Downloads the customer's own ledger statement via the shared endpoint
-  // GET /customers/:id/ledger/pdf (customer role allowed, own-only). Mirrors
-  // the driver trip-sheet pattern: arraybuffer → expo-file-system cache → OS
-  // share sheet. Date pickers default to the last 30 days. No DateTimePicker
-  // native module is installed, so plain YYYY-MM-DD text inputs are used.
-  const customerId = useAuthStore((s) => s.user?.customerId);
-  const [downloading, setDownloading] = useState(false);
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
-  });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().split('T')[0]);
-
-  const handleDownloadStatement = async () => {
-    if (!customerId) {
-      Alert.alert('Unavailable', 'No customer is linked to this account.');
-      return;
-    }
-    setDownloading(true);
-    try {
-      const res = await api.get(`/customers/${customerId}/ledger/pdf`, {
-        params: { from: fromDate, to: toDate },
-        responseType: 'arraybuffer',
-      });
-      const bytes = new Uint8Array(res.data);
-      const file = new File(Paths.cache, `statement-${Date.now()}.pdf`);
-      try { file.create(); } catch { /* already exists, fine */ }
-      file.write(bytes);
-
-      if (!(await Sharing.isAvailableAsync())) {
-        Alert.alert('Sharing unavailable', 'This device does not support sharing.');
-        return;
-      }
-      await Sharing.shareAsync(file.uri, {
-        mimeType: 'application/pdf',
-        dialogTitle: 'Customer Ledger Statement',
-        UTI: 'com.adobe.pdf',
-      });
-    } catch (err) {
-      Alert.alert('Could not download statement', getErrorMessage(err));
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  // P1-3 sweep (2026-06-09): the inline TextInput + dateInputStyle pair was
-  // replaced by the canonical `DateInput` component below for the Customer
-  // Ledger Statement range.
+  // 3-fix bundle Fix 2 (2026-06-12): Customer Ledger Statement download was
+  // moved off this screen onto the customer Dashboard so Payments is purely
+  // the payment history list. See app/(customer)/dashboard.tsx for the new
+  // home of the date pickers + Download Statement button.
 
   const getMethodIcon = (method: string | null | undefined): keyof typeof Ionicons.glyphMap => {
     if (!method) return 'wallet-outline';
@@ -169,39 +120,6 @@ export default function CustomerPaymentsScreen() {
         }
         ListEmptyComponent={
           <EmptyState title="No payments" description="Your payment history will appear here" />
-        }
-        ListFooterComponent={
-          <View style={{ marginTop: 20, gap: 10, paddingBottom: 16 }}>
-            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
-              Customer Ledger Statement
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <DateInput
-                  label="From"
-                  value={fromDate}
-                  onChange={setFromDate}
-                  minDate={MIN_DATE_FLOOR}
-                  maxDate={toDate || todayLocalIso()}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <DateInput
-                  label="To"
-                  value={toDate}
-                  onChange={setToDate}
-                  minDate={fromDate || MIN_DATE_FLOOR}
-                  maxDate={todayLocalIso()}
-                />
-              </View>
-            </View>
-            <Button
-              title={downloading ? 'Preparing statement…' : 'Download Statement (PDF)'}
-              onPress={handleDownloadStatement}
-              loading={downloading}
-              variant="secondary"
-            />
-          </View>
         }
       />
     </SafeAreaView>

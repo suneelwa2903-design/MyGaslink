@@ -426,6 +426,20 @@ export function mapPayment(p: PaymentInput | null | undefined): MappedRecord | n
       return m;
     });
   }
+  // 3-fix bundle Fix 1 (2026-06-12): the customer-portal Payments table
+  // renders the "Allocated" column as `formatCurrency(p.allocatedAmount)`,
+  // but PaymentTransaction has no such column — only `allocationStatus` and
+  // the joined `allocations[]` rows each carrying their per-invoice
+  // `allocatedAmount`. The mapper now derives the per-payment aggregate
+  // from the joined rows so the column stops showing "₹NaN" and the
+  // shared Payment.allocatedAmount/unallocatedAmount contract is honoured.
+  // Defensive: when `allocations` is not included, default to 0 — the
+  // frontend's `?? 0` belt-and-braces still holds.
+  const allocs = (p.allocations ?? []) as { allocatedAmount?: unknown }[];
+  const allocatedAmount = allocs.reduce((sum, a) => sum + Number(a.allocatedAmount ?? 0), 0);
+  const amount = Number((p as { amount?: unknown }).amount ?? 0);
+  mapped.allocatedAmount = allocatedAmount;
+  mapped.unallocatedAmount = Math.max(0, amount - allocatedAmount);
   return mapped;
 }
 
