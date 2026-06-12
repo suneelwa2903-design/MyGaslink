@@ -123,8 +123,15 @@ export default function InventoryScreen() {
 
 function SummaryContent() {
   const { dark, colors, accent } = useTheme();
+  // NOTE: this `today` uses UTC and is a known TZ-vulnerable pattern
+  // (CLAUDE.md anti-pattern #N). Phase D will sweep this across the
+  // codebase; for Phase B1 it's left alone to keep this edit narrow.
   const today = new Date().toISOString().split('T')[0];
   const [date, setDate] = useState(today);
+  // Phase B1 (2026-06-12): opening-stock entry modal trigger. The
+  // useApiQuery + useApiMutation that the modal needs live inside it;
+  // SummaryContent only owns the visibility state.
+  const [openingStockOpen, setOpeningStockOpen] = useState(false);
 
   const { data: summaries, isLoading, refetch } = useApiQuery<InventorySummary[]>(
     ['inv-summary', date],
@@ -191,6 +198,18 @@ function SummaryContent() {
         contentContainerStyle={{ padding: 16, paddingTop: 12, gap: 12 }}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} />}
       >
+        {/* Phase B1 (2026-06-12): opening-stock entry button. Shows
+            "Enter Opening Stock" when no summary rows exist yet (fresh
+            tenant), "Update Opening Stock" once any are recorded. The
+            modal handles the cylinder-type-by-type input + the 409
+            replace-confirmation flow returned by
+            POST /inventory/initial-balance. */}
+        <Button
+          title={(summaries?.length ?? 0) === 0 ? 'Enter Opening Stock' : 'Update Opening Stock'}
+          variant="accent"
+          onPress={() => setOpeningStockOpen(true)}
+        />
+
         {/* Top Metrics */}
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
@@ -276,7 +295,262 @@ function SummaryContent() {
           })
         )}
       </ScrollView>
+
+      {openingStockOpen && (
+        <OpeningStockModal
+          onClose={() => setOpeningStockOpen(false)}
+          onSaved={() => {
+            setOpeningStockOpen(false);
+            refetch();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+// ─── OPENING STOCK MODAL (Phase B1) ─────────────────────────────────────────
+//
+// Records opening-stock balances for every cylinder type. POST
+// /inventory/initial-balance returns 409 with structured conflict
+// payload when entries already exist; on confirmation, resend with
+// replaceExisting: true. Mirror of the web "Stock at Onboarding" modal.
+
+interface OpeningStockEntry {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  openingFulls: string;
+  openingEmpties: string;
+}
+
+function OpeningStockModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const { dark, colors, accent } = useTheme();
+  // Reuse the SummaryContent TZ caveat — Phase D will sweep both.
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [eventDate, setEventDate] = useState(todayStr);
+  const [entries, setEntries] = useState<OpeningStockEntry[] | null>(null);
+  const [pendingPayload, setPendingPayload] = useState<{
+    entries: { cylinderTypeId: string; openingFulls: number; openingEmpties: number }[];
+    eventDate: string;
+  } | null>(null);
+  // Phase B1 conflict wire shape — matches routes/inventory.ts:114
+  // (which forwards InitialBalanceConflictError.conflicts unchanged).
+  // The route does NOT add cylinderTypeName; we look that up from the
+  // cylinderTypes query when rendering.
+  const [conflicts, setConflicts] = useState<
+    { cylinderTypeId: string; fulls: number; empties: number; eventDate: string }[] | null
+  >(null);
+
+  const { data: cylinderTypes } = useApiQuery<CylinderType[]>(
+    ['cylinder-types'],
+    '/cylinder-types',
+  );
+
+  const nameById = new Map<string, string>(
+    (cylinderTypes ?? []).map((ct) => [ct.cylinderTypeId, ct.typeName]),
+  );
+
+  // Initialise the form once cylinder types load.
+  if (cylinderTypes && entries === null) {
+    setEntries(
+      cylinderTypes.map((ct) => ({
+        cylinderTypeId: ct.cylinderTypeId,
+        cylinderTypeName: ct.typeName,
+        openingFulls: '',
+        openingEmpties: '',
+      })),
+    );
+  }
+
+  // The mutation throws on 409 → we surface conflicts via onError and
+  // gate a confirm flow rather than auto-replacing.
+  const submitMutation = useApiMutation<
+    unknown,
+    { entries: { cylinderTypeId: string; openingFulls: number; openingEmpties: number }[]; eventDate: string; replaceExisting?: boolean }
+  >('post', '/inventory/initial-balance', {
+    invalidateKeys: [['inv-summary']],
+    successMessage: 'Opening stock saved',
+    onSuccess: () => onSaved(),
+    onError: (err: unknown) => {
+      // useApi.ts surfaces axios errors with attached `response.data.details`
+      // when present. The route returns `details.conflicts` on 409.
+      const e = err as { response?: { status?: number; data?: { details?: { conflicts?: typeof conflicts } } } };
+      const status = e?.response?.status;
+      const cnf = e?.response?.data?.details?.conflicts;
+      if (status === 409 && cnf && cnf.length > 0) {
+        setConflicts(cnf);
+        return;
+      }
+      Alert.alert('Could not save opening stock', (err as Error)?.message ?? 'Unknown error');
+    },
+  });
+
+  const handleSubmit = () => {
+    if (!entries) return;
+    // Filter to entries with at least one non-empty value (allow partial).
+    const payload = entries
+      .filter((e) => e.openingFulls.trim() !== '' || e.openingEmpties.trim() !== '')
+      .map((e) => ({
+        cylinderTypeId: e.cylinderTypeId,
+        openingFulls: parseInt(e.openingFulls || '0', 10),
+        openingEmpties: parseInt(e.openingEmpties || '0', 10),
+      }));
+    if (payload.length === 0) {
+      Alert.alert('Validation', 'Enter at least one filled or empty quantity.');
+      return;
+    }
+    if (payload.some((p) => Number.isNaN(p.openingFulls) || Number.isNaN(p.openingEmpties) || p.openingFulls < 0 || p.openingEmpties < 0)) {
+      Alert.alert('Validation', 'Quantities must be non-negative integers.');
+      return;
+    }
+    if (eventDate > todayStr) {
+      Alert.alert('Validation', 'As-of date cannot be in the future.');
+      return;
+    }
+    setPendingPayload({ entries: payload, eventDate });
+    submitMutation.mutate({ entries: payload, eventDate });
+  };
+
+  const handleConfirmReplace = () => {
+    if (!pendingPayload) return;
+    setConflicts(null);
+    submitMutation.mutate({ ...pendingPayload, replaceExisting: true });
+  };
+
+  return (
+    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          paddingHorizontal: 16, paddingVertical: 12,
+          borderBottomWidth: 1, borderBottomColor: colors.divider,
+        }}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Ionicons name="close" size={26} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>Opening Stock</Text>
+          <TouchableOpacity onPress={handleSubmit} disabled={submitMutation.isPending} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: submitMutation.isPending ? colors.textMuted : accent.red }}>Save</Text>
+          </TouchableOpacity>
+        </View>
+
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }} keyboardShouldPersistTaps="handled">
+            <View>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>As of date</Text>
+              <TextInput
+                value={eventDate}
+                onChangeText={setEventDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={colors.textMuted}
+                style={{
+                  backgroundColor: dark ? colors.inputBg : '#f8fafc',
+                  borderRadius: 10, borderWidth: 1, borderColor: colors.divider,
+                  paddingHorizontal: 12, paddingVertical: 10,
+                  fontSize: 15, color: colors.text,
+                }}
+              />
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
+                Defaults to today. Cannot be in the future.
+              </Text>
+            </View>
+
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              By cylinder type
+            </Text>
+
+            {entries?.map((e, idx) => (
+              <Card key={e.cylinderTypeId}>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 8 }}>
+                  {e.cylinderTypeName}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 4 }}>Filled</Text>
+                    <TextInput
+                      value={e.openingFulls}
+                      onChangeText={(t) => setEntries((arr) =>
+                        arr ? arr.map((x, i) => (i === idx ? { ...x, openingFulls: t } : x)) : arr,
+                      )}
+                      keyboardType="number-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textMuted}
+                      style={{
+                        backgroundColor: dark ? colors.inputBg : '#f8fafc',
+                        borderRadius: 8, borderWidth: 1, borderColor: colors.divider,
+                        paddingHorizontal: 10, paddingVertical: 8,
+                        fontSize: 15, color: colors.text,
+                      }}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 4 }}>Empty</Text>
+                    <TextInput
+                      value={e.openingEmpties}
+                      onChangeText={(t) => setEntries((arr) =>
+                        arr ? arr.map((x, i) => (i === idx ? { ...x, openingEmpties: t } : x)) : arr,
+                      )}
+                      keyboardType="number-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textMuted}
+                      style={{
+                        backgroundColor: dark ? colors.inputBg : '#f8fafc',
+                        borderRadius: 8, borderWidth: 1, borderColor: colors.divider,
+                        paddingHorizontal: 10, paddingVertical: 8,
+                        fontSize: 15, color: colors.text,
+                      }}
+                    />
+                  </View>
+                </View>
+              </Card>
+            ))}
+
+            {!entries && (
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <Text style={{ color: colors.textMuted }}>Loading cylinder types…</Text>
+              </View>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        {/* Replace confirmation overlay (409 conflict flow) */}
+        {conflicts && conflicts.length > 0 && (
+          <View style={{
+            position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            alignItems: 'center', justifyContent: 'center', padding: 16,
+          }}>
+            <View style={{ backgroundColor: colors.bg, borderRadius: 14, padding: 18, width: '100%', maxWidth: 360, gap: 12 }}>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
+                Replace existing opening stock?
+              </Text>
+              <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                Opening stock is already recorded for the cylinder types below.
+                Saving will overwrite the existing values.
+              </Text>
+              {conflicts.map((c) => (
+                <View key={c.cylinderTypeId} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 13, color: colors.text }}>
+                    {nameById.get(c.cylinderTypeId) ?? c.cylinderTypeId}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                    {c.fulls} filled / {c.empties} empty
+                  </Text>
+                </View>
+              ))}
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                <View style={{ flex: 1 }}>
+                  <Button title="Cancel" variant="secondary" onPress={() => setConflicts(null)} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Button title="Replace" variant="accent" onPress={handleConfirmReplace} loading={submitMutation.isPending} />
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
+      </SafeAreaView>
+    </Modal>
   );
 }
 

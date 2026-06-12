@@ -12,12 +12,17 @@ interface MenuItem {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   subtitle?: string;
-  action: 'profile' | 'settings' | 'logout';
+  // Phase B (2026-06-12): added 'customers' + 'reports' for the new
+  // inventory mobile parity screens. Both push into the (inventory)
+  // route group so the bottom tab bar stays coherent.
+  action: 'customers' | 'reports' | 'profile' | 'settings' | 'logout';
   color?: string;
   danger?: boolean;
 }
 
 const MENU_ITEMS: MenuItem[] = [
+  { icon: 'people-outline', label: 'Customers', subtitle: 'Browse customers + cylinder balances', action: 'customers' },
+  { icon: 'analytics-outline', label: 'Reports', subtitle: 'Inventory movement, delivery, sales', action: 'reports' },
   { icon: 'person-outline', label: 'Profile', subtitle: 'View your account details', action: 'profile' },
   { icon: 'settings-outline', label: 'Settings', subtitle: 'App preferences & notifications', action: 'settings' },
   { icon: 'log-out-outline', label: 'Sign Out', subtitle: 'Log out of your account', action: 'logout', danger: true, color: '#ef4444' },
@@ -39,6 +44,12 @@ export default function MoreScreen() {
 
   const handleMenuPress = (action: MenuItem['action']) => {
     switch (action) {
+      case 'customers':
+        router.push('/(inventory)/customers');
+        break;
+      case 'reports':
+        router.push('/(inventory)/reports');
+        break;
       case 'profile':
         // STAGE-E: Profile is now an editable self-service screen at
         // (inventory)/profile.tsx — route there instead of leaving the row

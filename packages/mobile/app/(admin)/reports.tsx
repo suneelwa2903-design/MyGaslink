@@ -104,10 +104,19 @@ function fmtCell(value: ReportCellValue, money?: boolean): string {
   return String(value);
 }
 
-export default function AdminReportsScreen() {
+// Phase B3 (2026-06-12): the inventory route group wraps this screen
+// with a smaller report-key whitelist. Default export passes
+// `allowedKeys: undefined` → no filtering, same behavior admin has
+// always had. The wrapper at (inventory)/reports.tsx imports the
+// named `ReportsScreen` and renders it with the whitelist.
+export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) {
+  const visibleReports = allowedKeys
+    ? REPORTS.filter((r) => allowedKeys.includes(r.key))
+    : REPORTS;
+  const initialKey = visibleReports[0]?.key ?? 'sales-summary';
   const { colors } = useTheme();
 
-  const [reportKey, setReportKey] = useState('sales-summary');
+  const [reportKey, setReportKey] = useState(initialKey);
   const [dateFrom, setDateFrom] = useState(monthAgoISO());
   const [dateTo, setDateTo] = useState(todayISO());
   const [cylinderTypeId, setCylinderTypeId] = useState('');
@@ -117,7 +126,7 @@ export default function AdminReportsScreen() {
   const [groupBy, setGroupBy] = useState<'day' | 'trip'>('day');
   const [downloading, setDownloading] = useState(false);
 
-  const def = REPORTS.find((r) => r.key === reportKey)!;
+  const def = visibleReports.find((r) => r.key === reportKey) ?? visibleReports[0]!;
   const needsCustomer = !!def.customerRequired && !customerId;
 
   // ─── Filter option data ─────────────────────────────────────────────────
@@ -225,7 +234,7 @@ export default function AdminReportsScreen() {
 
   // ─── Report-type picker shows every report. Per-report filter rows below
   // appear conditionally based on `def.filters`.
-  const reportOptions = REPORTS.map((r) => ({ value: r.key, label: r.label }));
+  const reportOptions = visibleReports.map((r) => ({ value: r.key, label: r.label }));
   const customerOptions = [
     { value: '', label: 'Select customer' },
     ...customers.map((c) => ({ value: c.customerId, label: c.customerName })),
@@ -447,6 +456,13 @@ export default function AdminReportsScreen() {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+// Default export: admin / finance get the unfiltered ReportsScreen. The
+// inventory route group wraps the named export with `allowedKeys` —
+// see (inventory)/reports.tsx.
+export default function AdminReportsScreen() {
+  return <ReportsScreen />;
 }
 
 // ─── Table renderer ────────────────────────────────────────────────────────

@@ -61,6 +61,12 @@ export default function InventoryLayout() {
       <Tabs.Screen name="reconciliation" options={{ href: null }} />
       <Tabs.Screen name="alerts" options={{ href: null }} />
       <Tabs.Screen name="profile" options={{ href: null }} />
+      {/* Phase B (2026-06-12): Customers (read-only, cylinder-balance
+          focused) + Reports (subset of 3) under the More tab, kept off
+          the bottom bar with href: null. */}
+      <Tabs.Screen name="customers" options={{ href: null }} />
+      <Tabs.Screen name="customer-detail" options={{ href: null }} />
+      <Tabs.Screen name="reports" options={{ href: null }} />
     </Tabs>
   );
 }
