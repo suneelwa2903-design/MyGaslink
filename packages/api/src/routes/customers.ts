@@ -263,11 +263,21 @@ router.post('/',
 
 // PUT /api/customers/:id
 router.put('/:id',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
   validate(updateCustomerSchema),
   auditLog('update', 'customer'),
   async (req, res) => {
     try {
+      // Per-field role guard: only super_admin / distributor_admin / finance
+      // can change customer.status. Inventory keeps general-edit access
+      // (address / phone / credit period) but is barred from suspending or
+      // closing accounts.
+      if (req.body.status !== undefined) {
+        const statusAllowed: ReadonlyArray<string> = ['super_admin', 'distributor_admin', 'finance'];
+        if (!statusAllowed.includes(req.user!.role)) {
+          return sendForbidden(res, 'You do not have permission to change customer status');
+        }
+      }
       const result = await customerService.updateCustomer(
         param(req.params.id), req.user!.distributorId!, req.body, req.user!.userId
       );

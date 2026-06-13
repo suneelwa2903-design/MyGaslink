@@ -64,6 +64,10 @@ export function CustomerSearchInput({
     queryFn: () =>
       apiGet<{ customers: Customer[] }>('/customers', {
         search: debouncedQuery,
+        // Suspended / inactive customers are hidden from order-creation
+        // search server-side. Operators must resume supply (or reactivate)
+        // before they can place a new order for those customers.
+        status: 'active',
         pageSize: RESULT_LIMIT,
       }),
     enabled: debouncedQuery.length >= MIN_CHARS,

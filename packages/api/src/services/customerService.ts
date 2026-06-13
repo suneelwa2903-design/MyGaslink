@@ -26,6 +26,7 @@ interface CustomerUpdateData {
   shippingPincode?: string | null;
   creditPeriodDays?: number;
   transportChargePerCylinder?: number;
+  status?: $Enums.CustomerStatus;
   contacts?: Array<{ name: string; phone?: string; email?: string | null; isPrimary?: boolean }>;
   cylinderDiscounts?: Array<{ cylinderTypeId: string; discountPerUnit: number }>;
 }
@@ -218,7 +219,7 @@ export async function updateCustomer(
       'customerName', 'businessName', 'gstin', 'phone', 'email', 'transportChargePerCylinder',
       'billingAddressLine1', 'billingCity', 'billingState', 'billingPincode',
       'shippingAddressLine1', 'shippingCity', 'shippingState', 'shippingPincode',
-      'creditPeriodDays',
+      'creditPeriodDays', 'status',
     ];
     const existingRecord = existing as Record<string, unknown>;
     for (const field of trackFields) {
@@ -287,6 +288,13 @@ export async function updateCustomer(
     if (data.shippingPincode !== undefined) updateData.shippingPincode = data.shippingPincode;
     if (data.creditPeriodDays !== undefined) updateData.creditPeriodDays = data.creditPeriodDays;
     if (data.transportChargePerCylinder !== undefined) updateData.transportChargePerCylinder = data.transportChargePerCylinder;
+    // Status (active/suspended/inactive) — also mirrored to stopSupply so the
+    // legacy boolean stays consistent with the new canonical field. Route
+    // handler enforces the role guard before this point.
+    if (data.status !== undefined) {
+      updateData.status = data.status;
+      updateData.stopSupply = data.status === 'suspended';
+    }
 
     const updated = await tx.customer.update({
       where: { id },
@@ -385,9 +393,11 @@ export async function getCustomerAuditTrail(customerId: string, distributorId: s
 
 export async function stopSupply(customerId: string, distributorId: string, performedBy: string) {
   return prisma.$transaction(async (tx) => {
+    // status is the canonical field going forward; stopSupply stays as a
+    // mirror until a future cleanup pass removes it.
     await tx.customer.update({
       where: { id: customerId },
-      data: { stopSupply: true },
+      data: { stopSupply: true, status: 'suspended' },
     });
     await tx.customerAuditTrail.create({
       data: {
@@ -395,9 +405,9 @@ export async function stopSupply(customerId: string, distributorId: string, perf
         distributorId,
         performedBy,
         actionType: 'stop_supply',
-        fieldName: 'stopSupply',
-        oldValue: false,
-        newValue: true,
+        fieldName: 'status',
+        oldValue: 'active',
+        newValue: 'suspended',
       },
     });
     return { message: 'Supply stopped' };
@@ -408,7 +418,7 @@ export async function resumeSupply(customerId: string, distributorId: string, pe
   return prisma.$transaction(async (tx) => {
     await tx.customer.update({
       where: { id: customerId },
-      data: { stopSupply: false },
+      data: { stopSupply: false, status: 'active' },
     });
     await tx.customerAuditTrail.create({
       data: {
@@ -416,9 +426,9 @@ export async function resumeSupply(customerId: string, distributorId: string, pe
         distributorId,
         performedBy,
         actionType: 'resume_supply',
-        fieldName: 'stopSupply',
-        oldValue: true,
-        newValue: false,
+        fieldName: 'status',
+        oldValue: 'suspended',
+        newValue: 'active',
       },
     });
     return { message: 'Supply resumed' };

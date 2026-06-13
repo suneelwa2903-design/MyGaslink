@@ -33,9 +33,9 @@ import { useAuthStore, selectRole } from '@/stores/authStore';
 import { cn } from '@/lib/cn';
 
 const STATUS_MAP: Record<string, { variant: 'success' | 'warning' | 'danger' | 'neutral'; label: string }> = {
-  [CustomerStatus.ACTIVE]: { variant: 'success', label: 'Active' },
-  [CustomerStatus.SUSPENDED]: { variant: 'warning', label: 'Suspended' },
-  [CustomerStatus.INACTIVE]: { variant: 'danger', label: 'Inactive' },
+  [CustomerStatus.ACTIVE]: { variant: 'success', label: 'Active' },     // green
+  [CustomerStatus.SUSPENDED]: { variant: 'warning', label: 'Suspended' }, // amber
+  [CustomerStatus.INACTIVE]: { variant: 'neutral', label: 'Inactive' },   // grey — was 'danger' (red) before
 };
 
 function formatCurrency(n: number) {
@@ -375,6 +375,23 @@ function CustomerFormModal({
   const isEdit = !!customer;
   const role = useAuthStore(selectRole);
   const canEditTransport = role === UserRole.DISTRIBUTOR_ADMIN || role === UserRole.SUPER_ADMIN;
+  const canEditStatus =
+    role === UserRole.DISTRIBUTOR_ADMIN ||
+    role === UserRole.SUPER_ADMIN ||
+    role === UserRole.FINANCE;
+
+  // Account status is edit-only. The PUT /customers/:id endpoint accepts it
+  // (see updateCustomerSchema in @gaslink/shared). We hold it outside RHF
+  // because createCustomerSchema — which the form resolver uses — has no
+  // `status` field.
+  const [accountStatus, setAccountStatus] = useState<CustomerStatus>(
+    (customer?.status as CustomerStatus | undefined) ?? CustomerStatus.ACTIVE,
+  );
+  const STATUS_HELPER: Record<CustomerStatus, string> = {
+    [CustomerStatus.ACTIVE]: 'Customer can place orders normally.',
+    [CustomerStatus.SUSPENDED]: 'Supply is paused. Customer cannot place new orders.',
+    [CustomerStatus.INACTIVE]: 'Account closed. Customer will not appear in order search.',
+  };
 
   const { register, handleSubmit, control, getValues, setValue, watch, formState: { errors } } = useForm<CreateCustomerInput>({
     resolver: zodResolver(createCustomerSchema) as Resolver<CreateCustomerInput>,
@@ -519,7 +536,14 @@ function CustomerFormModal({
   const mutation = useMutation({
     mutationFn: (data: CreateCustomerInput) =>
       isEdit
-        ? apiPut<{ warnings?: string[] }>(`/customers/${customer.customerId}`, data)
+        ? apiPut<{ warnings?: string[] }>(`/customers/${customer.customerId}`, {
+            ...data,
+            // Only attach status when the operator has permission AND it
+            // actually changed — keeps non-finance / non-admin role payloads
+            // untouched, so existing inventory edits don't trip the route's
+            // status guard.
+            ...(canEditStatus && accountStatus !== customer.status ? { status: accountStatus } : {}),
+          })
         : apiPost<{ warnings?: string[] }>('/customers', data),
     onSuccess: (response) => {
       const warnings = response?.warnings ?? [];
@@ -613,6 +637,23 @@ function CustomerFormModal({
             <Input label="Business Name" {...register('businessName')} />
             <Input label="Phone" required error={errors.phone?.message} {...register('phone')} />
             <Input label="Email" type="email" {...register('email')} />
+            {isEdit && canEditStatus && (
+              <div>
+                <Select
+                  label="Account Status"
+                  value={accountStatus}
+                  onChange={(e) => setAccountStatus(e.target.value as CustomerStatus)}
+                  options={[
+                    { value: CustomerStatus.ACTIVE, label: 'Active' },
+                    { value: CustomerStatus.SUSPENDED, label: 'Suspended' },
+                    { value: CustomerStatus.INACTIVE, label: 'Inactive' },
+                  ]}
+                />
+                <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+                  {STATUS_HELPER[accountStatus]}
+                </p>
+              </div>
+            )}
             <div>
               {/* WI-040: GSTIN field with "Fetch Details" button to autofill
                   business name and billing address from the NIC portal. */}

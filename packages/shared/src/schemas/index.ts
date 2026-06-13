@@ -162,7 +162,11 @@ export const createCustomerSchema = z.object({
   cylinderDiscounts: z.array(cylinderDiscountSchema).optional(),
 });
 
-export const updateCustomerSchema = createCustomerSchema.partial();
+export const updateCustomerSchema = createCustomerSchema.partial().extend({
+  // Status is edit-only — createCustomer ignores it; PUT /customers/:id
+  // applies the change subject to a role guard in the route handler.
+  status: z.nativeEnum(CustomerStatus).optional(),
+});
 
 // ─── Order Schemas ───────────────────────────────────────────────────────────
 
