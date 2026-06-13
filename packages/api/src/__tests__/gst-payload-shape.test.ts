@@ -219,7 +219,13 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
     expect(ewb.docDate).toBe(irn.DocDtls.Dt);
   });
 
-  it('transDocNo is non-empty and within 15 chars', () => {
+  it('transDocNo is a string within 15 chars (own-vehicle dispatch leaves it empty)', () => {
+    // Updated 2026-06-13: the EWB builder no longer mirrors vehicleNo into
+    // transDocNo. Own-vehicle deliveries (the dominant case for LPG
+    // distributors) have no separate transport document — putting the truck
+    // number in transDocNo confused the printed bill. NIC accepts an empty
+    // transDocNo for road mode; the CEWB path has always done this. The
+    // contract is now: it's a string ≤ 15 chars, allowed to be empty.
     const irn = buildIrnPayload(b2bFixture());
     const ewb = buildEwbPayload(irn, {
       vehicleNumber: 'KA01MN9999',
@@ -227,8 +233,9 @@ describe('EWB payload shape validation (NIC /ewaybillapi genewaybill — separat
       distance: 1,
     });
     expect(typeof ewb.transDocNo).toBe('string');
-    expect(ewb.transDocNo.length).toBeGreaterThanOrEqual(1);
     expect(ewb.transDocNo.length).toBeLessThanOrEqual(15);
+    // Default own-vehicle dispatch path emits empty.
+    expect(ewb.transDocNo).toBe('');
   });
 
   it('transDocDate matches DD/MM/YYYY', () => {

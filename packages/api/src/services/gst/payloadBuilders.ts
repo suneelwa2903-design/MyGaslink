@@ -486,7 +486,12 @@ export function buildEwbPayload(
     fromGstin: seller.Gstin,
     fromPincode: seller.Pin,
     fromStateCode: parseInt(seller.Stcd),
-    fromTrdName: seller.TrdNm || seller.LglNm,
+    // Use the legal name (LglNm) on the EWB so the supplier name on the
+    // printed bill matches the GST-registered legal entity (e.g.
+    // "Vanasthali Gas Service") rather than the shorter trade / business
+    // display name (e.g. "Vanasthali Gas"). LglNm is sanitized non-empty
+    // upstream; the `|| TrdNm` fallback covers any future shape change.
+    fromTrdName: seller.LglNm || seller.TrdNm,
     fromAddr1: seller.Addr1,
     fromAddr2: seller.Addr2,
     fromPlace: seller.Loc,
@@ -523,7 +528,14 @@ export function buildEwbPayload(
       ? { transporterId: transportDetails.transporterId }
       : (isB2C ? { transporterId: seller.Gstin } : {})),
 
-    transDocNo: vehicleNo,
+    // transDocNo is intended for the transporter's document (LR / bilty /
+    // consignment note). Own-vehicle deliveries have no separate transport
+    // document, so leave this empty — matches the CEWB path's behaviour at
+    // gstPreflightService.ts:676. Previously this field was set to vehicleNo
+    // which duplicated the truck number on the printed EWB. transDocDate
+    // stays populated (NIC's schema couples them but tolerates a blank
+    // transDocNo + a date for the road mode).
+    transDocNo: '',
     transDocDate: doc.Dt,
     vehicleNo: vehicleNo,
     vehicleType: 'R', // Regular
@@ -532,7 +544,11 @@ export function buildEwbPayload(
       hsnCode: item.HsnCd,
       taxableAmount: item.AssAmt,
       productName: item.PrdDesc,
-      productDesc: `Supply of ${item.PrdDesc}`,
+      // Include the commodity ("LPG") explicitly in the description so the
+      // EWB line reads e.g. "Supply of LPG - 19 KG" instead of "Supply of
+      // 19 KG", which omits the actual goods type. productName keeps the
+      // short cylinder type_name for legacy consumers.
+      productDesc: `Supply of LPG - ${item.PrdDesc}`,
       quantity: item.Qty,
       qtyUnit: item.Unit,
       cgstRate: item.CgstAmt > 0 ? CGST_RATE : 0,
