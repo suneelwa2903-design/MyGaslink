@@ -25,6 +25,9 @@ interface CustomerDashboard {
   amountDelivered: number;
   paymentsReceived: number;
   range: { from: string; to: string };
+  // Account state — drives the "supply paused / account closed" banner.
+  status?: 'active' | 'suspended' | 'inactive';
+  supplyStopped?: boolean;
 }
 
 function firstOfMonth(): string {
@@ -33,7 +36,7 @@ function firstOfMonth(): string {
 }
 
 export default function CustomerDashboardScreen() {
-  const { colors, accent } = useTheme();
+  const { dark, colors, accent } = useTheme();
 
   // Activity date range — defaults to the current month (1st → today).
   const [fromDate, setFromDate] = useState(firstOfMonth);
@@ -110,6 +113,32 @@ export default function CustomerDashboardScreen() {
         <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginBottom: 4 }}>
           Welcome back
         </Text>
+
+        {/* Account-status banner — shown when supply is paused or the account
+            is closed. Amber for both cases; not dismissible. Server-side
+            createOrder still blocks suspended customers, but this gives the
+            customer a clear explanation before they try. */}
+        {data?.status && data.status !== 'active' && (
+          <View
+            style={{
+              backgroundColor: dark ? '#3a2a05' : '#fef3c7',
+              borderColor: dark ? '#b45309' : '#f59e0b',
+              borderWidth: 1,
+              borderRadius: 12,
+              padding: 12,
+              marginTop: 4,
+              marginBottom: 8,
+            }}
+            accessibilityRole="alert"
+          >
+            <Text style={{ fontWeight: '700', color: dark ? '#fbbf24' : '#92400e', marginBottom: 2 }}>
+              {data.status === 'inactive' ? 'Account closed' : 'Supply paused'}
+            </Text>
+            <Text style={{ fontSize: 13, color: dark ? '#fcd34d' : '#92400e' }}>
+              Your supply is currently paused. Please contact your distributor.
+            </Text>
+          </View>
+        )}
 
         {/* ── Current Status (always current, ignores date range) ── */}
         <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 4 }}>

@@ -350,15 +350,20 @@ export async function approveModificationRequest(requestId: string, distributorI
     });
 
     // Apply changes based on modification type
+    // Status mirror: stopSupply ↔ status='suspended' / 'active'. Same contract
+    // as the direct stopSupply()/resumeSupply() service functions — must stay
+    // in lock-step so the approval workflow doesn't leave an inconsistent
+    // (status='active', stopSupply=true) state that hides a suspended customer
+    // from CustomerSearchInput.
     if (request.modificationType === 'stop_supply') {
       await tx.customer.update({
         where: { id: request.customerId },
-        data: { stopSupply: true },
+        data: { stopSupply: true, status: 'suspended' },
       });
     } else if (request.modificationType === 'resume_supply') {
       await tx.customer.update({
         where: { id: request.customerId },
-        data: { stopSupply: false },
+        data: { stopSupply: false, status: 'active' },
       });
     } else if (request.modificationType === 'update_info' && request.changes) {
       await tx.customer.update({

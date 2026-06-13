@@ -128,10 +128,17 @@ export default function CustomerOrdersScreen() {
   // FIX 2: credit period for the pay-before-credit reminder. Outstanding comes
   // from the dashboard query; credit period from the account endpoint. Both are
   // existing endpoints — this panel is UI-only and never blocks placing an order.
-  const { data: account } = useApiQuery<{ creditPeriodDays?: number }>(
+  // Also drives the supply-paused / account-closed banner — `status` is
+  // exposed by mapCustomer on the /account endpoint.
+  const { data: account } = useApiQuery<{
+    creditPeriodDays?: number;
+    status?: 'active' | 'suspended' | 'inactive';
+  }>(
     ['customer-account'],
     '/customer-portal/account',
   );
+  const accountStatus = account?.status ?? 'active';
+  const supplyBlocked = accountStatus !== 'active';
   const router = useRouter();
   const outstandingAmount = Number(dashboard?.outstandingAmount ?? 0);
   const [reminderDismissed, setReminderDismissed] = useState(false);
@@ -457,8 +464,35 @@ export default function CustomerOrdersScreen() {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 }}>
         <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>My Orders</Text>
-        <Button title="+ New Order" size="sm" onPress={() => { setReminderDismissed(false); setShowForm(true); }} />
+        <Button
+          title="+ New Order"
+          size="sm"
+          disabled={supplyBlocked}
+          onPress={() => { setReminderDismissed(false); setShowForm(true); }}
+        />
       </View>
+
+      {supplyBlocked && (
+        <View
+          style={{
+            marginHorizontal: 16,
+            marginBottom: 8,
+            backgroundColor: dark ? '#3a2a05' : '#fef3c7',
+            borderColor: dark ? '#b45309' : '#f59e0b',
+            borderWidth: 1,
+            borderRadius: 12,
+            padding: 12,
+          }}
+          accessibilityRole="alert"
+        >
+          <Text style={{ fontWeight: '700', color: dark ? '#fbbf24' : '#92400e', marginBottom: 2 }}>
+            {accountStatus === 'inactive' ? 'Account closed' : 'Supply paused'}
+          </Text>
+          <Text style={{ fontSize: 13, color: dark ? '#fcd34d' : '#92400e' }}>
+            Your supply is currently paused. Please contact your distributor.
+          </Text>
+        </View>
+      )}
 
       <DateRangeFilter from={dateFrom} to={dateTo} setFrom={setDateFrom} setTo={setDateTo} />
 
@@ -663,7 +697,7 @@ export default function CustomerOrdersScreen() {
                   <Button
                     title="Place Order"
                     loading={createOrder.isPending}
-                    disabled={totalSelected(orderItems) === 0}
+                    disabled={totalSelected(orderItems) === 0 || supplyBlocked}
                     onPress={handlePlaceOrder}
                   />
                 </View>

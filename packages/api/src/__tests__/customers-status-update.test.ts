@@ -181,6 +181,81 @@ describe('Stop / Resume supply — status mirror', () => {
   });
 });
 
+describe('Modification-request approval — status mirror', () => {
+  it('approving a stop_supply modification request sets status=suspended AND stopSupply=true', async () => {
+    const id = ids['ZZTEST_CSU StatusFilter A'];
+    // Set a known starting state — earlier tests in this file may have moved
+    // this row to inactive / suspended.
+    await prisma.customer.update({ where: { id }, data: { status: 'active', stopSupply: false } });
+
+    const created = await request(app)
+      .post(`/api/customers/${id}/modification-requests`)
+      .set(auth(adminToken))
+      .send({ modificationType: 'stop_supply', reason: 'audit trail check' });
+    expect(created.status).toBe(201);
+    const requestId = created.body.data.id || created.body.data.requestId;
+    expect(requestId).toBeTruthy();
+
+    const approved = await request(app)
+      .put(`/api/customers/modification-requests/${requestId}/approve`)
+      .set(auth(adminToken));
+    expect(approved.status).toBe(200);
+
+    const row = await prisma.customer.findUnique({ where: { id } });
+    expect(row?.status).toBe('suspended');
+    expect(row?.stopSupply).toBe(true);
+  });
+
+  it('approving a resume_supply modification request sets status=active AND stopSupply=false', async () => {
+    const id = ids['ZZTEST_CSU StatusFilter A'];
+    // Independent precondition: force the row into the suspended state.
+    await prisma.customer.update({ where: { id }, data: { status: 'suspended', stopSupply: true } });
+
+    const created = await request(app)
+      .post(`/api/customers/${id}/modification-requests`)
+      .set(auth(adminToken))
+      .send({ modificationType: 'resume_supply', reason: 'cleared overdue' });
+    expect(created.status).toBe(201);
+    const requestId = created.body.data.id || created.body.data.requestId;
+
+    const approved = await request(app)
+      .put(`/api/customers/modification-requests/${requestId}/approve`)
+      .set(auth(adminToken));
+    expect(approved.status).toBe(200);
+
+    const row = await prisma.customer.findUnique({ where: { id } });
+    expect(row?.status).toBe('active');
+    expect(row?.stopSupply).toBe(false);
+  });
+});
+
+describe('GET /api/customer-portal/dashboard — exposes status field', () => {
+  it('dashboard response includes the customer.status field (active branch)', async () => {
+    // Use Royal Kitchen (seed customer linked to a user).
+    const customerUser = await prisma.user.findFirst({
+      where: { email: 'royal@kitchen.com' },
+      select: { id: true, email: true, role: true, distributorId: true, customerId: true },
+    });
+    if (!customerUser) {
+      // Seed missing in this environment — skip silently rather than fail.
+      return;
+    }
+    const token = generateToken({
+      userId: customerUser.id,
+      email: customerUser.email,
+      role: customerUser.role as UserRole,
+      distributorId: customerUser.distributorId,
+      customerId: customerUser.customerId,
+    });
+    const res = await request(app)
+      .get('/api/customer-portal/dashboard')
+      .set(auth(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBeDefined();
+    expect(['active', 'suspended', 'inactive']).toContain(res.body.data.status);
+  });
+});
+
 describe('GET /api/customers — status filter (combined with type)', () => {
   it('status=active returns only active rows from our seed', async () => {
     const res = await request(app)

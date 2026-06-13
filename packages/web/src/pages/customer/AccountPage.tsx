@@ -2,9 +2,20 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import type { Customer } from '@gaslink/shared';
+import { CustomerStatus } from '@gaslink/shared';
 import { apiGet, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Button, Input, Badge, Loader, EmptyState } from '@/components/ui';
+
+// Mirrors the variant map on the admin CustomersPage so an Inactive account
+// renders as neutral (grey) and Suspended as warning (amber). Before this,
+// AccountPage had a binary `active ? success : warning` that rendered Inactive
+// as amber — inconsistent with the admin view.
+const STATUS_MAP: Record<string, { variant: 'success' | 'warning' | 'neutral'; label: string }> = {
+  [CustomerStatus.ACTIVE]: { variant: 'success', label: 'Active' },
+  [CustomerStatus.SUSPENDED]: { variant: 'warning', label: 'Suspended' },
+  [CustomerStatus.INACTIVE]: { variant: 'neutral', label: 'Inactive' },
+};
 
 export default function CustomerAccountPage() {
   const queryClient = useQueryClient();
@@ -62,7 +73,9 @@ export default function CustomerAccountPage() {
             {customer.businessName && <p className="text-sm text-surface-500">{customer.businessName}</p>}
             <div className="flex items-center gap-2 mt-1">
               <Badge variant="neutral">{customer.customerType}</Badge>
-              <Badge variant={customer.status === 'active' ? 'success' : 'warning'}>{customer.status}</Badge>
+              <Badge variant={STATUS_MAP[customer.status]?.variant || 'neutral'}>
+                {STATUS_MAP[customer.status]?.label || customer.status}
+              </Badge>
               {customer.stopSupply && <Badge variant="danger">Supply Stopped</Badge>}
             </div>
           </div>

@@ -15,7 +15,9 @@ export async function getCustomerDashboard(
 ) {
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
-    select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true },
+    // status is needed by the customer mobile dashboard so it can render the
+    // "supply paused" / "account closed" banner without a second round trip.
+    select: { id: true, customerName: true, status: true, stopSupply: true, creditPeriodDays: true },
   });
   if (!customer) throw new PortalError('Customer not found', 404);
 
@@ -63,6 +65,7 @@ export async function getCustomerDashboard(
       cylinderTypes,
       range: periodRange,
       supplyStopped: true,
+      status: customer.status,
     };
   }
 
@@ -143,6 +146,7 @@ export async function getCustomerDashboard(
     })),
     cylinderTypes,
     supplyStopped: false,
+    status: customer.status,
   };
 }
 
@@ -618,6 +622,12 @@ export async function getMyAccount(distributorId: string, customerId: string) {
       shippingState: true,
       shippingPincode: true,
       creditPeriodDays: true,
+      // status + stopSupply: drives the supply-paused / account-closed banner
+      // and the "Place Order" button-disable on the customer mobile orders
+      // screen. The orders screen reads this endpoint (already loaded for
+      // creditPeriodDays), so no second round trip is needed.
+      status: true,
+      stopSupply: true,
       contacts: true,
       // WI-120: per-customer cylinder discounts. mapCustomer flattens each
       // entry to { cylinderTypeName, discountPerUnit } for the account screen.
