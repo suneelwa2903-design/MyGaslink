@@ -536,7 +536,7 @@ export const updateDistributorSchema = createDistributorSchema.partial().extend(
 
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  pageSize: z.coerce.number().int().min(1).max(1000).default(25),
   sortBy: z.string().optional(),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
 });
@@ -572,6 +572,7 @@ export const paymentFilterSchema = paginationSchema.merge(dateRangeSchema).exten
 
 export const customerFilterSchema = paginationSchema.extend({
   status: z.nativeEnum(CustomerStatus).optional(),
+  customerType: z.enum(['B2B', 'B2C']).optional(),
   search: z.string().optional(),
   // Group B Part 3 — `unlinked=true` returns only customers that have no
   // app-login user row pointing at them via User.customerId. Drives the

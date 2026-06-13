@@ -47,13 +47,16 @@ export default function CustomersPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'' | 'B2B' | 'B2C'>('');
+  const [downloading, setDownloading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [viewCustomer, setViewCustomer] = useState<Customer | null>(null);
 
-  const queryParams: Record<string, unknown> = { page, pageSize: 25 };
+  const queryParams: Record<string, unknown> = { page, pageSize: 50 };
   if (search) queryParams.search = search;
   if (statusFilter) queryParams.status = statusFilter;
+  if (typeFilter) queryParams.customerType = typeFilter;
 
   const { data, isLoading } = useQuery({
     queryKey: ['customers', queryParams],
@@ -94,6 +97,55 @@ export default function CustomersPage() {
   // inventory can manage.
   const role = useAuthStore(selectRole);
   const canManage = role !== UserRole.FINANCE;
+  const distributorName = useAuthStore((s) => s.user?.distributorName ?? '');
+
+  const handleDownloadCsv = async () => {
+    setDownloading(true);
+    try {
+      // Always exports the full distributor's customer base, ignoring active filters.
+      const result = await apiGet<{ customers: Customer[] }>('/customers', { pageSize: 1000 });
+      const rows = result.customers ?? [];
+
+      const headers = [
+        'name', 'phone', 'business_name', 'gstin', 'customer_type',
+        'address_line1', 'city', 'state', 'pincode', 'email', 'credit_period_days',
+      ];
+      const esc = (v: unknown) => {
+        const s = v == null ? '' : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const body = rows.map((c) => [
+        c.customerName, c.phone, c.businessName ?? '', c.gstin ?? '',
+        c.customerType, c.billingAddressLine1 ?? '', c.billingCity ?? '',
+        c.billingState ?? '', c.billingPincode ?? '', c.email ?? '',
+        c.creditPeriodDays,
+      ].map(esc).join(','));
+      const csv = [headers.join(','), ...body].join('\n');
+
+      // Filename: customers_<distributorSlug>_DDMmmYYYY.csv (e.g. customers_VanasthaliGasService_13Jun2026.csv)
+      const slug = distributorName.replace(/\s+/g, '') || 'distributor';
+      const d = new Date();
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = d.toLocaleString('en-US', { month: 'short' });
+      const year = d.getFullYear();
+      const filename = `customers_${slug}_${day}${month}${year}.csv`;
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${rows.length} customers`);
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -102,16 +154,22 @@ export default function CustomersPage() {
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Customers</h1>
           <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Manage your customer base</p>
         </div>
-        {canManage && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <HiOutlinePlus className="h-4 w-4" />
-            New Customer
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={handleDownloadCsv} loading={downloading}>
+            <HiOutlineDocumentArrowDown className="h-4 w-4" />
+            Download CSV
           </Button>
-        )}
+          {canManage && (
+            <Button onClick={() => setCreateOpen(true)}>
+              <HiOutlinePlus className="h-4 w-4" />
+              New Customer
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="card p-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <div className="relative sm:col-span-2">
             <HiOutlineMagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-surface-400" />
             <input
@@ -122,6 +180,12 @@ export default function CustomersPage() {
               className="input pl-9 py-2"
             />
           </div>
+          <Select
+            options={[{ value: 'B2B', label: 'B2B' }, { value: 'B2C', label: 'B2C' }]}
+            placeholder="All Types"
+            value={typeFilter}
+            onChange={(e) => { setTypeFilter(e.target.value as '' | 'B2B' | 'B2C'); setPage(1); }}
+          />
           <Select
             options={Object.values(CustomerStatus).map((s) => ({ value: s, label: STATUS_MAP[s]?.label || s }))}
             placeholder="All Statuses"

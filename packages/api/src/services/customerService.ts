@@ -39,13 +39,14 @@ const customerInclude = {
 
 export async function listCustomers(
   distributorId: string,
-  filters: { status?: string; search?: string; page?: number; pageSize?: number; unlinked?: string }
+  filters: { status?: string; customerType?: string; search?: string; page?: number; pageSize?: number; unlinked?: string }
 ) {
   const where: Prisma.CustomerWhereInput = {
     distributorId,
     deletedAt: null,
   };
   if (filters.status) where.status = filters.status as $Enums.CustomerStatus;
+  if (filters.customerType) where.customerType = filters.customerType;
   if (filters.search) {
     where.OR = [
       { customerName: { contains: filters.search, mode: 'insensitive' } },

@@ -17,7 +17,6 @@ import {
 } from 'react-icons/hi2';
 import {
   type Order,
-  type Customer,
   type CylinderType,
   type Driver,
   type Vehicle,
@@ -39,8 +38,8 @@ import {
   localTodayISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
-import { useAuthStore, selectRole, selectDistributorId } from '@/stores/authStore';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { useAuthStore, selectRole } from '@/stores/authStore';
+import { Button, Input, Select, Modal, Badge, Loader, EmptyState, CustomerSearchInput } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
 function formatCurrency(amount: number): string {
@@ -54,7 +53,6 @@ export default function OrdersPage() {
   // morning depot dispatch is an inventory task). Driver role sees only
   // the Orders tab.
   const role = useAuthStore(selectRole);
-  const distributorId = useAuthStore(selectDistributorId);
   const canAssignDrivers =
     role === UserRole.DISTRIBUTOR_ADMIN ||
     role === UserRole.SUPER_ADMIN ||
@@ -96,11 +94,10 @@ export default function OrdersPage() {
     queryFn: () => apiGet<{ orders: Order[]; meta: PaginationMeta }>('/orders', queryParams),
   });
 
-  const { data: customers } = useQuery({
-    queryKey: ['customers-list', distributorId],
-    queryFn: () => apiGet<{ customers: Customer[] }>('/customers', { pageSize: 100 }),
-    staleTime: 5 * 60 * 1000,
-  });
+  // Customers are loaded on-demand via the CustomerSearchInput component
+  // inside Create/Returns modals — no preload. This avoids capping the
+  // dropdown at the API's max pageSize and silently hiding customers from
+  // the order-creation flow once a distributor crosses that threshold.
 
   const { data: cylinderTypes } = useQuery({
     queryKey: ['cylinder-types'],
@@ -383,7 +380,6 @@ export default function OrdersPage() {
         <CreateOrderModal
           open={createOpen}
           onClose={() => setCreateOpen(false)}
-          customers={customers?.customers ?? []}
           cylinderTypes={cylinderTypes ?? []}
         />
       )}
@@ -393,7 +389,6 @@ export default function OrdersPage() {
         <ReturnsOrderModal
           open={returnsOpen}
           onClose={() => setReturnsOpen(false)}
-          customers={customers?.customers ?? []}
           cylinderTypes={cylinderTypes ?? []}
         />
       )}
@@ -469,17 +464,15 @@ export default function OrdersPage() {
 function CreateOrderModal({
   open,
   onClose,
-  customers,
   cylinderTypes,
 }: {
   open: boolean;
   onClose: () => void;
-  customers: Customer[];
   cylinderTypes: CylinderType[];
 }) {
   const queryClient = useQueryClient();
 
-  const { register, handleSubmit, control, formState: { errors } } = useForm<CreateOrderInput>({
+  const { register, handleSubmit, control, watch, setValue, formState: { errors } } = useForm<CreateOrderInput>({
     resolver: zodResolver(createOrderSchema),
     defaultValues: {
       customerId: '',
@@ -502,19 +495,18 @@ function CreateOrderModal({
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const customerOptions = customers.map((c) => ({ value: c.customerId, label: c.customerName }));
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: `${ct.typeName} (${ct.capacity}${ct.unit})` }));
+  const customerId = watch('customerId');
 
   return (
     <Modal open={open} onClose={onClose} title="Create Order" size="lg">
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
-        <Select
+        <CustomerSearchInput
           label="Customer"
-          options={customerOptions}
-          placeholder="Select customer"
           required
+          value={customerId}
+          onChange={(id) => setValue('customerId', id, { shouldValidate: true })}
           error={errors.customerId?.message}
-          {...register('customerId')}
         />
 
         <Input
@@ -1101,17 +1093,15 @@ function DeliveryConfirmationModal({
 function ReturnsOrderModal({
   open,
   onClose,
-  customers,
   cylinderTypes,
 }: {
   open: boolean;
   onClose: () => void;
-  customers: Customer[];
   cylinderTypes: CylinderType[];
 }) {
   const queryClient = useQueryClient();
 
-  const { register, handleSubmit, control, formState: { errors } } = useForm<ReturnsOnlyOrderInput>({
+  const { register, handleSubmit, control, watch, setValue, formState: { errors } } = useForm<ReturnsOnlyOrderInput>({
     resolver: zodResolver(returnsOnlyOrderSchema),
     defaultValues: {
       customerId: '',
@@ -1134,19 +1124,18 @@ function ReturnsOrderModal({
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const customerOptions = customers.map((c) => ({ value: c.customerId, label: c.customerName }));
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: `${ct.typeName} (${ct.capacity}${ct.unit})` }));
+  const customerId = watch('customerId');
 
   return (
     <Modal open={open} onClose={onClose} title="Create Returns Order" size="lg">
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
-        <Select
+        <CustomerSearchInput
           label="Customer"
-          options={customerOptions}
-          placeholder="Select customer"
           required
+          value={customerId}
+          onChange={(id) => setValue('customerId', id, { shouldValidate: true })}
           error={errors.customerId?.message}
-          {...register('customerId')}
         />
 
         <Input
