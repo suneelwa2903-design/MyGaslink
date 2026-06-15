@@ -1931,7 +1931,7 @@ export default function AdminMoreScreen() {
             icon="person-outline"
             label="My Profile"
             subtitle="Edit name and phone"
-            onPress={() => router.push('/(admin)/profile')}
+            onPress={() => router.push('/profile')}
             theme={theme}
           />
           <Divider theme={theme} />

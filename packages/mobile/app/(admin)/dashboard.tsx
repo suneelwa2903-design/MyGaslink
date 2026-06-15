@@ -132,7 +132,7 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
     color: ACCENT.blue,
     iconBgLight: '#eff6ff',
     iconBgDark: 'rgba(59, 130, 246, 0.15)',
-    href: '/(admin)/customers',
+    href: '/customers',
   },
   {
     key: 'deliveredToday',
@@ -141,7 +141,7 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
     color: ACCENT.green,
     iconBgLight: '#ecfdf5',
     iconBgDark: 'rgba(16, 185, 129, 0.15)',
-    href: '/(admin)/orders',
+    href: '/orders',
   },
   {
     key: 'revenueToday',
@@ -151,7 +151,7 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
     iconBgLight: '#ecfdf5',
     iconBgDark: 'rgba(16, 185, 129, 0.15)',
     isCurrency: true,
-    href: '/(admin)/reports',
+    href: '/reports',
   },
   {
     key: 'totalOutstanding',
@@ -161,7 +161,7 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
     iconBgLight: '#fffbeb',
     iconBgDark: 'rgba(245, 158, 11, 0.15)',
     isCurrency: true,
-    href: '/(admin)/collections',
+    href: '/collections',
   },
   {
     key: 'overdueInvoices',
@@ -170,7 +170,7 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
     color: ACCENT.red,
     iconBgLight: '#fef2f2',
     iconBgDark: 'rgba(220, 38, 38, 0.15)',
-    href: '/(admin)/finance',
+    href: '/finance',
   },
   {
     key: 'inventoryAlerts',
@@ -179,7 +179,7 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
     color: ACCENT.orange,
     iconBgLight: '#fffbeb',
     iconBgDark: 'rgba(245, 158, 11, 0.15)',
-    href: '/(admin)/inventory',
+    href: '/inventory',
   },
 ];
 

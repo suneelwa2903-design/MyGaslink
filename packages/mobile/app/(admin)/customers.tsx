@@ -276,7 +276,7 @@ export default function AdminCustomersScreen() {
 
   const handleViewAccount = (customer: Customer) => {
     router.push({
-      pathname: '/(admin)/customer-detail',
+      pathname: '/customer-detail',
       params: { customerId: customer.customerId },
     });
   };
@@ -612,7 +612,7 @@ export default function AdminCustomersScreen() {
         />
       )}
 
-      <FAB onPress={() => router.push('/(admin)/customer-create')} />
+      <FAB onPress={() => router.push('/customer-create')} />
 
       <EditCustomerInlineModal
         visible={!!editTarget}
