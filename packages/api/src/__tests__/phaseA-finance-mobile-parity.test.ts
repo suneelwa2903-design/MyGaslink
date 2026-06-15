@@ -105,6 +105,95 @@ describe('Phase A — finance is still locked out of customer mutations (defense
   });
 });
 
+describe('2026-06-15 — finance gains Inventory + Fleet reads (re-export wave)', () => {
+  // The (finance)/inventory.tsx and (finance)/fleet.tsx files are
+  // thin re-exports of the admin screens. The admin fleet screen now
+  // hides create/edit affordances via a canEdit role gate that
+  // excludes 'finance'. The API is currently MORE permissive than the
+  // UI — POST /drivers and POST /vehicles accept finance — so the
+  // defense layers are inverted (UI stricter than server). The UI gate
+  // expresses the design intent "finance: read-only on fleet"; the
+  // server permissiveness is a separate cleanup if desired.
+
+  it('GET /api/inventory/summary returns 200 for finance', async () => {
+    const res = await request(app)
+      .get('/api/inventory/summary')
+      .set('Authorization', `Bearer ${financeToken}`);
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /api/drivers returns 200 for finance', async () => {
+    const res = await request(app)
+      .get('/api/drivers')
+      .set('Authorization', `Bearer ${financeToken}`);
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /api/vehicles returns 200 for finance', async () => {
+    const res = await request(app)
+      .get('/api/vehicles')
+      .set('Authorization', `Bearer ${financeToken}`);
+    expect(res.status).toBe(200);
+  });
+
+  it('(admin)/fleet.tsx canEdit gate excludes finance role (UI-level read-only)', () => {
+    const fleetSrc = readFileSync(
+      resolve(__dirname, '../../../mobile/app/(admin)/fleet.tsx'),
+      'utf-8',
+    );
+    // Pin the exact canEdit expression so a future edit that drops a
+    // role or adds finance trips this guard.
+    expect(fleetSrc).toMatch(/canEdit\s*=\s*\n\s*role === UserRole\.SUPER_ADMIN \|\|\s*\n\s*role === UserRole\.DISTRIBUTOR_ADMIN \|\|\s*\n\s*role === UserRole\.INVENTORY/);
+    expect(fleetSrc).not.toMatch(/canEdit[\s\S]*UserRole\.FINANCE/);
+  });
+
+  it('finance inventory + fleet re-export files exist and are thin re-exports', () => {
+    const financeInventory = readFileSync(
+      resolve(__dirname, '../../../mobile/app/(finance)/inventory.tsx'),
+      'utf-8',
+    );
+    const financeFleet = readFileSync(
+      resolve(__dirname, '../../../mobile/app/(finance)/fleet.tsx'),
+      'utf-8',
+    );
+    expect(financeInventory).toContain("export { default } from '../(admin)/inventory'");
+    expect(financeFleet).toContain("export { default } from '../(admin)/fleet'");
+  });
+
+  it('finance dashboard + collections are now thin re-exports (replaces slim versions)', () => {
+    const financeDashboard = readFileSync(
+      resolve(__dirname, '../../../mobile/app/(finance)/dashboard.tsx'),
+      'utf-8',
+    );
+    const financeCollections = readFileSync(
+      resolve(__dirname, '../../../mobile/app/(finance)/collections.tsx'),
+      'utf-8',
+    );
+    expect(financeDashboard).toContain("export { default } from '../(admin)/dashboard'");
+    expect(financeCollections).toContain("export { default } from '../(admin)/collections'");
+  });
+
+  it('(admin)/dashboard.tsx no longer hardcodes /(admin)/ paths (group-relative for re-export)', () => {
+    const adminDashboard = readFileSync(
+      resolve(__dirname, '../../../mobile/app/(admin)/dashboard.tsx'),
+      'utf-8',
+    );
+    expect(adminDashboard).not.toContain("router.push('/(admin)/inventory')");
+    expect(adminDashboard).not.toContain("router.push('/(admin)/collections')");
+    expect(adminDashboard).toContain("router.push('/inventory')");
+    expect(adminDashboard).toContain("router.push('/collections')");
+  });
+
+  it('(admin)/collections.tsx no longer hardcodes /(admin)/customer-detail', () => {
+    const adminCollections = readFileSync(
+      resolve(__dirname, '../../../mobile/app/(admin)/collections.tsx'),
+      'utf-8',
+    );
+    expect(adminCollections).not.toContain("'/(admin)/customer-detail'");
+    expect(adminCollections).toContain("pathname: '/customer-detail'");
+  });
+});
+
 describe('Phase A — mobile source guards', () => {
   const financeOrders = readFileSync(
     resolve(__dirname, '../../../mobile/app/(finance)/orders.tsx'),

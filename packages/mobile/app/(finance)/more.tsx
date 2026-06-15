@@ -50,6 +50,21 @@ export default function FinanceMoreScreen() {
       subtitle: 'Browse customer accounts, ledgers, invoices',
       onPress: () => router.push('/(finance)/customers'),
     },
+    // 2026-06-15: finance-parity additions. Re-exports of admin's
+    // inventory + fleet screens. Admin's canEdit gate hides write
+    // buttons; finance sees them as read-only operational views.
+    {
+      icon: 'cube-outline',
+      label: 'Inventory',
+      subtitle: 'Stock levels, movements, reconciliation',
+      onPress: () => router.push('/(finance)/inventory'),
+    },
+    {
+      icon: 'car-outline',
+      label: 'Fleet',
+      subtitle: 'Drivers, vehicles, and daily assignments',
+      onPress: () => router.push('/(finance)/fleet'),
+    },
     {
       icon: 'analytics-outline',
       label: 'Reports',

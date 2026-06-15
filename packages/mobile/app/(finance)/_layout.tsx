@@ -28,6 +28,12 @@ const TAB_CONFIG: {
   { name: 'customers', title: 'Customers', iconOutline: 'people-outline', iconFilled: 'people', href: null },
   { name: 'customer-detail', title: 'Customer', iconOutline: 'person-outline', iconFilled: 'person', href: null },
   { name: 'reports', title: 'Reports', iconOutline: 'analytics-outline', iconFilled: 'analytics', href: null },
+  // Inventory + Fleet — re-exports of admin screens. Reachable from the
+  // finance More hub; kept off the bottom tab bar (5-tab usability limit).
+  // Admin's screens hide write buttons via the canEdit role gate, so
+  // finance sees them as read-only.
+  { name: 'inventory', title: 'Inventory', iconOutline: 'cube-outline', iconFilled: 'cube', href: null },
+  { name: 'fleet', title: 'Fleet', iconOutline: 'car-outline', iconFilled: 'car', href: null },
 ];
 
 export default function FinanceLayout() {
