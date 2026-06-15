@@ -17,6 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
 import { DateInput } from '../../src/components/ui';
+import { useAuthStore } from '../../src/stores/authStore';
+import { UserRole } from '@gaslink/shared';
 
 const ACCENT = ACCENT_COLORS.red;
 
@@ -215,6 +217,16 @@ function TabBar({
 
 export default function AdminFleetScreen() {
   const { colors } = useTheme();
+  // canEdit gate: pattern mirrors (admin)/customer-detail.tsx:907-916.
+  // Hides every mutation affordance for the finance role (which can read
+  // drivers/vehicles/assignments but is blocked by the API on writes —
+  // see driversVehicles.ts lines 159, 845). Inventory + dist-admin +
+  // super-admin keep full edit access.
+  const role = useAuthStore((s) => s.user?.role);
+  const canEdit =
+    role === UserRole.SUPER_ADMIN ||
+    role === UserRole.DISTRIBUTOR_ADMIN ||
+    role === UserRole.INVENTORY;
   const [activeTab, setActiveTab] = useState(0);
   const [showDriverForm, setShowDriverForm] = useState(false);
   const [showVehicleForm, setShowVehicleForm] = useState(false);
@@ -643,13 +655,15 @@ export default function AdminFleetScreen() {
                 label={item.status}
                 color={item.status === 'active' ? '#10b981' : '#94a3b8'}
               />
-              <TouchableOpacity
-                onPress={() => startEditDriver(item)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                style={{ marginLeft: 8, padding: 4 }}
-              >
-                <Ionicons name="create-outline" size={20} color={ACCENT} />
-              </TouchableOpacity>
+              {canEdit && (
+                <TouchableOpacity
+                  onPress={() => startEditDriver(item)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={{ marginLeft: 8, padding: 4 }}
+                >
+                  <Ionicons name="create-outline" size={20} color={ACCENT} />
+                </TouchableOpacity>
+              )}
             </View>
           )}
           ItemSeparatorComponent={() => (
@@ -660,7 +674,9 @@ export default function AdminFleetScreen() {
             <RefreshControl refreshing={false} onRefresh={refetchDrivers} tintColor={ACCENT} />
           }
         />
-        <FAB onPress={() => { setEditingDriverId(null); setDriverName(''); setDriverPhone(''); setDriverLicense(''); setShowDriverForm(true); }} />
+        {canEdit && (
+          <FAB onPress={() => { setEditingDriverId(null); setDriverName(''); setDriverPhone(''); setDriverLicense(''); setShowDriverForm(true); }} />
+        )}
       </View>
     );
   };
@@ -902,31 +918,35 @@ export default function AdminFleetScreen() {
                     }}
                   >
                     <StatusBadge label={item.status} color={badgeColor} />
-                    <TouchableOpacity
-                      onPress={() => handleMarkReturned(item)}
-                      disabled={markReturnedMutation.isPending}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 6,
-                        backgroundColor: '#3b82f6' + '14',
-                        borderWidth: 1,
-                        borderColor: '#3b82f6',
-                        opacity: markReturnedMutation.isPending ? 0.6 : 1,
-                      }}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#3b82f6' }}>
-                        Mark Returned
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => startEditVehicle(item)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      style={{ padding: 4 }}
-                    >
-                      <Ionicons name="create-outline" size={20} color={ACCENT} />
-                    </TouchableOpacity>
+                    {canEdit && (
+                      <TouchableOpacity
+                        onPress={() => handleMarkReturned(item)}
+                        disabled={markReturnedMutation.isPending}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 6,
+                          backgroundColor: '#3b82f6' + '14',
+                          borderWidth: 1,
+                          borderColor: '#3b82f6',
+                          opacity: markReturnedMutation.isPending ? 0.6 : 1,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#3b82f6' }}>
+                          Mark Returned
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    {canEdit && (
+                      <TouchableOpacity
+                        onPress={() => startEditVehicle(item)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ padding: 4 }}
+                      >
+                        <Ionicons name="create-outline" size={20} color={ACCENT} />
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
               </View>
@@ -940,7 +960,9 @@ export default function AdminFleetScreen() {
             <RefreshControl refreshing={false} onRefresh={refetchVehicles} tintColor={ACCENT} />
           }
         />
-        <FAB onPress={() => { setEditingVehicleId(null); setVehNumber(''); setVehType(''); setVehCapacity(''); setVehStatus('idle'); setShowVehicleForm(true); }} />
+        {canEdit && (
+          <FAB onPress={() => { setEditingVehicleId(null); setVehNumber(''); setVehType(''); setVehCapacity(''); setVehStatus('idle'); setShowVehicleForm(true); }} />
+        )}
       </View>
     );
   };
@@ -969,31 +991,33 @@ export default function AdminFleetScreen() {
               placeholder="Select date"
             />
           </View>
-          <TouchableOpacity
-            onPress={handleBulkConfirm}
-            disabled={bulkConfirmMutation.isPending}
-            style={{
-              paddingVertical: 10,
-              paddingHorizontal: 14,
-              borderRadius: 8,
-              backgroundColor: ACCENT,
-              opacity: bulkConfirmMutation.isPending ? 0.6 : 1,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            {bulkConfirmMutation.isPending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="checkmark-done" size={14} color="#fff" />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>
-                  Use Previous Day
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {canEdit && (
+            <TouchableOpacity
+              onPress={handleBulkConfirm}
+              disabled={bulkConfirmMutation.isPending}
+              style={{
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                borderRadius: 8,
+                backgroundColor: ACCENT,
+                opacity: bulkConfirmMutation.isPending ? 0.6 : 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {bulkConfirmMutation.isPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-done" size={14} color="#fff" />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>
+                    Use Previous Day
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
 
         {assignmentsLoading ? (

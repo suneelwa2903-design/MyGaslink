@@ -425,7 +425,10 @@ export default function AdminDashboardScreen() {
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>Stock Position</Text>
               <TouchableOpacity
-                onPress={() => router.push('/(admin)/inventory')}
+                // Group-relative push: expo-router resolves to the current
+                // tab group's `inventory` route. Lets this dashboard be
+                // re-exported from (finance) without leaking into admin nav.
+                onPress={() => router.push('/inventory')}
                 activeOpacity={0.7}
                 style={styles.sectionHeaderLink}
               >
@@ -474,7 +477,8 @@ export default function AdminDashboardScreen() {
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>Call These Customers</Text>
               <TouchableOpacity
-                onPress={() => router.push('/(admin)/collections')}
+                // Group-relative push — see Stock Position note above.
+                onPress={() => router.push('/collections')}
                 activeOpacity={0.7}
                 style={styles.sectionHeaderLink}
               >
@@ -550,7 +554,8 @@ export default function AdminDashboardScreen() {
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>Threshold Alerts</Text>
               <TouchableOpacity
-                onPress={() => router.push('/(admin)/inventory')}
+                // Group-relative push — see Stock Position note above.
+                onPress={() => router.push('/inventory')}
                 activeOpacity={0.7}
                 style={styles.sectionHeaderLink}
               >

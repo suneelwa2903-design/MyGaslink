@@ -242,11 +242,13 @@ export default function AdminCollectionsScreen() {
     );
   }, []);
 
-  // STEP-3E: route to the new (admin)/customer-detail full screen.
+  // STEP-3E: route to the customer-detail full screen.
+  // Group-relative path so this collections screen can be re-exported
+  // from (finance) without leaking into the admin tab stack.
   const onViewAccount = useCallback(
     (customerId: string) => {
       router.push({
-        pathname: '/(admin)/customer-detail',
+        pathname: '/customer-detail',
         params: { customerId },
       });
     },

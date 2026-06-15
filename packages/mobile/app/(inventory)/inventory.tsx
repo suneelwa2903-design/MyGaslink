@@ -341,13 +341,18 @@ function OpeningStockModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     { cylinderTypeId: string; fulls: number; empties: number; eventDate: string }[] | null
   >(null);
 
-  const { data: cylinderTypes } = useApiQuery<CylinderType[]>(
+  // wire shape: { cylinderTypes: CylinderType[] } — anti-pattern #17.
+  // The previous direct-array typing collapsed at runtime because the
+  // envelope object was truthy but unindexable; both crash sites in this
+  // file are now fixed in lock-step.
+  const { data: cylinderTypesData } = useApiQuery<{ cylinderTypes: CylinderType[] }>(
     ['cylinder-types'],
     '/cylinder-types',
   );
+  const cylinderTypes = cylinderTypesData?.cylinderTypes ?? [];
 
   const nameById = new Map<string, string>(
-    (cylinderTypes ?? []).map((ct) => [ct.cylinderTypeId, ct.typeName]),
+    cylinderTypes.map((ct) => [ct.cylinderTypeId, ct.typeName]),
   );
 
   // Initialise the form once cylinder types load.
@@ -560,10 +565,12 @@ function ActionsContent() {
   const { dark, colors } = useTheme();
   const [activeAction, setActiveAction] = useState<ActionType | null>(null);
 
-  const { data: cylinderTypes } = useApiQuery<CylinderType[]>(
+  // wire shape: { cylinderTypes: CylinderType[] } — anti-pattern #17 (see OpeningStockModal).
+  const { data: cylinderTypesData } = useApiQuery<{ cylinderTypes: CylinderType[] }>(
     ['cylinder-types'],
     '/cylinder-types',
   );
+  const cylinderTypes = cylinderTypesData?.cylinderTypes ?? [];
 
   const { data: recentEvents, isLoading, refetch: refetchEvents } = useApiQuery<InventoryEvent[]>(
     ['depot-history-recent'],
