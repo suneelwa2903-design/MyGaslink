@@ -22,7 +22,7 @@ import request from 'supertest';
 import bcrypt from 'bcryptjs';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { generateToken, loginAsDistAdmin } from './helpers.js';
+import { generateToken } from './helpers.js';
 import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
 
@@ -30,7 +30,6 @@ const PREFIX = 'IVIS_';   // alphabetic so cleanup is easy
 const DIST = 'dist-001';
 
 let app: Express;
-let adminToken: string;
 let customerToken: string;
 let customerId: string;
 let customerUserId: string;
@@ -88,7 +87,6 @@ async function makeInvoice(orderStatus: string | null, opts: { isOB?: boolean; s
 
 beforeAll(async () => {
   app = createApp();
-  adminToken = (await loginAsDistAdmin()).token;
 
   // Reuse the existing customer-portal beforeAll pattern.
   const customer = await prisma.customer.findFirstOrThrow({
