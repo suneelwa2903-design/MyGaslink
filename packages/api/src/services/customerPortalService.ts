@@ -456,12 +456,31 @@ export async function raiseDispute(
 /**
  * Get customer's invoices.
  */
+// In-flight order statuses — customer must NOT see the invoice while the
+// underlying order is still in transit (quantities/items can still change
+// at delivery). OB invoices (orderId: null) and historical invoices whose
+// order has reached a terminal state (delivered / modified_delivered /
+// cancelled) remain visible. Re-introduces the gate P0-2 removed too
+// broadly while preserving the OB carve-out that motivated that removal.
+const IN_FLIGHT_ORDER_STATUSES: $Enums.OrderStatus[] = [
+  'pending_driver_assignment',
+  'pending_dispatch',
+  'pending_delivery',
+];
+const INVOICE_VISIBILITY_OR: Prisma.InvoiceWhereInput['OR'] = [
+  { orderId: null },
+  { order: { status: { notIn: IN_FLIGHT_ORDER_STATUSES } } },
+];
+
 export async function getMyInvoices(
   distributorId: string,
   customerId: string,
   filters: { status?: string; page?: number; pageSize?: number; from?: string; to?: string }
 ) {
-  const where: Prisma.InvoiceWhereInput = { customerId, distributorId, deletedAt: null, isGaslinkBilling: false };
+  const where: Prisma.InvoiceWhereInput = {
+    customerId, distributorId, deletedAt: null, isGaslinkBilling: false,
+    OR: INVOICE_VISIBILITY_OR,
+  };
   if (filters.status) where.status = filters.status as $Enums.InvoiceStatus;
   // WI-124: optional issueDate range filter.
   if (filters.from || filters.to) {
@@ -499,9 +518,22 @@ export async function getMyInvoices(
 /**
  * Get a specific invoice for the customer.
  */
-export async function getMyInvoiceById(distributorId: string, customerId: string, invoiceId: string) {
+export async function getMyInvoiceById(
+  distributorId: string,
+  customerId: string,
+  invoiceId: string,
+  options: { includeInFlight?: boolean } = {},
+) {
   return prisma.invoice.findFirst({
-    where: { id: invoiceId, customerId, distributorId, deletedAt: null },
+    where: {
+      id: invoiceId, customerId, distributorId, deletedAt: null,
+      // Hide invoices whose linked order is in flight. Same gate as
+      // getMyInvoices list — deep-linked detail must not bypass it.
+      // `includeInFlight: true` is used by the PDF and payment routes,
+      // which need to LOOK UP the in-flight invoice in order to return
+      // a friendly 403 ("available once delivered") instead of a 404.
+      ...(options.includeInFlight ? {} : { OR: INVOICE_VISIBILITY_OR }),
+    },
     include: {
       // P0-1: customer relation needed for customerName / customerGstin /
       // billingAddress. The mapper at utils/mappers.ts > mapCustomerInvoiceDetail
@@ -735,7 +767,10 @@ export async function getCustomerInvoices(
   customerId: string,
   filters?: { dateFrom?: string; dateTo?: string; status?: string }
 ) {
-  const where: Prisma.InvoiceWhereInput = { distributorId, customerId, deletedAt: null, isGaslinkBilling: false };
+  const where: Prisma.InvoiceWhereInput = {
+    distributorId, customerId, deletedAt: null, isGaslinkBilling: false,
+    OR: INVOICE_VISIBILITY_OR,
+  };
   if (filters?.status) where.status = filters.status as $Enums.InvoiceStatus;
   if (filters?.dateFrom || filters?.dateTo) {
     const issueDate: Prisma.DateTimeFilter = {};
@@ -772,6 +807,10 @@ export async function getInvoiceSummaryForDownload(
       customerId,
       deletedAt: null,
       isGaslinkBilling: false,
+      // Same in-flight gate as the list / detail endpoints. Date-range
+      // summary totals must not include amounts from invoices the customer
+      // can't yet see.
+      OR: INVOICE_VISIBILITY_OR,
       issueDate: {
         gte: new Date(dateFrom),
         lte: new Date(dateTo),

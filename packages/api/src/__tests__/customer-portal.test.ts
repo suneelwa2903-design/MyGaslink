@@ -335,18 +335,20 @@ describe('Customer Portal - Invoice PDF download (WI-126)', () => {
     expect(res.status).toBe(403);
   });
 
-  // P0-2 (was WI-126): the order-status gate has been removed. An invoice
-  // with a pending order (not yet delivered) is still a valid issued tax
-  // invoice — Indian GST law requires 8-year retention for the customer,
-  // so the download must be available. The remaining gate is on invoice
-  // status only: issued/partially_paid/paid → allowed; draft/cancelled →
-  // 403 (covered by the P0-2 describe block below).
-  it('allows the PDF when the linked order is still pending — invoice status is what gates', async () => {
+  // 2026-06-15: the order-status gate has been re-introduced, but now
+  // carved correctly. OB invoices (orderId: null) and historical
+  // delivered/cancelled invoices stay accessible; only in-flight
+  // orders block the PDF. This invariant is also pinned by
+  // customer-portal-invoice-visibility.test.ts. Was P0-2's "always
+  // allow" — that allowed customers to download invoices that could
+  // still change at delivery, contrary to the operator's stated rule
+  // ("invoice subject to change until delivered").
+  it('refuses the PDF when the linked order is still in-flight (pending_dispatch / pending_delivery)', async () => {
     const res = await request(app)
       .get(`/api/customer-portal/invoices/${pendingOrderInvoiceId}/pdf`)
       .set(auth(customerToken));
-    expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toContain('application/pdf');
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/will be available once your order is delivered/i);
   });
 });
 

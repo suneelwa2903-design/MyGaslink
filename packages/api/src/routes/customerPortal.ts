@@ -309,10 +309,29 @@ router.get('/invoices/:id/pdf',
     if (!req.user!.customerId) {
       return sendError(res, 'No customer linked to this account', 400);
     }
+    // includeInFlight: true so we can look the row up even while the
+    // order is in transit, then return a friendly 403 below — better
+    // UX than the bare 404 the list/detail endpoints fall back to.
     const invoice = await portalService.getMyInvoiceById(
-      req.user!.distributorId!, req.user!.customerId, param(req.params.id)
+      req.user!.distributorId!, req.user!.customerId, param(req.params.id),
+      { includeInFlight: true },
     );
     if (!invoice) return sendNotFound(res, 'Invoice');
+
+    // 2026-06-15: re-introduce the delivery gate that P0-2 removed too
+    // broadly. OB invoices (orderId null) and historical invoices whose
+    // order has reached a terminal state both pass through. Only blocks
+    // PDFs for invoices whose linked order is still in transit —
+    // matches the "invoice subject to change until delivered" rule.
+    const orderStatus = (invoice as { order?: { status?: string } | null }).order?.status;
+    const inFlightStatuses = [
+      'pending_driver_assignment',
+      'pending_dispatch',
+      'pending_delivery',
+    ];
+    if (orderStatus && inFlightStatuses.includes(orderStatus)) {
+      return sendError(res, 'Invoice will be available once your order is delivered', 403);
+    }
 
     // P0-2: allow PDF download for any non-draft, non-cancelled invoice.
     // Was previously also gated on `order.status IN [delivered,
@@ -538,6 +557,9 @@ router.post('/invoices/:id/create-payment-order',
         select: {
           id: true, invoiceNumber: true, customerId: true,
           outstandingAmount: true, totalAmount: true,
+          // Select the linked order's status so we can block payment
+          // initiation for in-flight invoices below.
+          order: { select: { status: true } },
         },
       });
       if (!invoice) return sendNotFound(res, 'Invoice not found');
@@ -545,6 +567,23 @@ router.post('/invoices/:id/create-payment-order',
       // Cross-customer guard: the customer pays only their own invoices.
       if (invoice.customerId !== req.user!.customerId) {
         return sendError(res, 'Invoice does not belong to this customer', 403, 'CROSS_CUSTOMER_ACCESS');
+      }
+
+      // 2026-06-15: block payment initiation on in-flight invoices. The
+      // invoice can still change at delivery (modified_delivered), so
+      // accepting payment now would create refund/reconciliation work.
+      const inFlightStatuses = [
+        'pending_driver_assignment',
+        'pending_dispatch',
+        'pending_delivery',
+      ];
+      if (invoice.order?.status && inFlightStatuses.includes(invoice.order.status)) {
+        return sendError(
+          res,
+          'Payment is not available until your order is delivered',
+          403,
+          'ORDER_IN_FLIGHT',
+        );
       }
 
       const outstanding = Number(invoice.outstandingAmount);
@@ -621,11 +660,30 @@ router.post('/invoices/:id/verify-payment',
         select: {
           id: true, invoiceNumber: true, customerId: true,
           outstandingAmount: true,
+          order: { select: { status: true } },
         },
       });
       if (!invoice) return sendNotFound(res, 'Invoice not found');
       if (invoice.customerId !== req.user!.customerId) {
         return sendError(res, 'Invoice does not belong to this customer', 403, 'CROSS_CUSTOMER_ACCESS');
+      }
+      // 2026-06-15: defense-in-depth — payment-init was gated above, but
+      // a request that reached here despite an in-flight order is either
+      // a race (driver delivered between init and verify — harmless,
+      // since the gate then passes) or a misconfigured client. Block to
+      // be safe.
+      const inFlightStatusesVerify = [
+        'pending_driver_assignment',
+        'pending_dispatch',
+        'pending_delivery',
+      ];
+      if (invoice.order?.status && inFlightStatusesVerify.includes(invoice.order.status)) {
+        return sendError(
+          res,
+          'Payment cannot be verified until your order is delivered',
+          403,
+          'ORDER_IN_FLIGHT',
+        );
       }
 
       // Idempotency: if the same razorpayPaymentId already has a row,
