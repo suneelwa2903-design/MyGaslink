@@ -1,27 +1,26 @@
 /**
- * Phase B — inventory mobile parity.
+ * Phase B — inventory mobile parity (server-contract layer).
  *
- * B1 (opening stock entry) — pins the server endpoint
- *   POST /api/inventory/initial-balance behavior: accepts inventory
- *   role, returns 409 with structured conflict payload on duplicate,
- *   replaceExisting:true succeeds.
- * B2 (customers list + balance-only detail) — pins:
+ * B1 (opening stock entry) — pins POST /api/inventory/initial-balance:
+ *   accepts inventory role, returns 409 with structured conflict
+ *   payload on duplicate, replaceExisting:true succeeds.
+ * B2 (customers list + balance detail) — pins:
  *   GET /api/customers is accessible to inventory
  *   GET /api/customers/:id/balance is accessible to inventory
- *   Customer mutations (POST /customers, stop-supply) are 403 for
- *   inventory in the FINANCIAL context that matters here — actually
- *   the rules permit inventory to write customers so we re-check
- *   that the server doesn't accidentally start rejecting reads.
- * B3 (reports subset) — pins:
- *   ReportsScreen named export accepts allowedKeys
- *   (inventory)/reports.tsx passes the correct 3-key whitelist
+ * B3 (reports gating) — pins:
+ *   GET /api/reports/:type accepts inventory for the 3 keys that
+ *   inventory's reports surface uses operationally (regression
+ *   guard — server permits all 7, the screen-side surface is now
+ *   the full admin reports component via re-export).
  *
- * Source-file guards on the new screens cover the mobile-side wiring.
+ * 2026-06-15 — the mobile source guards from the prior B1/B2/B3
+ * wave were retired. The (inventory)/* screens are now thin
+ * re-exports of (admin)/*; the source-file invariants that block
+ * pinned the standalone code are no longer valid. The replacement
+ * mobile guards live in phaseB-inventory-reexport-parity.test.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { createApp } from '../app.js';
 import { loginAsInventory } from './helpers.js';
 import { prisma } from '../lib/prisma.js';
@@ -169,91 +168,5 @@ describe('Phase B3 — reports route gating for inventory', () => {
   });
 });
 
-describe('Phase B — mobile source guards', () => {
-  const inventoryScreen = readFileSync(
-    resolve(__dirname, '../../../mobile/app/(inventory)/inventory.tsx'),
-    'utf-8',
-  );
-  const invCustomers = readFileSync(
-    resolve(__dirname, '../../../mobile/app/(inventory)/customers.tsx'),
-    'utf-8',
-  );
-  const invCustomerDetail = readFileSync(
-    resolve(__dirname, '../../../mobile/app/(inventory)/customer-detail.tsx'),
-    'utf-8',
-  );
-  const invReports = readFileSync(
-    resolve(__dirname, '../../../mobile/app/(inventory)/reports.tsx'),
-    'utf-8',
-  );
-  const invMore = readFileSync(
-    resolve(__dirname, '../../../mobile/app/(inventory)/more.tsx'),
-    'utf-8',
-  );
-  const invLayout = readFileSync(
-    resolve(__dirname, '../../../mobile/app/(inventory)/_layout.tsx'),
-    'utf-8',
-  );
-
-  it('inventory.tsx SummaryContent wires the Opening Stock modal', () => {
-    expect(inventoryScreen).toContain('OpeningStockModal');
-    expect(inventoryScreen).toContain('Enter Opening Stock');
-    expect(inventoryScreen).toContain('Update Opening Stock');
-  });
-
-  it('OpeningStockModal POSTs to /inventory/initial-balance', () => {
-    expect(inventoryScreen).toMatch(/['"]\/inventory\/initial-balance['"]/);
-  });
-
-  it('OpeningStockModal handles the 409 conflict flow', () => {
-    expect(inventoryScreen).toMatch(/status\s*===\s*409|response\?\.\status/);
-    expect(inventoryScreen).toMatch(/replaceExisting/);
-  });
-
-  it('inventory customers screen is read-only (no useApiMutation)', () => {
-    expect(invCustomers).not.toMatch(/useApiMutation/);
-  });
-
-  it('inventory customers screen routes to its own customer-detail (not admin)', () => {
-    expect(invCustomers).toContain('/(inventory)/customer-detail');
-    expect(invCustomers).not.toContain('/(admin)/customer-detail');
-  });
-
-  it('inventory customer-detail.tsx hits balance endpoint and skips financial tabs', () => {
-    expect(invCustomerDetail).toContain('/balance');
-    expect(invCustomerDetail).toContain('Cylinder Balances');
-    // The financial-tab labels admin's screen renders. Their absence is
-    // the contract the spec asks for.
-    expect(invCustomerDetail).not.toContain('Ledger');
-    expect(invCustomerDetail).not.toContain('Payments');
-  });
-
-  it('inventory reports.tsx uses the named ReportsScreen with the 3-key whitelist', () => {
-    expect(invReports).toMatch(/import\s*\{\s*ReportsScreen\s*\}\s*from\s*['"]\.\.\/\(admin\)\/reports['"]/);
-    // Pin the actual array literal — the file's docstring legitimately
-    // mentions the financial report keys (it explains why they're
-    // hidden), so .not.toContain on the whole file is too coarse.
-    // Strip comments first and then assert on the runtime const.
-    const stripped = invReports.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-    expect(stripped).toContain("'inventory-movement'");
-    expect(stripped).toContain("'delivery-performance'");
-    expect(stripped).toContain("'sales-summary'");
-    expect(stripped).not.toContain("'outstanding-aging'");
-    expect(stripped).not.toContain("'gst-summary'");
-    expect(stripped).not.toContain("'vehicle-ledger'");
-    expect(stripped).not.toContain("'customer-statement'");
-  });
-
-  it('inventory More tab wires the Customers + Reports menu items', () => {
-    expect(invMore).toContain("'customers'");
-    expect(invMore).toContain("'reports'");
-    expect(invMore).toMatch(/router\.push\(['"]\/\(inventory\)\/customers['"]\)/);
-    expect(invMore).toMatch(/router\.push\(['"]\/\(inventory\)\/reports['"]\)/);
-  });
-
-  it('inventory _layout mounts new routes with href: null', () => {
-    expect(invLayout).toMatch(/name="customers"[^/]*href:\s*null/);
-    expect(invLayout).toMatch(/name="reports"[^/]*href:\s*null/);
-    expect(invLayout).toMatch(/name="customer-detail"[^/]*href:\s*null/);
-  });
-});
+// Mobile source guards moved to phaseB-inventory-reexport-parity.test.ts
+// after the (inventory)/* → (admin)/* re-export wave on 2026-06-15.
