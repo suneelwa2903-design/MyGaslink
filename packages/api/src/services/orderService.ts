@@ -103,6 +103,13 @@ export async function createOrder(
   },
   options?: {
     commitment?: { promisedDate?: Date; promisedAmount?: number; acknowledged?: boolean };
+    // FLOAT-001 (2026-06-17): driver walk-in path. When set, the order is
+    // tagged orderSource='walk_in', tied DIRECTLY to the passed driverId+
+    // vehicleId (skipping the customer.preferredDriverId lookup), and starts
+    // in pending_dispatch ready for an immediate preflightAddToTrip from
+    // POST /api/drivers/me/orders. Avoids polluting the admin create flow
+    // with role-specific logic.
+    walkIn?: { driverId: string; vehicleId: string };
   },
 ) {
   // Validate customer belongs to distributor and supply is not stopped
@@ -217,7 +224,16 @@ export async function createOrder(
   let vehicleId: string | null = null;
   let status: string = 'pending_driver_assignment';
 
-  if (customer.preferredDriverId) {
+  if (options?.walkIn) {
+    // FLOAT-001: walk-in path bypasses the preferredDriverId lookup. The driver
+    // is creating this order from their own mobile app for a customer they're
+    // standing in front of — the active DVA is the source of truth for which
+    // driver+vehicle to attach. Route layer already verified the DVA is
+    // loaded_and_dispatched and the customer belongs to the driver's tenant.
+    driverId = options.walkIn.driverId;
+    vehicleId = options.walkIn.vehicleId;
+    status = 'pending_dispatch';
+  } else if (customer.preferredDriverId) {
     const assignment = await prisma.driverVehicleAssignment.findFirst({
       where: {
         driverId: customer.preferredDriverId,
@@ -250,6 +266,9 @@ export async function createOrder(
         orderDate: new Date(),
         deliveryDate,
         status: status as $Enums.OrderStatus,
+        // FLOAT-001 (2026-06-17): tag walk-in path; default 'regular' covers
+        // every other caller (admin / customer portal / legacy).
+        orderSource: options?.walkIn ? 'walk_in' : 'regular',
         totalAmount,
         specialInstructions: data.specialInstructions || null,
         items: { create: itemsWithPrices },

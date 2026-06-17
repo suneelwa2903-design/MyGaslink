@@ -581,7 +581,21 @@ export async function preflightAddToTrip(params: {
     },
   });
   if (inFlightCount === 0) {
-    throw new PreflightError(
+    // FLOAT-001 (2026-06-17): a float-only trip starts with zero in-flight
+    // orders (dispatch wrote only manifest events). The first walk-in order
+    // from the driver mobile arrives here BEFORE any in-flight order exists.
+    // If a manifest with floatQty > 0 exists on this trip, treat the trip
+    // as live and allow the add. Otherwise the WI-068 guard still fires —
+    // an admin grafting onto a logically-finished trip is rejected.
+    const floatManifestExists = await prisma.dVALoadManifest.count({
+      where: {
+        dvaId: mapping.id,
+        tripNumber: mapping.tripNumber,
+        distributorId,
+        floatQty: { gt: 0 },
+      },
+    });
+    if (floatManifestExists === 0) throw new PreflightError(
       'No orders currently in transit. All previous orders have been delivered. Use Dispatch to start a new trip.',
       'NO_ACTIVE_TRIP',
       409,

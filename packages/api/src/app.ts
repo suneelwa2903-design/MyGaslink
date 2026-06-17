@@ -42,6 +42,7 @@ import loginHistoryRoutes from './routes/loginHistory.js';
 import razorpayWebhookRoutes from './routes/razorpayWebhook.js';
 import razorpayCustomerWebhookRoutes from './routes/razorpayCustomerWebhook.js';
 import tallySettingsRoutes from './routes/tallySettings.js';
+import manifestsRoutes from './routes/manifests.js';
 
 export function createApp() {
   const app = express();
@@ -151,6 +152,8 @@ export function createApp() {
   app.use('/api/pricing', authenticate, resolveDistributor, pricingRoutes);
   app.use('/api/licenses', authenticate, resolveDistributor, requireDistributor, licensesRoutes);
   app.use('/api/tally-settings', authenticate, resolveDistributor, requireDistributor, tallySettingsRoutes);
+  // FLOAT-001 (2026-06-17): vehicle load manifests.
+  app.use('/api/manifests', authenticate, resolveDistributor, requireDistributor, manifestsRoutes);
 
   // ─── Dev / test helpers (never mounted in production) ─────────────────────
   // Provides POST /test/inject-stale-token and GET /test/token-cache-state

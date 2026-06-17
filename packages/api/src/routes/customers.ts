@@ -18,8 +18,12 @@ type ServiceError = { message: string; statusCode?: number; code?: string };
 const router = Router();
 
 // GET /api/customers
+// FLOAT-001 (2026-06-17): driver role added so the walk-in flow on mobile can
+// search the tenant's customer book. The route already scopes by
+// req.user.distributorId so tenant isolation holds — driver only sees their
+// own tenant's customers. POST /customers stays admin-only (mutations gated).
 router.get('/',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver'),
   validateQuery(customerFilterSchema),
   async (req, res) => {
     try {

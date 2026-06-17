@@ -474,12 +474,22 @@ driverRouter.get('/me/trip-stock',
       // order; we serialise to an array at the end so the mobile UI can
       // .map directly (anti-pattern #9: every list response shape is the
       // envelope `{ items: [...] }`).
+      // FLOAT-001 (2026-06-17): three new fields per row:
+      //   manifestTotalLoaded — admin-declared physical load (incl. float).
+      //   floatQty           — totalLoaded − orderedQty at manifest confirm.
+      //   availableFulls     — manifest-loaded − pending − delivered. Drives
+      //                        the driver mobile walk-in quantity input cap.
+      // Mirrors getAvailableFullsForDriver's formula in dvaManifestService
+      // (deliberately inlined here to avoid an N+1 call per row).
       type Row = {
         cylinderTypeId: string;
         cylinderTypeName: string;
-        fullQuantity: number;     // still to deliver
+        fullQuantity: number;     // still to deliver (order-derived)
         deliveredQuantity: number; // already handed over today
         emptyQuantity: number;     // returned by customers, on truck
+        manifestTotalLoaded: number; // FLOAT-001
+        floatQty: number;            // FLOAT-001
+        availableFulls: number;      // FLOAT-001
       };
       const rows = new Map<string, Row>();
 
@@ -493,6 +503,9 @@ driverRouter.get('/me/trip-stock',
             fullQuantity: 0,
             deliveredQuantity: 0,
             emptyQuantity: 0,
+            manifestTotalLoaded: 0,
+            floatQty: 0,
+            availableFulls: 0,
           };
           if (isDelivered) {
             const delivered = item.deliveredQuantity ?? 0;
@@ -512,6 +525,49 @@ driverRouter.get('/me/trip-stock',
           }
           rows.set(key, existing);
         }
+      }
+
+      // FLOAT-001: pull manifest rows for this DVA's current trip and merge
+      // their totals into the rows map. Manifest may carry cylinder types
+      // that have NO orders yet (pure float) — those create new rows.
+      // Single query, no N+1.
+      const dvaRow = await prisma.driverVehicleAssignment.findFirst({
+        where: { driverId: driver.id, distributorId, assignmentDate: today, status: { not: 'cancelled' } },
+        orderBy: { tripNumber: 'desc' },
+        select: { id: true },
+      });
+      if (dvaRow) {
+        const manifestRows = await prisma.dVALoadManifest.findMany({
+          where: { dvaId: dvaRow.id, tripNumber: effectiveTrip, distributorId },
+          include: { cylinderType: { select: { id: true, typeName: true } } },
+        });
+        for (const m of manifestRows) {
+          const key = m.cylinderTypeId;
+          const existing = rows.get(key) ?? {
+            cylinderTypeId: key,
+            cylinderTypeName: m.cylinderType?.typeName ?? 'Unknown',
+            fullQuantity: 0,
+            deliveredQuantity: 0,
+            emptyQuantity: 0,
+            manifestTotalLoaded: 0,
+            floatQty: 0,
+            availableFulls: 0,
+          };
+          existing.manifestTotalLoaded = m.totalLoaded;
+          existing.floatQty = m.floatQty;
+          rows.set(key, existing);
+        }
+      }
+
+      // availableFulls = manifestTotalLoaded − fullQuantity (pending) − deliveredQuantity.
+      // Clamped at 0 so a manifest-less row (manifestTotalLoaded = 0) reports
+      // zero rather than a negative number; the driver UI uses this as the
+      // walk-in quantity input cap.
+      for (const row of rows.values()) {
+        row.availableFulls = Math.max(
+          0,
+          row.manifestTotalLoaded - row.fullQuantity - row.deliveredQuantity,
+        );
       }
 
       return sendSuccess(res, { items: Array.from(rows.values()) });
@@ -777,6 +833,127 @@ driverRouter.get('/me/cancelled-stock',
       return sendError(res, (err as Error).message);
     }
   }
+);
+
+// POST /api/drivers/me/orders — FLOAT-001 (2026-06-17): driver walk-in order.
+//
+// Single endpoint for the mobile walk-in flow. Validates that the driver has
+// an active trip in loaded_and_dispatched, the customer is on the driver's
+// tenant, deliveryDate equals today (server clock), and the requested qty
+// does NOT exceed availableFulls on the vehicle. Creates the order with
+// orderSource='walk_in' tied to the active DVA's driver+vehicle, then
+// immediately calls preflightAddToTrip so NIC docs are minted before the
+// driver leaves the customer's doorstep.
+//
+// Response codes:
+//   201 → order created AND preflight succeeded
+//   207 → order created BUT preflight failed (driver must contact office)
+//   400 → validation / availability / role mismatch
+//   403 → cross-tenant customer
+driverRouter.post('/me/orders',
+  requireRole('driver'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const userId = req.user!.userId;
+
+      // 1. Resolve driver
+      const driver = await resolveDriverFromUser(userId, distributorId);
+      if (!driver) return sendError(res, 'Driver record not found for user', 403, 'DRIVER_NOT_FOUND');
+
+      // 2. Validate body
+      const { driverCreateOrderSchema } = await import('@gaslink/shared');
+      const parsed = driverCreateOrderSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return sendError(res, parsed.error.issues[0]?.message ?? 'Invalid request', 400, 'VALIDATION');
+      }
+      const body = parsed.data;
+
+      // 3. deliveryDate must equal today (server clock, UTC-day).
+      const today = startOfUtcDay();
+      const todayStr = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}-${String(today.getUTCDate()).padStart(2, '0')}`;
+      if (body.deliveryDate !== todayStr) {
+        return sendError(res, `Walk-in orders must use today's date (${todayStr})`, 400, 'INVALID_DATE');
+      }
+
+      // 4. Active DVA in loaded_and_dispatched (trip on the road)
+      const dva = await prisma.driverVehicleAssignment.findFirst({
+        where: { driverId: driver.id, distributorId, assignmentDate: today, status: { not: 'cancelled' } },
+        orderBy: { tripNumber: 'desc' },
+        select: { id: true, vehicleId: true, status: true, isReconciled: true },
+      });
+      if (!dva || dva.status !== 'loaded_and_dispatched' || dva.isReconciled) {
+        return sendError(res, 'No active trip found. Vehicle must be dispatched before creating walk-in orders.', 400, 'NO_ACTIVE_TRIP');
+      }
+
+      // 5. Customer same tenant
+      const customer = await prisma.customer.findFirst({
+        where: { id: body.customerId, distributorId, deletedAt: null },
+        select: { id: true, customerName: true },
+      });
+      if (!customer) {
+        return sendError(res, 'Customer not found in your tenant', 403, 'CUSTOMER_NOT_FOUND');
+      }
+
+      // 6. Availability check (hard block, no bypass)
+      const { getAvailableFullsForDriver } = await import('../services/dvaManifestService.js');
+      const availableFulls = await getAvailableFullsForDriver(
+        distributorId, driver.id, body.cylinderTypeId,
+      );
+      if (body.quantity > availableFulls) {
+        const ct = await prisma.cylinderType.findUnique({ where: { id: body.cylinderTypeId }, select: { typeName: true } });
+        return sendError(
+          res,
+          `Cannot create walk-in order: requested ${body.quantity} × ${ct?.typeName ?? 'cylinders'}, only ${availableFulls} available on vehicle`,
+          400,
+          'INSUFFICIENT_VEHICLE_STOCK',
+        );
+      }
+
+      // 7. Create order via walkIn path (orderSource='walk_in', driver+vehicle pinned)
+      const { createOrder } = await import('../services/orderService.js');
+      const order = await createOrder(
+        distributorId,
+        userId,
+        {
+          customerId: body.customerId,
+          deliveryDate: body.deliveryDate,
+          items: [{ cylinderTypeId: body.cylinderTypeId, quantity: body.quantity }],
+        },
+        { walkIn: { driverId: driver.id, vehicleId: dva.vehicleId } },
+      );
+
+      // 8. Immediate preflight (mid-trip add). On preflight failure return 207
+      // — order exists, GST doc pending; mobile shows a "contact office" toast.
+      const { preflightAddToTrip, PreflightError } = await import('../services/gst/gstPreflightService.js');
+      try {
+        const result = await preflightAddToTrip({
+          distributorId, driverId: driver.id, assignmentDate: body.deliveryDate, userId,
+        });
+        const succeeded = result.summary.succeeded > 0;
+        if (succeeded) {
+          return sendCreated(res, { orderId: order.id, preflightStatus: 'success', summary: result.summary });
+        }
+        return res.status(207).json({
+          success: true,
+          data: { orderId: order.id, preflightStatus: 'partial', summary: result.summary },
+        });
+      } catch (preflightErr) {
+        if (preflightErr instanceof PreflightError) {
+          return res.status(207).json({
+            success: true,
+            data: { orderId: order.id, preflightStatus: 'failed', preflightError: preflightErr.code, message: preflightErr.message },
+          });
+        }
+        return res.status(207).json({
+          success: true,
+          data: { orderId: order.id, preflightStatus: 'failed', preflightError: 'UNKNOWN', message: (preflightErr as Error).message },
+        });
+      }
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
