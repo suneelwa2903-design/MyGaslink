@@ -640,9 +640,10 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
       // pending_dispatch orders, the original is now pending_delivery.
       // The dispatch gate now runs the pending_dispatch order count
       // BEFORE touching DVA (premature-reset fix), so the failure is
-      // NO_ORDERS, not ALREADY_DISPATCHED. The ALREADY_DISPATCHED
-      // 409 path is exercised by the dedicated test at line 609 below
-      // (active trip + 1 new pending_dispatch order).
+      // NO_ORDERS_OR_MANIFEST (FLOAT-001: was NO_ORDERS), not
+      // ALREADY_DISPATCHED. The ALREADY_DISPATCHED 409 path is
+      // exercised by the dedicated test at line 609 below (active trip
+      // + 1 new pending_dispatch order).
       await expect(
         preflightDispatch({
           distributorId: 'dist-002',
@@ -650,7 +651,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
           assignmentDate: today(),
           userId: 'test-user',
         }),
-      ).rejects.toMatchObject({ code: 'NO_ORDERS' });
+      ).rejects.toMatchObject({ code: 'NO_ORDERS_OR_MANIFEST' });
     } finally {
       await prisma.driverVehicleAssignment.update({
         where: { id: ctx.mapping.id },
@@ -890,7 +891,10 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
     }
   });
 
-  it('Empty pending_dispatch list: throws NO_ORDERS', async () => {
+  it('Empty pending_dispatch list AND no manifest: throws NO_ORDERS_OR_MANIFEST', async () => {
+    // FLOAT-001 (2026-06-17): rename + code change. The guard now also
+    // accepts a populated DVALoadManifest as a valid reason to dispatch;
+    // pure "no orders" without manifest still fails.
     const ctx = await getSharmaContext();
     await expect(
       preflightDispatch({
@@ -899,7 +903,7 @@ describe('gstPreflightService — unit tests with mocked WhiteBooks', () => {
         assignmentDate: today(),
         userId: 'test-user',
       }),
-    ).rejects.toMatchObject({ code: 'NO_ORDERS' });
+    ).rejects.toMatchObject({ code: 'NO_ORDERS_OR_MANIFEST' });
   });
 });
 
@@ -1103,7 +1107,9 @@ describe('POST /api/orders/preflight-dispatch — integration', () => {
         .set(auth(sharmaAdminToken))
         .send({ driverId: ctx.driver.id, assignmentDate: today() });
       expect(retry.status).toBe(400);
-      expect(retry.body.code).toBe('NO_ORDERS');
+      // FLOAT-001 (2026-06-17): the legacy NO_ORDERS code was renamed to
+      // NO_ORDERS_OR_MANIFEST when the manifest path landed.
+      expect(retry.body.code).toBe('NO_ORDERS_OR_MANIFEST');
     } finally {
       await prisma.driverVehicleAssignment.update({
         where: { id: ctx.mapping.id },

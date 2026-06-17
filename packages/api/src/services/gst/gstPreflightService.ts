@@ -37,6 +37,7 @@ import {
 import { createInvoiceFromOrder } from '../invoiceService.js';
 import { createInventoryEvent, recalculateSummariesFromDate } from '../inventoryService.js';
 import { isDispatchDebitEnabled } from '../../utils/inventoryFlags.js';
+import { getManifestForDVA } from '../dvaManifestService.js';
 
 const orderInclude = {
   customer: true,
@@ -184,7 +185,10 @@ export async function preflightDispatch(params: {
       status: { not: 'cancelled' },
     },
     orderBy: { tripNumber: 'desc' },  // WI-083: prefer highest tripNumber to avoid stale-row collisions
-    select: { id: true, vehicleId: true, status: true, isReconciled: true, vehicle: { select: { vehicleNumber: true } } },
+    // FLOAT-001 (2026-06-17): include tripNumber so currentTripManifest can
+    // filter the manifest read to this trip's rows (DVA may carry rows from
+    // prior reconciled trips that have since rolled).
+    select: { id: true, vehicleId: true, status: true, isReconciled: true, tripNumber: true, vehicle: { select: { vehicleNumber: true } } },
   });
   if (distributor.gstMode !== 'disabled' && !mapping?.vehicleId) {
     throw new PreflightError(
@@ -211,10 +215,26 @@ export async function preflightDispatch(params: {
     orderBy: { createdAt: 'asc' },
   });
 
-  if (orders.length === 0) {
+  // FLOAT-001 (2026-06-17): read the vehicle load manifest BEFORE the
+  // legacy NO_ORDERS guard. A populated manifest with floatQty > 0 means the
+  // admin declared float stock loaded onto the vehicle — this alone is enough
+  // to start a trip, even with zero pre-booked orders.
+  const manifest = mapping?.id ? await getManifestForDVA(distributorId, mapping.id) : [];
+  // Filter to ONLY the current/upcoming trip's manifest rows. The DVA may
+  // already carry rows from a previous (reconciled) trip whose tripNumber has
+  // since rolled — those are audit history, not the load we're about to ship.
+  const currentTripManifest = mapping?.id
+    ? manifest.filter((m) => m.tripNumber === mapping.tripNumber)
+    : [];
+  const hasManifest =
+    currentTripManifest.length > 0 &&
+    currentTripManifest.some((m) => m.totalLoaded > 0);
+  const isFloatOnlyDispatch = orders.length === 0 && hasManifest;
+
+  if (orders.length === 0 && !hasManifest) {
     throw new PreflightError(
-      'No orders in pending_dispatch for this driver/date',
-      'NO_ORDERS',
+      'No orders or load manifest found. Add orders or enter vehicle load manifest before dispatching.',
+      'NO_ORDERS_OR_MANIFEST',
       400,
     );
   }
@@ -311,6 +331,33 @@ export async function preflightDispatch(params: {
     await probeNicEinvoiceSession(distributorId, distributor.gstin!);
   }
 
+  // FLOAT-001 (2026-06-17): debit depot stock for the manifest's float
+  // quantities. Per cylinder type with floatQty > 0, write a `dispatch`
+  // inventory event keyed on referenceType='dva_load_manifest'. Skipped
+  // entirely when the dispatch-debit flag is OFF — manifest is informational
+  // only on those tenants (Issue 4 resolution). Reconciliation will write a
+  // matching `cancellation_return` for whatever returns unsold (Phase 5).
+  if (hasManifest && isDispatchDebitEnabled(distributorId)) {
+    await prisma.$transaction(async (tx) => {
+      for (const manifestRow of currentTripManifest) {
+        if (manifestRow.floatQty <= 0) continue;
+        await createInventoryEvent(tx, {
+          distributorId,
+          cylinderTypeId: manifestRow.cylinderTypeId,
+          eventType: 'dispatch',
+          fullsChange: -manifestRow.floatQty,
+          emptiesChange: 0,
+          eventDate: targetDate,
+          referenceId: manifestRow.id,
+          referenceType: 'dva_load_manifest',
+          vehicleNumber: mapping?.vehicle?.vehicleNumber ?? undefined,
+          notes: `Float stock dispatched to vehicle — DVA ${mapping?.id}, trip ${mapping?.tripNumber}`,
+          createdBy: userId,
+        });
+      }
+    });
+  }
+
   const results: PreflightResult[] = [];
   for (const order of orders) {
     const r = await preflightOne({
@@ -340,6 +387,15 @@ export async function preflightDispatch(params: {
       if (!succeededOrderIds.has(order.id)) continue;
       for (const item of order.items) cylinderTypeIds.add(item.cylinderTypeId);
     }
+    // FLOAT-001 (2026-06-17): include manifest cylinder types so the dispatched
+    // column reflects float-debited stock even when no orders shipped this batch
+    // (float-only dispatch) or when an order on the same type doesn't suffice
+    // to recompute on its own. Set dedups when the same type appears in both.
+    if (hasManifest) {
+      for (const m of currentTripManifest) {
+        if (m.floatQty > 0) cylinderTypeIds.add(m.cylinderTypeId);
+      }
+    }
     for (const ctId of cylinderTypeIds) {
       await recalculateSummariesFromDate(distributorId, ctId, targetDate);
     }
@@ -349,7 +405,9 @@ export async function preflightDispatch(params: {
   // the vehicle physically left the depot, so the timeline should reflect when
   // it went, even on a partial dispatch. (WI-094 previously gated this on full
   // success, leaving partial dispatches with a null dispatchedAt — BUG F.)
-  if (mapping?.id && succeeded > 0) {
+  // FLOAT-001 (2026-06-17): also stamp on isFloatOnlyDispatch — the truck left
+  // the depot with float stock alone (zero orders).
+  if (mapping?.id && (succeeded > 0 || isFloatOnlyDispatch)) {
     await prisma.driverVehicleAssignment.update({
       where: { id: mapping.id },
       data: { dispatchedAt: new Date() },
@@ -359,7 +417,10 @@ export async function preflightDispatch(params: {
   // Drive the driver-vehicle assignment forward only when every order
   // succeeded — partial dispatch leaves it dispatch_ready so a retry of
   // the failing orders can still flip it.
-  if (mapping?.id && failed === 0 && succeeded > 0) {
+  // FLOAT-001 (2026-06-17): also fire on float-only dispatch. isFloatOnlyDispatch
+  // implies failed===0 by definition (no orders → no failures).
+  const tripStarted = (failed === 0 && succeeded > 0) || isFloatOnlyDispatch;
+  if (mapping?.id && tripStarted) {
     await prisma.driverVehicleAssignment.update({
       where: { id: mapping.id },
       data: { status: 'loaded_and_dispatched' }, // dispatchedAt already set above (WI-098)

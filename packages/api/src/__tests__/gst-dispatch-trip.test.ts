@@ -227,11 +227,12 @@ describe('WI-065 — dispatch state machine + Add to Trip', () => {
       await preflightDispatch({
         distributorId, driverId, assignmentDate: TEST_DATE, userId: 'test-user',
       });
-      throw new Error('Should have thrown NO_ORDERS');
+      throw new Error('Should have thrown NO_ORDERS_OR_MANIFEST');
     } catch (err) {
       expect(err).toBeInstanceOf(PreflightError);
       const pfErr = err as PreflightError;
-      expect(pfErr.code).toBe('NO_ORDERS');
+      // FLOAT-001 (2026-06-17): code rename — NO_ORDERS → NO_ORDERS_OR_MANIFEST.
+      expect(pfErr.code).toBe('NO_ORDERS_OR_MANIFEST');
       expect(pfErr.statusCode).toBe(400);
     }
 
