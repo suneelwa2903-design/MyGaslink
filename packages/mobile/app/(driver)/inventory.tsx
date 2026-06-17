@@ -10,6 +10,12 @@ interface TripStockItem {
   fullQuantity: number;       // still to deliver
   deliveredQuantity: number;  // delivered today
   emptyQuantity: number;      // empties collected today
+  // FLOAT-001 (2026-06-17): admin-declared physical load + remaining float
+  // headroom. availableFulls drives the walk-in order quantity cap on the
+  // (driver)/orders.tsx walk-in modal.
+  manifestTotalLoaded?: number;
+  floatQty?: number;
+  availableFulls?: number;
 }
 
 interface CancelledItem {
@@ -100,6 +106,31 @@ export default function DriverInventoryScreen() {
                   <Text style={{ fontSize: 11, color: dark ? ACCENT.blue : '#1d4ed8', marginTop: 2 }}>Empty</Text>
                 </View>
               </View>
+              {/* FLOAT-001 (2026-06-17): availableFulls badge + float qty —
+                  driver's at-a-glance "how much can I still sell" view. Only
+                  rendered when a manifest exists for this type. */}
+              {(item.manifestTotalLoaded ?? 0) > 0 && (
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <View style={{
+                    flex: 1, backgroundColor: dark ? 'rgba(245,158,11,0.15)' : '#fffbeb',
+                    paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignItems: 'center',
+                  }}>
+                    <Text style={{ fontSize: 11, color: dark ? '#fbbf24' : '#b45309' }}>
+                      Available: <Text style={{ fontWeight: '800' }}>{item.availableFulls ?? 0}</Text>
+                    </Text>
+                  </View>
+                  {(item.floatQty ?? 0) > 0 && (
+                    <View style={{
+                      flex: 1, backgroundColor: dark ? 'rgba(139,92,246,0.15)' : '#f5f3ff',
+                      paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignItems: 'center',
+                    }}>
+                      <Text style={{ fontSize: 11, color: dark ? '#a78bfa' : '#6d28d9' }}>
+                        Float: <Text style={{ fontWeight: '800' }}>{item.floatQty}</Text>
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
             </Card>
           ))
         )}

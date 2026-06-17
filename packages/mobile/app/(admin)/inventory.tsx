@@ -128,6 +128,18 @@ interface ReconciliationVehicle {
     typeName: string;
     collectedQty: number;
   }>;
+  // FLOAT-001 (2026-06-17): mobile reconciliation card surfaces the same
+  // float-summary the web card shows — read-only "Returning to Depot"
+  // column is what Step 2.5 will credit back on confirm.
+  floatSummary?: Array<{
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    totalLoaded: number;
+    orderedQty: number;
+    floatQty: number;
+    soldFromFloat: number;
+    unsoldFloat: number;
+  }>;
 }
 
 interface OnboardingStockRow {
@@ -3065,6 +3077,43 @@ function ReconcileTab() {
                   <Text style={{ flex: 1, fontSize: 12, color: t.text, textAlign: 'right' }}>{line.deliveredQty}</Text>
                   <Text style={{ flex: 1, fontSize: 12, fontWeight: '700', color: t.orange, textAlign: 'right' }}>
                     {line.shortfallQty}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* FLOAT-001 (2026-06-17): float-stock summary (read-only).
+              The "Unsold" column is what the server credits back as
+              cancellation_return on confirm. Hidden when no manifest. */}
+          {v.floatSummary && v.floatSummary.length > 0 && (
+            <View style={{ marginBottom: 14 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: t.textMuted, marginBottom: 6 }}>
+                FLOAT STOCK SUMMARY
+              </Text>
+              <Text style={{ fontSize: 10, color: t.textMuted, marginBottom: 6 }}>
+                Unsold float returns to depot automatically on reconciliation.
+              </Text>
+              {v.floatSummary.map((f) => (
+                <View
+                  key={f.cylinderTypeId}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingVertical: 5,
+                    borderBottomWidth: 1,
+                    borderBottomColor: t.cardBorder,
+                  }}
+                >
+                  <Text style={{ flex: 1, fontSize: 13, color: t.text }}>{f.cylinderTypeName}</Text>
+                  <Text style={{ width: 50, textAlign: 'right', fontSize: 11, color: t.textMuted }}>
+                    Load {f.totalLoaded}
+                  </Text>
+                  <Text style={{ width: 70, textAlign: 'right', fontSize: 11, color: t.textMuted }}>
+                    Sold {f.soldFromFloat}
+                  </Text>
+                  <Text style={{ width: 80, textAlign: 'right', fontSize: 13, fontWeight: '700', color: '#dc2626' }}>
+                    Return {f.unsoldFloat}
                   </Text>
                 </View>
               ))}

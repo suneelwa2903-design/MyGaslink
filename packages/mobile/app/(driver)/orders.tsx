@@ -53,6 +53,8 @@ export default function DriverOrdersScreen() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [showCamera, setShowCamera] = useState(false);
+  // FLOAT-001 (2026-06-17): walk-in order modal visibility.
+  const [walkInOpen, setWalkInOpen] = useState(false);
   const [proofPhoto, setProofPhoto] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [pendingQueue, setPendingQueue] = useState<QueuedDelivery[]>([]);
@@ -528,6 +530,274 @@ export default function DriverOrdersScreen() {
         onCapture={(uri) => { setProofPhoto(uri); setShowCamera(false); }}
         onClose={() => setShowCamera(false)}
       />
+
+      {/* FLOAT-001 (2026-06-17): walk-in order FAB + modal */}
+      <TouchableOpacity
+        onPress={() => setWalkInOpen(true)}
+        activeOpacity={0.85}
+        style={{
+          position: 'absolute',
+          right: 16,
+          bottom: 24,
+          width: 56,
+          height: 56,
+          borderRadius: 28,
+          backgroundColor: ACCENT.red,
+          alignItems: 'center',
+          justifyContent: 'center',
+          shadowColor: '#000',
+          shadowOpacity: 0.25,
+          shadowRadius: 6,
+          shadowOffset: { width: 0, height: 3 },
+          elevation: 6,
+        }}
+      >
+        <Text style={{ color: '#fff', fontSize: 28, fontWeight: '700', lineHeight: 30 }}>+</Text>
+      </TouchableOpacity>
+      <WalkInOrderModal
+        visible={walkInOpen}
+        onClose={() => setWalkInOpen(false)}
+        onCreated={() => {
+          setWalkInOpen(false);
+          queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+          queryClient.invalidateQueries({ queryKey: ['driver-trip-stock'] });
+        }}
+      />
     </SafeAreaView>
+  );
+}
+
+// ─── FLOAT-001: Walk-In Order Modal ─────────────────────────────────────────
+// Compact 1-screen flow. Customer picker (search by name/phone) + cylinder
+// type + quantity. POSTs /api/drivers/me/orders. Surfaces server errors
+// (INSUFFICIENT_VEHICLE_STOCK, NO_ACTIVE_TRIP, etc.) inline.
+
+interface CustomerRow {
+  customerId: string;
+  customerName: string;
+  phone?: string | null;
+  customerType?: string;
+}
+interface CylinderTypeRow {
+  id: string;
+  typeName: string;
+}
+interface TripStockRow {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  availableFulls?: number;
+}
+
+function WalkInOrderModal({
+  visible,
+  onClose,
+  onCreated,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const { colors } = useTheme();
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
+  const [cylinderTypeId, setCylinderTypeId] = useState<string | null>(null);
+  const [quantity, setQuantity] = useState('1');
+  const [paymentMode, setPaymentMode] = useState<'cash' | 'upi' | 'credit'>('cash');
+  const [submitting, setSubmitting] = useState(false);
+
+  const { data: customersResp } = useApiQuery<{ customers: CustomerRow[] }>(
+    ['driver-customers-list', customerQuery],
+    '/customers',
+    { search: customerQuery || undefined, limit: 20 },
+    { enabled: visible, staleTime: 60_000 },
+  );
+  const customers = customersResp?.customers ?? [];
+
+  const { data: typesResp } = useApiQuery<{ cylinderTypes: CylinderTypeRow[] }>(
+    ['driver-cylinder-types'],
+    '/cylinder-types',
+    undefined,
+    { enabled: visible, staleTime: 5 * 60_000 },
+  );
+  const types = typesResp?.cylinderTypes ?? [];
+
+  const { data: stockResp } = useApiQuery<{ items: TripStockRow[] }>(
+    ['driver-trip-stock'],
+    '/drivers/me/trip-stock',
+    undefined,
+    { enabled: visible },
+  );
+  const stock = stockResp?.items ?? [];
+  const availableForType = (cylinderTypeId
+    ? stock.find((s) => s.cylinderTypeId === cylinderTypeId)?.availableFulls
+    : 0) ?? 0;
+
+  const reset = () => {
+    setCustomerQuery('');
+    setSelectedCustomer(null);
+    setCylinderTypeId(null);
+    setQuantity('1');
+    setPaymentMode('cash');
+    setSubmitting(false);
+  };
+
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const submit = async () => {
+    if (!selectedCustomer || !cylinderTypeId) {
+      Alert.alert('Missing details', 'Select a customer and cylinder type.');
+      return;
+    }
+    const qty = Math.max(1, Math.floor(Number(quantity) || 0));
+    if (qty > availableForType) {
+      Alert.alert('Insufficient stock', `Only ${availableForType} available on vehicle for this cylinder type.`);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const today = new Date();
+      const todayStr = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}-${String(today.getUTCDate()).padStart(2, '0')}`;
+      const res = await apiPost<{ orderId: string; preflightStatus: string }>('/drivers/me/orders', {
+        customerId: selectedCustomer.customerId,
+        cylinderTypeId,
+        quantity: qty,
+        deliveryDate: todayStr,
+        paymentMode,
+      });
+      if (res.preflightStatus === 'success') {
+        Alert.alert('Order created', `${selectedCustomer.customerName} — ${qty} × cylinder. Preflight OK.`);
+      } else {
+        Alert.alert('Order created (GST pending)', 'Order saved on the truck. Contact office to complete GST docs.');
+      }
+      reset();
+      onCreated();
+    } catch (err) {
+      const msg = getErrorMessage(err) ?? 'Failed to create order';
+      Alert.alert('Cannot create order', msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: colors.bg, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '90%' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>New Walk-in Order</Text>
+            <TouchableOpacity onPress={handleClose}>
+              <Text style={{ fontSize: 22, color: colors.textSecondary }}>×</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 32 }}>
+            {/* 1. Customer search */}
+            <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Customer</Text>
+            {selectedCustomer ? (
+              <View style={{ padding: 12, backgroundColor: colors.cardBg, borderRadius: 8, marginBottom: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View>
+                  <Text style={{ color: colors.text, fontWeight: '600' }}>{selectedCustomer.customerName}</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 12 }}>{selectedCustomer.phone ?? '—'}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setSelectedCustomer(null)}>
+                  <Text style={{ color: ACCENT.red, fontSize: 12 }}>Change</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                <TextInput
+                  placeholder="Search by name or phone"
+                  placeholderTextColor={colors.textMuted}
+                  value={customerQuery}
+                  onChangeText={setCustomerQuery}
+                  style={{ borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 8, padding: 10, marginBottom: 8, color: colors.text }}
+                />
+                <View style={{ maxHeight: 200, marginBottom: 12 }}>
+                  {customers.slice(0, 8).map((c) => (
+                    <TouchableOpacity key={c.customerId} onPress={() => setSelectedCustomer(c)} style={{ padding: 10, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+                      <Text style={{ color: colors.text }}>{c.customerName}</Text>
+                      <Text style={{ color: colors.textMuted, fontSize: 11 }}>{c.phone ?? '—'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {customers.length === 0 && customerQuery.length > 0 && (
+                    <Text style={{ color: colors.textMuted, fontSize: 12, padding: 8 }}>No matches. Customer not found? Call office to register.</Text>
+                  )}
+                </View>
+              </>
+            )}
+
+            {/* 2. Cylinder type */}
+            <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Cylinder Type</Text>
+            <View style={{ marginBottom: 12 }}>
+              {types.map((t) => {
+                const avail = stock.find((s) => s.cylinderTypeId === t.id)?.availableFulls ?? 0;
+                const selected = cylinderTypeId === t.id;
+                return (
+                  <TouchableOpacity
+                    key={t.id}
+                    onPress={() => setCylinderTypeId(t.id)}
+                    style={{
+                      padding: 12,
+                      borderWidth: selected ? 2 : 1,
+                      borderColor: selected ? ACCENT.red : colors.cardBorder,
+                      borderRadius: 8,
+                      marginBottom: 6,
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ color: colors.text, fontWeight: selected ? '700' : '500' }}>{t.typeName}</Text>
+                    <Text style={{ color: avail > 0 ? ACCENT.green : ACCENT.red, fontSize: 12 }}>{avail} avail</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* 3. Quantity + Payment */}
+            <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Quantity</Text>
+            <TextInput
+              value={quantity}
+              onChangeText={(v) => setQuantity(v.replace(/[^0-9]/g, ''))}
+              keyboardType="number-pad"
+              style={{ borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 8, padding: 10, marginBottom: 8, color: colors.text }}
+            />
+            {cylinderTypeId && (
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 12 }}>
+                Available on vehicle: {availableForType}
+              </Text>
+            )}
+
+            <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Payment</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
+              {(['cash', 'upi', 'credit'] as const).map((m) => (
+                <TouchableOpacity
+                  key={m}
+                  onPress={() => setPaymentMode(m)}
+                  style={{
+                    flex: 1,
+                    padding: 10,
+                    borderRadius: 8,
+                    borderWidth: paymentMode === m ? 2 : 1,
+                    borderColor: paymentMode === m ? ACCENT.red : colors.cardBorder,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: colors.text, fontWeight: paymentMode === m ? '700' : '500' }}>{m.toUpperCase()}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Button
+              title={submitting ? 'Creating…' : 'Create Order & Dispatch'}
+              onPress={submit}
+              disabled={submitting || !selectedCustomer || !cylinderTypeId}
+            />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
