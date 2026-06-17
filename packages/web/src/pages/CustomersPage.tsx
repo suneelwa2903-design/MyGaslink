@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useFieldArray, Controller, type Resolver } from 'react-hook-form';
+import { useForm, useFieldArray, useWatch, Controller, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -393,7 +393,7 @@ function CustomerFormModal({
     [CustomerStatus.INACTIVE]: 'Account closed. Customer will not appear in order search.',
   };
 
-  const { register, handleSubmit, control, getValues, setValue, watch, formState: { errors } } = useForm<CreateCustomerInput>({
+  const { register, handleSubmit, control, getValues, setValue, formState: { errors } } = useForm<CreateCustomerInput>({
     resolver: zodResolver(createCustomerSchema) as Resolver<CreateCustomerInput>,
     defaultValues: customer
       ? {
@@ -452,13 +452,15 @@ function CustomerFormModal({
   const [shippingSameAsBilling, setShippingSameAsBilling] = useState<boolean>(() => detectSameAddress(customer));
 
   // When the toggle is ON, mirror billing → shipping for the 5 fields.
-  // We watch the billing values so a subsequent edit to billing propagates
-  // immediately while the toggle stays on.
-  const billingLine1 = watch('billingAddressLine1');
-  const billingLine2 = watch('billingAddressLine2');
-  const billingCity = watch('billingCity');
-  const billingStateValue = watch('billingState');
-  const billingPincodeValue = watch('billingPincode');
+  // We subscribe to the billing values so a subsequent edit to billing
+  // propagates immediately while the toggle stays on. useWatch (not
+  // watch()) — react-hook-form's watch() returns a non-stable callable
+  // that React Compiler can't safely memoize.
+  const billingLine1 = useWatch({ control, name: 'billingAddressLine1' });
+  const billingLine2 = useWatch({ control, name: 'billingAddressLine2' });
+  const billingCity = useWatch({ control, name: 'billingCity' });
+  const billingStateValue = useWatch({ control, name: 'billingState' });
+  const billingPincodeValue = useWatch({ control, name: 'billingPincode' });
   useEffect(() => {
     if (!shippingSameAsBilling) return;
     const opts = { shouldDirty: true } as const;
@@ -487,7 +489,7 @@ function CustomerFormModal({
   };
   const [gstinLookupStatus, setGstinLookupStatus] = useState<string | null>(null);
   const [gstinLookupError, setGstinLookupError] = useState<string | null>(null);
-  const gstinValue = watch('gstin');
+  const gstinValue = useWatch({ control, name: 'gstin' });
 
   const gstinLookupMutation = useMutation({
     mutationFn: (gstin: string) =>
@@ -581,7 +583,7 @@ function CustomerFormModal({
   const formRef = useRef<HTMLFormElement | null>(null);
   const contactsSectionRef = useRef<HTMLDivElement | null>(null);
   const [submitErrorCount, setSubmitErrorCount] = useState(0);
-  const onInvalid = (formErrors: typeof errors) => {
+  const onInvalid = useCallback((formErrors: typeof errors) => {
     const count = countErrors(formErrors);
     setSubmitErrorCount(count);
     if (formErrors.contacts) {
@@ -601,7 +603,7 @@ function CustomerFormModal({
     ) as HTMLElement | null;
     (firstInput ?? formRef.current)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     firstInput?.focus?.();
-  };
+  }, []);
   const contactErrorCount = Array.isArray(errors.contacts)
     ? errors.contacts.filter(Boolean).length
     : 0;
@@ -610,11 +612,21 @@ function CustomerFormModal({
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Customer' : 'New Customer'} size="xl">
       <form
         ref={formRef}
+        // React Compiler's `react-hooks/refs` rule flags the onInvalid
+        // argument because its body reads formRef.current and
+        // contactsSectionRef.current and the compiler can't statically
+        // prove that react-hook-form's handleSubmit only fires it on
+        // submit (it does — handleSubmit returns an event handler, the
+        // inner callbacks run on submit, never during render). useCallback
+        // alone doesn't satisfy the rule. Disabling at the argument site
+        // is the documented escape hatch when the closure is genuinely
+        // event-time only.
         onSubmit={handleSubmit(
           (data) => {
             setSubmitErrorCount(0);
             mutation.mutate(data as CreateCustomerInput);
           },
+          // eslint-disable-next-line react-hooks/refs
           onInvalid,
         )}
         className="space-y-6"

@@ -19,7 +19,7 @@
  * in-app navigation is NOT intercepted; per the WI spec that is post-launch
  * work (would need react-router's useBlocker).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { HiOutlineArrowRight, HiOutlineCheckCircle, HiOutlineExclamationTriangle } from 'react-icons/hi2';
@@ -161,11 +161,16 @@ export default function TallySetupPanel() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isDirty, setIsDirty] = useState(false);
 
-  // Sync server data into form state ONCE per identity change — same guard
-  // pattern as PaymentDetailsSection in SettingsPage (anti-pattern: cascading
-  // setState in useEffect masks lint errors).
+  // Sync server data into form state ONCE per identity change. The ref
+  // guard mirrors PaymentDetailsSection in SettingsPage: without it
+  // every setState inside the effect would re-trigger React's
+  // "cascading renders" lint warning (`react-hooks/incompatible-library`)
+  // and on a real refetch could replay the user's in-flight edits.
+  const syncedDataRef = useRef<TallySettingsResponse | null>(null);
   useEffect(() => {
     if (!data) return;
+    if (syncedDataRef.current === data) return;
+    syncedDataRef.current = data;
     setForm({ ...data.settings });
     // Seed the mapping draft from the resolved per-cylinder mappedTallyName.
     // This means "show the fallback (typeName) in the input box for unmapped

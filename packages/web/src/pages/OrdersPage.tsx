@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm, useFieldArray, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -472,7 +472,7 @@ function CreateOrderModal({
 }) {
   const queryClient = useQueryClient();
 
-  const { register, handleSubmit, control, watch, setValue, formState: { errors } } = useForm<CreateOrderInput>({
+  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<CreateOrderInput>({
     resolver: zodResolver(createOrderSchema),
     defaultValues: {
       customerId: '',
@@ -496,7 +496,11 @@ function CreateOrderModal({
   });
 
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: `${ct.typeName} (${ct.capacity}${ct.unit})` }));
-  const customerId = watch('customerId');
+  // useWatch (not watch()) — react-hook-form's watch() function returns a
+  // non-stable subscription callable that React Compiler can't safely
+  // memoize (rule: react-hooks/incompatible-library). useWatch returns
+  // the subscribed value directly with a stable subscription identity.
+  const customerId = useWatch({ control, name: 'customerId' });
 
   return (
     <Modal open={open} onClose={onClose} title="Create Order" size="lg">
@@ -1101,7 +1105,7 @@ function ReturnsOrderModal({
 }) {
   const queryClient = useQueryClient();
 
-  const { register, handleSubmit, control, watch, setValue, formState: { errors } } = useForm<ReturnsOnlyOrderInput>({
+  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<ReturnsOnlyOrderInput>({
     resolver: zodResolver(returnsOnlyOrderSchema),
     defaultValues: {
       customerId: '',
@@ -1125,7 +1129,11 @@ function ReturnsOrderModal({
   });
 
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: `${ct.typeName} (${ct.capacity}${ct.unit})` }));
-  const customerId = watch('customerId');
+  // useWatch (not watch()) — react-hook-form's watch() function returns a
+  // non-stable subscription callable that React Compiler can't safely
+  // memoize (rule: react-hooks/incompatible-library). useWatch returns
+  // the subscribed value directly with a stable subscription identity.
+  const customerId = useWatch({ control, name: 'customerId' });
 
   return (
     <Modal open={open} onClose={onClose} title="Create Returns Order" size="lg">

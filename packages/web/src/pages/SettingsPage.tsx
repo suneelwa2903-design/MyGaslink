@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, type Resolver } from 'react-hook-form';
+import { useForm, useWatch, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -1472,14 +1472,18 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
   const [pickedCustomerId, setPickedCustomerId] = useState<string>('');
   const [pickedContactId, setPickedContactId] = useState<string>('');
 
-  const { register, handleSubmit, getValues, setValue, watch, formState: { errors } } = useForm<CreateUserInput>({
+  const { register, handleSubmit, getValues, setValue, control, formState: { errors } } = useForm<CreateUserInput>({
     resolver: zodResolver(isEdit ? createUserSchema.partial().omit({ password: true }) : createUserSchema) as unknown as Resolver<CreateUserInput>,
     defaultValues: user
       ? { email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || '', role: user.role }
       : { email: '', password: '', firstName: '', lastName: '', phone: '', role: '' as unknown as UserRole },
   });
 
-  const watchedRole = watch('role') as UserRole | '';
+  // useWatch (not watch()) — react-hook-form's watch() function returns a
+  // non-stable subscription callable that React Compiler can't safely
+  // memoize (rule: react-hooks/incompatible-library). useWatch returns
+  // the subscribed value directly with a stable subscription identity.
+  const watchedRole = useWatch({ control, name: 'role' }) as UserRole | '';
   const showDriverPicker = !isEdit && watchedRole === UserRole.DRIVER;
   const showCustomerPicker = !isEdit && watchedRole === UserRole.CUSTOMER;
 

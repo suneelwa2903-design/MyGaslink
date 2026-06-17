@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm, useWatch, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
@@ -218,7 +218,7 @@ function DistributorFormModal({
   // were ever set).
   const hadExistingRazorpaySecrets = !!distributor?.razorpayEnabled;
 
-  const { register, handleSubmit, setValue, watch, control, formState: { errors } } = useForm<UpdateDistributorInput>({
+  const { register, handleSubmit, setValue, getValues, control, formState: { errors } } = useForm<UpdateDistributorInput>({
     resolver: zodResolver(isEdit ? updateDistributorSchema : createDistributorSchema),
     defaultValues: distributor
       ? {
@@ -255,11 +255,17 @@ function DistributorFormModal({
       : { businessName: '', legalName: '' },
   });
 
-  // Watch registered address for "same as" copy
-  const regAddress = watch('address');
-  const regCity = watch('city');
-  const regState = watch('state');
-  const regPincode = watch('pincode');
+  // Watch registered address for "same as" copy. useWatch (not watch())
+  // because react-hook-form's watch() returns a non-stable subscription
+  // callable that React Compiler can't safely memoize.
+  const regAddress = useWatch({ control, name: 'address' });
+  const regCity = useWatch({ control, name: 'city' });
+  const regState = useWatch({ control, name: 'state' });
+  const regPincode = useWatch({ control, name: 'pincode' });
+  // Read once at render so the JSX "Get Coordinates" button text + the
+  // "same-as-registered" disable-guard share a stable value.
+  const godownLatitude = useWatch({ control, name: 'godownLatitude' });
+  const godownLongitude = useWatch({ control, name: 'godownLongitude' });
 
   // Group D1 (2026-06-11): memoised state-options for the Combobox.
   const stateOptions = useMemo(
@@ -345,9 +351,11 @@ function DistributorFormModal({
       setValue('godownCity', regCity || '');
       setValue('godownState', regState || '');
       setValue('godownPincode', regPincode || '');
-      // Copy registered coordinates to godown
-      const lat = watch('latitude');
-      const lng = watch('longitude');
+      // Copy registered coordinates to godown. getValues (not watch()) for
+      // an imperative one-shot read inside a callback — see rule comment
+      // above the useForm destructure.
+      const lat = getValues('latitude');
+      const lng = getValues('longitude');
       if (lat && lng) {
         setValue('godownLatitude', lat);
         setValue('godownLongitude', lng);
@@ -366,10 +374,10 @@ function DistributorFormModal({
   }
 
   function handleGeocodeGodown() {
-    const godownAddr = watch('godownAddress');
-    const godownCity = watch('godownCity');
-    const godownState = watch('godownState');
-    const godownPincode = watch('godownPincode');
+    const godownAddr = getValues('godownAddress');
+    const godownCity = getValues('godownCity');
+    const godownState = getValues('godownState');
+    const godownPincode = getValues('godownPincode');
     if (!godownAddr && !godownPincode) {
       toast.error('Enter a godown address or pincode first');
       return;
@@ -588,10 +596,10 @@ function DistributorFormModal({
                 variant="secondary"
                 onClick={handleGeocodeGodown}
                 loading={geocodeGodown.isPending}
-                disabled={godownSameAsRegistered && !!watch('godownLatitude')}
+                disabled={godownSameAsRegistered && !!godownLatitude}
                 className="w-full"
               >
-                {watch('godownLatitude') ? `Located (${watch('godownLatitude')?.toFixed(4)}, ${watch('godownLongitude')?.toFixed(4)})` : 'Get Coordinates'}
+                {godownLatitude ? `Located (${godownLatitude.toFixed(4)}, ${godownLongitude?.toFixed(4)})` : 'Get Coordinates'}
               </Button>
             </div>
           </div>

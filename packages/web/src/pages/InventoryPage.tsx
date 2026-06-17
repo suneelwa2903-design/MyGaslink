@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -1345,7 +1345,7 @@ function IncomingFullsModal({
   date: string;
 }) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<IncomingFullsInput>({
+  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<IncomingFullsInput>({
     resolver: zodResolver(incomingFullsSchema),
     defaultValues: { cylinderTypeId: '', quantity: 1, documentType: '', documentNumber: '', documentDate: date },
   });
@@ -1368,7 +1368,10 @@ function IncomingFullsModal({
   // vehicle copies its plate to the persisted `vehicleNumber` field and
   // auto-selects the currently-assigned driver if one exists in the active
   // drivers list. Both can be cleared or changed independently.
-  const selectedVehicleId = watch('vehicleId');
+  // useWatch (not watch()) — react-hook-form's watch() returns a non-stable
+  // subscription callable that React Compiler can't safely memoize
+  // (rule: react-hooks/incompatible-library).
+  const selectedVehicleId = useWatch({ control, name: 'vehicleId' });
   useEffect(() => {
     if (!selectedVehicleId) {
       setValue('vehicleNumber', '', { shouldDirty: true });
@@ -1435,7 +1438,7 @@ function OutgoingEmptiesModal({
   date: string;
 }) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<OutgoingEmptiesInput>({
+  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<OutgoingEmptiesInput>({
     resolver: zodResolver(outgoingEmptiesSchema),
     defaultValues: { cylinderTypeId: '', quantity: 1, documentType: '', documentNumber: '', documentDate: date },
   });
@@ -1457,7 +1460,10 @@ function OutgoingEmptiesModal({
   // Same shape as the Incoming Fulls modal: Vehicle + Driver are dropdowns,
   // no free-text duplicates. Vehicle selection sets the persisted plate and
   // auto-selects the vehicle's current driver if they're in the active list.
-  const selectedVehicleId = watch('vehicleId');
+  // useWatch (not watch()) — react-hook-form's watch() returns a non-stable
+  // subscription callable that React Compiler can't safely memoize
+  // (rule: react-hooks/incompatible-library).
+  const selectedVehicleId = useWatch({ control, name: 'vehicleId' });
   useEffect(() => {
     if (!selectedVehicleId) {
       setValue('vehicleNumber', '', { shouldDirty: true });
