@@ -1763,10 +1763,7 @@ function AssignmentsTab() {
                       dispatch and credited back as cancellation_return at
                       reconcile for whatever didn't sell. */}
                   {mapping?.assignmentId && (
-                    <LoadManifestPanel
-                      assignmentId={mapping.assignmentId}
-                      orderItems={g.orders.flatMap((o) => o.items ?? [])}
-                    />
+                    <LoadManifestPanel assignmentId={mapping.assignmentId} />
                   )}
                 </div>
               );
@@ -1797,14 +1794,29 @@ function AssignmentsTab() {
 type CylinderTypeRow = { id: string; typeName: string };
 type LoadManifestPanelProps = {
   assignmentId: string;
-  orderItems: Array<{ cylinderTypeId: string; quantity: number }>;
 };
 
-function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps) {
+// FLOAT-001 (2026-06-18) — rewritten to fix 3 live-testing bugs:
+//   BUG 2 — Ordered column now reads `orderedQty` from the manifest GET
+//     response (server-computed, single source of truth). The previous
+//     client-side flatMap over o.items returned 0 for every row because
+//     orderItems aren't included in the dispatchGroups orders payload.
+//   BUG 3 — Inputs default to empty string. Saved float shows as a
+//     placeholder. handleSave only POSTs rows the admin explicitly
+//     typed into (or where the existing manifest had a non-zero value
+//     the admin chose to KEEP — implicit confirm via clicking Save
+//     without clearing the field). Empty/untouched rows are omitted.
+//     After save: panel collapses inputs into a read-only summary with
+//     an Edit button to re-open.
+//   BUG 4 — All .map outputs key={t.id}; static header siblings stay
+//     keyless (React only requires keys on array children, not on
+//     ordinary sibling elements).
+function LoadManifestPanel({ assignmentId }: LoadManifestPanelProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  // Per-type float input. Default 0 (no float = manifest matches order-sum).
-  const [floatByType, setFloatByType] = useState<Record<string, number>>({});
+  const [editing, setEditing] = useState(false);
+  // Inputs are strings — empty string means "leave as-is / no change".
+  const [floatByType, setFloatByType] = useState<Record<string, string>>({});
 
   const { data: cylTypes } = useQuery({
     queryKey: ['cylinder-types-list'],
@@ -1814,18 +1826,24 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
   });
   const types = cylTypes?.cylinderTypes ?? [];
 
-  // Existing manifest (so admin sees what was previously confirmed).
+  // Existing manifest — orderedQty here is the server-computed snapshot
+  // taken at confirm time, so it's the source of truth for the Ordered
+  // column display.
   const { data: existing, refetch: refetchManifest } = useQuery({
     queryKey: ['manifest', assignmentId],
-    queryFn: () => apiGet<{ manifest: Array<{ cylinderTypeId: string; totalLoaded: number; orderedQty: number; floatQty: number }> }>(`/manifests/dva/${assignmentId}`),
+    queryFn: () =>
+      apiGet<{
+        manifest: Array<{
+          cylinderTypeId: string;
+          cylinderTypeName?: string;
+          totalLoaded: number;
+          orderedQty: number;
+          floatQty: number;
+        }>;
+      }>(`/manifests/dva/${assignmentId}`),
     enabled: open,
     staleTime: 30_000,
   });
-
-  const orderedByType = new Map<string, number>();
-  for (const it of orderItems) {
-    orderedByType.set(it.cylinderTypeId, (orderedByType.get(it.cylinderTypeId) ?? 0) + it.quantity);
-  }
   const existingByType = new Map((existing?.manifest ?? []).map((m) => [m.cylinderTypeId, m]));
 
   const saveMutation = useMutation({
@@ -1833,29 +1851,48 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
       apiPost('/manifests', { dvaId: assignmentId, items }),
     onSuccess: () => {
       toast.success('Manifest confirmed');
+      setEditing(false);
+      setFloatByType({});
       refetchManifest();
       queryClient.invalidateQueries({ queryKey: ['manifest', assignmentId] });
     },
-    onError: (err: unknown) => toast.error(getErrorMessage(err) ?? 'Failed to save manifest'),
+    onError: (err: unknown) => {
+      // BUG 1 fix surface: include the server's detailed error body so
+      // failures like INVALID_CYLINDER_TYPE / TOTAL_BELOW_ORDERED show
+      // their actual reason instead of a generic "Failed".
+      toast.error(getErrorMessage(err) ?? 'Failed to save manifest');
+    },
   });
 
   const confirmedCount = (existing?.manifest ?? []).reduce((sum, m) => sum + m.totalLoaded, 0);
   const confirmedFloat = (existing?.manifest ?? []).reduce((sum, m) => sum + m.floatQty, 0);
+  const isReadOnly = !editing && (existing?.manifest ?? []).length > 0;
 
   const handleSave = () => {
-    // Build items array from every cylinder type with non-zero ordered+float.
-    const items = types
-      .map((t) => {
-        const ordered = orderedByType.get(t.id) ?? 0;
-        const float = Math.max(0, floatByType[t.id] ?? existingByType.get(t.id)?.floatQty ?? 0);
-        return { cylinderTypeId: t.id, totalLoaded: ordered + float };
-      })
-      .filter((i) => i.totalLoaded > 0);
+    // BUG 3 fix: only build payload rows from cylinder types where the
+    // admin explicitly entered a number. Empty inputs = omit. Server
+    // upserts by (dvaId, cylinderTypeId, tripNumber) so omitted rows
+    // leave any prior manifest row for that type untouched.
+    const items: Array<{ cylinderTypeId: string; totalLoaded: number }> = [];
+    for (const t of types) {
+      const raw = floatByType[t.id];
+      if (raw === undefined || raw.trim() === '') continue;
+      const float = Math.max(0, Math.floor(Number(raw) || 0));
+      const ordered = existingByType.get(t.id)?.orderedQty ?? 0;
+      const totalLoaded = ordered + float;
+      if (totalLoaded <= 0) continue;
+      items.push({ cylinderTypeId: t.id, totalLoaded });
+    }
     if (items.length === 0) {
-      toast.error('Enter at least one cylinder type quantity');
+      toast.error('Enter float qty for at least one cylinder type');
       return;
     }
     saveMutation.mutate(items);
+  };
+
+  const handleEdit = () => {
+    setEditing(true);
+    setFloatByType({});
   };
 
   return (
@@ -1876,7 +1913,7 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
       {open && (
         <div className="mt-3 space-y-2">
           <p className="text-xs text-surface-500 dark:text-surface-400">
-            Enter float cylinders (extra stock loaded for walk-in customers).
+            Float = extra cylinders loaded for walk-in customers (beyond ordered qty).
             Total = ordered + float, debits depot at dispatch.
           </p>
           <div className="grid gap-2 max-w-2xl">
@@ -1887,34 +1924,60 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
               <div className="text-right">Total Loaded</div>
             </div>
             {types.map((t) => {
-              const ordered = orderedByType.get(t.id) ?? 0;
-              const existingFloat = existingByType.get(t.id)?.floatQty ?? 0;
-              const floatValue = floatByType[t.id] ?? existingFloat;
-              const total = ordered + (floatValue || 0);
+              const saved = existingByType.get(t.id);
+              const orderedDisplay = saved?.orderedQty ?? 0;
+              const savedFloat = saved?.floatQty ?? 0;
+              const inputRaw = floatByType[t.id] ?? '';
+              const inputNum = inputRaw === '' ? null : Math.max(0, Math.floor(Number(inputRaw) || 0));
+              const totalDisplay = isReadOnly
+                ? saved?.totalLoaded ?? 0
+                : orderedDisplay + (inputNum ?? savedFloat);
               return (
                 <div key={t.id} className="grid grid-cols-4 gap-2 items-center">
                   <div className="text-sm text-surface-900 dark:text-white">{t.typeName}</div>
-                  <div className="text-right text-sm text-surface-600 dark:text-surface-300">{ordered}</div>
-                  <input
-                    type="number"
-                    min={0}
-                    value={floatValue}
-                    onChange={(e) =>
-                      setFloatByType((prev) => ({
-                        ...prev,
-                        [t.id]: Math.max(0, Math.floor(Number(e.target.value) || 0)),
-                      }))
-                    }
-                    className="input py-1 text-sm w-full text-right"
-                  />
-                  <div className="text-right text-sm font-medium text-surface-900 dark:text-white">{total}</div>
+                  <div className="text-right text-sm text-surface-600 dark:text-surface-300">
+                    {orderedDisplay}
+                  </div>
+                  {isReadOnly ? (
+                    <div className="text-right text-sm text-surface-900 dark:text-white">
+                      {savedFloat}
+                    </div>
+                  ) : (
+                    <input
+                      key={t.id}
+                      type="number"
+                      min={0}
+                      value={inputRaw}
+                      placeholder={savedFloat > 0 ? String(savedFloat) : '0'}
+                      onChange={(e) =>
+                        setFloatByType((prev) => ({ ...prev, [t.id]: e.target.value }))
+                      }
+                      className="input py-1 text-sm w-full text-right"
+                    />
+                  )}
+                  <div className="text-right text-sm font-medium text-surface-900 dark:text-white">
+                    {totalDisplay}
+                  </div>
                 </div>
               );
             })}
           </div>
-          <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending}>
-            {saveMutation.isPending ? 'Saving…' : 'Confirm Manifest'}
-          </Button>
+          {isReadOnly ? (
+            <Button size="sm" variant="secondary" onClick={handleEdit}>
+              Edit Manifest
+            </Button>
+          ) : (
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending}>
+                {saveMutation.isPending ? 'Saving…' : 'Confirm Manifest'}
+              </Button>
+              {(existing?.manifest ?? []).length > 0 && (
+                <Button size="sm" variant="secondary" onClick={() => { setEditing(false); setFloatByType({}); }}>
+                  Cancel
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -100,8 +100,21 @@ export async function createOrUpdateManifest(
   const validIds = new Set(cylinderTypes.map((ct) => ct.id));
   for (const item of items) {
     if (!validIds.has(item.cylinderTypeId)) {
+      // FLOAT-001 (2026-06-18): identify which ID failed AND why so the UI /
+      // future debugging can act on the message directly. Three failure modes
+      // collapse into INVALID_CYLINDER_TYPE: (a) ID doesn't exist for any
+      // tenant, (b) belongs to a different tenant, (c) is_active=false.
+      const orphan = await prisma.cylinderType.findUnique({
+        where: { id: item.cylinderTypeId },
+        select: { id: true, distributorId: true, isActive: true, typeName: true },
+      });
+      const detail = !orphan
+        ? `cylinder type ${item.cylinderTypeId} does not exist`
+        : orphan.distributorId !== distributorId
+          ? `cylinder type ${item.cylinderTypeId} (${orphan.typeName}) belongs to another tenant`
+          : `cylinder type ${item.cylinderTypeId} (${orphan.typeName}) is inactive`;
       throw new ManifestError(
-        `Invalid cylinder type: ${item.cylinderTypeId}`,
+        `Invalid cylinder type: ${detail}`,
         'INVALID_CYLINDER_TYPE',
         400,
       );
