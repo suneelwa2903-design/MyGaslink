@@ -1719,41 +1719,55 @@ function AssignmentsTab() {
               return (
                 <div
                   key={g.driverId}
-                  className="card p-4 flex flex-wrap items-center justify-between gap-3"
+                  className="card p-4 flex flex-col gap-3"
                 >
-                  <div className="min-w-0">
-                    <div className="font-medium text-surface-900 dark:text-white">
-                      {g.driverName}
-                      <span className="ml-2 text-sm text-surface-500 dark:text-surface-400">
-                        {g.vehicleNumber ?? '(no vehicle)'}
-                      </span>
-                    </div>
-                    <div className="text-sm text-surface-500 dark:text-surface-400">
-                      {g.orders.length} order{g.orders.length === 1 ? '' : 's'}
-                      {' · '}
-                      {formatCurrency(g.totalValue)}
-                    </div>
-                    {!canDispatch && (
-                      <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                        ⚠ Assign vehicle in Fleet → Vehicle Mapping first
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-surface-900 dark:text-white">
+                        {g.driverName}
+                        <span className="ml-2 text-sm text-surface-500 dark:text-surface-400">
+                          {g.vehicleNumber ?? '(no vehicle)'}
+                        </span>
                       </div>
-                    )}
+                      <div className="text-sm text-surface-500 dark:text-surface-400">
+                        {g.orders.length} order{g.orders.length === 1 ? '' : 's'}
+                        {' · '}
+                        {formatCurrency(g.totalValue)}
+                      </div>
+                      {!canDispatch && (
+                        <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                          ⚠ Assign vehicle in Fleet → Vehicle Mapping first
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      disabled={!canDispatch}
+                      onClick={() =>
+                        setDispatchDriver({
+                          driverId: g.driverId,
+                          driverName: g.driverName,
+                          vehicleNumber: g.vehicleNumber,
+                          assignmentId: mapping?.assignmentId ?? null,
+                          orders: g.orders,
+                        })
+                      }
+                    >
+                      Dispatch {g.driverName.split(' ')[0]} ▶
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    disabled={!canDispatch}
-                    onClick={() =>
-                      setDispatchDriver({
-                        driverId: g.driverId,
-                        driverName: g.driverName,
-                        vehicleNumber: g.vehicleNumber,
-                        assignmentId: mapping?.assignmentId ?? null,
-                        orders: g.orders,
-                      })
-                    }
-                  >
-                    Dispatch {g.driverName.split(' ')[0]} ▶
-                  </Button>
+                  {/* FLOAT-001 (2026-06-17): inline load-manifest editor.
+                      Optional — admin can dispatch without it (pre-booked-only
+                      trip). Float qty entered here is the EXTRA stock loaded
+                      onto the vehicle beyond order-sum, debited from depot at
+                      dispatch and credited back as cancellation_return at
+                      reconcile for whatever didn't sell. */}
+                  {mapping?.assignmentId && (
+                    <LoadManifestPanel
+                      assignmentId={mapping.assignmentId}
+                      orderItems={g.orders.flatMap((o) => o.items ?? [])}
+                    />
+                  )}
                 </div>
               );
             })}
@@ -1769,6 +1783,139 @@ function AssignmentsTab() {
             refresh();
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── FLOAT-001: Load Manifest Panel ─────────────────────────────────────────
+// Optional inline editor inside each dispatch card. Lets the admin declare
+// per-cylinder-type quantities loaded onto the vehicle (ordered + float).
+// On confirm, POSTs /api/manifests so preflightDispatch will debit depot
+// for the float portion AND the reconcile flow will credit unsold back.
+
+type CylinderTypeRow = { id: string; typeName: string };
+type LoadManifestPanelProps = {
+  assignmentId: string;
+  orderItems: Array<{ cylinderTypeId: string; quantity: number }>;
+};
+
+function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  // Per-type float input. Default 0 (no float = manifest matches order-sum).
+  const [floatByType, setFloatByType] = useState<Record<string, number>>({});
+
+  const { data: cylTypes } = useQuery({
+    queryKey: ['cylinder-types-list'],
+    queryFn: () => apiGet<{ cylinderTypes: CylinderTypeRow[] }>('/cylinder-types'),
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+  const types = cylTypes?.cylinderTypes ?? [];
+
+  // Existing manifest (so admin sees what was previously confirmed).
+  const { data: existing, refetch: refetchManifest } = useQuery({
+    queryKey: ['manifest', assignmentId],
+    queryFn: () => apiGet<{ manifest: Array<{ cylinderTypeId: string; totalLoaded: number; orderedQty: number; floatQty: number }> }>(`/manifests/dva/${assignmentId}`),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const orderedByType = new Map<string, number>();
+  for (const it of orderItems) {
+    orderedByType.set(it.cylinderTypeId, (orderedByType.get(it.cylinderTypeId) ?? 0) + it.quantity);
+  }
+  const existingByType = new Map((existing?.manifest ?? []).map((m) => [m.cylinderTypeId, m]));
+
+  const saveMutation = useMutation({
+    mutationFn: (items: Array<{ cylinderTypeId: string; totalLoaded: number }>) =>
+      apiPost('/manifests', { dvaId: assignmentId, items }),
+    onSuccess: () => {
+      toast.success('Manifest confirmed');
+      refetchManifest();
+      queryClient.invalidateQueries({ queryKey: ['manifest', assignmentId] });
+    },
+    onError: (err: unknown) => toast.error(getErrorMessage(err) ?? 'Failed to save manifest'),
+  });
+
+  const confirmedCount = (existing?.manifest ?? []).reduce((sum, m) => sum + m.totalLoaded, 0);
+  const confirmedFloat = (existing?.manifest ?? []).reduce((sum, m) => sum + m.floatQty, 0);
+
+  const handleSave = () => {
+    // Build items array from every cylinder type with non-zero ordered+float.
+    const items = types
+      .map((t) => {
+        const ordered = orderedByType.get(t.id) ?? 0;
+        const float = Math.max(0, floatByType[t.id] ?? existingByType.get(t.id)?.floatQty ?? 0);
+        return { cylinderTypeId: t.id, totalLoaded: ordered + float };
+      })
+      .filter((i) => i.totalLoaded > 0);
+    if (items.length === 0) {
+      toast.error('Enter at least one cylinder type quantity');
+      return;
+    }
+    saveMutation.mutate(items);
+  };
+
+  return (
+    <div className="border-t border-surface-200 dark:border-surface-700 pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300 hover:underline"
+      >
+        <span>{open ? '▾' : '▸'}</span>
+        <span className="font-medium">Vehicle Load Manifest</span>
+        {confirmedCount > 0 && (
+          <span className="text-xs text-surface-500 dark:text-surface-400">
+            ({confirmedCount} total · {confirmedFloat} float)
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-surface-500 dark:text-surface-400">
+            Enter float cylinders (extra stock loaded for walk-in customers).
+            Total = ordered + float, debits depot at dispatch.
+          </p>
+          <div className="grid gap-2 max-w-2xl">
+            <div className="grid grid-cols-4 gap-2 text-xs text-surface-500 dark:text-surface-400 font-medium">
+              <div>Cylinder Type</div>
+              <div className="text-right">Ordered</div>
+              <div className="text-right">Float</div>
+              <div className="text-right">Total Loaded</div>
+            </div>
+            {types.map((t) => {
+              const ordered = orderedByType.get(t.id) ?? 0;
+              const existingFloat = existingByType.get(t.id)?.floatQty ?? 0;
+              const floatValue = floatByType[t.id] ?? existingFloat;
+              const total = ordered + (floatValue || 0);
+              return (
+                <div key={t.id} className="grid grid-cols-4 gap-2 items-center">
+                  <div className="text-sm text-surface-900 dark:text-white">{t.typeName}</div>
+                  <div className="text-right text-sm text-surface-600 dark:text-surface-300">{ordered}</div>
+                  <input
+                    type="number"
+                    min={0}
+                    value={floatValue}
+                    onChange={(e) =>
+                      setFloatByType((prev) => ({
+                        ...prev,
+                        [t.id]: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                      }))
+                    }
+                    className="input py-1 text-sm w-full text-right"
+                  />
+                  <div className="text-right text-sm font-medium text-surface-900 dark:text-white">{total}</div>
+                </div>
+              );
+            })}
+          </div>
+          <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending}>
+            {saveMutation.isPending ? 'Saving…' : 'Confirm Manifest'}
+          </Button>
+        </div>
       )}
     </div>
   );

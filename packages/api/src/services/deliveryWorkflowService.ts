@@ -1014,6 +1014,77 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
       select: { id: true, createdAt: true, description: true },
     });
 
+    // FLOAT-001 (2026-06-17): vehicle's active-trip DVA + manifest for the
+    // float-stock summary panel in the web/mobile reconciliation card.
+    // Picks the latest non-cancelled DVA on today for this vehicle (same
+    // selector confirmVehicleReconciliation uses).
+    const tripDva = await prisma.driverVehicleAssignment.findFirst({
+      where: { vehicleId: vehicle.id, distributorId, assignmentDate: startOfUtcDay(), status: { not: 'cancelled' } },
+      orderBy: { tripNumber: 'desc' },
+      select: { id: true, driverId: true, tripNumber: true },
+    });
+    let loadManifest: Array<{
+      manifestId: string;
+      cylinderTypeId: string;
+      cylinderTypeName: string;
+      tripNumber: number;
+      totalLoaded: number;
+      orderedQty: number;
+      floatQty: number;
+    }> = [];
+    const floatSummary: Array<{
+      cylinderTypeId: string;
+      cylinderTypeName: string;
+      totalLoaded: number;
+      orderedQty: number;
+      floatQty: number;
+      soldFromFloat: number;
+      unsoldFloat: number;
+    }> = [];
+    if (tripDva) {
+      const rows = await prisma.dVALoadManifest.findMany({
+        where: { dvaId: tripDva.id, tripNumber: tripDva.tripNumber, distributorId },
+        include: { cylinderType: { select: { typeName: true } } },
+      });
+      loadManifest = rows.map((r) => ({
+        manifestId: r.id,
+        cylinderTypeId: r.cylinderTypeId,
+        cylinderTypeName: r.cylinderType?.typeName ?? '—',
+        tripNumber: r.tripNumber,
+        totalLoaded: r.totalLoaded,
+        orderedQty: r.orderedQty,
+        floatQty: r.floatQty,
+      }));
+      // floatSummary mirrors the Step 2.5 reconciliation math so the UI can
+      // show the admin what's about to be credited back before they confirm.
+      for (const m of rows) {
+        if (m.floatQty <= 0) continue;
+        const walkInAgg = await prisma.orderItem.aggregate({
+          where: {
+            cylinderTypeId: m.cylinderTypeId,
+            order: {
+              distributorId, driverId: tripDva.driverId,
+              tripNumber: tripDva.tripNumber, orderSource: 'walk_in',
+              status: { in: ['delivered', 'modified_delivered'] }, deletedAt: null,
+            },
+          },
+          _sum: { deliveredQuantity: true },
+        });
+        const walkInDelivered = walkInAgg._sum.deliveredQuantity ?? 0;
+        const soldFromFloat = Math.min(walkInDelivered, m.floatQty);
+        const unsoldFloat = m.floatQty - soldFromFloat;
+        floatSummary.push({
+          cylinderTypeId: m.cylinderTypeId,
+          cylinderTypeName: m.cylinderType?.typeName ?? '—',
+          totalLoaded: m.totalLoaded,
+          orderedQty: m.orderedQty,
+          floatQty: m.floatQty,
+          soldFromFloat,
+          unsoldFloat,
+        });
+      }
+    }
+
     result.push({
       vehicleId: vehicle.id,
       vehicleNumber: vehicle.vehicleNumber,
@@ -1028,6 +1099,10 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
       pendingCancelledStockLines,
       emptiesTypes,
       mismatchReported: !!openMismatchPa,
+      // FLOAT-001 (2026-06-17): manifest + float-summary for the web/mobile
+      // reconciliation card. Empty arrays when no manifest exists.
+      loadManifest,
+      floatSummary,
     });
   }
 

@@ -80,6 +80,26 @@ interface ReconciliationVehicle {
   // Open STOCK_MISMATCH pending action exists for this vehicle — the card
   // surfaces an amber badge until the PA is resolved.
   mismatchReported?: boolean;
+  // FLOAT-001 (2026-06-17): manifest + float summary for the new
+  // "Float Stock Summary" section. Empty arrays when no manifest exists.
+  loadManifest?: Array<{
+    manifestId: string;
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    tripNumber: number;
+    totalLoaded: number;
+    orderedQty: number;
+    floatQty: number;
+  }>;
+  floatSummary?: Array<{
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    totalLoaded: number;
+    orderedQty: number;
+    floatQty: number;
+    soldFromFloat: number;
+    unsoldFloat: number;
+  }>;
 }
 
 interface ReconciliationConfirmInput {
@@ -972,6 +992,45 @@ function VehicleReturnCard({
                         {String(l.status).replace(/_/g, ' ')}
                       </Badge>
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* FLOAT-001: Section A2 — float stock summary (read-only). Shows the
+          admin what's about to be credited back when they confirm reconciliation. */}
+      {(vehicle.floatSummary ?? []).length > 0 && (
+        <div className="mb-5">
+          <h4 className="text-sm font-medium text-surface-800 dark:text-surface-200 mb-1">
+            Float Stock Summary
+          </h4>
+          <p className="text-xs text-surface-500 mb-2">
+            Unsold float stock will be automatically returned to depot inventory on reconciliation.
+          </p>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Cylinder Type</th>
+                  <th className="text-center">Loaded</th>
+                  <th className="text-center">Ordered</th>
+                  <th className="text-center">Float</th>
+                  <th className="text-center">Sold (Walk-in)</th>
+                  <th className="text-center">Returning to Depot</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(vehicle.floatSummary ?? []).map((f) => (
+                  <tr key={f.cylinderTypeId}>
+                    <td className="font-medium">{f.cylinderTypeName}</td>
+                    <td className="text-center">{f.totalLoaded}</td>
+                    <td className="text-center">{f.orderedQty}</td>
+                    <td className="text-center">{f.floatQty}</td>
+                    <td className="text-center">{f.soldFromFloat}</td>
+                    <td className="text-center text-flame-600 dark:text-flame-400">{f.unsoldFloat}</td>
                   </tr>
                 ))}
               </tbody>
