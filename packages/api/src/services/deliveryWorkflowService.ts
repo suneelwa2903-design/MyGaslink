@@ -17,6 +17,7 @@ import { toNum } from '../utils/decimal.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
 import { computeOrderTotal } from './orderService.js';
 import { notifyDriver } from '../lib/sseManager.js';
+import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
 
 // ─── Customer Delivery Confirmation ─────────────────────────────────────────
 
@@ -680,6 +681,92 @@ export async function confirmVehicleReconciliation(
     }
 
     results.undeliveredOrdersCancelled++;
+  }
+
+  // 2.5 FLOAT-001 (2026-06-17): credit unsold float back to depot.
+  //
+  // At dispatch time, preflightDispatch wrote a `dispatch` InventoryEvent per
+  // manifest row with floatQty > 0 (referenceType='dva_load_manifest'). Some
+  // of that float left the vehicle as walk-in orders the driver created on
+  // the road (Order.orderSource='walk_in', which on delivery wrote its own
+  // `delivery` event keyed on referenceType='order'). Whatever floatQty
+  // didn't sell is still on the vehicle and must come back as `cancellation_return`
+  // so depot closingFulls balances.
+  //
+  // Walk-in identification: filter orders by Order.orderSource='walk_in' on
+  // the trip — NOT a createdAt > dispatchedAt heuristic (Issue 3 in pre-flight).
+  //
+  // Flag-gated symmetrically with the dispatch event: skip the credit step
+  // when INVENTORY_DISPATCH_DEBIT is OFF (no dispatch event was written, so
+  // no credit is needed).
+  if (isDispatchDebitEnabled(distributorId)) {
+    // Find the trip's DVA + tripNumber so we filter manifest + walk-in orders
+    // to this trip only. The reconcile DVA is fetched again below for the
+    // WI-094 timestamp; that lookup runs on whatever the current DVA looks
+    // like AFTER our updates, so a fresh fetch is needed here too.
+    const tripDva = await prisma.driverVehicleAssignment.findFirst({
+      where: { vehicleId, distributorId, assignmentDate: startOfUtcDay(), status: { not: 'cancelled' } },
+      orderBy: { tripNumber: 'desc' },
+      select: { id: true, driverId: true, tripNumber: true, assignmentDate: true },
+    });
+    if (tripDva) {
+      const manifestRows = await prisma.dVALoadManifest.findMany({
+        where: {
+          dvaId: tripDva.id,
+          tripNumber: tripDva.tripNumber,
+          distributorId,
+          floatQty: { gt: 0 },
+        },
+      });
+      const affectedTypeIds = new Set<string>();
+      for (const manifestRow of manifestRows) {
+        // Walk-in sales of this cylinder type on this trip — sum of
+        // OrderItem.deliveredQuantity where the parent order is a walk-in.
+        const walkInAgg = await prisma.orderItem.aggregate({
+          where: {
+            cylinderTypeId: manifestRow.cylinderTypeId,
+            order: {
+              distributorId,
+              driverId: tripDva.driverId,
+              tripNumber: tripDva.tripNumber,
+              orderSource: 'walk_in',
+              status: { in: ['delivered', 'modified_delivered'] },
+              deletedAt: null,
+            },
+          },
+          _sum: { deliveredQuantity: true },
+        });
+        const walkInDelivered = walkInAgg._sum.deliveredQuantity ?? 0;
+        const soldFromFloat = Math.min(walkInDelivered, manifestRow.floatQty);
+        const unsoldFloat = manifestRow.floatQty - soldFromFloat;
+        if (unsoldFloat <= 0) continue;
+        await prisma.$transaction(async (tx) => {
+          await createInventoryEvent(tx, {
+            distributorId,
+            cylinderTypeId: manifestRow.cylinderTypeId,
+            eventType: 'cancellation_return',
+            fullsChange: unsoldFloat,
+            emptiesChange: 0,
+            // Pin to the trip's dispatch date (manifest.confirmedAt sits on
+            // the same UTC day; assignmentDate is the audit anchor we want)
+            // so dispatched − returned closes on the SAME daily summary row.
+            eventDate: tripDva.assignmentDate,
+            referenceId: manifestRow.id,
+            referenceType: 'dva_load_manifest',
+            createdBy: userId,
+            notes: `Float stock returned to depot — DVA ${tripDva.id}, trip ${tripDva.tripNumber}`,
+          });
+        });
+        affectedTypeIds.add(manifestRow.cylinderTypeId);
+        results.inventoryRestored[manifestRow.cylinderTypeId] =
+          (results.inventoryRestored[manifestRow.cylinderTypeId] || 0) + unsoldFloat;
+      }
+      // Recompute every cylinder type we credited. Same date as dispatch so
+      // the closingFulls leg balances.
+      for (const ctId of affectedTypeIds) {
+        await recalculateSummariesFromDate(distributorId, ctId, tripDva.assignmentDate);
+      }
+    }
   }
 
   // 3. Update vehicle status to idle
