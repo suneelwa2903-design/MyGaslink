@@ -623,3 +623,34 @@ export type PaymentFilterInput = z.infer<typeof paymentFilterSchema>;
 export type CustomerFilterInput = z.infer<typeof customerFilterSchema>;
 export type ReturnsOnlyOrderInput = z.infer<typeof returnsOnlyOrderSchema>;
 export type ReturnsConfirmationInput = z.infer<typeof returnsConfirmationSchema>;
+
+// ─── FLOAT-001 — Vehicle Load Manifest + Driver walk-in order ────────────────
+
+// Admin enters per-cylinder-type totals BEFORE preflight dispatch. `totalLoaded`
+// is the count physically loaded onto the vehicle (ordered + float). Server
+// computes `orderedQty` from pending_dispatch orders and stores the row;
+// floatQty = totalLoaded - orderedQty. Allows an empty `items` array — useful
+// for clearing a previously-entered manifest before dispatch starts; the
+// service-side guard validates at least one cylinderType is referenced.
+export const createManifestSchema = z.object({
+  dvaId: uuid,
+  items: z.array(z.object({
+    cylinderTypeId: uuid,
+    totalLoaded: z.number().int().min(0),
+  })).min(1, 'At least one cylinder type entry is required'),
+});
+export type CreateManifestInput = z.infer<typeof createManifestSchema>;
+
+// Driver mobile walk-in order. deliveryDate MUST equal today (server-side check
+// in routes/driversVehicles.ts). One cylinder type per call; multiple types
+// require multiple submissions (keeps the mobile flow simple). paymentMode is
+// a subset of PaymentMethod — the driver collects cash/UPI on the road or
+// flags the order as customer credit.
+export const driverCreateOrderSchema = z.object({
+  customerId: uuid,
+  cylinderTypeId: uuid,
+  quantity: z.number().int().min(1),
+  deliveryDate: dateString,
+  paymentMode: z.enum(['cash', 'upi', 'credit']).optional(),
+});
+export type DriverCreateOrderInput = z.infer<typeof driverCreateOrderSchema>;

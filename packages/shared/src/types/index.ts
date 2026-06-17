@@ -1,6 +1,6 @@
 import type {
   UserRole, UserStatus, ProvisioningStatus, DistributorStatus, GstMode, SubscriptionPlan,
-  CustomerStatus, OrderStatus, OrderType, InvoiceStatus, IrnStatus, EwbStatus,
+  CustomerStatus, OrderStatus, OrderType, OrderSource, InvoiceStatus, IrnStatus, EwbStatus,
   DriverStatus, VehicleStatus, AssignmentStatus,
   CancelledStockStatus, PaymentMethod, PaymentAllocationStatus,
   BillingPeriodType, BillingStatus,
@@ -291,6 +291,10 @@ export interface Order {
   deliveryDate: string;
   status: OrderStatus;
   orderType?: OrderType;
+  // FLOAT-001 (2026-06-17): present on every Order returned from the API after
+  // the migration; optional in the wire type so legacy consumers compile.
+  // Default value is OrderSource.REGULAR for all pre-existing rows.
+  orderSource?: OrderSource;
   totalAmount: number;
   specialInstructions: string | null;
   items: OrderItem[];
@@ -470,6 +474,39 @@ export interface DriverVehicleAssignment {
   isReconciled: boolean;
   isSubmitted: boolean;
   orders: Order[];
+  // FLOAT-001 (2026-06-17): per-trip load manifest entries (one per cylinder type).
+  // Optional on the wire — present only on endpoints that explicitly include them
+  // (GET /api/manifests/dva/:dvaId, reconciliation/pending response).
+  loadManifest?: DVALoadManifestItem[];
+}
+
+// FLOAT-001 (2026-06-17): one row per (DVA, cylinderType, tripNumber).
+// totalLoaded = orderedQty + floatQty. orderedQty is snapshotted at confirm time
+// (so reconciliation reads it as-at-confirm without re-querying orders).
+export interface DVALoadManifestItem {
+  manifestId: string;
+  dvaId: string;
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  tripNumber: number;
+  totalLoaded: number;
+  orderedQty: number;
+  floatQty: number;
+  confirmedBy: string;
+  confirmedAt: string;
+}
+
+// FLOAT-001 (2026-06-17): reconciliation float-summary row (one per type).
+// Surfaced in the reconciliation pending response so the inventory team can
+// see at a glance how much float was sold vs. how much returns to depot.
+export interface DVALoadManifestFloatSummary {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  totalLoaded: number;
+  orderedQty: number;
+  floatQty: number;
+  soldFromFloat: number;
+  unsoldFloat: number;
 }
 
 // ─── Inventory ───────────────────────────────────────────────────────────────

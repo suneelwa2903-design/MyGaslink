@@ -81,6 +81,14 @@ export enum OrderType {
   RETURNS_ONLY = 'returns_only',
 }
 
+// FLOAT-001 (2026-06-17): order provenance — see schema.prisma OrderSource.
+// `regular` is the default (every legacy and advance-booked order).
+// `walk_in` is set ONLY by the driver mobile walk-in order path.
+export enum OrderSource {
+  REGULAR = 'regular',
+  WALK_IN = 'walk_in',
+}
+
 // ─── Invoices ────────────────────────────────────────────────────────────────
 
 export enum InvoiceStatus {

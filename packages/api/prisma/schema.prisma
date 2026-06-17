@@ -68,6 +68,16 @@ enum OrderType {
   returns_only @map("returns_only")
 }
 
+// FLOAT-001 (2026-06-17): order provenance. `regular` covers every advance-booked
+// order the system has shipped to date (default for migration backfill).
+// `walk_in` is set ONLY by the driver mobile walk-in order path — used by the
+// reconciliation float-unsold calculation to distinguish sold-from-float from
+// pre-booked deliveries on the same trip.
+enum OrderSource {
+  regular
+  walk_in @map("walk_in")
+}
+
 enum InvoiceStatus {
   draft
   issued
@@ -433,6 +443,9 @@ model Distributor {
   seatRequests         SeatRequest[]
   invoiceCounters      InvoiceCounter[]
   tallySettings        TallySettings?
+  // FLOAT-001 (2026-06-17): per-trip vehicle load manifests entered by admin
+  // before dispatch. One row per (DVA, cylinderType, tripNumber).
+  dvaLoadManifests     DVALoadManifest[]
 
   @@map("distributors")
 }
@@ -474,6 +487,8 @@ model User {
   driverAssignments     DriverAssignment[] @relation("AssignedBy")
   cancelledGstDocuments GstDocument[]      @relation("CancelledGstDocuments")
   loginHistory          LoginHistory[]
+  // FLOAT-001 (2026-06-17): manifests this user confirmed (admin/inventory/finance).
+  manifestsConfirmed    DVALoadManifest[]  @relation("ManifestConfirmedBy")
 
   @@index([email])
   @@index([distributorId])
@@ -664,6 +679,8 @@ model CylinderType {
   cancelledStocks      CancelledStockEvent[]
   accountabilityLogs   AccountabilityLog[]
   stockMismatchRecords StockMismatchRecord[]
+  // FLOAT-001 (2026-06-17): manifest rows recording per-trip loaded qty of this type.
+  dvaLoadManifests     DVALoadManifest[]
 
   @@unique([distributorId, typeName])
   @@index([providerCatalogId])
@@ -726,6 +743,11 @@ model Order {
   deliveryDate          DateTime    @map("delivery_date") @db.Date
   status                OrderStatus @default(pending_driver_assignment)
   orderType             OrderType   @default(delivery) @map("order_type")
+  // FLOAT-001 (2026-06-17): tagged by the driver mobile walk-in path. Reconciliation
+  // sums delivered walk-ins as "sold from float" — depot debit happens at preflight
+  // for ordered + manifest-float; whatever float remained at reconcile is credited
+  // back via `cancellation_return` events. Default `regular` covers every legacy row.
+  orderSource           OrderSource @default(regular) @map("order_source")
   totalAmount           Decimal     @default(0) @map("total_amount") @db.Decimal(18, 4)
   specialInstructions   String?     @map("special_instructions")
   deliveryLatitude      Float?      @map("delivery_latitude")
@@ -908,6 +930,8 @@ model DriverVehicleAssignment {
   driver                Driver                          @relation(fields: [driverId], references: [id])
   vehicle               Vehicle                         @relation(fields: [vehicleId], references: [id])
   reconciliationEmpties ReconciliationEmptiesReturned[]
+  // FLOAT-001 (2026-06-17): vehicle load manifest entries per trip.
+  loadManifests         DVALoadManifest[]
 
   // WI-061: prevent duplicate DVA rows for the same driver+date+trip.
   // The dev DB accumulated 4 rows for one driver/date because nothing
@@ -919,6 +943,47 @@ model DriverVehicleAssignment {
   @@index([distributorId, assignmentDate])
   @@index([driverId, assignmentDate])
   @@map("driver_vehicle_assignments")
+}
+
+// FLOAT-001 (2026-06-17): admin-confirmed load manifest. One row per
+// (DVA, cylinderType, tripNumber). Lets the system represent "vehicle V left the
+// depot carrying X cylinders" — separate from order-sum — so depot stock debits
+// correctly even when some cylinders are float for walk-in customers.
+//
+// `tripNumber` lives on the row directly (not derived from `dva.tripNumber` at
+// read time) because a DVA's tripNumber rolls forward on each new dispatch; we
+// must preserve per-trip audit history. The composite key
+// `[dvaId, cylinderTypeId, tripNumber]` permits trip-2 manifest to coexist with
+// trip-1 manifest on the same DVA row.
+//
+// `totalLoaded` is the admin's declared physical count.
+// `orderedQty` is a snapshot of Σ OrderItem.quantity for pending_dispatch orders
+//   on (driverId, assignmentDate) at manifest-write time. Stored (not derived)
+//   so reconciliation reads the value as-at-confirm without re-querying orders.
+// `floatQty = totalLoaded - orderedQty`, stored for audit + cheap reads.
+model DVALoadManifest {
+  id             String   @id @default(uuid()) @map("manifest_id")
+  distributorId  String   @map("distributor_id")
+  dvaId          String   @map("dva_id")
+  cylinderTypeId String   @map("cylinder_type_id")
+  tripNumber     Int      @map("trip_number")
+  totalLoaded    Int      @map("total_loaded")
+  orderedQty     Int      @map("ordered_qty")
+  floatQty       Int      @map("float_qty")
+  confirmedBy    String   @map("confirmed_by")
+  confirmedAt    DateTime @default(now()) @map("confirmed_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  distributor     Distributor             @relation(fields: [distributorId], references: [id])
+  dva             DriverVehicleAssignment @relation(fields: [dvaId], references: [id])
+  cylinderType    CylinderType            @relation(fields: [cylinderTypeId], references: [id])
+  confirmedByUser User                    @relation("ManifestConfirmedBy", fields: [confirmedBy], references: [id])
+
+  @@unique([dvaId, cylinderTypeId, tripNumber])
+  @@index([distributorId])
+  @@index([dvaId, tripNumber])
+  @@map("dva_load_manifests")
 }
 
 // Supervisor's physically-verified per-type empties count captured at trip-end
