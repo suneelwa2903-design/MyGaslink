@@ -54,8 +54,11 @@ async function resolveDriverFromUser(userId: string, distributorId: string) {
  * trip) has no earlier trip with orders, so we return the latest tripNumber
  * unchanged — the screens correctly show an empty trip, not a crash.
  */
-const TRIP_CONTENT_STATUSES = ['pending_delivery', 'delivered', 'modified_delivered'] as const;
-async function resolveEffectiveTripNumber(
+// FLOAT-001 (2026-06-17): exported so dvaManifestService.getAvailableFullsForDriver
+// can use the SAME trip-resolution rule the driver-facing endpoints use. Keeps the
+// availability calculation in lockstep with what `/me/trip-stock` displays.
+export const TRIP_CONTENT_STATUSES = ['pending_delivery', 'delivered', 'modified_delivered'] as const;
+export async function resolveEffectiveTripNumber(
   distributorId: string, driverId: string, today: Date, latestTripNumber: number,
 ): Promise<number> {
   const latestHasOrders = await prisma.order.count({
