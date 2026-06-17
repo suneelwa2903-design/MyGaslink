@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { HiOutlineArrowDownTray, HiOutlineDocumentArrowDown } from 'react-icons/hi2';
 import { api, apiGet, getErrorMessage } from '@/lib/api';
 import { Button, Select, Loader, EmptyState } from '@/components/ui';
+import TallyExportPanel from '@/components/reports/TallyExportPanel';
 
 type ReportCellValue = string | number | null;
 type LineChartData = { x: string; y: number }[];
@@ -109,6 +110,11 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-6">
+      {/* Tally Export — separate from the per-report selector below
+          because it's an accounting-software bulk export, not a printable
+          report. Picks up dateFrom/dateTo from the same filter row. */}
+      <TallyExportPanel dateFrom={dateFrom} dateTo={dateTo} />
+
       {/* Report selector */}
       <div className="flex flex-wrap gap-2">
         {REPORTS.map((r) => (

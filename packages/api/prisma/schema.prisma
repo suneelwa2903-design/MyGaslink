@@ -432,6 +432,7 @@ model Distributor {
   gstApiUsage          GstApiUsage[]
   seatRequests         SeatRequest[]
   invoiceCounters      InvoiceCounter[]
+  tallySettings        TallySettings?
 
   @@map("distributors")
 }
@@ -1716,6 +1717,65 @@ model DistributorSetting {
 
   @@unique([distributorId, settingKey])
   @@map("distributor_settings")
+}
+
+// ─── Tally Setup (per-tenant accounting export config) ──────────────────────
+//
+// Drives the Tally XML export on the Reports page. One row per distributor.
+// All ledger/voucher fields have sane defaults so a distributor whose Tally
+// uses the stock Chart of Accounts never has to touch this — the export
+// works out of the box. The `cylinderStockItems` JSON is a map of
+// CylinderType.id → Tally stock item name (so a 14.2 KG cylinder typed in
+// MyGasLink can be mapped to "Indane 14.2 KG Domestic Cylinder" or whatever
+// the distributor created in Tally). Missing keys fall back to
+// invoiceItem.description at export time — that covers both
+// "not-mapped-yet" cylinder lines AND legitimate non-cylinder lines
+// (transport charges, ad-hoc fees) whose InvoiceItem.cylinderTypeId is null.
+model TallySettings {
+  id            String @id @default(uuid()) @map("tally_settings_id")
+  distributorId String @unique @map("distributor_id")
+
+  // Tally version — drives a handful of XML-element differences between
+  // Prime and ERP 9. Constrained to "prime" | "erp9" at the route layer.
+  tallyVersion     String  @default("prime") @map("tally_version")
+  // Optional override for SVCURRENTCOMPANY. NULL → fall back to
+  // Distributor.legalName at export time so the XML always identifies
+  // a company even before this row is configured.
+  tallyCompanyName String? @map("tally_company_name")
+
+  // Ledger names — must match the Tally Chart of Accounts exactly.
+  ledgerSales         String @default("Sales")           @map("ledger_sales")
+  ledgerCgst          String @default("Output CGST")     @map("ledger_cgst")
+  ledgerSgst          String @default("Output SGST")     @map("ledger_sgst")
+  ledgerIgst          String @default("Output IGST")     @map("ledger_igst")
+  ledgerCash          String @default("Cash")            @map("ledger_cash")
+  ledgerBank          String @default("Bank Account")    @map("ledger_bank")
+  ledgerSundryDebtors String @default("Sundry Debtors")  @map("ledger_sundry_debtors")
+  ledgerRoundOff      String @default("Round Off")       @map("ledger_round_off")
+
+  // Voucher type names — must match Tally's Voucher Types screen.
+  voucherTypeSales      String @default("Sales")       @map("voucher_type_sales")
+  voucherTypeReceipt    String @default("Receipt")     @map("voucher_type_receipt")
+  voucherTypeCreditNote String @default("Credit Note") @map("voucher_type_credit_note")
+  voucherTypeDebitNote  String @default("Debit Note")  @map("voucher_type_debit_note")
+
+  // Inventory — Tally's Unit of Measure (UOM) for cylinder stock lines.
+  // Tally's stock default is "Nos"; we capitalise to "NOS" to align with
+  // the GSTR-1 UQC convention (InvoiceItem.uom defaults to "NOS" too —
+  // see invoiceService.createInvoiceFromOrder).
+  stockUnit String @default("NOS") @map("stock_unit")
+
+  // Map of CylinderType.id → Tally stock item name. Validation at write
+  // time ensures every key is a CylinderType owned by this distributor
+  // (cross-tenant leak guard — anti-pattern #13).
+  cylinderStockItems Json @default("{}") @map("cylinder_stock_items")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  distributor Distributor @relation(fields: [distributorId], references: [id])
+
+  @@map("tally_settings")
 }
 
 // ─── Licenses ────────────────────────────────────────────────────────────────

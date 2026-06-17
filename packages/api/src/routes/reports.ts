@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { requireRole } from '../middleware/auth.js';
 import { sendSuccess, sendError, sendNotFound } from '../utils/apiResponse.js';
 import { REPORTS, reportToCsv, type ReportFilters } from '../services/reportsService.js';
+import { buildTallyExport } from '../services/tallyExportService.js';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
 
@@ -18,6 +19,31 @@ function parseFilters(q: Request['query']): ReportFilters {
     groupBy: q.groupBy === 'trip' ? 'trip' : q.groupBy === 'day' ? 'day' : undefined,
   };
 }
+
+// GET /api/reports/tally-export → text/xml attachment (Tally import payload).
+// Registered BEFORE the generic /:reportType handler so 'tally-export' is
+// not interpreted as a key into the JSON-report REPORTS map. The Tally
+// export's only output is XML — there is no JSON variant — so it lives
+// outside the REPORTS table by design.
+router.get('/tally-export',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+      const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
+      const { xml } = await buildTallyExport(req.user!.distributorId!, { dateFrom, dateTo });
+      const fromTag = dateFrom ?? 'all';
+      const toTag = dateTo ?? 'all';
+      res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="tally-export-${fromTag}_${toTag}.xml"`,
+      );
+      return res.status(200).send(xml);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  });
 
 // GET /api/reports/:reportType            → JSON { columns, rows, totals?, chart? }
 // GET /api/reports/:reportType?format=csv → text/csv attachment

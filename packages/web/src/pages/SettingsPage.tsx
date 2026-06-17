@@ -20,6 +20,7 @@ import {
   HiOutlineDocumentArrowDown,
   HiOutlineClipboardDocument,
   HiOutlineChatBubbleLeftRight,
+  HiOutlineCalculator,
 } from 'react-icons/hi2';
 import {
   type DistributorSettings,
@@ -40,6 +41,7 @@ import { useAuthStore, selectDistributorId } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { OnboardingTab } from '@/components/OnboardingTab';
+import TallySetupPanel from '@/components/settings/TallySetupPanel';
 
 type SettingsTabKey =
   | 'onboarding'
@@ -51,7 +53,8 @@ type SettingsTabKey =
   | 'thresholds'
   | 'approvals'
   | 'users'
-  | 'licenses';
+  | 'licenses'
+  | 'tally';
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
@@ -75,6 +78,9 @@ export default function SettingsPage() {
     ...(isAdmin ? [{ key: 'approvals' as const, label: 'Approvals', icon: HiOutlineCheckCircle }] : []),
     ...(isAdmin ? [{ key: 'users' as const, label: 'Users', icon: HiOutlineUsers }] : []),
     ...(isAdmin || isOps ? [{ key: 'licenses' as const, label: 'Licenses', icon: HiOutlineDocumentText }] : []),
+    // Tally Setup — admin only in v1 (matches GST tab edit gate). Finance
+    // read-only view is post-launch. Deep link: ?tab=tally from ReportsPage.
+    ...(isAdmin ? [{ key: 'tally' as const, label: 'Tally Setup', icon: HiOutlineCalculator }] : []),
   ];
 
   const allowedTabs = tabs.map((t) => t.key);
@@ -125,6 +131,7 @@ export default function SettingsPage() {
       {tab === 'approvals' && <ApprovalsTab />}
       {tab === 'users' && <UsersTab />}
       {tab === 'licenses' && <LicensesTab />}
+      {tab === 'tally' && <TallySetupPanel />}
     </div>
   );
 }
