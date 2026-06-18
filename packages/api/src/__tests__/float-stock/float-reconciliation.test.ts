@@ -780,6 +780,126 @@ describe('FLOAT-001 — float-unsold reconciliation credit', () => {
     expect(allReturns[1].referenceId).not.toBe(trip1ManifestId);
   });
 
+  it('BUG #10 — mid-trip regular order via Add to Trip consumes from float (not phantom credit)', async () => {
+    // User repro 2026-06-18 ~21:04 IST, dist-002: OSHD677 was a regular
+    // order added mid-trip via "+ Add to Trip" for 1 cylinder of 19 KG.
+    // Bug #6 correctly skipped its per-order dispatch event (came from
+    // float). But Step 2.5's old formula counted only orderSource='walk_in'
+    // for soldFromFloat → mid-trip regular missed → credited the full 9
+    // float back to depot instead of 8 → Inventory On Vehicle = -1 for 19 KG.
+    // Fix: discriminate via "has per-order dispatch event" (walk-ins AND
+    // mid-trip regulars both lack one — both consume float).
+
+    // Pre-book a regular order (qty 1) BEFORE manifest confirm so the
+    // manifest captures orderedQty=1, floatQty=9.
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-PB-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_dispatch',
+        orderSource: 'regular',
+        totalAmount: 500,
+        items: { create: [{ cylinderTypeId, quantity: 1, unitPrice: 500, totalPrice: 500 }] },
+      },
+    });
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 10 }], adminUserId,
+    );
+    await preflightDispatch({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+    // Deliver the pre-booked order
+    const preBooked = await prisma.order.findFirstOrThrow({
+      where: { distributorId: DIST, deliveryDate: todayMidnight, status: 'pending_delivery' },
+      include: { items: true },
+    });
+    await prisma.order.update({
+      where: { id: preBooked.id },
+      data: { status: 'delivered', deliveredAt: new Date() },
+    });
+    for (const item of preBooked.items) {
+      await prisma.orderItem.update({
+        where: { id: item.id },
+        data: { deliveredQuantity: item.quantity },
+      });
+    }
+
+    // Admin adds a mid-trip regular order (NOT walk_in) and dispatches
+    // via preflightAddToTrip → Bug #6 skips per-order dispatch event.
+    const midTrip = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-MT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_dispatch',
+        orderSource: 'regular',
+        totalAmount: 500,
+        items: { create: [{ cylinderTypeId, quantity: 1, unitPrice: 500, totalPrice: 500 }] },
+      },
+    });
+    const { preflightAddToTrip } = await import('../../services/gst/gstPreflightService.js');
+    await preflightAddToTrip({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+    // Mid-trip order should now be pending_delivery with no dispatch event
+    const midDispatchEvents = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'dispatch',
+        referenceType: 'order',
+        referenceId: midTrip.id,
+      },
+    });
+    expect(midDispatchEvents).toHaveLength(0); // Bug #6 — pre-condition
+
+    // Deliver the mid-trip order
+    const midTripFresh = await prisma.order.findUniqueOrThrow({
+      where: { id: midTrip.id }, include: { items: true },
+    });
+    await prisma.order.update({
+      where: { id: midTrip.id },
+      data: { status: 'delivered', deliveredAt: new Date() },
+    });
+    for (const item of midTripFresh.items) {
+      await prisma.orderItem.update({
+        where: { id: item.id },
+        data: { deliveredQuantity: item.quantity },
+      });
+    }
+
+    // Reconcile
+    await markVehicleReturned(vehicleId, driverId, DIST);
+    await confirmVehicleReconciliation(vehicleId, DIST, adminUserId, {
+      physicalStockConfirmed: true,
+    });
+
+    // CRITICAL: Step 2.5 must credit 8 (not 9) — 1 cylinder from float
+    // was consumed by the mid-trip regular order.
+    const floatReturns = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'cancellation_return',
+        referenceType: 'dva_load_manifest',
+        eventDate: todayMidnight,
+      },
+    });
+    expect(floatReturns).toHaveLength(1);
+    expect(floatReturns[0].fullsChange).toBe(8); // 9 float − 1 mid-trip = 8
+
+    // Net inventory: dispatched (-10) + delivered (-2) + return (+8) = -4 on vehicle?
+    // No wait — "on vehicle" = dispatched - delivered - returned = 10 - 2 - 8 = 0 ✓
+    // Verify by recomputing the daily summary and checking closingFulls vs opening.
+  });
+
   it('BUG #8 — pending_dispatch order cancelled at reconcile writes NO phantom credit', async () => {
     // User repro 2026-06-18 ~20:14 IST, dist-002: OSHD673 was a regular
     // pending_dispatch order for 6 cylinders (never went through preflight,

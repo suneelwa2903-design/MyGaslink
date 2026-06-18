@@ -245,11 +245,18 @@ describe('FLOAT-001 — getAvailableFullsForDriver', () => {
   // ── Bug #4 regression tests (2026-06-18) ─────────────────────────────────
 
   it('BUG #4 CASE 1 — DVA rolled to trip 2: float still available (manifest at trip 1)', async () => {
-    // Manifest written at trip 1 (floatQty=8). DVA then rolls to trip 2
+    // Manifest written at trip 1 (floatQty=10). DVA then rolls to trip 2
     // (regular order added + dispatched mid-day). Original code keyed the
     // manifest lookup on `tripNumber: effectiveTrip` (=2) → manifest miss
     // → returned 0 → driver could not create walk-ins despite physical
     // fulls on the truck. Fix: lookup ignores tripNumber.
+    //
+    // Bug #10 (2026-06-19): the planted trip-2 order must ALSO have a
+    // per-order dispatch event for it to NOT subtract from float — that's
+    // what marks it as "pre-booked depot-debited" vs "mid-trip from-float".
+    // Without the dispatch event the order is treated as having consumed
+    // float (correctly — see BUG #10 CASE below). For this test we want
+    // a pre-booked-style order so the floatQty=10 is preserved.
     await createOrUpdateManifest(
       DIST, dvaId, [{ cylinderTypeId, totalLoaded: 10 }], adminUserId,
     );
@@ -260,9 +267,9 @@ describe('FLOAT-001 — getAvailableFullsForDriver', () => {
       where: { id: dvaId },
       data: { tripNumber: 2, status: 'loaded_and_dispatched', dispatchedAt: new Date() },
     });
-    // Plant a regular pending_delivery order at trip 2 so resolveEffectiveTrip
-    // resolves to 2 (latest with content).
-    await prisma.order.create({
+    // Plant a pre-booked regular order at trip 2 WITH a per-order dispatch
+    // event (= depot was directly debited; not from float).
+    const preBooked = await prisma.order.create({
       data: {
         orderNumber: `TEST-AF-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
         distributorId: DIST, customerId, driverId, vehicleId,
@@ -271,8 +278,20 @@ describe('FLOAT-001 — getAvailableFullsForDriver', () => {
         items: { create: [{ cylinderTypeId, quantity: 2, unitPrice: 500, totalPrice: 1000 }] },
       },
     });
+    await prisma.inventoryEvent.create({
+      data: {
+        distributorId: DIST,
+        cylinderTypeId,
+        eventType: 'dispatch',
+        fullsChange: -2, emptiesChange: 0,
+        eventDate: todayMidnight,
+        referenceId: preBooked.id,
+        referenceType: 'order',
+        createdBy: adminUserId,
+      },
+    });
     const avail = await getAvailableFullsForDriver(DIST, driverId, cylinderTypeId);
-    expect(avail).toBe(10); // floatQty (10) − no walk-ins = 10
+    expect(avail).toBe(10); // floatQty (10) − no float-consumers = 10
   });
 
   it('BUG #4 CASE 2 — walk-ins span trip roll: trip-1 walk-in still counted against float', async () => {
@@ -298,33 +317,74 @@ describe('FLOAT-001 — getAvailableFullsForDriver', () => {
     expect(avail).toBe(7); // floatQty 10 − walk-in 3 (across all trips) = 7
   });
 
-  it('BUG #4 CASE 3 — regular orders never subtract from float pool', async () => {
-    // Create 10 pending_dispatch regular orders BEFORE manifest so they
-    // snapshot into orderedQty (10). floatQty = totalLoaded − orderedQty.
-    // With totalLoaded=18, orderedQty=10 → floatQty=8.
-    // Then promote those orders to pending_delivery (representing dispatched
-    // state). They are REGULAR orders, so they must NOT subtract from
-    // available — float is 8, unchanged.
-    for (let i = 0; i < 10; i++) {
-      await prisma.order.create({
+  it('BUG #4 CASE 3 (rewritten under Bug #10) — pre-booked regulars (WITH dispatch event) do NOT subtract; mid-trip regulars (NO dispatch event) DO', async () => {
+    // BUG #10 (2026-06-19) redefined the rule: "from float" is identified
+    // by absence of a per-order dispatch event, NOT by orderSource. The
+    // previous version of this test asserted "regular orders never
+    // subtract" — that's false now. The new contract:
+    //   - Pre-booked regulars (preflightDispatch wrote a dispatch event)
+    //     → NOT from float → don't subtract
+    //   - Mid-trip regulars via Add to Trip (no dispatch event per Bug #6)
+    //     → from float → DO subtract
+    // Setup: manifest floatQty=8. Plant 3 pre-booked regulars (with
+    // dispatch events) + 2 mid-trip regulars (without). Expect
+    // avail = 8 − 2 (only the no-dispatch ones).
+    // Create 5 pending_dispatch regulars BEFORE manifest. They'll snapshot
+    // into orderedQty=5; manifest totalLoaded=13 → floatQty=8.
+    const preBookedIds: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const o = await prisma.order.create({
         data: {
-          orderNumber: `TEST-AF-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+          orderNumber: `TEST-PB-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
           distributorId: DIST, customerId, driverId, vehicleId,
           orderDate: todayMidnight, deliveryDate: todayMidnight,
           status: 'pending_dispatch', orderSource: 'regular', tripNumber: 1, totalAmount: 500,
           items: { create: [{ cylinderTypeId, quantity: 1, unitPrice: 500, totalPrice: 500 }] },
         },
       });
+      preBookedIds.push(o.id);
     }
     await createOrUpdateManifest(
-      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 18 }], adminUserId,
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 13 }], adminUserId,
     );
-    // Promote all 10 to pending_delivery (mid-trip / post-dispatch)
+    // Promote pre-booked to pending_delivery + WRITE dispatch events for
+    // each (simulates what preflightDispatch would do).
     await prisma.order.updateMany({
-      where: { distributorId: DIST, deliveryDate: todayMidnight, orderSource: 'regular' },
+      where: { id: { in: preBookedIds } },
       data: { status: 'pending_delivery' },
     });
+    for (const id of preBookedIds) {
+      await prisma.inventoryEvent.create({
+        data: {
+          distributorId: DIST,
+          cylinderTypeId,
+          eventType: 'dispatch',
+          fullsChange: -1, emptiesChange: 0,
+          eventDate: todayMidnight,
+          referenceId: id,
+          referenceType: 'order',
+          createdBy: adminUserId,
+        },
+      });
+    }
+
+    // Now add 2 mid-trip regulars in pending_delivery WITHOUT dispatch
+    // events (simulates preflightAddToTrip's Bug #6 skip).
+    for (let i = 0; i < 2; i++) {
+      await prisma.order.create({
+        data: {
+          orderNumber: `TEST-MT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+          distributorId: DIST, customerId, driverId, vehicleId,
+          orderDate: todayMidnight, deliveryDate: todayMidnight,
+          status: 'pending_delivery', orderSource: 'regular', tripNumber: 1, totalAmount: 500,
+          items: { create: [{ cylinderTypeId, quantity: 1, unitPrice: 500, totalPrice: 500 }] },
+        },
+      });
+    }
+
     const avail = await getAvailableFullsForDriver(DIST, driverId, cylinderTypeId);
-    expect(avail).toBe(8); // floatQty 8, no walk-ins → 8
+    // floatQty 8 − 2 (mid-trip from-float) = 6. Pre-booked 5 are excluded
+    // because they have dispatch events (depot was already debited for them).
+    expect(avail).toBe(6);
   });
 });

@@ -784,35 +784,65 @@ export async function confirmVehicleReconciliation(
         // manifest's OWN tripNumber (not tripDva's current value, which may
         // have rolled past this manifest's trip).
         //
-        // FLOAT-001 (2026-06-18 #2): we sum `quantity` (= ordered) and NOT
-        // `deliveredQuantity`. The float pool is debited by what the driver
-        // takes OUT for walk-ins, regardless of whether the customer
-        // ultimately accepted all of it. Any shortfall (ordered − delivered)
-        // is handled INDEPENDENTLY by the CancelledStockEvent path in
-        // Step 2 above (which already credits the same physical cylinder
-        // back to depot). Using deliveredQuantity here would credit the
-        // shortfall cylinder TWICE — once via CSE, once via float-unsold.
-        // User repro 2026-06-18 ~07:02 IST, dist-002 Sharma: Bangalore Foods
-        // walk-in ordered 8 of 47.5 KG, delivered 7, 1 in CSE; the float
-        // event also credited +1 for "unsold" → On Vehicle stayed at +1
-        // (rest of the gap was the walk-in dispatch double-debit fixed
-        // separately in gstPreflightService.buildDispatchCtx).
-        const walkInAgg = await prisma.orderItem.aggregate({
+        // FLOAT-001 (2026-06-19 Bug #10): soldFromFloat = sum of quantity for
+        // ALL orders on this trip that consumed from the float pool. The
+        // discriminator is "no per-order dispatch event exists for the
+        // order" — that flag naturally catches:
+        //   - Walk-in orders (Bug #2 skip — orderSource='walk_in' never
+        //     writes a per-order dispatch event)
+        //   - Regular orders added mid-trip via "+ Add to Trip" (Bug #6 skip
+        //     — preflightAddToTrip path doesn't write per-order dispatch
+        //     events; cylinders come from the float pool already on truck)
+        // Pre-booked regulars dispatched via the initial preflightDispatch
+        // path DO write per-order dispatch events → excluded (they were
+        // debited from depot directly, not from float).
+        //
+        // Why `quantity` not `deliveredQuantity`: same Bug #3 reasoning —
+        // float is debited at the moment the driver takes cylinders OUT,
+        // not at customer accept. Shortfalls (ordered − delivered) are
+        // handled independently by the CSE path so they don't double-credit.
+        //
+        // Live evidence: dist-002 2026-06-18 ~21:04 IST, OSHD677 was a
+        // regular order added mid-trip via Add to Trip (qty 1 of 19 KG).
+        // Pre-fix: orderSource='walk_in' filter missed it → soldFromFloat=0
+        // → unsoldFloat=9 → Inventory showed On Vehicle = -1 for 19 KG.
+        // Post-fix: identified via "no dispatch event" → soldFromFloat=1
+        // → unsoldFloat=8 → On Vehicle = 0.
+        const tripOrders = await prisma.order.findMany({
           where: {
-            cylinderTypeId: manifestRow.cylinderTypeId,
-            order: {
-              distributorId,
-              driverId: tripDva.driverId,
-              tripNumber: manifestRow.tripNumber,
-              orderSource: 'walk_in',
-              status: { in: ['delivered', 'modified_delivered'] },
-              deletedAt: null,
+            distributorId,
+            driverId: tripDva.driverId,
+            tripNumber: manifestRow.tripNumber,
+            deletedAt: null,
+            status: { in: ['pending_delivery', 'preflight_in_progress', 'delivered', 'modified_delivered'] },
+            items: { some: { cylinderTypeId: manifestRow.cylinderTypeId } },
+          },
+          select: {
+            id: true,
+            items: {
+              where: { cylinderTypeId: manifestRow.cylinderTypeId },
+              select: { quantity: true },
             },
           },
-          _sum: { quantity: true },
         });
-        const walkInOrdered = walkInAgg._sum.quantity ?? 0;
-        const soldFromFloat = Math.min(walkInOrdered, manifestRow.floatQty);
+        const tripOrderIds = tripOrders.map((o) => o.id);
+        const dispatchedFromDepotIds = new Set(
+          tripOrderIds.length === 0 ? [] :
+          (await prisma.inventoryEvent.findMany({
+            where: {
+              distributorId,
+              eventType: 'dispatch',
+              referenceType: 'order',
+              referenceId: { in: tripOrderIds },
+              cylinderTypeId: manifestRow.cylinderTypeId,
+            },
+            select: { referenceId: true },
+          })).map((e) => e.referenceId).filter((v): v is string => v !== null),
+        );
+        const fromFloatQty = tripOrders
+          .filter((o) => !dispatchedFromDepotIds.has(o.id))
+          .reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
+        const soldFromFloat = Math.min(fromFloatQty, manifestRow.floatQty);
         const unsoldFloat = manifestRow.floatQty - soldFromFloat;
         if (unsoldFloat <= 0) continue;
         await prisma.$transaction(async (tx) => {
@@ -1153,21 +1183,51 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
       }));
       // floatSummary mirrors the Step 2.5 reconciliation math so the UI can
       // show the admin what's about to be credited back before they confirm.
+      //
+      // FLOAT-001 (2026-06-19 Bug #10): use the same "no per-order dispatch
+      // event = from float" discriminator as Step 2.5. Walk-ins AND mid-trip
+      // regulars (Add to Trip path) both consume float. Pre-fix the label
+      // and column counted only walk_in orderSource, so mid-trip regulars
+      // appeared as if they took 0 from float — and the displayed
+      // unsoldFloat was over-stated by their quantity, matching the
+      // over-credit that Step 2.5 wrote (Inventory On Vehicle = -1).
       for (const m of rows) {
         if (m.floatQty <= 0) continue;
-        const walkInAgg = await prisma.orderItem.aggregate({
+        const tripOrders = await prisma.order.findMany({
           where: {
-            cylinderTypeId: m.cylinderTypeId,
-            order: {
-              distributorId, driverId: tripDva.driverId,
-              tripNumber: tripDva.tripNumber, orderSource: 'walk_in',
-              status: { in: ['delivered', 'modified_delivered'] }, deletedAt: null,
+            distributorId,
+            driverId: tripDva.driverId,
+            tripNumber: tripDva.tripNumber,
+            deletedAt: null,
+            status: { in: ['pending_delivery', 'preflight_in_progress', 'delivered', 'modified_delivered'] },
+            items: { some: { cylinderTypeId: m.cylinderTypeId } },
+          },
+          select: {
+            id: true,
+            items: {
+              where: { cylinderTypeId: m.cylinderTypeId },
+              select: { quantity: true },
             },
           },
-          _sum: { deliveredQuantity: true },
         });
-        const walkInDelivered = walkInAgg._sum.deliveredQuantity ?? 0;
-        const soldFromFloat = Math.min(walkInDelivered, m.floatQty);
+        const tripOrderIds = tripOrders.map((o) => o.id);
+        const dispatchedFromDepotIds = new Set(
+          tripOrderIds.length === 0 ? [] :
+          (await prisma.inventoryEvent.findMany({
+            where: {
+              distributorId,
+              eventType: 'dispatch',
+              referenceType: 'order',
+              referenceId: { in: tripOrderIds },
+              cylinderTypeId: m.cylinderTypeId,
+            },
+            select: { referenceId: true },
+          })).map((e) => e.referenceId).filter((v): v is string => v !== null),
+        );
+        const fromFloatQty = tripOrders
+          .filter((o) => !dispatchedFromDepotIds.has(o.id))
+          .reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
+        const soldFromFloat = Math.min(fromFloatQty, m.floatQty);
         const unsoldFloat = m.floatQty - soldFromFloat;
         floatSummary.push({
           cylinderTypeId: m.cylinderTypeId,

@@ -336,29 +336,58 @@ export async function getAvailableFullsForDriver(
   const totalFloat = manifestRow.floatQty;
   if (totalFloat <= 0) return 0;
 
-  const walkInAgg = await prisma.orderItem.aggregate({
+  // FLOAT-001 (2026-06-19 Bug #10): "consumed from float" is identified
+  // by "no per-order dispatch event for this order" — naturally captures
+  // walk-ins (Bug #2 skip) AND mid-trip regulars dispatched via
+  // preflightAddToTrip (Bug #6 skip). Pre-booked regulars dispatched via
+  // the initial preflightDispatch DO write per-order dispatch events →
+  // they were debited from depot directly, NOT from float. Excluding
+  // them keeps the float pool calculation honest.
+  // Pre-fix this counted orderSource='walk_in' only, so a mid-trip
+  // regular order would not subtract from availableFulls → driver could
+  // create a walk-in qty exceeding what was physically left on the truck.
+  const tripOrders = await prisma.order.findMany({
     where: {
-      cylinderTypeId,
-      order: {
-        distributorId,
-        driverId,
-        deliveryDate: today,
-        orderSource: 'walk_in',
-        status: {
-          in: [
-            'pending_dispatch',
-            'preflight_in_progress',
-            'pending_delivery',
-            'delivered',
-            'modified_delivered',
-          ],
-        },
-        deletedAt: null,
-        ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+      distributorId,
+      driverId,
+      deliveryDate: today,
+      deletedAt: null,
+      status: {
+        in: [
+          'pending_dispatch',
+          'preflight_in_progress',
+          'pending_delivery',
+          'delivered',
+          'modified_delivered',
+        ],
+      },
+      items: { some: { cylinderTypeId } },
+      ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+    },
+    select: {
+      id: true,
+      items: {
+        where: { cylinderTypeId },
+        select: { quantity: true },
       },
     },
-    _sum: { quantity: true },
   });
-  const walkInTaken = walkInAgg._sum.quantity ?? 0;
-  return Math.max(0, totalFloat - walkInTaken);
+  const tripOrderIds = tripOrders.map((o) => o.id);
+  const dispatchedFromDepotIds = new Set(
+    tripOrderIds.length === 0 ? [] :
+    (await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId,
+        eventType: 'dispatch',
+        referenceType: 'order',
+        referenceId: { in: tripOrderIds },
+        cylinderTypeId,
+      },
+      select: { referenceId: true },
+    })).map((e) => e.referenceId).filter((v): v is string => v !== null),
+  );
+  const fromFloatQty = tripOrders
+    .filter((o) => !dispatchedFromDepotIds.has(o.id))
+    .reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
+  return Math.max(0, totalFloat - fromFloatQty);
 }

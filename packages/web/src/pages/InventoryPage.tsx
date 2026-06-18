@@ -1018,7 +1018,7 @@ function VehicleReturnCard({
                   <th className="text-center">Loaded</th>
                   <th className="text-center">Ordered</th>
                   <th className="text-center">Float</th>
-                  <th className="text-center">Sold (Walk-in)</th>
+                  <th className="text-center">Sold (Float)</th>
                   <th className="text-center">Returning to Depot</th>
                 </tr>
               </thead>
