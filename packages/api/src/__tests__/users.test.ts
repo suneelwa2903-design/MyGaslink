@@ -282,9 +282,62 @@ describe('Users — Driver ↔ User FK + unlinked filter (Group B Part 3)', () =
       });
     }
     await prisma.user.deleteMany({ where: { email: { in: leftoverEmails } } });
+    // 2026-06-18: a previous run's DVA seed (e.g. from gst-* tests sharing
+    // the same dev DB) may still hold an FK to "FK Test Driver". Drop those
+    // before deleting the driver — otherwise the deleteMany throws P2003 on
+    // `driver_vehicle_assignments_driver_id_fkey` and the entire describe
+    // suite fails before any test runs.
+    const leftoverDrivers = await prisma.driver.findMany({
+      where: { distributorId: 'dist-001', driverName: 'FK Test Driver' },
+      select: { id: true },
+    });
+    if (leftoverDrivers.length > 0) {
+      const ids = leftoverDrivers.map((d) => d.id);
+      await prisma.driverAssignment.deleteMany({ where: { driverId: { in: ids } } });
+      await prisma.driverVehicleAssignment.deleteMany({ where: { driverId: { in: ids } } });
+    }
     await prisma.driver.deleteMany({
       where: { distributorId: 'dist-001', driverName: 'FK Test Driver' },
     });
+    // 2026-06-18: leftover FK Test Customer rows from prior runs may carry
+    // customer_inventory_balances / customer_ledger_entries / orders /
+    // invoices etc — drop FK refs before the customer delete so P2003
+    // doesn't fail the whole describe's beforeAll.
+    const leftoverCustomers = await prisma.customer.findMany({
+      where: { distributorId: 'dist-001', customerName: 'FK Test Customer' },
+      select: { id: true },
+    });
+    if (leftoverCustomers.length > 0) {
+      const ids = leftoverCustomers.map((c) => c.id);
+      await prisma.customerInventoryBalance.deleteMany({ where: { customerId: { in: ids } } });
+      await prisma.customerLedgerEntry.deleteMany({ where: { customerId: { in: ids } } });
+      const oldInv = await prisma.invoice.findMany({
+        where: { customerId: { in: ids } },
+        select: { id: true },
+      });
+      const invIds = oldInv.map((i) => i.id);
+      if (invIds.length > 0) {
+        await prisma.creditNote.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.debitNote.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.gstDocument.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.invoiceItem.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.invoice.deleteMany({ where: { id: { in: invIds } } });
+      }
+      const oldOrders = await prisma.order.findMany({
+        where: { customerId: { in: ids } },
+        select: { id: true },
+      });
+      const orderIds = oldOrders.map((o) => o.id);
+      if (orderIds.length > 0) {
+        await prisma.driverAssignment.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.cancelledStockEvent.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.orderStatusLog.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      }
+      await prisma.paymentTransaction.deleteMany({ where: { customerId: { in: ids } } });
+      await prisma.user.deleteMany({ where: { customerId: { in: ids } } });
+    }
     await prisma.customer.deleteMany({
       where: { distributorId: 'dist-001', customerName: 'FK Test Customer' },
     });

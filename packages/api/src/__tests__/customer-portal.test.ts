@@ -18,11 +18,24 @@ beforeAll(async () => {
   const admin = await loginAsDistAdmin();
   adminToken = admin.token;
 
-  // Find a B2B customer from dist-001 and create a user account for it
+  // Find a B2B customer from dist-001 and create a user account for it.
+  // 2026-06-18: `deletedAt: null` is required because the dev DB has leftover
+  // ZZTEST_CSU soft-deleted customers from customer-status-update test runs.
+  // Without the filter findFirst would silently pick one, generate a token
+  // for a deleted customer id, and every portal endpoint returns 404.
+  // Adding `status: 'active'` as well so we never pick a stop-supply customer
+  // whose dashboard short-circuits with `supplyStopped: true` and breaks
+  // the wire-shape assertions further down.
   const customer = await prisma.customer.findFirst({
-    where: { distributorId: 'dist-001', customerType: 'B2B' },
+    where: {
+      distributorId: 'dist-001',
+      customerType: 'B2B',
+      deletedAt: null,
+      status: 'active',
+    },
+    orderBy: { createdAt: 'asc' },
   });
-  if (!customer) throw new Error('No B2B customer found');
+  if (!customer) throw new Error('No active B2B customer found in dist-001 seed');
   customerId = customer.id;
   distributorId = customer.distributorId;
 

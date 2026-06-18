@@ -250,12 +250,65 @@ describe('GET /api/analytics/overdue-call-list', () => {
   const issued = new Date();
   const past = new Date(Date.now() - 15 * 86400_000);
   const future = new Date(Date.now() + 5 * 86400_000);
+  // 2026-06-18: track ids at create time so afterAll deletes ONLY what we
+  // created, not every customer that happens to share these names. Previously
+  // ~94 leftover rows accumulated on the dev DB because the cleanup ran by
+  // name and either skipped customers with FK refs or wasn't scoped.
+  const seededCustomerIds: string[] = [];
 
   beforeAll(async () => {
+    // FK-safe sweep of leftover rows from prior failed runs (same names +
+    // same fixed phones we seed below). Drop every FK first or P2003 throws.
+    const oldCustomers = await prisma.customer.findMany({
+      where: {
+        OR: [
+          { distributorId: dist1Id, phone: { in: ['9000000100', '9000000101'] } },
+          { distributorId: dist2Id!, phone: '9000000102' },
+        ],
+      },
+      select: { id: true },
+    });
+    if (oldCustomers.length > 0) {
+      const ids = oldCustomers.map((c) => c.id);
+      await prisma.customerInventoryBalance.deleteMany({ where: { customerId: { in: ids } } });
+      await prisma.customerLedgerEntry.deleteMany({ where: { customerId: { in: ids } } });
+      const oldInvoices = await prisma.invoice.findMany({
+        where: { customerId: { in: ids } },
+        select: { id: true },
+      });
+      const invIds = oldInvoices.map((i) => i.id);
+      if (invIds.length > 0) {
+        await prisma.creditNote.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.debitNote.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.gstDocument.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.invoiceItem.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.invoice.deleteMany({ where: { id: { in: invIds } } });
+      }
+      const oldOrders = await prisma.order.findMany({
+        where: { customerId: { in: ids } },
+        select: { id: true },
+      });
+      const orderIds = oldOrders.map((o) => o.id);
+      if (orderIds.length > 0) {
+        await prisma.driverAssignment.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.cancelledStockEvent.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.orderStatusLog.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      }
+      await prisma.paymentTransaction.deleteMany({ where: { customerId: { in: ids } } });
+      await prisma.user.deleteMany({ where: { customerId: { in: ids } } });
+      await prisma.customer.deleteMany({ where: { id: { in: ids } } });
+    }
+    // Also clear any orphan OBT-* invoices from prior runs (their customer
+    // may have been deleted by an earlier afterAll branch).
+    await prisma.invoice.deleteMany({ where: { invoiceNumber: { startsWith: 'OBT-' } } });
+
     // Seed: one customer with an overdue invoice + one with a future-due invoice
     const c1 = await prisma.customer.create({
       data: { distributorId: dist1Id, customerName: 'Overdue Caller', phone: '9000000100' },
     });
+    seededCustomerIds.push(c1.id);
     await prisma.invoice.create({
       data: {
         invoiceNumber: `OBT-${Date.now()}-1`,
@@ -272,6 +325,7 @@ describe('GET /api/analytics/overdue-call-list', () => {
     const c2 = await prisma.customer.create({
       data: { distributorId: dist1Id, customerName: 'Within Period', phone: '9000000101' },
     });
+    seededCustomerIds.push(c2.id);
     await prisma.invoice.create({
       data: {
         invoiceNumber: `OBT-${Date.now()}-2`,
@@ -289,6 +343,7 @@ describe('GET /api/analytics/overdue-call-list', () => {
     const c3 = await prisma.customer.create({
       data: { distributorId: dist2Id!, customerName: 'Other Tenant Caller', phone: '9000000102' },
     });
+    seededCustomerIds.push(c3.id);
     await prisma.invoice.create({
       data: {
         invoiceNumber: `OBT-${Date.now()}-3`,
@@ -304,12 +359,52 @@ describe('GET /api/analytics/overdue-call-list', () => {
   });
 
   afterAll(async () => {
-    await prisma.invoice.deleteMany({
-      where: { invoiceNumber: { startsWith: 'OBT-' } },
-    });
-    await prisma.customer.deleteMany({
-      where: { customerName: { in: ['Overdue Caller', 'Within Period', 'Other Tenant Caller'] } },
-    });
+    // 2026-06-18: delete by SEEDED IDS captured in beforeAll, not by name.
+    // Name-based delete swept the same names across every prior run, hit
+    // FK violations the moment any leftover customer had a balance/ledger
+    // row, and accumulated ~94 stale rows on the dev DB.
+    if (seededCustomerIds.length > 0) {
+      // FK chain: balance + ledger + invoices/items/gst-docs + orders/items/
+      // status-log/driver-assignment/CSE + payments before customer delete.
+      await prisma.customerInventoryBalance.deleteMany({
+        where: { customerId: { in: seededCustomerIds } },
+      });
+      await prisma.customerLedgerEntry.deleteMany({
+        where: { customerId: { in: seededCustomerIds } },
+      });
+      const inv = await prisma.invoice.findMany({
+        where: { customerId: { in: seededCustomerIds } },
+        select: { id: true },
+      });
+      const invIds = inv.map((i) => i.id);
+      if (invIds.length > 0) {
+        await prisma.creditNote.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.debitNote.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.gstDocument.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.invoiceItem.deleteMany({ where: { invoiceId: { in: invIds } } });
+        await prisma.invoice.deleteMany({ where: { id: { in: invIds } } });
+      }
+      await prisma.invoice.deleteMany({ where: { invoiceNumber: { startsWith: 'OBT-' } } });
+      const ord = await prisma.order.findMany({
+        where: { customerId: { in: seededCustomerIds } },
+        select: { id: true },
+      });
+      const orderIds = ord.map((o) => o.id);
+      if (orderIds.length > 0) {
+        await prisma.driverAssignment.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.cancelledStockEvent.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.orderStatusLog.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      }
+      await prisma.paymentTransaction.deleteMany({ where: { customerId: { in: seededCustomerIds } } });
+      await prisma.user.deleteMany({ where: { customerId: { in: seededCustomerIds } } });
+      await prisma.customer.deleteMany({ where: { id: { in: seededCustomerIds } } });
+    } else {
+      // Fallback for the unusual path where beforeAll failed mid-seed —
+      // still try to clear any OBT-* invoices that may have been written.
+      await prisma.invoice.deleteMany({ where: { invoiceNumber: { startsWith: 'OBT-' } } });
+    }
   });
 
   it('returns customers past credit period sorted by daysOverdue desc', async () => {
