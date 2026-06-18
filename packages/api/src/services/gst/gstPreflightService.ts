@@ -587,10 +587,21 @@ export async function preflightAddToTrip(params: {
     // If a manifest with floatQty > 0 exists on this trip, treat the trip
     // as live and allow the add. Otherwise the WI-068 guard still fires —
     // an admin grafting onto a logically-finished trip is rejected.
+    //
+    // FLOAT-001 (2026-06-18 #5): dropped tripNumber filter — same root
+    // cause as Bug #1 (Step 2.5) and Bug #4 (getAvailableFullsForDriver).
+    // When the DVA rolls trip 1 → trip 2 mid-day (admin adds a fresh
+    // regular order), the manifest stays at trip 1. Filtering this guard
+    // by tripNumber=2 misses the trip-1 manifest, the count goes to 0,
+    // and the walk-in is rejected with NO_ACTIVE_TRIP even though the
+    // truck still has float cylinders. One DVA = one truck = one float
+    // pool until reconciliation — same model as the two prior fixes.
+    // Live evidence: user repro on dist-002 OSHD2627000654, walk-in qty=3
+    // returned 207 / preflight_error=NO_ACTIVE_TRIP. After this fix, the
+    // count picks up the trip-1 manifest and preflight proceeds normally.
     const floatManifestExists = await prisma.dVALoadManifest.count({
       where: {
         dvaId: mapping.id,
-        tripNumber: mapping.tripNumber,
         distributorId,
         floatQty: { gt: 0 },
       },
