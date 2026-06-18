@@ -579,7 +579,12 @@ interface CustomerRow {
   customerType?: string;
 }
 interface CylinderTypeRow {
-  id: string;
+  // FLOAT-001 (2026-06-18) — field is `cylinderTypeId` not `id` in the
+  // /api/cylinder-types response. Using `t.id` (undefined) caused the
+  // React "missing key" warning, the type picker selection to silently
+  // fail (cylinderTypeId stayed null), and availableFulls lookup against
+  // undefined → driver couldn't enter quantity.
+  cylinderTypeId: string;
   typeName: string;
 }
 interface TripStockRow {
@@ -732,12 +737,12 @@ function WalkInOrderModal({
             <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Cylinder Type</Text>
             <View style={{ marginBottom: 12 }}>
               {types.map((t) => {
-                const avail = stock.find((s) => s.cylinderTypeId === t.id)?.availableFulls ?? 0;
-                const selected = cylinderTypeId === t.id;
+                const avail = stock.find((s) => s.cylinderTypeId === t.cylinderTypeId)?.availableFulls ?? 0;
+                const selected = cylinderTypeId === t.cylinderTypeId;
                 return (
                   <TouchableOpacity
-                    key={t.id}
-                    onPress={() => setCylinderTypeId(t.id)}
+                    key={t.cylinderTypeId}
+                    onPress={() => setCylinderTypeId(t.cylinderTypeId)}
                     style={{
                       padding: 12,
                       borderWidth: selected ? 2 : 1,

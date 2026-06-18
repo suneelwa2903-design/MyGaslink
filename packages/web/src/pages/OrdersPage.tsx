@@ -1794,7 +1794,12 @@ function AssignmentsTab() {
 // On confirm, POSTs /api/manifests so preflightDispatch will debit depot
 // for the float portion AND the reconcile flow will credit unsold back.
 
-type CylinderTypeRow = { id: string; typeName: string };
+// FLOAT-001 (2026-06-18) — field is `cylinderTypeId` not `id` in the
+// /api/cylinder-types response envelope. Using the wrong key was the root
+// cause of "Ordered always 0, all inputs share value, typing 7 → all 7":
+// `t.id` evaluated to undefined, the Map lookup missed every row, and
+// `floatByType[undefined]` was a single shared cell across every input.
+type CylinderTypeRow = { cylinderTypeId: string; typeName: string };
 type LoadManifestPanelProps = {
   assignmentId: string;
   // FLOAT-001 (2026-06-18): live ordered items from the dispatch card.
@@ -1888,15 +1893,15 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
     // leave any prior manifest row for that type untouched.
     const items: Array<{ cylinderTypeId: string; totalLoaded: number }> = [];
     for (const t of types) {
-      const raw = floatByType[t.id];
+      const raw = floatByType[t.cylinderTypeId];
       if (raw === undefined || raw.trim() === '') continue;
       const float = Math.max(0, Math.floor(Number(raw) || 0));
       // Use the same Ordered we DISPLAY to the admin so totalLoaded matches
       // the on-screen Total column exactly.
-      const ordered = existingByType.get(t.id)?.orderedQty ?? liveOrderedByType.get(t.id) ?? 0;
+      const ordered = existingByType.get(t.cylinderTypeId)?.orderedQty ?? liveOrderedByType.get(t.cylinderTypeId) ?? 0;
       const totalLoaded = ordered + float;
       if (totalLoaded <= 0) continue;
-      items.push({ cylinderTypeId: t.id, totalLoaded });
+      items.push({ cylinderTypeId: t.cylinderTypeId, totalLoaded });
     }
     if (items.length === 0) {
       toast.error('Enter float qty for at least one cylinder type');
@@ -1939,18 +1944,18 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
               <div className="text-right">Total Loaded</div>
             </div>
             {types.map((t) => {
-              const saved = existingByType.get(t.id);
+              const saved = existingByType.get(t.cylinderTypeId);
               // Prefer saved snapshot (post-confirm) — falls back to live
               // pending_dispatch count from the current order list pre-confirm.
-              const orderedDisplay = saved?.orderedQty ?? liveOrderedByType.get(t.id) ?? 0;
+              const orderedDisplay = saved?.orderedQty ?? liveOrderedByType.get(t.cylinderTypeId) ?? 0;
               const savedFloat = saved?.floatQty ?? 0;
-              const inputRaw = floatByType[t.id] ?? '';
+              const inputRaw = floatByType[t.cylinderTypeId] ?? '';
               const inputNum = inputRaw === '' ? null : Math.max(0, Math.floor(Number(inputRaw) || 0));
               const totalDisplay = isReadOnly
                 ? saved?.totalLoaded ?? 0
                 : orderedDisplay + (inputNum ?? savedFloat);
               return (
-                <div key={t.id} className="grid grid-cols-4 gap-2 items-center">
+                <div key={t.cylinderTypeId} className="grid grid-cols-4 gap-2 items-center">
                   <div className="text-sm text-surface-900 dark:text-white">{t.typeName}</div>
                   <div className="text-right text-sm text-surface-600 dark:text-surface-300">
                     {orderedDisplay}
@@ -1961,13 +1966,13 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
                     </div>
                   ) : (
                     <input
-                      key={t.id}
+                      key={t.cylinderTypeId}
                       type="number"
                       min={0}
                       value={inputRaw}
                       placeholder={savedFloat > 0 ? String(savedFloat) : '0'}
                       onChange={(e) =>
-                        setFloatByType((prev) => ({ ...prev, [t.id]: e.target.value }))
+                        setFloatByType((prev) => ({ ...prev, [t.cylinderTypeId]: e.target.value }))
                       }
                       className="input py-1 text-sm w-full text-right"
                     />
