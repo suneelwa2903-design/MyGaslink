@@ -696,4 +696,113 @@ describe('FLOAT-001 — float-unsold reconciliation credit', () => {
     expect(dispatchEvents).toHaveLength(0);
     expect(returnEvents).toHaveLength(0);
   });
+
+  // ── Bug #7 regression cluster (2026-06-18) ──────────────────────────────
+  //
+  // confirmVehicleReconciliation now increments DVA.tripNumber as part of
+  // its terminal state update. Before this fix tripNumber was only bumped
+  // by preflightDispatch's shouldRoll on the NEXT dispatch — leaving a
+  // window where a manifest save would overwrite the prior trip's rows
+  // in place (destroying audit trail and breaking Step 2.5 idempotency
+  // by manifest.id on the next reconcile).
+
+  it('BUG #7 — DVA.tripNumber increments immediately at reconciliation', async () => {
+    await fullCycle({ manifest: [{ cylinderTypeId, totalLoaded: 5 }] });
+    const dva = await prisma.driverVehicleAssignment.findUniqueOrThrow({
+      where: { id: dvaId },
+    });
+    expect(dva.tripNumber).toBe(2); // was 1 at dispatch, now 2 immediately after reconcile
+    expect(dva.status).toBe('dispatch_ready');
+    expect(dva.isReconciled).toBe(true);
+  });
+
+  it('BUG #7 — manifest save after reconcile creates NEW trip-2 rows (not overwrite trip-1)', async () => {
+    // Trip 1: dispatch + reconcile → manifest row at trip 1, DVA at trip 2
+    await fullCycle({ manifest: [{ cylinderTypeId, totalLoaded: 8 }] });
+    const t1Rows = await prisma.dVALoadManifest.findMany({
+      where: { dvaId, cylinderTypeId },
+    });
+    expect(t1Rows).toHaveLength(1);
+    expect(t1Rows[0].tripNumber).toBe(1);
+    expect(t1Rows[0].totalLoaded).toBe(8);
+    const t1RowId = t1Rows[0].id;
+
+    // Admin saves a fresh manifest for trip 2 with DIFFERENT value
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 12 }], adminUserId,
+    );
+
+    const allRows = await prisma.dVALoadManifest.findMany({
+      where: { dvaId, cylinderTypeId },
+      orderBy: { tripNumber: 'asc' },
+    });
+    // Expect 2 rows now — trip 1 UNCHANGED + trip 2 NEW
+    expect(allRows).toHaveLength(2);
+    expect(allRows[0].tripNumber).toBe(1);
+    expect(allRows[0].id).toBe(t1RowId); // same id — not overwritten
+    expect(allRows[0].totalLoaded).toBe(8); // trip-1 value preserved
+    expect(allRows[1].tripNumber).toBe(2);
+    expect(allRows[1].id).not.toBe(t1RowId); // distinct id
+    expect(allRows[1].totalLoaded).toBe(12); // new value
+  });
+
+  it('BUG #7 — Step 2.5 fires correctly on trip-2 reconcile (idempotency-by-id not broken)', async () => {
+    // Trip 1 full cycle with 5 float, no walk-ins → +5 return event for trip-1 row
+    await fullCycle({ manifest: [{ cylinderTypeId, totalLoaded: 5 }] });
+    const trip1Returns = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'cancellation_return',
+        referenceType: 'dva_load_manifest',
+        eventDate: todayMidnight,
+      },
+    });
+    expect(trip1Returns).toHaveLength(1);
+    expect(trip1Returns[0].fullsChange).toBe(5);
+    const trip1ManifestId = trip1Returns[0].referenceId;
+
+    // Trip 2: fresh manifest with 4 float, full cycle → expect +4 return event
+    // with a DIFFERENT manifest id (the trip-2 row)
+    await fullCycle({ manifest: [{ cylinderTypeId, totalLoaded: 4 }] });
+    const allReturns = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'cancellation_return',
+        referenceType: 'dva_load_manifest',
+        eventDate: todayMidnight,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(allReturns).toHaveLength(2);
+    expect(allReturns[0].fullsChange).toBe(5); // trip 1 — unchanged
+    expect(allReturns[0].referenceId).toBe(trip1ManifestId);
+    expect(allReturns[1].fullsChange).toBe(4); // trip 2 — fresh credit
+    expect(allReturns[1].referenceId).not.toBe(trip1ManifestId);
+  });
+
+  it('BUG #7 — preflightDispatch shouldRoll does NOT double-bump tripNumber on reconciled path', async () => {
+    // Trip 1 → reconciled → DVA at trip 2 already (per Bug #7 fix above).
+    await fullCycle({ manifest: [{ cylinderTypeId, totalLoaded: 3 }] });
+    const beforeTrip2 = await prisma.driverVehicleAssignment.findUniqueOrThrow({
+      where: { id: dvaId },
+    });
+    expect(beforeTrip2.tripNumber).toBe(2);
+    expect(beforeTrip2.isReconciled).toBe(true);
+
+    // Admin enters trip-2 manifest + dispatches. shouldRoll path triggers
+    // (status=dispatch_ready, isReconciled=true) → must NOT bump again.
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 4 }], adminUserId,
+    );
+    await preflightDispatch({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+
+    const afterT2Dispatch = await prisma.driverVehicleAssignment.findUniqueOrThrow({
+      where: { id: dvaId },
+    });
+    expect(afterT2Dispatch.tripNumber).toBe(2); // STILL 2, not 3
+    expect(afterT2Dispatch.isReconciled).toBe(false); // cleared by shouldRoll block
+    expect(afterT2Dispatch.status).toBe('loaded_and_dispatched');
+  });
 });

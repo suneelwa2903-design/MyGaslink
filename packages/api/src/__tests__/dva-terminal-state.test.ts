@@ -108,20 +108,33 @@ describe('WI-100 — DVA terminal state + return-loop guard', () => {
     await expect(markVehicleReturned(d.vehicleId, 'dts-user', D1)).rejects.toThrow('Vehicle has already been reconciled');
   });
 
-  it('✅ 3. preflightDispatch rolls on a dispatch_ready + isReconciled DVA (post-reconcile path)', async () => {
+  it('✅ 3. preflightDispatch on dispatch_ready + isReconciled DVA clears flags but does NOT bump tripNumber (Bug #7 — reconcile already bumped)', async () => {
+    // FLOAT-001 (2026-06-18 Bug #7): confirmVehicleReconciliation now bumps
+    // tripNumber as part of its terminal state update. By the time
+    // preflightDispatch sees a `dispatch_ready + isReconciled=true` DVA, the
+    // tripNumber has ALREADY been incremented by reconcile to N+1 — so the
+    // dispatch path must NOT re-increment (would double-bump and orphan the
+    // newly-saved manifest at trip N+1 against orders stamped trip N+2).
+    // It still clears the isReconciled flag and timeline stamps so the
+    // upcoming trip's state is clean.
+    //
+    // Setup simulates the post-reconcile state: tripNumber=4 (already bumped
+    // from 3 by reconcile), isReconciled=true, status=dispatch_ready.
+    // The completed trip's order is stamped trip 3 (pre-bump value).
     const d = await mkDriver(PHONES[2], 'RollRec', 'idle');
-    const dva = await mkDva(d.driverId, d.vehicleId, { status: 'dispatch_ready', tripNumber: 3, isReconciled: true, date: ffDate });
-    await mkOrder(d.driverId, d.vehicleId, { status: 'delivered', tripNumber: 3, date: ffDate }); // 0 in-flight
+    const dva = await mkDva(d.driverId, d.vehicleId, { status: 'dispatch_ready', tripNumber: 4, isReconciled: true, date: ffDate });
+    await mkOrder(d.driverId, d.vehicleId, { status: 'delivered', tripNumber: 3, date: ffDate }); // prior trip — 0 in-flight
     const fresh = await mkOrder(d.driverId, d.vehicleId, { status: 'pending_dispatch', tripNumber: null, date: ffDate });
 
     const res = await preflightDispatch({ distributorId: D1, driverId: d.driverId, assignmentDate: FF, userId: 'dts-user' });
     expect(res.summary.succeeded).toBeGreaterThan(0);
 
     const after = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: dva.id } });
-    expect(after.tripNumber).toBe(4);            // rolled
-    expect(after.isReconciled).toBe(false);      // cleared by roll
+    expect(after.tripNumber).toBe(4);            // unchanged — reconcile already bumped
+    expect(after.isReconciled).toBe(false);      // cleared by shouldRoll block
+    expect(after.status).toBe('loaded_and_dispatched');
     const o = await prisma.order.findUniqueOrThrow({ where: { id: fresh.id } });
-    expect(o.tripNumber).toBe(4);
+    expect(o.tripNumber).toBe(4);                // stamped with current trip
     expect(o.status).toBe('pending_delivery');
   });
 

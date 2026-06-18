@@ -825,9 +825,30 @@ export async function confirmVehicleReconciliation(
       // trip — dispatch_ready (vehicle idle, waiting for the next dispatch).
       // Without this the DVA stuck at loaded_and_dispatched after reconcile, so
       // the driver app re-showed "Mark Vehicle Returned" forever (the loop).
-      // preflightDispatch (WI-100 Gap B) rolls this dispatch_ready+isReconciled
-      // DVA to the next trip when a new batch is dispatched.
-      data: { status: 'dispatch_ready', reconciledAt: new Date(), isReconciled: true },
+      //
+      // FLOAT-001 (2026-06-18 Bug #7): tripNumber INCREMENTS HERE, not in
+      // preflightDispatch's shouldRoll block. Previously the bump was deferred
+      // until the next dispatch click — between reconcile and that next
+      // dispatch, DVA.tripNumber was stale (still trip N). A manifest save in
+      // that window hit the trip-N unique slot and SILENTLY OVERWROTE the
+      // trip-N manifest values. Trip N's audit trail was destroyed and
+      // Step 2.5's idempotency-by-manifest.id check would later skip the
+      // trip-N+1 return credit because the manifest IDs were already
+      // "settled" by trip N's earlier reconcile. Depot would permanently
+      // lose those cylinders.
+      //
+      // Bumping tripNumber here closes that window: after reconcile the DVA
+      // is at tripNumber=N+1 immediately, so any manifest save targets a
+      // fresh (dvaId, cylinderType, N+1) slot — new rows, new IDs, no
+      // overwrite. preflightDispatch's shouldRoll block was updated to NOT
+      // re-increment for the reconciled path (would double-bump).
+      // Live evidence: user repro on dist-002 2026-06-18 ~17:56 IST.
+      data: {
+        status: 'dispatch_ready',
+        reconciledAt: new Date(),
+        isReconciled: true,
+        tripNumber: { increment: 1 },
+      },
     });
 
     // P2-1: emit trip_updated so the driver's Trip tab refetches

@@ -240,17 +240,21 @@ export async function preflightDispatch(params: {
   }
 
   // WI-100 Gap B: decide whether this dispatch starts a NEW trip on an
-  // already-used DVA (→ roll tripNumber + clear the prior trip's state). Two
-  // trigger cases:
+  // already-used DVA (→ clear the prior trip's state). Two trigger cases:
   //   (a) status === 'dispatch_ready' && isReconciled — the NORMAL post-reconcile
   //       path. confirmVehicleReconciliation now leaves the DVA dispatch_ready
-  //       (WI-100 Gap A). A brand-new first-trip DVA is also dispatch_ready but
-  //       has isReconciled === false, so it does NOT roll (keeps tripNumber 1).
+  //       (WI-100 Gap A) AND increments tripNumber to N+1 (Bug #7, 2026-06-18).
+  //       This branch must NOT re-increment tripNumber — only clear the
+  //       isReconciled flag so the next reconcile can fire its own credits.
   //   (b) status === 'loaded_and_dispatched' with 0 in-flight orders —
   //       defence-in-depth for a completed trip whose DVA never got reconciled
-  //       (escaped/pre-WI-100 rows). If orders ARE in flight the caller wanted
+  //       (escaped/pre-WI-100 rows). tripNumber MUST bump here because
+  //       reconcile never ran. If orders ARE in flight the caller wanted
   //       "Add to Trip", so refuse the second dispatch with a 409.
-  let shouldRoll = false;
+  //   A brand-new first-trip DVA is dispatch_ready with isReconciled=false —
+  //   does NOT match either branch, keeps tripNumber=1, falls through.
+  let shouldClearTripState = false;
+  let needsTripBumpHere = false;
   if (mapping?.status === 'loaded_and_dispatched') {
     const inFlightCount = await prisma.order.count({
       where: {
@@ -268,20 +272,22 @@ export async function preflightDispatch(params: {
         409,
       );
     }
-    shouldRoll = true; // completed trip, 0 in-flight
+    shouldClearTripState = true;
+    needsTripBumpHere = true; // (b) reconcile never ran → bump here
   } else if (mapping?.status === 'dispatch_ready' && mapping.isReconciled) {
-    shouldRoll = true; // reconciled trip → start the next one
+    shouldClearTripState = true;
+    needsTripBumpHere = false; // (a) reconcile already bumped → must not double-bump
   }
 
-  if (shouldRoll && mapping?.id) {
-    // Roll to a fresh trip: bump tripNumber, reset to dispatch_ready, clear the
-    // prior trip's consolidated-EWB + timeline stamps (the new trip writes its
-    // own). order_status_logs keeps the per-order audit trail. WI-096b moved
-    // this roll out of confirmDelivery (which fired too early at last delivery).
+  if (shouldClearTripState && mapping?.id) {
+    // Reset to a fresh trip state: clear the prior trip's consolidated-EWB +
+    // timeline stamps (the new trip writes its own). order_status_logs keeps
+    // the per-order audit trail. WI-096b moved this out of confirmDelivery
+    // (which fired too early at last delivery).
     await prisma.driverVehicleAssignment.update({
       where: { id: mapping.id },
       data: {
-        tripNumber: { increment: 1 },
+        ...(needsTripBumpHere ? { tripNumber: { increment: 1 } } : {}),
         status: 'dispatch_ready',
         tripSheetNo: null,
         tripSheetGeneratedAt: null,
@@ -294,6 +300,8 @@ export async function preflightDispatch(params: {
       },
     });
     mapping.status = 'dispatch_ready';
+    if (needsTripBumpHere) mapping.tripNumber += 1; // keep in-memory in sync for filters below
+    mapping.isReconciled = false;
   }
 
   // Re-fetch DVA to get the post-reset tripNumber so we stamp the right

@@ -105,9 +105,21 @@ describe('Feature 2 — empties returned at reconciliation', () => {
     // The prior zero-input test reconciled this DVA. Reset it to a live state
     // so the trip-scoped helper finds an active DVA (otherwise the validation
     // guard sees collected=0 because no active trip exists).
+    //
+    // FLOAT-001 (2026-06-18 Bug #7): confirmVehicleReconciliation now bumps
+    // tripNumber as part of its terminal state update. The prior zero-input
+    // reconcile incremented tripNumber to 2. The empties validation downstream
+    // filters trip orders by DVA.tripNumber — without resetting tripNumber back
+    // to 1 here, the seeded order at tripNumber=1 is invisible, collectedEmpties=0,
+    // and the 12-empties payload rejects with statusCode 400.
     await prisma.driverVehicleAssignment.update({
       where: { id: dvaId },
-      data: { status: 'loaded_and_dispatched', isReconciled: false, reconciledAt: null },
+      data: {
+        status: 'loaded_and_dispatched',
+        isReconciled: false,
+        reconciledAt: null,
+        tripNumber: 1,
+      },
     });
     await prisma.vehicle.update({ where: { id: vehicleId }, data: { status: 'returned' } });
     const result = await confirmVehicleReconciliation(vehicleId, DIST, 'test-user', {
