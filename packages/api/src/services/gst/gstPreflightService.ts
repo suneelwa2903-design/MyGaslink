@@ -936,7 +936,19 @@ async function preflightOne(params: {
  */
 // WI-106: assemble the dispatch-debit context from an order (with items).
 // Passed to transitionToPendingDelivery; only consumed when the flag is on.
+//
+// FLOAT-001 (2026-06-18): return undefined for walk-in orders. Walk-ins are
+// SERVED FROM THE FLOAT POOL — the manifest's float dispatch event already
+// debited those cylinders from depot when the trip left. Writing a second
+// dispatch event here would double-debit: depot sees both the float event
+// (-floatQty) AND a per-walk-in-order dispatch (-walkInQty). Symptom (user
+// repro 2026-06-18 ~07:02 IST): "On Vehicle Fulls" stays positive after a
+// successful reconcile because closingFulls subtracts the duplicate dispatch
+// twice. The walk-in delivery event still fires at confirmDelivery and is
+// correct on its own — that's the cylinder leaving the vehicle for the
+// customer's hand. We just must not pretend it left the depot a second time.
 function buildDispatchCtx(order: PreflightOrder, vehicleNumber: string | null) {
+  if (order.orderSource === 'walk_in') return undefined;
   return {
     distributorId: order.distributorId,
     deliveryDate: order.deliveryDate,

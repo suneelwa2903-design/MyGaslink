@@ -258,75 +258,77 @@ export async function getAvailableFullsForDriver(
       status: { not: 'cancelled' },
     },
     orderBy: { tripNumber: 'desc' },
-    select: { id: true, tripNumber: true, status: true, isReconciled: true },
+    select: { id: true, status: true, isReconciled: true },
   });
   if (!dva) return 0;
   if (dva.isReconciled || dva.status === 'cancelled') return 0;
 
-  const effectiveTrip = await resolveEffectiveTripNumber(
-    distributorId,
-    driverId,
-    today,
-    dva.tripNumber,
-  );
-
-  const manifestRow = await prisma.dVALoadManifest.findUnique({
+  // FLOAT-001 (2026-06-18 #4): availability is per-DVA, NOT per-trip.
+  // One DVA = one truck = one float pool that persists across every trip
+  // the DVA serves until reconciliation. The original code keyed the
+  // manifest lookup on `tripNumber: effectiveTrip` which broke the moment
+  // the DVA rolled to a new trip mid-day — manifest stayed at trip 1,
+  // lookup at trip 2 returned null, availability collapsed to 0, driver
+  // could not create walk-ins despite physical fulls still on the truck.
+  // Same bug class as the Step 2.5 rolled-trip fix earlier today.
+  //
+  // New formula: availableFulls = Σ manifest.floatQty (any trip) − Σ
+  // walk-in cylinders already taken from the pool (any trip, any status
+  // that consumed the cylinder OUT of the float pool).
+  //
+  // Why floatQty (not totalLoaded): mid-trip regular orders (added after
+  // manifest confirm and dispatched fresh) have their own per-order
+  // dispatch event AND are reserved for specific customers. They don't
+  // come out of the float pool. The float pool is only for un-named
+  // walk-in capacity.
+  //
+  // Why quantity (not deliveredQuantity): the float pool is debited by
+  // what the driver TAKES OUT for a walk-in, regardless of whether the
+  // customer ultimately accepted it. Shortfalls flow through the
+  // CancelledStockEvent path. Same logic as Step 2.5 fix #3.
+  // Earliest (= original) manifest for this DVA + cylinderType. In normal
+  // flow there's exactly one row because manifests can only be confirmed
+  // when DVA.status='dispatch_ready' (pre-dispatch); the unique key includes
+  // tripNumber only because reconciliation could in theory loop you back to
+  // dispatch_ready for a fresh load. Take the lowest tripNumber so a
+  // hypothetical second manifest after a reconcile-and-redispatch wouldn't
+  // accidentally count both pools.
+  const manifestRow = await prisma.dVALoadManifest.findFirst({
     where: {
-      dvaId_cylinderTypeId_tripNumber: {
-        dvaId: dva.id,
-        cylinderTypeId,
-        tripNumber: effectiveTrip,
-      },
+      dvaId: dva.id,
+      cylinderTypeId,
+      distributorId,
     },
-    select: { totalLoaded: true },
+    orderBy: { tripNumber: 'asc' },
+    select: { floatQty: true },
   });
   if (!manifestRow) return 0;
+  const totalFloat = manifestRow.floatQty;
+  if (totalFloat <= 0) return 0;
 
-  // In-flight: pending_dispatch / preflight_in_progress / pending_delivery
-  const IN_FLIGHT_STATUSES = [
-    'pending_dispatch',
-    'preflight_in_progress',
-    'pending_delivery',
-  ] as const;
-  const pending = await prisma.orderItem.aggregate({
+  const walkInAgg = await prisma.orderItem.aggregate({
     where: {
       cylinderTypeId,
       order: {
         distributorId,
         driverId,
-        tripNumber: effectiveTrip,
         deliveryDate: today,
-        status: { in: [...IN_FLIGHT_STATUSES] },
+        orderSource: 'walk_in',
+        status: {
+          in: [
+            'pending_dispatch',
+            'preflight_in_progress',
+            'pending_delivery',
+            'delivered',
+            'modified_delivered',
+          ],
+        },
         deletedAt: null,
         ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
       },
     },
     _sum: { quantity: true },
   });
-
-  // Delivered: TRIP_CONTENT_STATUSES drops pending_delivery, leaving the
-  // terminal {delivered, modified_delivered} set we want here.
-  const DELIVERED_STATUSES = TRIP_CONTENT_STATUSES.filter(
-    (s) => s !== 'pending_delivery',
-  );
-  const delivered = await prisma.orderItem.aggregate({
-    where: {
-      cylinderTypeId,
-      order: {
-        distributorId,
-        driverId,
-        tripNumber: effectiveTrip,
-        deliveryDate: today,
-        status: { in: [...DELIVERED_STATUSES] },
-        deletedAt: null,
-        ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
-      },
-    },
-    _sum: { deliveredQuantity: true },
-  });
-
-  const pendingSum = pending._sum.quantity ?? 0;
-  const deliveredSum = delivered._sum.deliveredQuantity ?? 0;
-  const available = manifestRow.totalLoaded - pendingSum - deliveredSum;
-  return Math.max(0, available);
+  const walkInTaken = walkInAgg._sum.quantity ?? 0;
+  return Math.max(0, totalFloat - walkInTaken);
 }

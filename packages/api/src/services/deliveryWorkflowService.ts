@@ -710,34 +710,65 @@ export async function confirmVehicleReconciliation(
       select: { id: true, driverId: true, tripNumber: true, assignmentDate: true },
     });
     if (tripDva) {
-      const manifestRows = await prisma.dVALoadManifest.findMany({
-        where: {
-          dvaId: tripDva.id,
-          tripNumber: tripDva.tripNumber,
-          distributorId,
-          floatQty: { gt: 0 },
-        },
+      // FLOAT-001 (2026-06-18): find EVERY un-credited float manifest for
+      // this DVA, regardless of tripNumber. Original code filtered to
+      // `tripNumber: tripDva.tripNumber` which broke the legitimate "admin
+      // dispatched trip 2 before reconciling trip 1" path — DVA had rolled
+      // to trip 2 by reconcile time, manifest stayed at trip 1, lookup
+      // missed everything, and the depot's "On Vehicle" column showed the
+      // float still out for delivery forever. We now match each manifest
+      // by its own tripNumber and skip rows that already have a
+      // cancellation_return event written (idempotent — safe on re-run).
+      const allManifestRows = await prisma.dVALoadManifest.findMany({
+        where: { dvaId: tripDva.id, distributorId, floatQty: { gt: 0 } },
       });
+      const settledManifestIds = new Set(
+        (await prisma.inventoryEvent.findMany({
+          where: {
+            distributorId,
+            eventType: 'cancellation_return',
+            referenceType: 'dva_load_manifest',
+            referenceId: { in: allManifestRows.map((m) => m.id) },
+          },
+          select: { referenceId: true },
+        })).map((e) => e.referenceId).filter((v): v is string => v !== null),
+      );
+      const manifestRows = allManifestRows.filter((m) => !settledManifestIds.has(m.id));
       const affectedTypeIds = new Set<string>();
       for (const manifestRow of manifestRows) {
-        // Walk-in sales of this cylinder type on this trip — sum of
-        // OrderItem.deliveredQuantity where the parent order is a walk-in.
+        // Walk-in cylinders TAKEN FROM the float pool — scoped to the
+        // manifest's OWN tripNumber (not tripDva's current value, which may
+        // have rolled past this manifest's trip).
+        //
+        // FLOAT-001 (2026-06-18 #2): we sum `quantity` (= ordered) and NOT
+        // `deliveredQuantity`. The float pool is debited by what the driver
+        // takes OUT for walk-ins, regardless of whether the customer
+        // ultimately accepted all of it. Any shortfall (ordered − delivered)
+        // is handled INDEPENDENTLY by the CancelledStockEvent path in
+        // Step 2 above (which already credits the same physical cylinder
+        // back to depot). Using deliveredQuantity here would credit the
+        // shortfall cylinder TWICE — once via CSE, once via float-unsold.
+        // User repro 2026-06-18 ~07:02 IST, dist-002 Sharma: Bangalore Foods
+        // walk-in ordered 8 of 47.5 KG, delivered 7, 1 in CSE; the float
+        // event also credited +1 for "unsold" → On Vehicle stayed at +1
+        // (rest of the gap was the walk-in dispatch double-debit fixed
+        // separately in gstPreflightService.buildDispatchCtx).
         const walkInAgg = await prisma.orderItem.aggregate({
           where: {
             cylinderTypeId: manifestRow.cylinderTypeId,
             order: {
               distributorId,
               driverId: tripDva.driverId,
-              tripNumber: tripDva.tripNumber,
+              tripNumber: manifestRow.tripNumber,
               orderSource: 'walk_in',
               status: { in: ['delivered', 'modified_delivered'] },
               deletedAt: null,
             },
           },
-          _sum: { deliveredQuantity: true },
+          _sum: { quantity: true },
         });
-        const walkInDelivered = walkInAgg._sum.deliveredQuantity ?? 0;
-        const soldFromFloat = Math.min(walkInDelivered, manifestRow.floatQty);
+        const walkInOrdered = walkInAgg._sum.quantity ?? 0;
+        const soldFromFloat = Math.min(walkInOrdered, manifestRow.floatQty);
         const unsoldFloat = manifestRow.floatQty - soldFromFloat;
         if (unsoldFloat <= 0) continue;
         await prisma.$transaction(async (tx) => {
@@ -754,7 +785,7 @@ export async function confirmVehicleReconciliation(
             referenceId: manifestRow.id,
             referenceType: 'dva_load_manifest',
             createdBy: userId,
-            notes: `Float stock returned to depot — DVA ${tripDva.id}, trip ${tripDva.tripNumber}`,
+            notes: `Float stock returned to depot — DVA ${tripDva.id}, trip ${manifestRow.tripNumber}`,
           });
         });
         affectedTypeIds.add(manifestRow.cylinderTypeId);

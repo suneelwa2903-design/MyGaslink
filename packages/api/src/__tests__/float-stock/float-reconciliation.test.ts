@@ -380,6 +380,285 @@ describe('FLOAT-001 — float-unsold reconciliation credit', () => {
     expect(event.referenceId).not.toBe(dvaId);
   });
 
+  it('REGRESSION 2026-06-18 — manifest from trip 1 credited even after DVA rolled to trip 2 before reconcile', async () => {
+    // Reproduces user-reported "On Vehicle inventory stuck > 0 after
+    // reconcile" bug:
+    //   1. Admin enters manifest at trip 1 (10 fulls; 2 ordered → float=8)
+    //   2. Trip 1 dispatched + delivered
+    //   3. Fresh order created; admin dispatches again → DVA rolls to trip 2
+    //      (NO new manifest entered for trip 2)
+    //   4. Trip 2 delivered, vehicle returned, reconcile
+    // BUG: Step 2.5 used to filter manifest by `tripNumber: tripDva.tripNumber`
+    // which was 2 by reconcile time. The trip-1 manifest never matched, no
+    // cancellation_return events were written, and the depot's "On Vehicle"
+    // column showed 8 cylinders stuck out for delivery permanently.
+    // FIX: Step 2.5 now reads ALL un-settled float manifests for the DVA
+    // regardless of tripNumber (idempotent via cancellation_return existence
+    // check on referenceId).
+
+    // ── Trip 1 ────────────────────────────────────────────────────────────
+    await createOrUpdateManifest(
+      DIST,
+      dvaId,
+      [{ cylinderTypeId, totalLoaded: 10 }],
+      adminUserId,
+    );
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-T1-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_dispatch',
+        orderSource: 'regular',
+        totalAmount: 1000,
+        items: {
+          create: [{ cylinderTypeId, quantity: 2, unitPrice: 500, totalPrice: 1000 }],
+        },
+      },
+    });
+    await preflightDispatch({
+      distributorId: DIST,
+      driverId,
+      assignmentDate: TEST_DATE,
+      userId: adminUserId,
+    });
+    const t1Order = await prisma.order.findFirstOrThrow({
+      where: { distributorId: DIST, deliveryDate: todayMidnight, status: 'pending_delivery' },
+      include: { items: true },
+    });
+    await prisma.order.update({
+      where: { id: t1Order.id },
+      data: { status: 'delivered', deliveredAt: new Date() },
+    });
+    for (const item of t1Order.items) {
+      await prisma.orderItem.update({
+        where: { id: item.id },
+        data: { deliveredQuantity: item.quantity },
+      });
+    }
+
+    // ── Trip 2 (no fresh manifest) ────────────────────────────────────────
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-T2-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_dispatch',
+        orderSource: 'regular',
+        totalAmount: 1500,
+        items: {
+          create: [{ cylinderTypeId, quantity: 3, unitPrice: 500, totalPrice: 1500 }],
+        },
+      },
+    });
+    await preflightDispatch({
+      distributorId: DIST,
+      driverId,
+      assignmentDate: TEST_DATE,
+      userId: adminUserId,
+    });
+    const dvaAfterRoll = await prisma.driverVehicleAssignment.findUniqueOrThrow({
+      where: { id: dvaId },
+      select: { tripNumber: true },
+    });
+    expect(dvaAfterRoll.tripNumber).toBeGreaterThan(1); // proves DVA actually rolled
+    const t2Order = await prisma.order.findFirstOrThrow({
+      where: { distributorId: DIST, deliveryDate: todayMidnight, status: 'pending_delivery' },
+      include: { items: true },
+    });
+    await prisma.order.update({
+      where: { id: t2Order.id },
+      data: { status: 'delivered', deliveredAt: new Date() },
+    });
+    for (const item of t2Order.items) {
+      await prisma.orderItem.update({
+        where: { id: item.id },
+        data: { deliveredQuantity: item.quantity },
+      });
+    }
+
+    // ── Reconcile ─────────────────────────────────────────────────────────
+    await markVehicleReturned(vehicleId, driverId, DIST);
+    await confirmVehicleReconciliation(vehicleId, DIST, adminUserId, {
+      physicalStockConfirmed: true,
+    });
+
+    // Manifest captured orderedQty=0 (order was created AFTER manifest
+    // confirm — no pending_dispatch rows existed at snapshot time) so
+    // floatQty=10. The 2-cylinder order is 'regular' (not 'walk_in'), so it
+    // doesn't consume float → unsoldFloat=10. The fact that ONE event with
+    // fullsChange=10 is written is itself the regression assertion: without
+    // the fix, the array is empty.
+    const returnEvents = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'cancellation_return',
+        referenceType: 'dva_load_manifest',
+        eventDate: todayMidnight,
+      },
+    });
+    expect(returnEvents).toHaveLength(1);
+    expect(returnEvents[0].fullsChange).toBe(10);
+    expect(returnEvents[0].cylinderTypeId).toBe(cylinderTypeId);
+  });
+
+  it('REGRESSION 2026-06-18 #2 — walk-in order MUST NOT write a per-order dispatch event (already debited via float)', async () => {
+    // User-reported (2026-06-18 ~07:02 IST, dist-002 Sharma):
+    //   manifest 19 KG: loaded 10, ordered 2 → float 8
+    //   walk-in delivered 5
+    //   reconcile → "On Vehicle Fulls" stayed at 5 instead of 0
+    // Root cause: walk-in order preflight wrote its own per-order dispatch
+    // event (-5), in addition to the float manifest event (-8). Depot saw
+    // -13 total dispatch when it should have seen -10. Reconcile credited
+    // back only the unsold float (+3), leaving On-Vehicle = 13-7-3 = 5.
+    // Fix: buildDispatchCtx() returns undefined for orderSource='walk_in'.
+    // Test contract: after a walk-in dispatch + delivery, the only
+    // dispatch events for that cylinder type on today are the manifest
+    // float event and the regular order's event — NEVER one keyed to the
+    // walk-in order itself.
+
+    // Manifest 10 fulls, no pending regular orders → float 10
+    await createOrUpdateManifest(
+      DIST,
+      dvaId,
+      [{ cylinderTypeId, totalLoaded: 10 }],
+      adminUserId,
+    );
+    // 1 walk-in order for 3 cylinders (driver creates mid-trip)
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-WI-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_dispatch',
+        orderSource: 'walk_in',
+        totalAmount: 1500,
+        items: {
+          create: [{ cylinderTypeId, quantity: 3, unitPrice: 500, totalPrice: 1500 }],
+        },
+      },
+    });
+    await preflightDispatch({
+      distributorId: DIST,
+      driverId,
+      assignmentDate: TEST_DATE,
+      userId: adminUserId,
+    });
+
+    // Pin the exact dispatch-event shape: ONE float event (-10),
+    // ZERO per-order dispatch events for the walk-in order.
+    const dispatchEvents = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'dispatch',
+        cylinderTypeId,
+        eventDate: todayMidnight,
+      },
+      select: { fullsChange: true, referenceType: true, referenceId: true },
+    });
+    const floatEvents = dispatchEvents.filter((e) => e.referenceType === 'dva_load_manifest');
+    const orderDispatchEvents = dispatchEvents.filter((e) => e.referenceType === 'order');
+    expect(floatEvents).toHaveLength(1);
+    expect(floatEvents[0].fullsChange).toBe(-10);
+    // Pre-fix: this would be 1 (the walk-in's per-order dispatch). Post-fix: 0.
+    expect(orderDispatchEvents).toHaveLength(0);
+  });
+
+  it('REGRESSION 2026-06-18 #3 — walk-in shortfall uses ordered (not delivered) so CSE + float do not double-credit', async () => {
+    // User repro 2026-06-18 ~07:02 IST, dist-002 Sharma:
+    //   Bangalore Foods walk-in: ordered 8, delivered 7, 1 shortfall → CSE
+    //   Float manifest 47.5 KG: loaded 10, ordered 2 → float 8
+    //   Reconcile: CSE flow credited +1 (correct). Step 2.5 ALSO credited +1
+    //   for "unsold float" using deliveredQuantity (8 − 7 = 1). The same
+    //   physical cylinder was credited twice → On Vehicle stayed at +1.
+    // Fix: Step 2.5 sums OrderItem.quantity (= ordered) instead of
+    // deliveredQuantity. soldFromFloat = walkInOrdered ⇒ unsoldFloat = 0
+    // when walk-in ordered consumed the entire float pool. Shortfall is
+    // handled exclusively by the CancelledStockEvent path.
+
+    // No pending regular orders at manifest confirm → manifest snapshot
+    // floatQty=10. Then create a single walk-in order ordered=10,
+    // delivered=8 (2 shortfall). The CSE for that shortfall is created
+    // by modify-delivery elsewhere; here we directly construct the same
+    // shape (order delivered+modified, OrderItem.deliveredQuantity=8) and
+    // assert Step 2.5 credits 0 (not 2).
+    await createOrUpdateManifest(
+      DIST,
+      dvaId,
+      [{ cylinderTypeId, totalLoaded: 10 }],
+      adminUserId,
+    );
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-SHRT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_dispatch',
+        orderSource: 'walk_in',
+        totalAmount: 5000,
+        items: {
+          create: [{ cylinderTypeId, quantity: 10, unitPrice: 500, totalPrice: 5000 }],
+        },
+      },
+    });
+    await preflightDispatch({
+      distributorId: DIST,
+      driverId,
+      assignmentDate: TEST_DATE,
+      userId: adminUserId,
+    });
+    const shortOrder = await prisma.order.findFirstOrThrow({
+      where: { distributorId: DIST, orderSource: 'walk_in', status: 'pending_delivery' },
+      include: { items: true },
+    });
+    // Mark as MODIFIED_DELIVERED with deliveredQuantity=8 (2 shortfall)
+    await prisma.order.update({
+      where: { id: shortOrder.id },
+      data: { status: 'modified_delivered', deliveredAt: new Date() },
+    });
+    for (const item of shortOrder.items) {
+      await prisma.orderItem.update({
+        where: { id: item.id },
+        data: { deliveredQuantity: 8 },
+      });
+    }
+
+    await markVehicleReturned(vehicleId, driverId, DIST);
+    await confirmVehicleReconciliation(vehicleId, DIST, adminUserId, {
+      physicalStockConfirmed: true,
+    });
+
+    // Float credit MUST be 0 (walk-in ordered 10 ≥ floatQty 10 → unsold = 0).
+    // The 2-cylinder shortfall belongs to the CSE path; if no CSE row was
+    // created by this test setup, the depot just won't see those 2 back —
+    // but the float-side calculation must NOT compensate for them.
+    const floatReturnEvents = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'cancellation_return',
+        referenceType: 'dva_load_manifest',
+        eventDate: todayMidnight,
+      },
+    });
+    expect(floatReturnEvents).toHaveLength(0);
+  });
+
   it('Flag OFF: dispatch event not written → cancellation_return event also skipped', async () => {
     process.env.INVENTORY_DISPATCH_DEBIT = 'false';
     await createOrUpdateManifest(

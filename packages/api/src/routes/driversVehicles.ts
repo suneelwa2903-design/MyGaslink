@@ -901,7 +901,17 @@ driverRouter.post('/me/orders',
         distributorId, driver.id, body.cylinderTypeId,
       );
       if (body.quantity > availableFulls) {
-        const ct = await prisma.cylinderType.findUnique({ where: { id: body.cylinderTypeId }, select: { typeName: true } });
+        // FLOAT-001 (2026-06-18 security pass): scope the typeName lookup to
+        // the driver's tenant. Without the scope, a crafted cross-tenant
+        // cylinderTypeId would still resolve availableFulls=0 (manifest miss),
+        // but the typeName from another tenant would leak in the error
+        // message. With the scope, foreign IDs return null → generic
+        // 'cylinders' fallback. Same tenant-discriminator pattern used by
+        // every other route per CLAUDE.md anti-pattern #13.
+        const ct = await prisma.cylinderType.findFirst({
+          where: { id: body.cylinderTypeId, distributorId },
+          select: { typeName: true },
+        });
         return sendError(
           res,
           `Cannot create walk-in order: requested ${body.quantity} × ${ct?.typeName ?? 'cylinders'}, only ${availableFulls} available on vehicle`,
