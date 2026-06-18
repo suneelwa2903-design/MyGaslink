@@ -366,6 +366,10 @@ export async function preflightDispatch(params: {
       vehicleNumber: mapping?.vehicle?.vehicleNumber ?? null,
       userId,
       tripNumber: currentTripNumber,
+      // First-dispatch path (includes the WI-068/WI-069 self-heal bump
+      // where DVA was loaded_and_dispatched with 0 in-flight). Per-order
+      // dispatch events MUST fire — fresh cylinders are loaded from depot.
+      isAddToTrip: false,
     });
     results.push(r);
   }
@@ -649,6 +653,10 @@ export async function preflightAddToTrip(params: {
       vehicleNumber: mapping.vehicle?.vehicleNumber ?? null,
       userId,
       tripNumber: mapping.tripNumber, // preserve existing trip identity
+      // Add-to-trip path. buildDispatchCtx skips per-order dispatch events
+      // for ALL orders (walk-in or regular) so depot isn't double-debited.
+      // Cylinders come from the float pool already on the truck.
+      isAddToTrip: true,
     });
     results.push(r);
   }
@@ -792,8 +800,12 @@ async function preflightOne(params: {
   vehicleNumber: string | null;
   userId: string;
   tripNumber: number; // WI-065: stamped on the order at pending_delivery transition
+  // FLOAT-001 (2026-06-18 Bug #6): true = "+ Add to Trip" path → skip
+  // per-order dispatch events (cylinders come from float). false = first
+  // dispatch OR self-heal/tripNumber-bump path → write events (fresh load).
+  isAddToTrip: boolean;
 }): Promise<PreflightResult> {
-  const { order, distributor, vehicleNumber, userId, tripNumber } = params;
+  const { order, distributor, vehicleNumber, userId, tripNumber, isAddToTrip } = params;
   const orderId: string = order.id;
   const customerName: string | null = order.customer?.customerName ?? null;
 
@@ -873,7 +885,7 @@ async function preflightOne(params: {
 
     // GST-disabled tenants: just transition to pending_delivery.
     if (distributor.gstMode === 'disabled') {
-      await transitionToPendingDelivery(orderId, userId, 'GST disabled — preflight skipped', tripNumber, buildDispatchCtx(order, vehicleNumber));
+      await transitionToPendingDelivery(orderId, userId, 'GST disabled — preflight skipped', tripNumber, buildDispatchCtx(order, vehicleNumber, isAddToTrip));
       return {
         orderId,
         orderNumber: order.orderNumber,
@@ -909,12 +921,12 @@ async function preflightOne(params: {
     // B2B: IRN + EWB (inline preferred).
     if (!isB2C) {
       return await runB2bPreflight({
-        order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber,
+        order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber, isAddToTrip,
       });
     }
     // B2C / URP: EWB only (standalone) — always, regardless of invoice value.
     return await runB2cPreflight({
-      order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber,
+      order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber, isAddToTrip,
     });
   } catch (err: unknown) {
     const { code, message } = errInfo(err);
@@ -958,8 +970,32 @@ async function preflightOne(params: {
 // twice. The walk-in delivery event still fires at confirmDelivery and is
 // correct on its own — that's the cylinder leaving the vehicle for the
 // customer's hand. We just must not pretend it left the depot a second time.
-function buildDispatchCtx(order: PreflightOrder, vehicleNumber: string | null) {
+function buildDispatchCtx(
+  order: PreflightOrder,
+  vehicleNumber: string | null,
+  isAddToTrip: boolean,
+) {
+  // FLOAT-001 (2026-06-18 Bug #6): once the vehicle is dispatched, ALL orders
+  // — walk-in or regular — consume from float stock on the truck. The depot
+  // was fully debited at first dispatch via the manifest's float events; any
+  // per-order dispatch event written after that would double-debit depot.
+  //
+  // Operational confirmation from Suneel: when office adds a regular order
+  // mid-trip via "+ Add to Trip", the driver fulfils it from cylinders
+  // already on the vehicle. He does NOT come back to depot to load more.
+  // Therefore the only legitimate depot debit for any mid-trip order is the
+  // ALREADY-WRITTEN manifest float event.
+  //
+  // Bug #2 (commit fc12e04) covered the walk-in case. This extends to the
+  // regular-order-via-AddToTrip case. The right discriminator is the CALLER
+  // (preflightAddToTrip vs preflightDispatch), NOT the DVA status — because
+  // preflightDispatch may legitimately re-run on a stale loaded_and_dispatched
+  // DVA in the "self-heal / bump tripNumber" path (WI-068 / WI-069 self-heal:
+  // every prior trip delivered, admin clicks Dispatch on new orders → fresh
+  // cylinders loaded from depot, dispatch events MUST fire). Initial draft
+  // used dvaStatus which broke that path.
   if (order.orderSource === 'walk_in') return undefined;
+  if (isAddToTrip) return undefined;
   return {
     distributorId: order.distributorId,
     deliveryDate: order.deliveryDate,
@@ -1171,8 +1207,9 @@ async function runB2bPreflight(params: {
   userId: string;
   customerName: string | null;
   tripNumber: number;
+  isAddToTrip: boolean;
 }): Promise<PreflightResult> {
-  const { order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber } = params;
+  const { order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber, isAddToTrip } = params;
   const distributorId: string = distributor.id;
   const invoiceId = invoice.id;
   const orderId: string = order.id;
@@ -1341,7 +1378,7 @@ async function runB2bPreflight(params: {
       orderId, userId,
       `Preflight succeeded: IRN=${irn?.substring(0, 16)}… EWB=${ewbNo ?? 'n/a'}`,
       tripNumber,
-      buildDispatchCtx(order, vehicleNumber),
+      buildDispatchCtx(order, vehicleNumber, isAddToTrip),
     );
 
     return {
@@ -1367,7 +1404,7 @@ async function runB2bPreflight(params: {
       await transitionToPendingDelivery(
         orderId, userId, 'Preflight: duplicate IRN (2150) — accepted',
         tripNumber,
-        buildDispatchCtx(order, vehicleNumber),
+        buildDispatchCtx(order, vehicleNumber, isAddToTrip),
       );
       return {
         orderId, orderNumber: order.orderNumber, customerName,
@@ -1416,8 +1453,9 @@ async function runB2cPreflight(params: {
   userId: string;
   customerName: string | null;
   tripNumber: number;
+  isAddToTrip: boolean;
 }): Promise<PreflightResult> {
-  const { order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber } = params;
+  const { order, invoice, distributor, vehicleNumber, userId, customerName, tripNumber, isAddToTrip } = params;
   const distributorId: string = distributor.id;
   const invoiceId = invoice.id;
   const orderId: string = order.id;
@@ -1504,7 +1542,7 @@ async function runB2cPreflight(params: {
       orderId, userId,
       ewbOk ? `B2C preflight succeeded: EWB=${parsed.ewbNo}` : 'B2C dispatched; EWB pending (no number returned by NIC)',
       tripNumber,
-      buildDispatchCtx(order, vehicleNumber),
+      buildDispatchCtx(order, vehicleNumber, isAddToTrip),
     );
 
     return {
@@ -1540,7 +1578,7 @@ async function runB2cPreflight(params: {
       orderId, userId,
       `B2C dispatched; EWB pending — ${message.slice(0, 80)}`,
       tripNumber,
-      buildDispatchCtx(order, vehicleNumber),
+      buildDispatchCtx(order, vehicleNumber, isAddToTrip),
     );
     return {
       orderId, orderNumber: order.orderNumber, customerName,

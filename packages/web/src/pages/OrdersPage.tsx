@@ -1850,7 +1850,7 @@ function LoadManifestPanel({ assignmentId, tripNumber, orderItems }: LoadManifes
   // Existing manifest — orderedQty here is the server-computed snapshot
   // taken at confirm time, so it's the source of truth for the Ordered
   // column display.
-  const { data: existing, refetch: refetchManifest } = useQuery({
+  const { data: existing } = useQuery({
     queryKey: ['manifest', assignmentId, tripNumber],
     queryFn: () =>
       apiGet<{
@@ -1875,12 +1875,48 @@ function LoadManifestPanel({ assignmentId, tripNumber, orderItems }: LoadManifes
 
   const saveMutation = useMutation({
     mutationFn: (items: Array<{ cylinderTypeId: string; totalLoaded: number }>) =>
-      apiPost('/manifests', { dvaId: assignmentId, items }),
-    onSuccess: () => {
+      apiPost<{
+        manifest: Array<{
+          cylinderTypeId: string;
+          cylinderTypeName?: string;
+          totalLoaded: number;
+          orderedQty: number;
+          floatQty: number;
+        }>;
+      }>('/manifests', { dvaId: assignmentId, items }),
+    onSuccess: (saved) => {
       toast.success('Manifest confirmed');
+      // FLOAT-001 (2026-06-18 Issue A): optimistic cache update so the
+      // badge ('30 total · 26 float') and read-only table reflect the
+      // just-saved values on the very next render. Without this the UI
+      // re-renders from the stale cache for the 50-200ms window before
+      // the refetch returns, leaving the user staring at old numbers.
+      // The POST returns ONLY the upserted rows (if the admin edited
+      // only 19 KG, only the 19 KG row is in `saved.manifest`) so we
+      // MERGE into the existing cache by cylinderTypeId — replacing
+      // the cache wholesale would lose any types not in this save.
+      // The invalidate below is belt-and-braces — confirms server state
+      // matches our optimism, no-op if it does.
+      type ManifestRow = {
+        cylinderTypeId: string;
+        cylinderTypeName?: string;
+        totalLoaded: number;
+        orderedQty: number;
+        floatQty: number;
+      };
+      if (saved && Array.isArray(saved.manifest)) {
+        queryClient.setQueryData<{ manifest: ManifestRow[] }>(
+          ['manifest', assignmentId, tripNumber],
+          (prev) => {
+            const merged = new Map<string, ManifestRow>();
+            for (const m of prev?.manifest ?? []) merged.set(m.cylinderTypeId, m);
+            for (const m of saved.manifest) merged.set(m.cylinderTypeId, m);
+            return { manifest: Array.from(merged.values()) };
+          },
+        );
+      }
       setEditing(false);
       setFloatByType({});
-      refetchManifest();
       queryClient.invalidateQueries({ queryKey: ['manifest', assignmentId, tripNumber] });
     },
     onError: (err: unknown) => {

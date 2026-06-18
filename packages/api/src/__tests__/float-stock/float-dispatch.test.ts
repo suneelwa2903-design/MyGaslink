@@ -14,7 +14,7 @@
  * on the same tenant.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { preflightDispatch } from '../../services/gst/gstPreflightService.js';
+import { preflightDispatch, preflightAddToTrip } from '../../services/gst/gstPreflightService.js';
 import { createOrUpdateManifest } from '../../services/dvaManifestService.js';
 import { prisma } from '../../lib/prisma.js';
 import { ensureDriverVehicleMapping, getOrCreateTestVehicle } from '../helpers.js';
@@ -437,5 +437,219 @@ describe('FLOAT-001 — float-only + mixed dispatch', () => {
       },
     });
     expect(manifestEvents).toBe(0);
+  });
+
+  // ── Bug #6 regression cluster (2026-06-18) ──────────────────────────────
+  //
+  // Operational rule confirmed by Suneel: once a vehicle is dispatched, ALL
+  // orders (walk-in OR regular) added via "+ Add to Trip" come from the
+  // float stock already on the truck. The depot was fully debited at first
+  // dispatch via the manifest's float event. preflightAddToTrip must NOT
+  // write per-order dispatch events — that would double-debit depot.
+  //
+  // Bug #2 (commit fc12e04) handled the walk-in subset. These tests pin
+  // the broader rule: ALL mid-trip orders skip the per-order dispatch
+  // event, AND first-dispatch (preflightDispatch) STILL writes them for
+  // regular orders so we don't accidentally regress the depot accounting
+  // on a fresh trip.
+
+  /** Helper: seed a dispatched trip with a float manifest so the DVA is in
+   * loaded_and_dispatched, ready for preflightAddToTrip calls. */
+  async function dispatchFloatTrip(totalLoaded: number) {
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded }], adminUserId,
+    );
+    await preflightDispatch({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+  }
+
+  it('BUG #6 — regular order added mid-trip via preflightAddToTrip writes NO dispatch event', async () => {
+    // Setup: dispatched trip with 10-fulls manifest, no orders yet.
+    await dispatchFloatTrip(10);
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId: DIST, deletedAt: null, customerType: 'B2C' },
+      select: { id: true },
+    });
+    // Count dispatch events that exist BEFORE we add the mid-trip order.
+    // Should be 1: the float manifest event from initial dispatch.
+    const eventsBefore = await prisma.inventoryEvent.count({
+      where: {
+        distributorId: DIST,
+        eventType: 'dispatch',
+        eventDate: new Date(TEST_DATE),
+      },
+    });
+    expect(eventsBefore).toBe(1);
+
+    // Office adds a fresh regular order mid-trip.
+    const newOrder = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-A2T-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId: customer.id,
+        driverId,
+        vehicleId,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'pending_dispatch',
+        orderSource: 'regular',
+        totalAmount: 1000,
+        items: {
+          create: [{ cylinderTypeId, quantity: 2, unitPrice: 500, totalPrice: 1000 }],
+        },
+      },
+    });
+    // Admin clicks "+ Add to Trip" → preflightAddToTrip
+    const result = await preflightAddToTrip({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+    expect(result.summary.succeeded).toBe(1);
+
+    // Order moved to pending_delivery
+    const fresh = await prisma.order.findUniqueOrThrow({ where: { id: newOrder.id } });
+    expect(fresh.status).toBe('pending_delivery');
+
+    // CRITICAL: dispatch event count is UNCHANGED. The order's cylinders
+    // came from float, not from depot — no new depot debit.
+    const eventsAfter = await prisma.inventoryEvent.count({
+      where: {
+        distributorId: DIST,
+        eventType: 'dispatch',
+        eventDate: new Date(TEST_DATE),
+      },
+    });
+    expect(eventsAfter).toBe(eventsBefore);
+
+    // No order-keyed dispatch event for this newOrder specifically
+    const orderDispatchEvents = await prisma.inventoryEvent.count({
+      where: {
+        distributorId: DIST,
+        eventType: 'dispatch',
+        referenceType: 'order',
+        referenceId: newOrder.id,
+      },
+    });
+    expect(orderDispatchEvents).toBe(0);
+  });
+
+  it('BUG #6 — walk-in via preflightAddToTrip also writes NO dispatch event (existing Bug #2 still holds)', async () => {
+    await dispatchFloatTrip(10);
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId: DIST, deletedAt: null, customerType: 'B2C' },
+      select: { id: true },
+    });
+    const walkInOrder = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-WIA2T-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId: customer.id,
+        driverId,
+        vehicleId,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'pending_dispatch',
+        orderSource: 'walk_in',
+        totalAmount: 500,
+        items: { create: [{ cylinderTypeId, quantity: 1, unitPrice: 500, totalPrice: 500 }] },
+      },
+    });
+    await preflightAddToTrip({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+    const orderDispatchEvents = await prisma.inventoryEvent.count({
+      where: {
+        distributorId: DIST,
+        eventType: 'dispatch',
+        referenceType: 'order',
+        referenceId: walkInOrder.id,
+      },
+    });
+    expect(orderDispatchEvents).toBe(0);
+  });
+
+  it('BUG #6 negative control — first dispatch (preflightDispatch) STILL writes dispatch event for regular orders (no regression)', async () => {
+    // Critical guard against over-applying the Bug #6 fix to the initial
+    // dispatch path. preflightDispatch runs with DVA.status='dispatch_ready',
+    // which IS the moment fresh cylinders genuinely leave depot — those
+    // dispatch events must fire.
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId: DIST, deletedAt: null, customerType: 'B2C' },
+      select: { id: true },
+    });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-FD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId: customer.id,
+        driverId,
+        vehicleId,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'pending_dispatch',
+        orderSource: 'regular',
+        totalAmount: 1000,
+        items: { create: [{ cylinderTypeId, quantity: 2, unitPrice: 500, totalPrice: 1000 }] },
+      },
+    });
+    await preflightDispatch({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+    const orderDispatchEvents = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'dispatch',
+        referenceType: 'order',
+        referenceId: order.id,
+      },
+    });
+    expect(orderDispatchEvents).toHaveLength(1);
+    expect(orderDispatchEvents[0].fullsChange).toBe(-2);
+  });
+
+  it('BUG #6 inventory balance — dispatch + add-to-trip + deliver = depot debited exactly once for float', async () => {
+    // End-to-end ledger check. Seed opening=100 on the day before, dispatch
+    // float-only=10, add-to-trip a regular order qty=4, deliver it.
+    // Depot should be debited by exactly 10 (the float), NOT 14.
+    const PRIOR = new Date(PRIOR_DATE);
+    await prisma.inventoryEvent.create({
+      data: {
+        distributorId: DIST, cylinderTypeId,
+        eventType: 'initial_balance', fullsChange: 100, emptiesChange: 0,
+        eventDate: PRIOR, createdBy: adminUserId,
+      },
+    });
+    const { recalculateSummariesFromDate } = await import('../../services/inventoryService.js');
+    await recalculateSummariesFromDate(DIST, cylinderTypeId, PRIOR);
+
+    await dispatchFloatTrip(10);
+    const customer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId: DIST, deletedAt: null, customerType: 'B2C' },
+      select: { id: true },
+    });
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-LDG-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST, customerId: customer.id, driverId, vehicleId,
+        orderDate: new Date(TEST_DATE), deliveryDate: new Date(TEST_DATE),
+        status: 'pending_dispatch', orderSource: 'regular', totalAmount: 2000,
+        items: { create: [{ cylinderTypeId, quantity: 4, unitPrice: 500, totalPrice: 2000 }] },
+      },
+    });
+    await preflightAddToTrip({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+    const summary = await prisma.inventorySummary.findUnique({
+      where: {
+        distributorId_cylinderTypeId_summaryDate: {
+          distributorId: DIST, cylinderTypeId, summaryDate: new Date(TEST_DATE),
+        },
+      },
+    });
+    expect(summary).not.toBeNull();
+    // openingFulls = 100. Float dispatched = 10. The add-to-trip wrote NO
+    // dispatch event, so dispatchedQty stays at 10 (not 14).
+    expect(summary!.openingFulls).toBe(100);
+    expect(summary!.dispatchedQty).toBe(10);
   });
 });

@@ -157,31 +157,67 @@ describe('1F — preflightAddToTrip recompute symmetry', () => {
     await prisma.cylinderType.deleteMany({ where: { id: addCylTypeId } });
   });
 
-  it('writes dispatch event AND recomputes summary on the same path as preflightDispatch', async () => {
-    // setup.ts `beforeEach` deletes INVENTORY_DISPATCH_DEBIT before every test
-    // for safety; re-set it inside this test (this is the flag the dispatch-
-    // debit branch in transitionToPendingDelivery reads).
+  it('does NOT write per-order dispatch event (Bug #6 — cylinders come from float), but STILL recomputes summary', async () => {
+    // FLOAT-001 (2026-06-18 Bug #6): mid-trip add-to-trip MUST NOT write a
+    // depot-debit dispatch event. The driver is already on the road; the
+    // depot was fully debited at first dispatch via the manifest's float
+    // events. A per-order dispatch event here would double-debit.
+    //
+    // The recompute symmetry from WI-129 still matters — the daily summary
+    // should be re-derived on the add-to-trip path so values don't lag.
+    // We assert (a) NO dispatch event for the new order, (b) the summary
+    // row exists (recompute fired and persisted a row), (c) dispatchedQty
+    // stays at 0 because no event was written.
     process.env.INVENTORY_DISPATCH_DEBIT = 'true';
     try {
+      // Seed a baseline dispatch event for THIS cylinderType on this date so
+      // the WI-129 recompute has something concrete to write. Without this,
+      // the recompute creates no row (nothing to summarize) and we can't
+      // distinguish "recompute fired with nothing to do" from "recompute
+      // never ran". A baseline of −7 (the existing trip-1 order's qty for
+      // a different referenceId — simulating the morning dispatch event for
+      // the pre-existing pending_delivery order) gives the recompute a
+      // dispatched value of 7 that should NOT change after add-to-trip.
+      await prisma.inventoryEvent.create({
+        data: {
+          distributorId: DIST, cylinderTypeId: addCylTypeId,
+          eventType: 'dispatch', fullsChange: -7, emptiesChange: 0,
+          eventDate: ADD_DATE, createdBy: 'add-trip-test',
+          referenceId: addExistingOrderId, referenceType: 'order',
+          notes: 'baseline dispatch for the pre-existing pending_delivery order',
+        },
+      });
+      const { recalculateSummariesFromDate } = await import('../services/inventoryService.js');
+      await recalculateSummariesFromDate(DIST, addCylTypeId, ADD_DATE);
+      const preSummary = await prisma.inventorySummary.findFirstOrThrow({
+        where: { distributorId: DIST, cylinderTypeId: addCylTypeId, summaryDate: ADD_DATE },
+      });
+      expect(preSummary.dispatchedQty).toBe(7);
+
       const { preflightAddToTrip } = await import('../services/gst/gstPreflightService.js');
       await preflightAddToTrip({ distributorId: DIST, driverId: addDriverId, assignmentDate: ADD_DATE_STR, userId: 'add-trip-test' });
 
-      // The dispatch event for the new order's 3 cylinders must exist.
+      // Contract A — no per-order dispatch event for the mid-trip add.
       const dispatchEvents = await prisma.inventoryEvent.findMany({
         where: { distributorId: DIST, eventType: 'dispatch', referenceId: addNewOrderId },
       });
-      expect(dispatchEvents).toHaveLength(1);
-      expect(dispatchEvents[0].fullsChange).toBe(-3);
+      expect(dispatchEvents).toHaveLength(0);
 
-      // And — the key assertion — the snapshot reflects the dispatch IMMEDIATELY
-      // (before any delivery), proving the recompute fired on the add-to-trip
-      // path (closing the WI-129 asymmetry).
-      const summary = await prisma.inventorySummary.findFirst({
+      // Contract B — order moved to pending_delivery despite no dispatch event
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: addNewOrderId } });
+      expect(order.status).toBe('pending_delivery');
+      expect(order.tripNumber).toBe(1); // stamped at transition, matches DVA trip
+
+      // Contract C — WI-129 recompute symmetry preserved. The summary row
+      // still exists with the SAME dispatchedQty as before (=7 from the
+      // baseline event). If a regression silently re-introduces the
+      // dispatch event for the new order, dispatchedQty would jump to 10
+      // (7 baseline + 3 from the new order) and this assertion would fail.
+      const postSummary = await prisma.inventorySummary.findFirstOrThrow({
         where: { distributorId: DIST, cylinderTypeId: addCylTypeId, summaryDate: ADD_DATE },
       });
-      expect(summary).toBeTruthy();
-      expect(summary!.dispatchedQty).toBeGreaterThanOrEqual(3);
-      expect(summary!.deliveredQty).toBe(0); // no delivery yet
+      expect(postSummary.dispatchedQty).toBe(7);
+      expect(postSummary.deliveredQty).toBe(0);
     } finally {
       delete process.env.INVENTORY_DISPATCH_DEBIT;
     }
