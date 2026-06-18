@@ -719,7 +719,17 @@ function WalkInOrderModal({
                   onChangeText={setCustomerQuery}
                   style={{ borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 8, padding: 10, marginBottom: 8, color: colors.text }}
                 />
-                <View style={{ maxHeight: 200, marginBottom: 12 }}>
+                {/* FLOAT-001 (2026-06-18): maxHeight on a plain View does NOT
+                    clip overflow in React Native — rows bled down on top of
+                    the Cylinder Type section. ScrollView + overflow:'hidden'
+                    + nestedScrollEnabled is the reliable combo (the modal's
+                    outer ScrollView also pans without locking this inner
+                    list). User repro: see screenshot 2026-06-18 ~08:25 IST. */}
+                <ScrollView
+                  style={{ maxHeight: 200, marginBottom: 12, overflow: 'hidden' }}
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                >
                   {customers.slice(0, 8).map((c) => (
                     <TouchableOpacity key={c.customerId} onPress={() => setSelectedCustomer(c)} style={{ padding: 10, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                       <Text style={{ color: colors.text }}>{c.customerName}</Text>
@@ -729,7 +739,7 @@ function WalkInOrderModal({
                   {customers.length === 0 && customerQuery.length > 0 && (
                     <Text style={{ color: colors.textMuted, fontSize: 12, padding: 8 }}>No matches. Customer not found? Call office to register.</Text>
                   )}
-                </View>
+                </ScrollView>
               </>
             )}
 
