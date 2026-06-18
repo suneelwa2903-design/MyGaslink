@@ -283,12 +283,32 @@ export async function markVehicleReturned(
     },
   });
 
+  // FLOAT-001 (2026-06-19 Bug #9): block return when any orders are still
+  // in pending_dispatch — those are NOT yet dispatched but were assigned to
+  // this driver. Letting the reconcile silently force-cancel them was
+  // bad UX (orders disappeared with no warning) AND combined with the now-
+  // fixed Bug #8 created phantom inventory credits. Now we surface a clear
+  // error so the admin can either "+ Add to Trip" to dispatch them or
+  // manually cancel them BEFORE returning the vehicle.
+  // Code PENDING_DISPATCH_ORDERS_EXIST is consumed by the mobile driver
+  // app to render a specific message; web admin renders the message verbatim.
+  const pendingDispatchOrders = undeliveredOrders.filter(
+    (o) => o.status === 'pending_dispatch',
+  );
+  if (pendingDispatchOrders.length > 0) {
+    const orderNumbers = pendingDispatchOrders.map((o) => o.orderNumber).join(', ');
+    const err = new Error(
+      `Cannot return vehicle — ${pendingDispatchOrders.length} order(s) not yet dispatched: ${orderNumbers}. Use "+ Add to Trip" to dispatch them, or cancel them manually first.`,
+    ) as Error & { statusCode: number; code: string };
+    err.statusCode = 400;
+    err.code = 'PENDING_DISPATCH_ORDERS_EXIST';
+    throw err;
+  }
+
   // WI-087 BUG FIX: Block return if any orders are actively out for delivery.
   // pending_delivery = IRN/EWB committed at NIC — the order is with the
   // driver and cannot be silently abandoned. The admin must cancel those
   // orders (which cancels the GST docs) BEFORE marking the vehicle returned.
-  // pending_dispatch orders are not yet dispatched so they CAN be reconciled
-  // at the inventory step, but pending_delivery ones cannot.
   const pendingDeliveryOrders = undeliveredOrders.filter(
     (o) => o.status === 'pending_delivery',
   );
@@ -615,50 +635,74 @@ export async function confirmVehicleReconciliation(
       // immediately update to 'returned_to_depot' within the same transaction
       // — this preserves the invariant that 'returned_to_depot' is always
       // written by reconcileVehicle (Step 1 or here) or returnCancelledStock.
-      for (const item of order.items) {
-        const cse = await tx.cancelledStockEvent.create({
-          data: {
-            orderId: order.id,
-            vehicleId,
-            driverId: order.driverId,
-            cylinderTypeId: item.cylinderTypeId,
+      //
+      // FLOAT-001 (2026-06-19 Bug #8): the CSE + cancellation_return write
+      // path runs ONLY for orders that were actually dispatched, i.e.
+      // status was in {pending_delivery, preflight_in_progress,
+      // modified_delivered}. For pending_dispatch orders, NO dispatch event
+      // exists — depot was never debited — so a return credit would create
+      // phantom inventory. User repro 2026-06-18 ~20:14 IST, dist-002:
+      // OSHD673 (pending_dispatch, qty 6 of 425 KG) was cancelled at
+      // reconcile and got a +6 cancellation_return → Inventory showed
+      // On Vehicle = -6 for 425 KG. Pre-status-cancel orders just transition
+      // to cancelled + status log; no CSE, no inventory event.
+      const wasDispatched =
+        order.status === 'pending_delivery' ||
+        order.status === 'preflight_in_progress' ||
+        order.status === 'modified_delivered';
+      if (wasDispatched) {
+        for (const item of order.items) {
+          const cse = await tx.cancelledStockEvent.create({
+            data: {
+              orderId: order.id,
+              vehicleId,
+              driverId: order.driverId,
+              cylinderTypeId: item.cylinderTypeId,
+              distributorId,
+              quantity: item.quantity,
+              cancellationDate: order.deliveryDate ?? new Date(),
+              status: 'on_vehicle',
+            },
+          });
+          await tx.cancelledStockEvent.update({
+            where: { id: cse.id },
+            data: { status: 'returned_to_depot', returnedDate: new Date(), reconciledBy: userId, notes: `Vehicle reconciliation — order ${order.orderNumber}` },
+          });
+
+          // Pin the return event to the order's deliveryDate so it lands
+          // on the same daily-summary row as the dispatch event. Falling
+          // back to `new Date()` only when deliveryDate is somehow null
+          // (defensive — orderService always sets it).
+          const tripDate = order.deliveryDate ?? new Date();
+          await createInventoryEvent(tx, {
             distributorId,
-            quantity: item.quantity,
-            cancellationDate: order.deliveryDate ?? new Date(),
-            status: 'on_vehicle',
-          },
-        });
-        await tx.cancelledStockEvent.update({
-          where: { id: cse.id },
-          data: { status: 'returned_to_depot', returnedDate: new Date(), reconciledBy: userId, notes: `Vehicle reconciliation — order ${order.orderNumber}` },
-        });
+            cylinderTypeId: item.cylinderTypeId,
+            eventType: 'cancellation_return',
+            fullsChange: item.quantity,
+            emptiesChange: 0,
+            eventDate: tripDate,
+            referenceId: order.id,
+            referenceType: 'order',
+            createdBy: userId,
+            notes: `Undelivered order ${order.orderNumber} - vehicle reconciliation`,
+          });
 
-        // Pin the return event to the order's deliveryDate so it lands
-        // on the same daily-summary row as the dispatch event. Falling
-        // back to `new Date()` only when deliveryDate is somehow null
-        // (defensive — orderService always sets it).
-        const tripDate = order.deliveryDate ?? new Date();
-        await createInventoryEvent(tx, {
-          distributorId,
-          cylinderTypeId: item.cylinderTypeId,
-          eventType: 'cancellation_return',
-          fullsChange: item.quantity,
-          emptiesChange: 0,
-          eventDate: tripDate,
-          referenceId: order.id,
-          referenceType: 'order',
-          createdBy: userId,
-          notes: `Undelivered order ${order.orderNumber} - vehicle reconciliation`,
-        });
-
-        results.inventoryRestored[item.cylinderTypeId] = (results.inventoryRestored[item.cylinderTypeId] || 0) + item.quantity;
+          results.inventoryRestored[item.cylinderTypeId] = (results.inventoryRestored[item.cylinderTypeId] || 0) + item.quantity;
+        }
       }
     });
 
     // Recalculate from the order's deliveryDate, not wall-clock today.
-    const tripDate = order.deliveryDate ?? new Date();
-    for (const item of order.items) {
-      await recalculateSummariesFromDate(distributorId, item.cylinderTypeId, tripDate);
+    // Only matters when we actually wrote events (dispatched orders).
+    const wasDispatchedForRecompute =
+      order.status === 'pending_delivery' ||
+      order.status === 'preflight_in_progress' ||
+      order.status === 'modified_delivered';
+    if (wasDispatchedForRecompute) {
+      const tripDate = order.deliveryDate ?? new Date();
+      for (const item of order.items) {
+        await recalculateSummariesFromDate(distributorId, item.cylinderTypeId, tripDate);
+      }
     }
 
     // Cancel GST invoice if it exists

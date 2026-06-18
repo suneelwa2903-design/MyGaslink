@@ -81,7 +81,15 @@ router.post('/driver/vehicle-returned',
       );
       return sendSuccess(res, result);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const e = err as Error & { statusCode?: number; code?: string };
+      const message = e.message ?? String(err);
+      // FLOAT-001 (2026-06-19 Bug #9): pending_dispatch guard → 400 with
+      // code PENDING_DISPATCH_ORDERS_EXIST. Mobile driver app reads
+      // this code to render a specific "contact office" alert. Throw
+      // shape is set in deliveryWorkflowService.markVehicleReturned.
+      if (e.code === 'PENDING_DISPATCH_ORDERS_EXIST') {
+        return sendError(res, message, e.statusCode ?? 400, e.code);
+      }
       // WI-087: pending_delivery guard throws a descriptive error → 409 Conflict
       if (message.startsWith('Cannot mark vehicle as returned')) {
         return sendError(res, message, 409);

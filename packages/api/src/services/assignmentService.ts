@@ -66,6 +66,13 @@ export async function getRecommendedMappings(distributorId: string, date: string
         // can include it in its TanStack Query cache key — without this, the
         // panel keeps showing trip 1's manifest after a roll to trip 2.
         tripNumber: todayMapping.tripNumber,
+        // FLOAT-001 (2026-06-19 Bug #9b): expose DVA status so the dispatch
+        // card's button can switch between "Dispatch" (dispatch_ready) and
+        // "+ Add to Trip" (loaded_and_dispatched). Without this the UI has
+        // no way to know the vehicle is already on the road and the admin
+        // ends up clicking Dispatch on a card that should be Add-to-Trip.
+        dvaStatus: todayMapping.status,
+        dvaIsReconciled: todayMapping.isReconciled,
         status: 'confirmed' as const,
         source: 'today' as const,
       };

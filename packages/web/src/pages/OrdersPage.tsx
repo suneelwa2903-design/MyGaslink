@@ -1356,7 +1356,13 @@ function AssignmentsTab() {
   const { data: inTransitData } = useQuery({
     queryKey: ['in-transit-drivers'],
     queryFn: () => apiGet<{ drivers: InTransitRow[] }>('/orders/in-transit'),
-    refetchInterval: 30_000, // light auto-refresh so counts stay current
+    // FLOAT-001 (2026-06-19 Bug #9b): 5s instead of 30s. With 30s, a driver
+    // just dispatched would still appear in Ready-to-Dispatch with "Dispatch"
+    // button for up to 30 seconds after going on the road, instead of moving
+    // to the In Transit panel with "+ Add to Trip". The dispatch-card
+    // button conditional on dvaStatus catches the race, but the panel
+    // location should still update quickly.
+    refetchInterval: 5_000,
   });
   const inTransitDrivers: InTransitRow[] = inTransitData?.drivers ?? [];
   const inTransitDriverIds = new Set(inTransitDrivers.map((d) => d.driverId));
@@ -1382,6 +1388,11 @@ function AssignmentsTab() {
           // rows so LoadManifestPanel can key its cache by (assignmentId,
           // tripNumber) — auto-invalidates when the DVA rolls.
           tripNumber?: number;
+          // FLOAT-001 (2026-06-19 Bug #9b): DVA status drives the dispatch
+          // card's button label — "Dispatch" when dispatch_ready,
+          // "+ Add to Trip" when loaded_and_dispatched.
+          dvaStatus?: string;
+          dvaIsReconciled?: boolean;
           status: string;
           source: string;
         }>;
@@ -1403,6 +1414,12 @@ function AssignmentsTab() {
     queryClient.invalidateQueries({ queryKey: ['pending-dispatch-orders'] });
     queryClient.invalidateQueries({ queryKey: ['in-transit-drivers'] });
     queryClient.invalidateQueries({ queryKey: ['orders'] });
+    // FLOAT-001 (2026-06-19 Bug #9b): also refresh vehicle-mappings so the
+    // dispatch card's dvaStatus updates immediately after a dispatch /
+    // add-to-trip / vehicle return. Without this the card's button stays
+    // stale (still says "Dispatch" right after a dispatch) until the next
+    // tab focus or page reload.
+    queryClient.invalidateQueries({ queryKey: ['vehicle-mappings', today] });
   };
 
   // WI-036: group pending_dispatch orders by driver for the dispatch UI.
@@ -1744,21 +1761,47 @@ function AssignmentsTab() {
                         </div>
                       )}
                     </div>
-                    <Button
-                      size="sm"
-                      disabled={!canDispatch}
-                      onClick={() =>
-                        setDispatchDriver({
-                          driverId: g.driverId,
-                          driverName: g.driverName,
-                          vehicleNumber: g.vehicleNumber,
-                          assignmentId: mapping?.assignmentId ?? null,
-                          orders: g.orders,
-                        })
-                      }
-                    >
-                      Dispatch {g.driverName.split(' ')[0]} ▶
-                    </Button>
+                    {/* FLOAT-001 (2026-06-19 Bug #9b): switch button when the
+                        driver's vehicle is ALREADY on the road (DVA at
+                        loaded_and_dispatched). Add-to-Trip dispatches new
+                        orders onto the existing trip via preflightAddToTrip
+                        (NO new depot debit — cylinders come from float).
+                        Without this the admin would click Dispatch and start
+                        a brand-new trip with phantom dispatch events. */}
+                    {mapping?.dvaStatus === 'loaded_and_dispatched' ? (
+                      <Button
+                        size="sm"
+                        disabled={!canDispatch}
+                        onClick={() =>
+                          setDispatchDriver({
+                            driverId: g.driverId,
+                            driverName: g.driverName,
+                            vehicleNumber: g.vehicleNumber,
+                            assignmentId: mapping?.assignmentId ?? null,
+                            orders: g.orders,
+                            mode: 'add_to_trip',
+                          })
+                        }
+                      >
+                        + Add {g.orders.length} to Trip
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        disabled={!canDispatch}
+                        onClick={() =>
+                          setDispatchDriver({
+                            driverId: g.driverId,
+                            driverName: g.driverName,
+                            vehicleNumber: g.vehicleNumber,
+                            assignmentId: mapping?.assignmentId ?? null,
+                            orders: g.orders,
+                          })
+                        }
+                      >
+                        Dispatch {g.driverName.split(' ')[0]} ▶
+                      </Button>
+                    )}
                   </div>
                   {/* FLOAT-001 (2026-06-17): inline load-manifest editor.
                       Optional — admin can dispatch without it (pre-booked-only

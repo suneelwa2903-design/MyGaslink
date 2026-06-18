@@ -780,6 +780,123 @@ describe('FLOAT-001 — float-unsold reconciliation credit', () => {
     expect(allReturns[1].referenceId).not.toBe(trip1ManifestId);
   });
 
+  it('BUG #8 — pending_dispatch order cancelled at reconcile writes NO phantom credit', async () => {
+    // User repro 2026-06-18 ~20:14 IST, dist-002: OSHD673 was a regular
+    // pending_dispatch order for 6 cylinders (never went through preflight,
+    // never debited depot). At reconcile, Step 2's cancel-undelivered branch
+    // force-cancelled it AND wrote +6 cancellation_return → depot got a
+    // phantom credit for cylinders that never left → Inventory showed
+    // On Vehicle = -6 for 425 KG.
+    // Fix: cancellation_return + CSE only fire when the order was actually
+    // dispatched (status in pending_delivery / preflight_in_progress /
+    // modified_delivered). pending_dispatch just transitions to cancelled.
+
+    // Setup: float manifest + dispatch (writes float event, depot debit ok)
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 5 }], adminUserId,
+    );
+    await preflightDispatch({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+    // Now create a NEW regular order pending_dispatch — never dispatched.
+    const undispatched = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-PD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_dispatch',
+        orderSource: 'regular',
+        totalAmount: 3000,
+        items: { create: [{ cylinderTypeId, quantity: 6, unitPrice: 500, totalPrice: 3000 }] },
+      },
+    });
+
+    // Mark vehicle returned then reconcile (Bug #9 guard is bypassed by
+    // calling confirmVehicleReconciliation directly — Bug #9 separately
+    // covers the markVehicleReturned guard).
+    // Mark vehicle returned would 400 because of the pending_dispatch
+    // guard (Bug #9). For this Bug #8 test we want to reach Step 2's
+    // cancel-undelivered branch, so we flip vehicle/DVA state manually.
+    await prisma.vehicle.update({ where: { id: vehicleId }, data: { status: 'returned' } });
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dvaId }, data: { returnedAt: new Date() },
+    });
+    await confirmVehicleReconciliation(vehicleId, DIST, adminUserId, {
+      physicalStockConfirmed: true,
+    });
+
+    // Order should be cancelled.
+    const cancelled = await prisma.order.findUniqueOrThrow({ where: { id: undispatched.id } });
+    expect(cancelled.status).toBe('cancelled');
+
+    // CRITICAL: no cancellation_return event referencing this order.
+    const phantomEvents = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'cancellation_return',
+        referenceType: 'order',
+        referenceId: undispatched.id,
+      },
+    });
+    expect(phantomEvents).toHaveLength(0);
+
+    // No CancelledStockEvent for this order either.
+    const phantomCse = await prisma.cancelledStockEvent.findMany({
+      where: { orderId: undispatched.id },
+    });
+    expect(phantomCse).toHaveLength(0);
+  });
+
+  it('BUG #9 — markVehicleReturned blocks when pending_dispatch orders exist', async () => {
+    const { markVehicleReturned } = await import('../../services/deliveryWorkflowService.js');
+    // Setup: dispatch a float-only trip so the DVA is loaded_and_dispatched.
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 5 }], adminUserId,
+    );
+    await preflightDispatch({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+
+    // Create a regular order in pending_dispatch (assigned to this vehicle
+    // but never dispatched — admin clicked Mark Returned without first
+    // running "+ Add to Trip" or cancelling).
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-VR-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_dispatch',
+        orderSource: 'regular',
+        totalAmount: 1000,
+        items: { create: [{ cylinderTypeId, quantity: 2, unitPrice: 500, totalPrice: 1000 }] },
+      },
+    });
+
+    // Mark returned should throw with PENDING_DISPATCH_ORDERS_EXIST.
+    let caught: (Error & { code?: string; statusCode?: number }) | null = null;
+    try {
+      await markVehicleReturned(vehicleId, driverId, DIST);
+    } catch (e) {
+      caught = e as Error & { code?: string; statusCode?: number };
+    }
+    expect(caught).not.toBeNull();
+    expect(caught!.code).toBe('PENDING_DISPATCH_ORDERS_EXIST');
+    expect(caught!.statusCode).toBe(400);
+    expect(caught!.message).toMatch(/not yet dispatched/);
+
+    // Vehicle status NOT changed (still dispatched, not returned).
+    const vehicle = await prisma.vehicle.findUniqueOrThrow({ where: { id: vehicleId } });
+    expect(vehicle.status).toBe('dispatched');
+  });
+
   it('BUG #7 — preflightDispatch shouldRoll does NOT double-bump tripNumber on reconciled path', async () => {
     // Trip 1 → reconciled → DVA at trip 2 already (per Bug #7 fix above).
     await fullCycle({ manifest: [{ cylinderTypeId, totalLoaded: 3 }] });

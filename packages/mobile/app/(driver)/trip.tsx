@@ -213,6 +213,24 @@ export default function DriverTripScreen() {
     {
       invalidateKeys: [['driver-active-trip'], ['driver-orders']],
       successMessage: 'Vehicle marked as returned!',
+      // FLOAT-001 (2026-06-19 Bug #9): surface a specific message when
+      // the server blocks on undispatched orders. The error envelope
+      // carries `code === 'PENDING_DISPATCH_ORDERS_EXIST'` plus the
+      // full English message. Show the server message verbatim (lists
+      // the affected order numbers) plus a "contact office" hint.
+      onError: (error) => {
+        const err = error as Error & { code?: string; response?: { data?: { code?: string; error?: string } } };
+        const code = err.code ?? err.response?.data?.code;
+        if (code === 'PENDING_DISPATCH_ORDERS_EXIST') {
+          const serverMsg = err.response?.data?.error ?? err.message ?? '';
+          Alert.alert(
+            'Cannot return vehicle',
+            `${serverMsg}\n\nContact office to dispatch or cancel pending orders.`,
+          );
+          return;
+        }
+        Alert.alert('Error', err.message || 'Failed to mark vehicle returned');
+      },
     },
   );
 
