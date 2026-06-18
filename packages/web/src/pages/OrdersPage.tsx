@@ -1763,7 +1763,10 @@ function AssignmentsTab() {
                       dispatch and credited back as cancellation_return at
                       reconcile for whatever didn't sell. */}
                   {mapping?.assignmentId && (
-                    <LoadManifestPanel assignmentId={mapping.assignmentId} />
+                    <LoadManifestPanel
+                      assignmentId={mapping.assignmentId}
+                      orderItems={g.orders.flatMap((o) => (o.items ?? []).map((it) => ({ cylinderTypeId: it.cylinderTypeId, quantity: it.quantity })))}
+                    />
                   )}
                 </div>
               );
@@ -1794,6 +1797,10 @@ function AssignmentsTab() {
 type CylinderTypeRow = { id: string; typeName: string };
 type LoadManifestPanelProps = {
   assignmentId: string;
+  // FLOAT-001 (2026-06-18): live ordered items from the dispatch card.
+  // Used to populate the Ordered column BEFORE the first manifest is
+  // confirmed. After confirm, manifest.orderedQty (server snapshot) wins.
+  orderItems: Array<{ cylinderTypeId: string; quantity: number }>;
 };
 
 // FLOAT-001 (2026-06-18) — rewritten to fix 3 live-testing bugs:
@@ -1811,7 +1818,7 @@ type LoadManifestPanelProps = {
 //   BUG 4 — All .map outputs key={t.id}; static header siblings stay
 //     keyless (React only requires keys on array children, not on
 //     ordinary sibling elements).
-function LoadManifestPanel({ assignmentId }: LoadManifestPanelProps) {
+function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -1845,6 +1852,12 @@ function LoadManifestPanel({ assignmentId }: LoadManifestPanelProps) {
     staleTime: 30_000,
   });
   const existingByType = new Map((existing?.manifest ?? []).map((m) => [m.cylinderTypeId, m]));
+  // Live ordered count from current dispatch card orders — used as the
+  // Ordered column fallback BEFORE any manifest is confirmed.
+  const liveOrderedByType = new Map<string, number>();
+  for (const it of orderItems) {
+    liveOrderedByType.set(it.cylinderTypeId, (liveOrderedByType.get(it.cylinderTypeId) ?? 0) + it.quantity);
+  }
 
   const saveMutation = useMutation({
     mutationFn: (items: Array<{ cylinderTypeId: string; totalLoaded: number }>) =>
@@ -1878,7 +1891,9 @@ function LoadManifestPanel({ assignmentId }: LoadManifestPanelProps) {
       const raw = floatByType[t.id];
       if (raw === undefined || raw.trim() === '') continue;
       const float = Math.max(0, Math.floor(Number(raw) || 0));
-      const ordered = existingByType.get(t.id)?.orderedQty ?? 0;
+      // Use the same Ordered we DISPLAY to the admin so totalLoaded matches
+      // the on-screen Total column exactly.
+      const ordered = existingByType.get(t.id)?.orderedQty ?? liveOrderedByType.get(t.id) ?? 0;
       const totalLoaded = ordered + float;
       if (totalLoaded <= 0) continue;
       items.push({ cylinderTypeId: t.id, totalLoaded });
@@ -1925,7 +1940,9 @@ function LoadManifestPanel({ assignmentId }: LoadManifestPanelProps) {
             </div>
             {types.map((t) => {
               const saved = existingByType.get(t.id);
-              const orderedDisplay = saved?.orderedQty ?? 0;
+              // Prefer saved snapshot (post-confirm) — falls back to live
+              // pending_dispatch count from the current order list pre-confirm.
+              const orderedDisplay = saved?.orderedQty ?? liveOrderedByType.get(t.id) ?? 0;
               const savedFloat = saved?.floatQty ?? 0;
               const inputRaw = floatByType[t.id] ?? '';
               const inputNum = inputRaw === '' ? null : Math.max(0, Math.floor(Number(inputRaw) || 0));
