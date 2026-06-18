@@ -19,10 +19,6 @@
  * same DVA rolls forward to trip 2.
  */
 import { prisma } from '../lib/prisma.js';
-import {
-  resolveEffectiveTripNumber,
-  TRIP_CONTENT_STATUSES,
-} from '../routes/driversVehicles.js';
 import type { Prisma } from '@prisma/client';
 
 export class ManifestError extends Error {
@@ -203,6 +199,12 @@ export async function createOrUpdateManifest(
 /**
  * All manifest rows for a DVA, across all trip numbers. Includes cylinderType.
  * Empty array if no manifest entered yet.
+ *
+ * Use this for audit / history views, and from preflight where the just-
+ * confirmed manifest is the only row anyway. For the web dispatch panel's
+ * "is there a manifest for the trip I'm about to dispatch?" question, use
+ * [[getManifestForDVATripCurrent]] instead — it scopes to the DVA's CURRENT
+ * tripNumber so a rolled DVA doesn't echo back trip-1's snapshot.
  */
 export async function getManifestForDVA(distributorId: string, dvaId: string) {
   // Verify tenant via DVA first — refuse cross-tenant reads even before hitting
@@ -218,6 +220,34 @@ export async function getManifestForDVA(distributorId: string, dvaId: string) {
     where: { dvaId, distributorId },
     include: { cylinderType: { select: { id: true, typeName: true } } },
     orderBy: [{ tripNumber: 'asc' }, { confirmedAt: 'asc' }],
+  });
+}
+
+/**
+ * Manifest rows for a DVA scoped to its CURRENT tripNumber. The web dispatch
+ * panel's source of truth — without this, a DVA that rolled trip 1 → trip 2
+ * shows trip 1's confirmed manifest in the panel, hides the input fields
+ * behind read-only mode, and uses trip 1's orderedQty snapshot for any new
+ * totalLoaded computation. See user repro 2026-06-18 ~08:25 IST (dist-002).
+ *
+ * Returns [] when DVA not found OR no manifest at the current trip.
+ * Cross-tenant safe: DVA tenant check before manifest read.
+ */
+export async function getManifestForDVATripCurrent(
+  distributorId: string,
+  dvaId: string,
+) {
+  const dva = await prisma.driverVehicleAssignment.findFirst({
+    where: { id: dvaId, distributorId },
+    select: { tripNumber: true },
+  });
+  if (!dva) {
+    throw new ManifestError('DVA not found', 'DVA_NOT_FOUND', 404);
+  }
+  return prisma.dVALoadManifest.findMany({
+    where: { dvaId, distributorId, tripNumber: dva.tripNumber },
+    include: { cylinderType: { select: { id: true, typeName: true } } },
+    orderBy: { confirmedAt: 'asc' },
   });
 }
 

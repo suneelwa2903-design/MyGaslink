@@ -537,9 +537,19 @@ driverRouter.get('/me/trip-stock',
         select: { id: true },
       });
       if (dvaRow) {
+        // FLOAT-001 (2026-06-18): manifest lookup decoupled from tripNumber.
+        // After a DVA roll (trip 1 → trip 2) the manifest stays at trip 1
+        // but the truck is still physically the same — filtering by
+        // effectiveTrip=2 caused the merge to miss every row, leaving
+        // manifestTotalLoaded=0 and the float chips hidden on Vehicle Stock.
+        // Same fix family as the Bug #4 getAvailableFullsForDriver rewrite.
+        // orderBy ascending so the EARLIEST manifest wins on the (cylinderType)
+        // key during the merge below — matches getAvailableFullsForDriver's
+        // "take earliest" semantics.
         const manifestRows = await prisma.dVALoadManifest.findMany({
-          where: { dvaId: dvaRow.id, tripNumber: effectiveTrip, distributorId },
+          where: { dvaId: dvaRow.id, distributorId },
           include: { cylinderType: { select: { id: true, typeName: true } } },
+          orderBy: { tripNumber: 'asc' },
         });
         for (const m of manifestRows) {
           const key = m.cylinderTypeId;

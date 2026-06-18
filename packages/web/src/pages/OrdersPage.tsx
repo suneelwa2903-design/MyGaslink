@@ -1378,6 +1378,10 @@ function AssignmentsTab() {
           vehicleId: string | null;
           vehicleNumber: string | null;
           assignmentId?: string;
+          // FLOAT-001 (2026-06-18): exposed by assignmentService for confirmed
+          // rows so LoadManifestPanel can key its cache by (assignmentId,
+          // tripNumber) — auto-invalidates when the DVA rolls.
+          tripNumber?: number;
           status: string;
           source: string;
         }>;
@@ -1765,6 +1769,7 @@ function AssignmentsTab() {
                   {mapping?.assignmentId && (
                     <LoadManifestPanel
                       assignmentId={mapping.assignmentId}
+                      tripNumber={mapping.tripNumber ?? 1}
                       orderItems={g.orders.flatMap((o) => (o.items ?? []).map((it) => ({ cylinderTypeId: it.cylinderTypeId, quantity: it.quantity })))}
                     />
                   )}
@@ -1802,6 +1807,10 @@ function AssignmentsTab() {
 type CylinderTypeRow = { cylinderTypeId: string; typeName: string };
 type LoadManifestPanelProps = {
   assignmentId: string;
+  // FLOAT-001 (2026-06-18): current DVA tripNumber for cache-key scoping.
+  // Without this the panel keeps showing trip 1's manifest after a roll —
+  // user repro 2026-06-18 ~08:25 IST on dist-002.
+  tripNumber: number;
   // FLOAT-001 (2026-06-18): live ordered items from the dispatch card.
   // Used to populate the Ordered column BEFORE the first manifest is
   // confirmed. After confirm, manifest.orderedQty (server snapshot) wins.
@@ -1823,7 +1832,7 @@ type LoadManifestPanelProps = {
 //   BUG 4 — All .map outputs key={t.id}; static header siblings stay
 //     keyless (React only requires keys on array children, not on
 //     ordinary sibling elements).
-function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps) {
+function LoadManifestPanel({ assignmentId, tripNumber, orderItems }: LoadManifestPanelProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -1842,7 +1851,7 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
   // taken at confirm time, so it's the source of truth for the Ordered
   // column display.
   const { data: existing, refetch: refetchManifest } = useQuery({
-    queryKey: ['manifest', assignmentId],
+    queryKey: ['manifest', assignmentId, tripNumber],
     queryFn: () =>
       apiGet<{
         manifest: Array<{
@@ -1872,7 +1881,7 @@ function LoadManifestPanel({ assignmentId, orderItems }: LoadManifestPanelProps)
       setEditing(false);
       setFloatByType({});
       refetchManifest();
-      queryClient.invalidateQueries({ queryKey: ['manifest', assignmentId] });
+      queryClient.invalidateQueries({ queryKey: ['manifest', assignmentId, tripNumber] });
     },
     onError: (err: unknown) => {
       // BUG 1 fix surface: include the server's detailed error body so

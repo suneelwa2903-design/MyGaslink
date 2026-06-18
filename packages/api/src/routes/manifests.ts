@@ -13,7 +13,7 @@ import { validate } from '../middleware/validate.js';
 import { createManifestSchema } from '@gaslink/shared';
 import {
   createOrUpdateManifest,
-  getManifestForDVA,
+  getManifestForDVATripCurrent,
   ManifestError,
 } from '../services/dvaManifestService.js';
 
@@ -57,7 +57,11 @@ router.get(
       const distributorId = req.user!.distributorId!;
       const dvaId = req.params.dvaId;
       if (typeof dvaId !== 'string') return sendError(res, 'dvaId required', 400, 'VALIDATION');
-      const rows = await getManifestForDVA(distributorId, dvaId);
+      // FLOAT-001 (2026-06-18): current-trip scope. The web dispatch panel is
+      // the only consumer of this endpoint and it must NOT see prior-trip
+      // manifests after a DVA roll. Audit-trail consumers can use the service
+      // function getManifestForDVA directly. See user repro on dist-002.
+      const rows = await getManifestForDVATripCurrent(distributorId, dvaId);
       return sendSuccess(res, { manifest: rows });
     } catch (err) {
       if (err instanceof ManifestError) {
