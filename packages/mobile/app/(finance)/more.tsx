@@ -77,7 +77,8 @@ export default function FinanceMoreScreen() {
       icon: 'time-outline',
       label: 'Pending Payment Approvals',
       subtitle: 'Verify or reject self-reported payments',
-      onPress: () => router.push('/(finance)/pending-payments'),
+      // Group-relative path so navigation stays inside (finance).
+      onPress: () => router.push('/pending-payments'),
     },
     {
       icon: 'person-outline',

@@ -274,7 +274,7 @@ export default function CustomerInvoicesPage() {
                             variant="secondary"
                             onClick={() => setReportPaymentInvoice(inv)}
                           >
-                            I've Paid
+                            I&apos;ve Paid
                           </Button>
                         )}
                         <button onClick={() => setViewInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="View invoice">

@@ -36,11 +36,9 @@ let adminToken: string;
 let financeToken: string;
 let inventoryToken: string;
 let driverToken: string;
-let driverDist002Token: string;
 let customerToken: string;
 
 let dist1CustomerId: string;
-let dist1CustomerName: string;
 let dist2CustomerId: string;
 let driverDist1Id: string;
 let driverDist2Id: string;
@@ -70,7 +68,6 @@ beforeAll(async () => {
   driverToken = drvLogin.token;
   driverDist1Id = drvLogin.driver.id;
   const drv2Login = await loginAsDriverDist002();
-  driverDist002Token = drv2Login.token;
   driverDist2Id = drv2Login.driver!.id;
   const custLogin = await loginAsCustomer();
   customerToken = custLogin.token;
@@ -81,7 +78,6 @@ beforeAll(async () => {
     where: { distributorId: 'dist-001', email: 'royal@kitchen.com' },
   });
   dist1CustomerId = dist1Customer.id;
-  dist1CustomerName = dist1Customer.customerName;
 
   // dist-002 customer — Bangalore Foods (any will do, tenant-iso tests use the id)
   const dist2Customer = await prisma.customer.findFirstOrThrow({
@@ -271,14 +267,10 @@ describe('PaymentSubmission — Creation', () => {
     expect(res.status).toBe(400);
   });
 
-  it('T05 — paymentDate more than 1 day in future rejected with 400', async () => {
-    // Use a clearly-future date.
-    const farFuture = '2099-12-31'; // but service permits this — anti-pattern #7
-    // Actually we want a future date relative to NOW that's past tomorrow.
-    // 2099 IS far future. Service allows it (anti-pattern #7 convention).
-    // To test the >1 day guard, we'd need to mock Date. Skip strict
-    // future-block here — instead assert that anti-pattern #7 dates ARE
-    // accepted (already covered by T01) and use a malformed date for T05.
+  it('T05 — malformed transactionDate rejected with 400', async () => {
+    // Service is intentionally permissive on future dates (anti-pattern
+    // #7 convention uses 2099-12-31 for fixtures). The Zod regex still
+    // rejects malformed dates at the route boundary.
     const res = await request(app)
       .post('/api/drivers/me/payment-submissions')
       .set(auth(driverToken))

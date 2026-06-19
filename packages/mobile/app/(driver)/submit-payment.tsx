@@ -41,7 +41,7 @@ const METHODS: { value: Method; label: string }[] = [
 ];
 
 export default function DriverSubmitPaymentScreen() {
-  const { dark, colors } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -264,7 +264,7 @@ export default function DriverSubmitPaymentScreen() {
             />
           </View>
           <Text style={{ fontSize: 12, color: colors.textMuted, textAlign: 'center' }}>
-            Your submission goes to the office for verification before posting to the customer's account.
+            {"Your submission goes to the office for verification before posting to the customer's account."}
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>

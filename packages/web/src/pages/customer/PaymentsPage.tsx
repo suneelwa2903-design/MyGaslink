@@ -136,7 +136,7 @@ export default function CustomerPaymentsPage() {
           <div>
             <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Pending Verifications</h2>
             <p className="text-xs text-surface-500 dark:text-surface-400">
-              Payments you reported here are reviewed by the distributor's team before they appear in your cleared payment history.
+              Payments you reported here are reviewed by the distributor&apos;s team before they appear in your cleared payment history.
             </p>
           </div>
           <div className="table-container">
@@ -316,7 +316,7 @@ export function ReportPaymentModal({ onClose, invoiceId, invoiceOutstanding }: R
       <div className="space-y-4">
         <p className="text-sm text-surface-600 dark:text-surface-400">
           Use this to report payments you made through channels outside this portal — cash to the
-          delivery driver, bank transfer, UPI, cheque, etc. Your distributor's team will verify
+          delivery driver, bank transfer, UPI, cheque, etc. Your distributor&apos;s team will verify
           and update your balance.
         </p>
         <div>

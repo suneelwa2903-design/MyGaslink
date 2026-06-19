@@ -1874,7 +1874,11 @@ export default function AdminMoreScreen() {
             icon="time-outline"
             label="Pending Payment Approvals"
             subtitle="Verify or reject self-reported payments"
-            onPress={() => router.push('/(admin)/pending-payments')}
+            // Group-relative path so the same MenuRow keeps working when
+            // (admin)/more.tsx is re-rendered under (finance) (none today,
+            // but the test guard at phaseB-inventory-reexport-parity.test.ts
+            // enforces this convention).
+            onPress={() => router.push('/pending-payments')}
             theme={theme}
           />
         </SectionCard>
