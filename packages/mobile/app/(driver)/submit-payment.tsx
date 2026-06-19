@@ -29,6 +29,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme, ACCENT } from '../../src/theme';
 import { Button } from '../../src/components/ui';
 import { apiPost, getErrorMessage } from '../../src/lib/api';
+import { useApiQuery } from '../../src/hooks/useApi';
 import { CameraView, useCameraPermissions } from '../../src/services/camera';
 import { localTodayISO } from '@gaslink/shared';
 
@@ -69,17 +70,36 @@ export default function DriverSubmitPaymentScreen() {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const customerId = params.customerId ?? '';
-  const customerName = params.customerName ?? 'Customer';
+  // WI-PENDING-PAYMENTS post-smoke FIX-C: two-mode operation.
+  // Mode A — opened from an order (params.customerId set): customer is
+  //   read-only at the top, prefillAmount populates the field.
+  // Mode B — opened from analytics "+ Add Payment" (no params): the
+  //   customer picker below is shown instead. Driver searches the
+  //   distributor's customers and taps to select. selectedCustomer
+  //   then drives the submit payload.
+  const fromOrder = !!params.customerId;
+  const [pickedCustomer, setPickedCustomer] = useState<{ id: string; customerName: string } | null>(null);
+  const [customerSearch, setCustomerSearch] = useState('');
 
-  if (!customerId) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg, padding: 16 }}>
-        <Text style={{ color: colors.text }}>Missing customer context — go back and reopen from an order.</Text>
-        <Button title="Back" onPress={() => router.back()} />
-      </SafeAreaView>
-    );
-  }
+  const { data: customerData } = useApiQuery<{ customers: Array<{ customerId: string; customerName: string; phone?: string | null }> }>(
+    ['driver-submit-payment-customers'],
+    '/customers',
+    { pageSize: 200 },
+    { enabled: !fromOrder },
+  );
+  const allCustomers = customerData?.customers ?? [];
+  const filteredCustomers = customerSearch.trim().length === 0
+    ? allCustomers
+    : allCustomers.filter((c) => {
+        const q = customerSearch.trim().toLowerCase();
+        return (
+          c.customerName?.toLowerCase().includes(q)
+          || (c.phone ?? '').toLowerCase().includes(q)
+        );
+      });
+
+  const effectiveCustomerId = fromOrder ? (params.customerId ?? '') : (pickedCustomer?.id ?? '');
+  const effectiveCustomerName = fromOrder ? (params.customerName ?? 'Customer') : (pickedCustomer?.customerName ?? '');
 
   const handleTakePhoto = async () => {
     if (!cameraPermission?.granted) {
@@ -123,10 +143,14 @@ export default function DriverSubmitPaymentScreen() {
       Alert.alert('Invalid amount', 'Enter an amount greater than zero.');
       return;
     }
+    if (!effectiveCustomerId) {
+      Alert.alert('Pick a customer', 'Select a customer before submitting.');
+      return;
+    }
     try {
       setSubmitting(true);
       await apiPost('/drivers/me/payment-submissions', {
-        customerId,
+        customerId: effectiveCustomerId,
         amount: amt,
         paymentMethod: method,
         transactionDate,
@@ -158,12 +182,70 @@ export default function DriverSubmitPaymentScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, gap: 12 }}>
-          <View style={cardStyle(colors)}>
-            <Text style={{ fontSize: 13, color: colors.textSecondary }}>Customer</Text>
-            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginTop: 2 }}>
-              {customerName}
-            </Text>
-          </View>
+          {fromOrder ? (
+            <View style={cardStyle(colors)}>
+              <Text style={{ fontSize: 13, color: colors.textSecondary }}>Customer</Text>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginTop: 2 }}>
+                {effectiveCustomerName}
+              </Text>
+            </View>
+          ) : (
+            <View style={cardStyle(colors)}>
+              <Text style={labelStyle(colors)}>Customer</Text>
+              {pickedCustomer ? (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                  <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
+                    {pickedCustomer.customerName}
+                  </Text>
+                  <Button title="Change" variant="secondary" size="sm" onPress={() => setPickedCustomer(null)} />
+                </View>
+              ) : (
+                <>
+                  <TextInput
+                    value={customerSearch}
+                    onChangeText={setCustomerSearch}
+                    placeholder="Search customer by name or phone"
+                    placeholderTextColor={colors.textMuted}
+                    style={inputStyle(colors)}
+                  />
+                  <View style={{ marginTop: 8, maxHeight: 240 }}>
+                    <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+                      {filteredCustomers.length === 0 ? (
+                        <Text style={{ color: colors.textSecondary, fontSize: 13, padding: 8 }}>
+                          {customerSearch ? 'No matches.' : 'No customers loaded yet.'}
+                        </Text>
+                      ) : (
+                        filteredCustomers.slice(0, 50).map((c) => (
+                          <TouchableOpacity
+                            key={c.customerId}
+                            onPress={() => {
+                              setPickedCustomer({ id: c.customerId, customerName: c.customerName });
+                              setCustomerSearch('');
+                            }}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 8,
+                              borderBottomWidth: 1,
+                              borderBottomColor: colors.cardBorder,
+                            }}
+                          >
+                            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                              {c.customerName}
+                            </Text>
+                            {c.phone && (
+                              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                                {c.phone}
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        ))
+                      )}
+                    </ScrollView>
+                  </View>
+                </>
+              )}
+            </View>
+          )}
 
           <View style={cardStyle(colors)}>
             <Text style={labelStyle(colors)}>Amount (₹)</Text>
@@ -265,7 +347,7 @@ export default function DriverSubmitPaymentScreen() {
               title={submitting ? 'Submitting…' : 'Submit for Verification'}
               variant="primary"
               onPress={handleSubmit}
-              disabled={submitting || uploading || !(Number(amount) > 0)}
+              disabled={submitting || uploading || !(Number(amount) > 0) || !effectiveCustomerId}
             />
           </View>
           <Text style={{ fontSize: 12, color: colors.textMuted, textAlign: 'center' }}>

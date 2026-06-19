@@ -1,13 +1,40 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
-import { Card, MetricCard, DateInput, MIN_DATE_FLOOR, todayLocalIso } from '../../src/components/ui';
+import { Card, MetricCard, DateInput, MIN_DATE_FLOOR, todayLocalIso, Button } from '../../src/components/ui';
 import { useTheme, ACCENT, formatINR } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 import { Badge } from '../../src/components/ui';
 import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
+
+// WI-PENDING-PAYMENTS post-smoke FIX-C: wire shape returned by
+// GET /api/drivers/me/payment-submissions for the recent-submissions
+// block under My Performance.
+interface RecentSubmission {
+  submissionId: string;
+  customerName?: string;
+  customer?: { customerName: string };
+  amount: number;
+  paymentMethod: string;
+  status: 'pending_verification' | 'verified' | 'rejected';
+  transactionDate: string;
+  rejectionReason?: string | null;
+}
+
+const SUBMISSION_STATUS_LABEL = {
+  pending_verification: 'Pending',
+  verified: 'Verified',
+  rejected: 'Rejected',
+} as const;
+
+const SUBMISSION_STATUS_VARIANT: Record<string, 'warning' | 'success' | 'danger'> = {
+  pending_verification: 'warning',
+  verified: 'success',
+  rejected: 'danger',
+};
 
 interface DriverPerformanceRow {
   driverId: string;
@@ -27,6 +54,7 @@ function offsetDate(offsetDays: number): string {
 
 export default function DriverAnalyticsScreen() {
   const { colors } = useTheme();
+  const router = useRouter();
 
   const [dateFrom, setDateFrom] = useState<string>(() => offsetDate(-7));
   const [dateTo, setDateTo] = useState<string>(() => offsetDate(0));
@@ -44,18 +72,35 @@ export default function DriverAnalyticsScreen() {
   // data[0] may be undefined when date range has no activity
   const perf = perfData?.[0];
 
+  // WI-PENDING-PAYMENTS post-smoke FIX-C: limit reduced from 10 → 7 so
+  // the Recent Payments Submitted block above doesn't get pushed off
+  // the visible viewport on smaller phones.
   const { data: recentOrdersResponse, isLoading: ordersLoading, refetch: refetchOrders } = useApiQuery<{ orders: Order[] }>(
     ['driver-recent-deliveries'],
     '/orders',
-    { limit: 10 },
+    { limit: 7 },
   );
   const recentOrders: Order[] = recentOrdersResponse?.orders ?? [];
 
-  const isLoading = metricsLoading || ordersLoading;
+  // WI-PENDING-PAYMENTS post-smoke FIX-C: last 5 payment submissions
+  // by this driver — render under "My Performance" with a +Add Payment
+  // CTA that routes to submit-payment WITHOUT a customer param (the
+  // screen has a picker mode for that case).
+  const { data: submissionsResponse, isLoading: submissionsLoading, refetch: refetchSubmissions } = useApiQuery<{
+    submissions: RecentSubmission[];
+  }>(
+    ['driver-submissions-recent'],
+    '/drivers/me/payment-submissions',
+    { pageSize: 5 },
+  );
+  const recentSubmissions: RecentSubmission[] = submissionsResponse?.submissions ?? [];
+
+  const isLoading = metricsLoading || ordersLoading || submissionsLoading;
 
   const refetch = () => {
     refetchMetrics();
     refetchOrders();
+    refetchSubmissions();
   };
 
   const metricCards = [
@@ -153,8 +198,58 @@ export default function DriverAnalyticsScreen() {
           </View>
         </View>
 
-        {/* Recent Activity */}
+        {/* WI-PENDING-PAYMENTS post-smoke FIX-C: Recent Payments Submitted
+            block. Lives at the bottom of "My Performance" because tracking
+            how many of your self-reported payments cleared is a
+            performance signal for the driver. */}
         <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
+          Recent Payments Submitted
+        </Text>
+        {submissionsLoading && recentSubmissions.length === 0 ? (
+          <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color={ACCENT.red} />
+          </View>
+        ) : recentSubmissions.length === 0 ? (
+          <Card>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', paddingVertical: 8 }}>
+              No payments submitted yet.
+            </Text>
+          </Card>
+        ) : (
+          recentSubmissions.map((s) => (
+            <Card key={s.submissionId}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>
+                    {s.customer?.customerName ?? s.customerName ?? 'Customer'}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                    {formatINR(s.amount)} · {s.paymentMethod.replace(/_/g, ' ')} · {new Date(s.transactionDate).toLocaleDateString('en-IN')}
+                  </Text>
+                  {s.status === 'rejected' && s.rejectionReason && (
+                    <Text style={{ fontSize: 11, color: ACCENT.red, marginTop: 2 }}>
+                      {s.rejectionReason}
+                    </Text>
+                  )}
+                </View>
+                <Badge
+                  label={SUBMISSION_STATUS_LABEL[s.status]}
+                  variant={SUBMISSION_STATUS_VARIANT[s.status]}
+                />
+              </View>
+            </Card>
+          ))
+        )}
+        <View style={{ marginTop: 4 }}>
+          <Button
+            title="+ Add Payment"
+            variant="secondary"
+            onPress={() => router.push('/(driver)/submit-payment')}
+          />
+        </View>
+
+        {/* Recent Activity */}
+        <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 16 }}>
           Recent Activity
         </Text>
 
