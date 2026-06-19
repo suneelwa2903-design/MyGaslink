@@ -181,6 +181,28 @@ enum PaymentAllocationStatus {
   fully_allocated
 }
 
+// WI-PENDING-PAYMENTS: a self-reported payment claim from a driver or
+// customer that has NOT yet been verified by office staff. Lives on the
+// `payment_submissions` table — see model PaymentSubmission. NEVER
+// stored on the PaymentTransaction row (that table's invariant is
+// "every row is a cleared money event"; pending claims would leak
+// into computeCustomerOverdue, Tally export, analytics KPIs, etc.).
+enum PaymentSubmissionStatus {
+  pending_verification
+  verified
+  rejected
+}
+
+// WI-PENDING-PAYMENTS: who submitted an unverified payment claim.
+// `staff` covers any internal user (admin/finance/inventory) — if office
+// staff are submitting via this flow at all, which is uncommon since
+// they have direct POST /api/payments access.
+enum PaymentSubmittedBy {
+  staff
+  driver
+  customer
+}
+
 enum CreditNoteStatus {
   pending_cn   @map("pending")
   approved_cn  @map("approved")
@@ -446,6 +468,8 @@ model Distributor {
   // FLOAT-001 (2026-06-17): per-trip vehicle load manifests entered by admin
   // before dispatch. One row per (DVA, cylinderType, tripNumber).
   dvaLoadManifests     DVALoadManifest[]
+  // WI-PENDING-PAYMENTS: self-reported payment claims awaiting verification.
+  paymentSubmissions   PaymentSubmission[]
 
   @@map("distributors")
 }
@@ -489,6 +513,9 @@ model User {
   loginHistory          LoginHistory[]
   // FLOAT-001 (2026-06-17): manifests this user confirmed (admin/inventory/finance).
   manifestsConfirmed    DVALoadManifest[]  @relation("ManifestConfirmedBy")
+  // WI-PENDING-PAYMENTS: submissions this user submitted (customer/staff path) and verified (office path).
+  paymentSubmissionsSubmitted PaymentSubmission[] @relation("SubmittedByUser")
+  paymentSubmissionsVerified  PaymentSubmission[] @relation("VerifiedByUser")
 
   @@index([email])
   @@index([distributorId])
@@ -543,6 +570,8 @@ model Customer {
   accountabilityLogs   AccountabilityLog[]
   paymentCommitments   PaymentCommitment[]
   stockMismatchRecords StockMismatchRecord[]
+  // WI-PENDING-PAYMENTS: self-reported payment claims awaiting verification.
+  paymentSubmissions   PaymentSubmission[]
 
   @@index([distributorId, status])
   @@index([distributorId, customerName])
@@ -868,6 +897,8 @@ model Driver {
   accountabilityLogs   AccountabilityLog[]
   cancelledStockEvents CancelledStockEvent[]
   stockMismatchRecords StockMismatchRecord[]
+  // WI-PENDING-PAYMENTS: payment claims this driver submitted (cash/UPI collected at delivery).
+  paymentSubmissions   PaymentSubmission[]   @relation("SubmittedByDriver")
 
   @@index([distributorId, status])
   @@map("drivers")
@@ -1259,6 +1290,11 @@ model PaymentTransaction {
   distributor Distributor         @relation(fields: [distributorId], references: [id])
   customer    Customer            @relation(fields: [customerId], references: [id])
   allocations PaymentAllocation[]
+  // WI-PENDING-PAYMENTS: 1:0..1 — every PaymentTransaction is the
+  // resulting cleared payment of at most one verified PaymentSubmission.
+  // NULL when the payment was recorded directly via POST /api/payments
+  // (office-recorded) or via the Razorpay flow.
+  submission  PaymentSubmission?
 
   @@index([distributorId, customerId, createdAt(sort: Desc)])
   @@index([distributorId, transactionDate])
@@ -1277,6 +1313,69 @@ model PaymentAllocation {
   invoice Invoice            @relation(fields: [invoiceId], references: [id])
 
   @@map("payment_allocations")
+}
+
+// WI-PENDING-PAYMENTS: self-reported payment claims awaiting office
+// verification. SEPARATE TABLE from `payment_transactions` so unverified
+// claims cannot leak into any existing payment reader (the credit gate
+// at computeCustomerOverdue, Tally export, analytics KPIs, customer
+// dashboard, etc.). On verify, the office orchestrator calls the
+// existing `paymentService.createPayment()` which inserts a real
+// PaymentTransaction row and records its id in `resultingPaymentId`.
+// Rejection leaves no ledger trace, only `rejectionReason` on the
+// submission row.
+//
+// Invariant: PaymentSubmission.status='pending_verification' rows MUST
+// NEVER have associated PaymentTransaction or PaymentAllocation rows
+// (the `resultingPaymentId` must be NULL). See CLAUDE.md anti-pattern #18.
+model PaymentSubmission {
+  id                  String                  @id @default(uuid()) @map("submission_id")
+  distributorId       String                  @map("distributor_id")
+  customerId          String                  @map("customer_id")
+  amount              Decimal                 @db.Decimal(18, 4)
+  paymentMethod       PaymentMethod           @map("payment_method")
+  transactionDate     DateTime                @db.Date @map("transaction_date")
+  referenceNumber     String?                 @map("reference_number")
+  notes               String?
+  attachmentUrl       String?                 @map("attachment_url")
+  // Optional hint from the submitter (driver / customer) about which
+  // invoices they intended to pay against. Office may use these as
+  // pre-selected allocations during approval, but is not bound to them.
+  // Stored as Json (not String) so Prisma JSON helpers apply.
+  pendingInvoiceIds   Json?                   @map("pending_invoice_ids")
+  status              PaymentSubmissionStatus @default(pending_verification)
+  submittedBy         PaymentSubmittedBy      @map("submitted_by")
+  // For driver/customer submissions: the User row of the submitter.
+  // For staff submissions: same — the staff member's User row.
+  submittedByUserId   String?                 @map("submitted_by_user_id")
+  // For driver submissions only: the Driver row (resolved via
+  // resolveDriverFromUser, which prefers driver.userId FK then falls back
+  // to phone-match). Customer/staff submissions leave this NULL.
+  submittedByDriverId String?                 @map("submitted_by_driver_id")
+  // Set on verify or reject — the office user who actioned the row.
+  verifiedByUserId    String?                 @map("verified_by_user_id")
+  verifiedAt          DateTime?               @map("verified_at")
+  rejectionReason     String?                 @map("rejection_reason")
+  // On verify: the cleared PaymentTransaction row that this submission
+  // produced. NULL while pending or rejected. Once set, the customer's
+  // "Pending Verifications" UI can link to the cleared payment.
+  // @unique enforces 1:0..1 — a PaymentTransaction can be the result of
+  // at most one verified submission.
+  resultingPaymentId  String?                 @unique @map("resulting_payment_id")
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
+
+  distributor       Distributor         @relation(fields: [distributorId], references: [id])
+  customer          Customer            @relation(fields: [customerId], references: [id])
+  submittedByUser   User?               @relation("SubmittedByUser", fields: [submittedByUserId], references: [id])
+  submittedByDriver Driver?             @relation("SubmittedByDriver", fields: [submittedByDriverId], references: [id])
+  verifiedBy        User?               @relation("VerifiedByUser", fields: [verifiedByUserId], references: [id])
+  resultingPayment  PaymentTransaction? @relation(fields: [resultingPaymentId], references: [id])
+
+  @@index([distributorId, status])
+  @@index([customerId, status])
+  @@index([submittedByDriverId])
+  @@map("payment_submissions")
 }
 
 // ─── Inventory (Event-Sourced) ───────────────────────────────────────────────
