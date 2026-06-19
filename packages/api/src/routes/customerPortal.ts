@@ -7,6 +7,7 @@ import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
 import * as portalService from '../services/customerPortalService.js';
 import * as paymentService from '../services/paymentService.js';
+import * as submissionService from '../services/paymentSubmissionService.js';
 import {
   createRazorpayOrder,
   verifyHandlerSignature,
@@ -15,7 +16,8 @@ import {
 } from '../services/razorpayService.js';
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../utils/logger.js';
-import { mapCustomer, mapOrder, mapOrders, mapInvoices, mapCustomerInvoiceDetail, mapPayment, mapPayments } from '../utils/mappers.js';
+import { mapCustomer, mapOrder, mapOrders, mapInvoices, mapCustomerInvoiceDetail, mapPayment, mapPayments, mapPaymentSubmission, mapPaymentSubmissions } from '../utils/mappers.js';
+import { generatePaymentAttachmentUploadUrl, isOwnedPaymentAttachmentUrl } from '../lib/s3.js';
 import { z } from 'zod';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
@@ -736,6 +738,104 @@ router.post('/invoices/:id/verify-payment',
         err: (err as Error).message,
       });
       return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WI-PENDING-PAYMENTS — Customer-side payment self-reporting.
+//
+// Customers can report payments they made through off-portal channels
+// (cash to driver, bank transfer, cheque). These land as
+// PaymentSubmission rows with status=pending_verification. The
+// customer's distributorId + customerId always come from the JWT —
+// never from the request body (IDOR prevention).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// POST /api/customer-portal/payments/attachment-upload-url
+router.post('/payments/attachment-upload-url',
+  customerPaymentLimiter,
+  requireRole('customer'),
+  async (req, res) => {
+    try {
+      const { uploadUrl, finalUrl } = await generatePaymentAttachmentUploadUrl(
+        req.user!.distributorId!,
+      );
+      return sendSuccess(res, { uploadUrl, finalUrl });
+    } catch (err) {
+      return sendError(res, (err as Error).message, 500);
+    }
+  },
+);
+
+// POST /api/customer-portal/payments/submit
+const customerSubmissionSchema = z.object({
+  amount: z.number().positive(),
+  paymentMethod: z.enum(['cash', 'cheque', 'online', 'upi', 'bank_transfer', 'credit']),
+  transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  referenceNumber: z.string().max(120).optional(),
+  notes: z.string().max(500).optional(),
+  attachmentUrl: z.string().url().optional(),
+  pendingInvoiceIds: z.array(z.string().uuid()).optional(),
+});
+
+router.post('/payments/submit',
+  customerPaymentLimiter,
+  requireRole('customer'),
+  validate(customerSubmissionSchema),
+  auditLog('submit', 'payment_submission'),
+  async (req, res) => {
+    try {
+      if (!req.user!.customerId) {
+        return sendError(res, 'No customer linked to this account', 400);
+      }
+      // attachmentUrl must point at the same distributor's S3 prefix
+      // (defends against attempts to claim attachments uploaded under
+      // another tenant's path).
+      if (
+        req.body.attachmentUrl &&
+        !isOwnedPaymentAttachmentUrl(req.body.attachmentUrl, req.user!.distributorId!)
+      ) {
+        return sendError(res, 'attachmentUrl is not a valid payment attachment', 400);
+      }
+      const submission = await submissionService.createSubmission(
+        req.user!.distributorId!,
+        {
+          customerId: req.user!.customerId,
+          amount: req.body.amount,
+          paymentMethod: req.body.paymentMethod,
+          transactionDate: req.body.transactionDate,
+          referenceNumber: req.body.referenceNumber,
+          notes: req.body.notes,
+          attachmentUrl: req.body.attachmentUrl,
+          pendingInvoiceIds: req.body.pendingInvoiceIds,
+          submittedBy: 'customer',
+          submittedByUserId: req.user!.userId,
+        },
+      );
+      return sendCreated(res, mapPaymentSubmission(submission));
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// GET /api/customer-portal/payments/my-submissions
+router.get('/payments/my-submissions',
+  requireRole('customer'),
+  async (req, res) => {
+    try {
+      if (!req.user!.customerId) {
+        return sendError(res, 'No customer linked to this account', 400);
+      }
+      const submissions = await submissionService.listByCustomer(
+        req.user!.distributorId!,
+        req.user!.customerId,
+      );
+      return sendSuccess(res, { submissions: mapPaymentSubmissions(submissions) });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
     }
   },
 );

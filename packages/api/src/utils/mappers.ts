@@ -447,6 +447,42 @@ export function mapPayments(list: PaymentInput[]): MappedRecord[] {
   return list.map((p) => mapPayment(p) as MappedRecord);
 }
 
+// ─── PaymentSubmission ──────────────────────────────────────────────────────
+//
+// WI-PENDING-PAYMENTS: unverified payment claims. The mapper renames
+// `id → submissionId` and surfaces nested `customer` + `submittedByDriver`
+// flat fields the way mapPayment does.
+//
+// Wide input type — same approach as other mappers: declare only the
+// fields the mapper actually reads; the rest flow through opaquely via
+// the renameId spread.
+
+interface PaymentSubmissionInput extends HasId {
+  customer?: { id?: string; customerName?: string | null } | null;
+  submittedByDriver?: { id?: string; driverName?: string | null } | null;
+  otherPendingCount?: number;
+}
+
+export function mapPaymentSubmission(
+  s: PaymentSubmissionInput | null | undefined,
+): MappedRecord | null | undefined {
+  if (!s) return s;
+  const mapped = renameId(s, 'submissionId');
+  if (s.customer) {
+    mapped.customerName = s.customer.customerName ?? 'Deleted Customer';
+    mapped.customer = mapCustomer(s.customer);
+  }
+  if (s.submittedByDriver) {
+    mapped.submittedByDriverName = s.submittedByDriver.driverName ?? null;
+    mapped.submittedByDriver = mapDriver(s.submittedByDriver);
+  }
+  return mapped;
+}
+
+export function mapPaymentSubmissions(list: PaymentSubmissionInput[]): MappedRecord[] {
+  return list.map((s) => mapPaymentSubmission(s) as MappedRecord);
+}
+
 // ─── Driver ──────────────────────────────────────────────────────────────────
 
 type DriverInput = DriverRow & {

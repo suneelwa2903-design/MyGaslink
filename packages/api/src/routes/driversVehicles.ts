@@ -7,8 +7,10 @@ import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiR
 import { prisma } from '../lib/prisma.js';
 import * as driverService from '../services/driverService.js';
 import * as vehicleService from '../services/vehicleService.js';
-import { mapDriver, mapDrivers, mapVehicle, mapVehicles, mapAssignment, mapAssignments, mapOrders } from '../utils/mappers.js';
+import * as submissionService from '../services/paymentSubmissionService.js';
+import { mapDriver, mapDrivers, mapVehicle, mapVehicles, mapAssignment, mapAssignments, mapOrders, mapPaymentSubmission, mapPaymentSubmissions } from '../utils/mappers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
+import * as driverPaymentS3 from '../lib/s3.js';
 import { z } from 'zod';
 
 /**
@@ -970,6 +972,108 @@ driverRouter.post('/me/orders',
           data: { orderId: order.id, preflightStatus: 'failed', preflightError: 'UNKNOWN', message: (preflightErr as Error).message },
         });
       }
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WI-PENDING-PAYMENTS — Driver payment submissions.
+// Drivers can self-report payments they collected at delivery (cash /
+// UPI). The submission lands as pending_verification until office
+// staff verify. The driver's `submittedByDriverId` is resolved via
+// `resolveDriverFromUser` so a misconfigured login can't post on
+// behalf of another driver.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// POST /api/drivers/me/payment-submissions/attachment-upload-url
+driverRouter.post('/me/payment-submissions/attachment-upload-url',
+  requireRole('driver'),
+  async (req, res) => {
+    try {
+      const { uploadUrl, finalUrl } = await driverPaymentS3.generatePaymentAttachmentUploadUrl(
+        req.user!.distributorId!,
+      );
+      return sendSuccess(res, { uploadUrl, finalUrl });
+    } catch (err) {
+      return sendError(res, (err as Error).message, 500);
+    }
+  },
+);
+
+const driverSubmissionSchema = z.object({
+  customerId: z.string().uuid(),
+  amount: z.number().positive(),
+  paymentMethod: z.enum(['cash', 'cheque', 'online', 'upi', 'bank_transfer', 'credit']),
+  transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  referenceNumber: z.string().max(120).optional(),
+  notes: z.string().max(500).optional(),
+  attachmentUrl: z.string().url().optional(),
+  pendingInvoiceIds: z.array(z.string().uuid()).optional(),
+});
+
+// POST /api/drivers/me/payment-submissions — driver submits a payment claim
+driverRouter.post('/me/payment-submissions',
+  requireRole('driver'),
+  validate(driverSubmissionSchema),
+  auditLog('submit', 'payment_submission'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
+      if (!driver) {
+        return sendError(res, 'Driver record not found for this user', 404);
+      }
+      if (
+        req.body.attachmentUrl &&
+        !driverPaymentS3.isOwnedPaymentAttachmentUrl(req.body.attachmentUrl, distributorId)
+      ) {
+        return sendError(res, 'attachmentUrl is not a valid payment attachment', 400);
+      }
+      const submission = await submissionService.createSubmission(distributorId, {
+        customerId: req.body.customerId,
+        amount: req.body.amount,
+        paymentMethod: req.body.paymentMethod,
+        transactionDate: req.body.transactionDate,
+        referenceNumber: req.body.referenceNumber,
+        notes: req.body.notes,
+        attachmentUrl: req.body.attachmentUrl,
+        pendingInvoiceIds: req.body.pendingInvoiceIds,
+        submittedBy: 'driver',
+        submittedByUserId: req.user!.userId,
+        submittedByDriverId: driver.id,
+      });
+      return sendCreated(res, mapPaymentSubmission(submission));
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// GET /api/drivers/me/payment-submissions — driver's own history
+driverRouter.get('/me/payment-submissions',
+  requireRole('driver'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const driver = await resolveDriverFromUser(req.user!.userId, distributorId);
+      if (!driver) {
+        return sendSuccess(res, { submissions: [] }, 200, { page: 1, pageSize: 0, total: 0, totalPages: 0 });
+      }
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+      const pageSize = req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined;
+      const result = await submissionService.listByDriver(distributorId, driver.id, {
+        page,
+        pageSize,
+      });
+      return sendSuccess(
+        res,
+        { submissions: mapPaymentSubmissions(result.submissions) },
+        200,
+        result.meta,
+      );
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

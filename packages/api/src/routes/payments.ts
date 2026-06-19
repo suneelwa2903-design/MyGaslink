@@ -3,12 +3,14 @@ import { param } from '../utils/params.js';
 import { requireRole } from '../middleware/auth.js';
 import { validate, validateQuery } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
-import { sendSuccess, sendError, sendCreated } from '../utils/apiResponse.js';
+import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
 import { createPaymentSchema, paymentFilterSchema } from '@gaslink/shared';
 import * as paymentService from '../services/paymentService.js';
-import { mapPayment, mapPayments, mapInvoice } from '../utils/mappers.js';
+import * as submissionService from '../services/paymentSubmissionService.js';
+import { mapPayment, mapPayments, mapPaymentSubmission, mapPaymentSubmissions, mapInvoice } from '../utils/mappers.js';
 import { prisma } from '../lib/prisma.js';
 import { toNum } from '../utils/decimal.js';
+import { generatePaymentAttachmentUploadUrl } from '../lib/s3.js';
 import { z } from 'zod';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
@@ -198,5 +200,133 @@ router.get('/ledger/:customerId',
     return sendError(res, e.message, e.statusCode || 500);
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WI-PENDING-PAYMENTS — Office endpoints for the verification queue.
+//
+// RBAC: super_admin | distributor_admin | finance ONLY.
+// `inventory` is INTENTIONALLY excluded from approval/rejection — record-
+// keeping access (the existing GET / and POST / routes above) is one thing;
+// clearing customer balances is another, and inventory shouldn't have the
+// second power. Deliberate tightening per WI-PENDING-PAYMENTS decision.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// POST /api/payments/attachment-upload-url
+// Issues a short-lived presigned PUT URL so staff can upload a receipt
+// image they're recording on behalf of a driver/customer. distributorId
+// always comes from the authenticated session (tenant isolation).
+router.post('/attachment-upload-url',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  async (req, res) => {
+    try {
+      const { uploadUrl, finalUrl } = await generatePaymentAttachmentUploadUrl(
+        req.user!.distributorId!,
+      );
+      return sendSuccess(res, { uploadUrl, finalUrl });
+    } catch (err) {
+      return sendError(res, (err as Error).message, 500);
+    }
+  },
+);
+
+// GET /api/payments/pending — list pending submissions awaiting verification
+const pendingQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(100).optional(),
+});
+
+router.get('/pending',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  validateQuery(pendingQuerySchema),
+  async (req, res) => {
+    try {
+      const q = (req.validated?.query || req.query) as z.infer<typeof pendingQuerySchema>;
+      const result = await submissionService.listPending(req.user!.distributorId!, q);
+      return sendSuccess(
+        res,
+        { submissions: mapPaymentSubmissions(result.submissions) },
+        200,
+        result.meta,
+      );
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// GET /api/payments/pending/count — badge count for the nav
+router.get('/pending/count',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  async (req, res) => {
+    try {
+      const count = await submissionService.countPending(req.user!.distributorId!);
+      return sendSuccess(res, { count });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// POST /api/payments/:id/verify — approve a pending submission
+const verifySubmissionSchema = z.object({
+  allocations: z
+    .array(
+      z.object({
+        invoiceId: z.string().uuid(),
+        amount: z.number().positive(),
+      }),
+    )
+    .optional(),
+});
+
+router.post('/:id/verify',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  validate(verifySubmissionSchema),
+  auditLog('verify', 'payment_submission'),
+  async (req, res) => {
+    try {
+      const { submission, payment } = await submissionService.verifySubmission(
+        req.user!.distributorId!,
+        param(req.params.id),
+        req.user!.userId,
+        req.body.allocations,
+      );
+      return sendSuccess(res, {
+        submission: mapPaymentSubmission(submission),
+        payment: mapPayment(payment),
+      });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.statusCode === 404) return sendNotFound(res, 'Submission');
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// POST /api/payments/:id/reject — reject a pending submission
+const rejectSubmissionSchema = z.object({
+  rejectionReason: z.string().min(5).max(500),
+});
+
+router.post('/:id/reject',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  validate(rejectSubmissionSchema),
+  auditLog('reject', 'payment_submission'),
+  async (req, res) => {
+    try {
+      const submission = await submissionService.rejectSubmission(
+        req.user!.distributorId!,
+        param(req.params.id),
+        req.user!.userId,
+        req.body.rejectionReason,
+      );
+      return sendSuccess(res, mapPaymentSubmission(submission));
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.statusCode === 404) return sendNotFound(res, 'Submission');
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
 
 export default router;
