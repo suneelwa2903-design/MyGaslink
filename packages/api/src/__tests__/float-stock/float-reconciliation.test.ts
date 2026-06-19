@@ -94,6 +94,24 @@ describe('FLOAT-001 — float-unsold reconciliation credit', () => {
       select: { id: true },
     });
     customerId = customer.id;
+
+    // CI-CONTAMINATION fix: float-reconciliation reads via
+    // `recalculateSummariesFromDate` which walks EVERY inventoryEvent
+    // row in the (distributorId, cylinderTypeId) bucket. Other test
+    // files that touch the same seeded cylinder type can leave events
+    // behind (their afterEach scopes to a narrower date window than
+    // this test's recompute spans). To get a clean slate regardless
+    // of test-order on CI, wipe ALL inventoryEvent + inventorySummary
+    // for THIS distributor + THESE two cylinder types here, before
+    // any test in this file runs. afterEach's date-scoped cleanup
+    // continues to handle per-test cleanup within the suite.
+    const cylinderIds = Array.from(new Set([cylinderTypeId, cylinderTypeId2]));
+    await prisma.inventoryEvent.deleteMany({
+      where: { distributorId: DIST, cylinderTypeId: { in: cylinderIds } },
+    });
+    await prisma.inventorySummary.deleteMany({
+      where: { distributorId: DIST, cylinderTypeId: { in: cylinderIds } },
+    });
   });
 
   afterEach(async () => {
