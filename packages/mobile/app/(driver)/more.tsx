@@ -42,6 +42,15 @@ export default function DriverMoreScreen() {
       onPress: () => router.push('/(driver)/profile'),
     },
     {
+      // WI-PENDING-PAYMENTS: driver's read-only history of self-reported
+      // payments. Submit affordance lives per-order on the deliveries
+      // list — this screen is for reviewing status / rejection reasons.
+      label: 'My Payment Submissions',
+      icon: 'cash-outline',
+      color: ACCENT.green,
+      onPress: () => router.push('/(driver)/my-submissions'),
+    },
+    {
       label: 'Sign Out',
       icon: 'log-out-outline',
       color: ACCENT.red,

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
 import { DeliveryProofCamera } from '../../src/components/DeliveryProofCamera';
@@ -41,6 +42,7 @@ type DeliveryItemEntry = { delivered: string; empties: string };
 export default function DriverOrdersScreen() {
   const { dark, colors } = useTheme();
   const queryClient = useQueryClient();
+  const router = useRouter();
   // NEW-4 + NEW-5 (2026-06-09): root-SafeAreaProvider insets feed both edges
   // of the Confirm Delivery modal sheet — top to clear the iOS status bar /
   // Android notch on tall sheets (long item lists push the sheet upward),
@@ -297,6 +299,31 @@ export default function DriverOrdersScreen() {
                   </View>
                 )}
               </View>
+              {/* WI-PENDING-PAYMENTS: per-order "Submit Payment" affordance.
+                  Visible on any status where the driver might collect cash
+                  (pending_delivery, delivered, modified_delivered). Routes
+                  to the dedicated submit-payment screen, pre-filling
+                  customer + outstanding context. */}
+              {(order.status === 'pending_delivery'
+                || order.status === 'delivered'
+                || order.status === 'modified_delivered') && (
+                <View style={{ marginTop: 8 }}>
+                  <Button
+                    title="Submit Payment"
+                    variant="secondary"
+                    size="sm"
+                    onPress={() => router.push({
+                      pathname: '/(driver)/submit-payment',
+                      params: {
+                        orderId: order.orderId,
+                        customerId: order.customerId,
+                        customerName: order.customerName ?? '',
+                        prefillAmount: order.totalAmount?.toFixed(2) ?? '',
+                      },
+                    })}
+                  />
+                </View>
+              )}
             </View>
           ))
         )}

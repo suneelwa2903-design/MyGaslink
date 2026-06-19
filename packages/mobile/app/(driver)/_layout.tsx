@@ -127,6 +127,9 @@ export default function DriverLayout() {
       }} />
       {/* Profile is accessed from More menu, hide from tabs */}
       <Tabs.Screen name="profile" options={{ href: null }} />
+      {/* WI-PENDING-PAYMENTS: stack-pushed screens, hidden from tabs */}
+      <Tabs.Screen name="submit-payment" options={{ href: null }} />
+      <Tabs.Screen name="my-submissions" options={{ href: null }} />
     </Tabs>
   );
 }
