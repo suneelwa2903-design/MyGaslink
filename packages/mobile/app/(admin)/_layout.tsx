@@ -209,6 +209,9 @@ export default function AdminLayout() {
       <Tabs.Screen name="customer-detail" options={{ href: null, title: 'Customer', tabBarItemStyle: { display: 'none' } }} />
       <Tabs.Screen name="customer-create" options={{ href: null, title: 'New Customer', tabBarItemStyle: { display: 'none' } }} />
       <Tabs.Screen name="profile" options={{ href: null, title: 'My Profile', tabBarItemStyle: { display: 'none' } }} />
+      {/* WI-PENDING-PAYMENTS: pending approval queue. Stack-pushed from
+          the More tab, never a primary tab. */}
+      <Tabs.Screen name="pending-payments" options={{ href: null, title: 'Pending Payments', tabBarItemStyle: { display: 'none' } }} />
     </Tabs>
   );
 }

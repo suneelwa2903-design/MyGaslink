@@ -1866,6 +1866,17 @@ export default function AdminMoreScreen() {
         {/* ── Section: Analytics ─────────────────────────────────── */}
         <SectionCard title="Analytics" theme={theme}>
           <MenuRow icon="stats-chart" label="Overview" subtitle="Key business metrics" onPress={() => setShowOverview(true)} theme={theme} />
+          <Divider theme={theme} />
+          {/* WI-PENDING-PAYMENTS: pending approval queue. Stack-pushed
+              from here — finance/admin can review driver+customer
+              self-reported payments. */}
+          <MenuRow
+            icon="time-outline"
+            label="Pending Payment Approvals"
+            subtitle="Verify or reject self-reported payments"
+            onPress={() => router.push('/(admin)/pending-payments')}
+            theme={theme}
+          />
         </SectionCard>
 
         {/* ── STAGE-A A7: Appearance ──────────────────────────────── */}

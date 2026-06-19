@@ -71,6 +71,14 @@ export default function FinanceMoreScreen() {
       subtitle: 'Sales, aging, GST, performance and more',
       onPress: () => router.push('/(finance)/reports'),
     },
+    // WI-PENDING-PAYMENTS: pending payment approval queue. Re-exports
+    // the admin canonical screen via (finance)/pending-payments.tsx.
+    {
+      icon: 'time-outline',
+      label: 'Pending Payment Approvals',
+      subtitle: 'Verify or reject self-reported payments',
+      onPress: () => router.push('/(finance)/pending-payments'),
+    },
     {
       icon: 'person-outline',
       label: 'Profile',

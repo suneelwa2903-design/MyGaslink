@@ -34,6 +34,9 @@ const TAB_CONFIG: {
   // finance sees them as read-only.
   { name: 'inventory', title: 'Inventory', iconOutline: 'cube-outline', iconFilled: 'cube', href: null },
   { name: 'fleet', title: 'Fleet', iconOutline: 'car-outline', iconFilled: 'car', href: null },
+  // WI-PENDING-PAYMENTS: pending approval queue. Stack-pushed from the
+  // More tab. Re-exports (admin)/pending-payments.
+  { name: 'pending-payments', title: 'Pending Payments', iconOutline: 'time-outline', iconFilled: 'time', href: null },
 ];
 
 export default function FinanceLayout() {
