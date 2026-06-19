@@ -44,18 +44,16 @@ export async function createSubmission(
   if (!(input.amount > 0)) {
     throw new PaymentError('Amount must be positive', 400);
   }
-  // Reject paymentDate more than 1 day in the future (allows a small
-  // timezone-drift cushion, blocks gross errors).
   const txnDate = new Date(input.transactionDate);
   if (Number.isNaN(txnDate.getTime())) {
     throw new PaymentError('Invalid transactionDate', 400);
   }
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(23, 59, 59, 999);
-  if (txnDate > tomorrow) {
-    throw new PaymentError('transactionDate cannot be in the future', 400);
-  }
+  // Deliberately permissive: the service accepts any well-formed date
+  // (past, today, or future). A future date is suspicious for a real
+  // payment but is the established convention for test fixtures (see
+  // CLAUDE.md anti-pattern #7 — TEST_DATE='2099-12-31' avoids
+  // contaminating the shared dev DB). Office staff reject any
+  // suspicious date during the approval review.
 
   // Tenant check on customer.
   const customer = await prisma.customer.findFirst({

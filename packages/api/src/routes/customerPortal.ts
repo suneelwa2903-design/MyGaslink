@@ -395,6 +395,29 @@ router.get('/payments',
   }
 });
 
+// GET /api/customer-portal/payments/my-submissions
+//
+// WI-PENDING-PAYMENTS: registered BEFORE `/payments/:id` so Express
+// matches the literal path instead of treating "my-submissions" as an
+// id parameter (which the more general route would otherwise claim).
+router.get('/payments/my-submissions',
+  requireRole('customer'),
+  async (req, res) => {
+    try {
+      if (!req.user!.customerId) {
+        return sendError(res, 'No customer linked to this account', 400);
+      }
+      const submissions = await submissionService.listByCustomer(
+        req.user!.distributorId!,
+        req.user!.customerId,
+      );
+      return sendSuccess(res, { submissions: mapPaymentSubmissions(submissions) });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
 // GET /api/customer-portal/payments/:id
 router.get('/payments/:id',
   requireRole('customer'),
@@ -817,25 +840,6 @@ router.post('/payments/submit',
     } catch (err: unknown) {
       const e = err as ServiceError;
       return sendError(res, e.message, e.statusCode || 500);
-    }
-  },
-);
-
-// GET /api/customer-portal/payments/my-submissions
-router.get('/payments/my-submissions',
-  requireRole('customer'),
-  async (req, res) => {
-    try {
-      if (!req.user!.customerId) {
-        return sendError(res, 'No customer linked to this account', 400);
-      }
-      const submissions = await submissionService.listByCustomer(
-        req.user!.distributorId!,
-        req.user!.customerId,
-      );
-      return sendSuccess(res, { submissions: mapPaymentSubmissions(submissions) });
-    } catch (err) {
-      return sendError(res, (err as Error).message);
     }
   },
 );

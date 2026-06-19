@@ -75,6 +75,65 @@ export async function loginAsInventory() {
 }
 
 /**
+ * Login as the seeded dist-001 driver (raju@gasagency.com) and return
+ * a token + the matched Driver row (resolved via phone-match — same
+ * convention used by driversVehicles.resolveDriverFromUser).
+ */
+export async function loginAsDriver() {
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { email: 'raju@gasagency.com' },
+  });
+  const driver = await prisma.driver.findFirst({
+    where: { distributorId: user.distributorId!, phone: user.phone! },
+  });
+  if (!driver) throw new Error('Seed missing dist-001 driver matching raju@gasagency.com phone');
+  const token = generateToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role as UserRole,
+    distributorId: user.distributorId,
+  });
+  return { token, user, driver, distributorId: user.distributorId! };
+}
+
+/**
+ * Login as the seeded dist-002 driver (driver2@gasdist.com). Used for
+ * cross-tenant isolation tests.
+ */
+export async function loginAsDriverDist002() {
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { email: 'driver2@gasdist.com' },
+  });
+  const driver = await prisma.driver.findFirst({
+    where: { distributorId: user.distributorId!, phone: user.phone! },
+  });
+  const token = generateToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role as UserRole,
+    distributorId: user.distributorId,
+  });
+  return { token, user, driver, distributorId: user.distributorId! };
+}
+
+/**
+ * Login as the seeded dist-001 customer (royal@kitchen.com).
+ */
+export async function loginAsCustomer() {
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { email: 'royal@kitchen.com' },
+  });
+  const token = generateToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role as UserRole,
+    distributorId: user.distributorId,
+    customerId: user.customerId,
+  });
+  return { token, user, distributorId: user.distributorId!, customerId: user.customerId! };
+}
+
+/**
  * Login as super admin and return token.
  */
 export async function loginAsSuperAdmin() {
@@ -210,6 +269,57 @@ export async function getOrCreateTestVehicle(distributorId: string, vehicleNumbe
   return prisma.vehicle.create({
     data: { distributorId, vehicleNumber, vehicleType: 'truck', capacity: 100, status: 'idle' },
   });
+}
+
+/**
+ * WI-PENDING-PAYMENTS: seed a PaymentSubmission row.
+ *
+ * Defaults to a pending row dated 2099-12-31 (anti-pattern #7 —
+ * far-future date avoids contaminating manual-test data on the
+ * shared dev DB). Caller passes distributorId + customerId + role
+ * fields; submittedBy defaults to 'driver'.
+ */
+export async function seedPaymentSubmission(opts: {
+  distributorId: string;
+  customerId: string;
+  amount?: number;
+  paymentMethod?: 'cash' | 'cheque' | 'online' | 'upi' | 'bank_transfer' | 'credit';
+  transactionDate?: string;
+  status?: 'pending_verification' | 'verified' | 'rejected';
+  submittedBy?: 'staff' | 'driver' | 'customer';
+  submittedByUserId?: string | null;
+  submittedByDriverId?: string | null;
+  referenceNumber?: string;
+  notes?: string;
+  attachmentUrl?: string;
+  pendingInvoiceIds?: string[];
+}) {
+  return prisma.paymentSubmission.create({
+    data: {
+      distributorId: opts.distributorId,
+      customerId: opts.customerId,
+      amount: opts.amount ?? 1000,
+      paymentMethod: opts.paymentMethod ?? 'cash',
+      transactionDate: new Date(opts.transactionDate ?? '2099-12-31'),
+      status: opts.status ?? 'pending_verification',
+      submittedBy: opts.submittedBy ?? 'driver',
+      submittedByUserId: opts.submittedByUserId ?? null,
+      submittedByDriverId: opts.submittedByDriverId ?? null,
+      referenceNumber: opts.referenceNumber ?? null,
+      notes: opts.notes ?? null,
+      attachmentUrl: opts.attachmentUrl ?? null,
+      pendingInvoiceIds: opts.pendingInvoiceIds ?? undefined,
+    },
+  });
+}
+
+/**
+ * Clean up payment submissions for a tenant. Safe to call from
+ * afterAll. Deletes only — does not touch related PaymentTransactions
+ * (the `resulting_payment_id` FK is SET NULL on delete).
+ */
+export async function cleanupPaymentSubmissions(distributorId: string) {
+  await prisma.paymentSubmission.deleteMany({ where: { distributorId } });
 }
 
 /**
