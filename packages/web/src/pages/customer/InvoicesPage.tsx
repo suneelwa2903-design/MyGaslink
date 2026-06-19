@@ -8,6 +8,7 @@ import { InvoiceStatus, invoiceStatusLabel, invoiceStatusVariant } from '@gaslin
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Select, Modal, Badge, Loader, EmptyState, Input } from '@/components/ui';
 import { cn } from '@/lib/cn';
+import { ReportPaymentModal } from './PaymentsPage';
 
 // Phase F (2026-06-12): Razorpay checkout.js loader — singleton
 // promise matching Anah pattern (and Phase E SubscriptionTab). Loaded
@@ -69,6 +70,10 @@ export default function CustomerInvoicesPage() {
   // (defaults to outstandingAmount, bounded server-side to (0,
   // outstanding]).
   const [payInvoice, setPayInvoice] = useState<Invoice | null>(null);
+  // WI-PENDING-PAYMENTS: per-row "I've Paid" CTA opens the same
+  // ReportPaymentModal as the Payments page header. Pre-fills amount +
+  // pendingInvoiceIds so the office sees the customer's intended target.
+  const [reportPaymentInvoice, setReportPaymentInvoice] = useState<Invoice | null>(null);
   const [payAmount, setPayAmount] = useState<string>('');
 
   const queryParams: Record<string, unknown> = { page, pageSize: 25 };
@@ -257,6 +262,21 @@ export default function CustomerInvoicesPage() {
                             Pay Now
                           </Button>
                         )}
+                        {/* WI-PENDING-PAYMENTS: "I've Paid" button — always
+                            available when there's outstanding balance, even
+                            if Razorpay isn't enabled. Lets the customer
+                            self-report a payment they made through any
+                            off-portal channel (cash to driver, bank
+                            transfer, UPI outside Razorpay, cheque). */}
+                        {inv.outstandingAmount > 0 && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setReportPaymentInvoice(inv)}
+                          >
+                            I've Paid
+                          </Button>
+                        )}
                         <button onClick={() => setViewInvoice(inv)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="View invoice">
                           <HiOutlineEye className="h-4 w-4" />
                         </button>
@@ -400,6 +420,16 @@ export default function CustomerInvoicesPage() {
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* WI-PENDING-PAYMENTS: "I've Paid" modal — pre-fills amount +
+          invoice id so the office sees the customer's intended target. */}
+      {reportPaymentInvoice && (
+        <ReportPaymentModal
+          onClose={() => setReportPaymentInvoice(null)}
+          invoiceId={reportPaymentInvoice.invoiceId}
+          invoiceOutstanding={reportPaymentInvoice.outstandingAmount}
+        />
       )}
     </div>
   );

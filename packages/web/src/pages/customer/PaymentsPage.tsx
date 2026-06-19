@@ -1,11 +1,33 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { HiOutlineEye } from 'react-icons/hi2';
+import toast from 'react-hot-toast';
+import { HiOutlineEye, HiOutlinePlus } from 'react-icons/hi2';
 import type { Payment, PaginationMeta } from '@gaslink/shared';
 import { PaymentAllocationStatus } from '@gaslink/shared';
-import { apiGet } from '@/lib/api';
-import { Button, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
+import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+
+/** Wire shape from GET /customer-portal/payments/my-submissions */
+interface CustomerSubmission {
+  submissionId: string;
+  amount: number;
+  paymentMethod: string;
+  transactionDate: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  attachmentUrl: string | null;
+  status: 'pending_verification' | 'verified' | 'rejected';
+  rejectionReason: string | null;
+  resultingPaymentId: string | null;
+  createdAt: string;
+}
+
+const SUBMISSION_STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'danger'> = {
+  pending_verification: 'warning',
+  verified: 'success',
+  rejected: 'danger',
+};
 
 const ALLOCATION_VARIANTS: Record<string, 'success' | 'warning' | 'neutral'> = {
   [PaymentAllocationStatus.FULLY_ALLOCATED]: 'success',
@@ -21,6 +43,7 @@ export default function CustomerPaymentsPage() {
   const { t } = useTranslation();
   const [page, setPage] = useState(1);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
+  const [reportPaymentOpen, setReportPaymentOpen] = useState(false);
 
   // 3-fix bundle Fix 2 (2026-06-12): Download Statement + date range pickers
   // were moved to the customer Dashboard so the Payments screen is purely
@@ -32,14 +55,28 @@ export default function CustomerPaymentsPage() {
     queryFn: () => apiGet<{ payments: Payment[]; meta: PaginationMeta }>('/customer-portal/payments', { page, pageSize: 25 }),
   });
 
+  // WI-PENDING-PAYMENTS: self-reported submissions go here. Kept separate
+  // from the cleared payments list above so totals never mix verified
+  // money with unverified claims.
+  const { data: submissionsData } = useQuery({
+    queryKey: ['customer-payment-submissions'],
+    queryFn: () => apiGet<{ submissions: CustomerSubmission[] }>('/customer-portal/payments/my-submissions'),
+  });
+  const submissions = submissionsData?.submissions ?? [];
+
   const payments = data?.payments ?? [];
   const meta = data?.meta;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-surface-900 dark:text-white">{t('customerPortal.payments.title')}</h1>
-        <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">{t('customerPortal.payments.subtitle')}</p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-surface-900 dark:text-white">{t('customerPortal.payments.title')}</h1>
+          <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">{t('customerPortal.payments.subtitle')}</p>
+        </div>
+        <Button onClick={() => setReportPaymentOpen(true)}>
+          <HiOutlinePlus className="h-4 w-4" /> Report a Payment
+        </Button>
       </div>
 
       {isLoading ? (
@@ -93,6 +130,62 @@ export default function CustomerPaymentsPage() {
         </>
       )}
 
+      {/* WI-PENDING-PAYMENTS: Pending verifications section — only when there are any. */}
+      {submissions.length > 0 && (
+        <div className="space-y-2">
+          <div>
+            <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Pending Verifications</h2>
+            <p className="text-xs text-surface-500 dark:text-surface-400">
+              Payments you reported here are reviewed by the distributor's team before they appear in your cleared payment history.
+            </p>
+          </div>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Amount</th>
+                  <th>Method</th>
+                  <th>Reference</th>
+                  <th>Status</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.map((s) => (
+                  <tr key={s.submissionId}>
+                    <td>{new Date(s.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td className="font-medium">{formatCurrency(s.amount)}</td>
+                    <td><Badge variant="neutral">{s.paymentMethod.replace(/_/g, ' ')}</Badge></td>
+                    <td className="text-xs">{s.referenceNumber || '-'}</td>
+                    <td>
+                      <Badge variant={SUBMISSION_STATUS_VARIANTS[s.status] || 'neutral'}>
+                        {s.status === 'pending_verification' ? 'Pending' : s.status === 'verified' ? 'Verified' : 'Rejected'}
+                      </Badge>
+                    </td>
+                    <td className="text-xs">
+                      {s.status === 'rejected' && s.rejectionReason ? (
+                        <span className="text-red-600 dark:text-red-400">{s.rejectionReason}</span>
+                      ) : s.notes ? (
+                        <span>{s.notes}</span>
+                      ) : (
+                        <span className="text-surface-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {reportPaymentOpen && (
+        <ReportPaymentModal
+          onClose={() => setReportPaymentOpen(false)}
+        />
+      )}
+
       {viewPayment && (
         <Modal open={!!viewPayment} onClose={() => setViewPayment(null)} title={t('customerPortal.payments.viewModal.title')}>
           <div className="space-y-4">
@@ -130,3 +223,175 @@ export default function CustomerPaymentsPage() {
     </div>
   );
 }
+
+// ─── Report a Payment modal ─────────────────────────────────────────────────
+// WI-PENDING-PAYMENTS: customer self-reports a payment made via off-portal
+// channels (cash to driver, bank transfer, cheque). Lands as
+// PaymentSubmission status=pending_verification until office verifies.
+
+export interface ReportPaymentModalProps {
+  onClose: () => void;
+  /** Optional invoice context — pre-fills amount + pendingInvoiceIds. */
+  invoiceId?: string;
+  invoiceOutstanding?: number;
+}
+
+export function ReportPaymentModal({ onClose, invoiceId, invoiceOutstanding }: ReportPaymentModalProps) {
+  const queryClient = useQueryClient();
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [amount, setAmount] = useState(
+    invoiceOutstanding ? invoiceOutstanding.toFixed(2) : '',
+  );
+  const [paymentMethod, setPaymentMethod] = useState<string>('upi');
+  const [transactionDate, setTransactionDate] = useState(todayStr);
+  const [referenceNumber, setReferenceNumber] = useState('');
+  const [notes, setNotes] = useState('');
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please attach an image');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be under 5MB');
+      return;
+    }
+    try {
+      setUploading(true);
+      const urls = await apiPost<{ uploadUrl: string; finalUrl: string }>(
+        '/customer-portal/payments/attachment-upload-url',
+        {},
+      );
+      // PUT raw bytes directly to S3 — bypassing axios because the
+      // presigned URL has its own auth in the query string.
+      await fetch(urls.uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': 'image/jpeg' },
+      });
+      setAttachmentUrl(urls.finalUrl);
+      toast.success('Receipt uploaded');
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const submitMutation = useMutation({
+    mutationFn: () =>
+      apiPost('/customer-portal/payments/submit', {
+        amount: Number(amount),
+        paymentMethod,
+        transactionDate,
+        referenceNumber: referenceNumber || undefined,
+        notes: notes || undefined,
+        attachmentUrl: attachmentUrl || undefined,
+        pendingInvoiceIds: invoiceId ? [invoiceId] : undefined,
+      }),
+    onSuccess: () => {
+      toast.success('Your payment has been reported. Our team will verify and update your account shortly.');
+      queryClient.invalidateQueries({ queryKey: ['customer-payment-submissions'] });
+      onClose();
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const methodOptions = [
+    { value: 'cash', label: 'Cash' },
+    { value: 'upi', label: 'UPI' },
+    { value: 'bank_transfer', label: 'Bank Transfer' },
+    { value: 'cheque', label: 'Cheque' },
+    { value: 'online', label: 'Online' },
+  ];
+
+  const canSubmit = Number(amount) > 0 && transactionDate && !uploading;
+
+  return (
+    <Modal open={true} onClose={onClose} title="Report a Payment" size="md">
+      <div className="space-y-4">
+        <p className="text-sm text-surface-600 dark:text-surface-400">
+          Use this to report payments you made through channels outside this portal — cash to the
+          delivery driver, bank transfer, UPI, cheque, etc. Your distributor's team will verify
+          and update your balance.
+        </p>
+        <div>
+          <label className="block text-xs text-surface-400 mb-1">Amount (₹)</label>
+          <Input
+            type="number"
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0.00"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-surface-400 mb-1">Method</label>
+            <Select
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value)}
+              options={methodOptions}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-surface-400 mb-1">Payment Date</label>
+            <input
+              type="date"
+              value={transactionDate}
+              onChange={(e) => setTransactionDate(e.target.value)}
+              max={todayStr}
+              className="input py-2 w-full"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-surface-400 mb-1">Reference / UTR (optional)</label>
+          <Input
+            value={referenceNumber}
+            onChange={(e) => setReferenceNumber(e.target.value)}
+            placeholder="UPI ref / cheque no. / UTR"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-surface-400 mb-1">Notes (optional)</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+            className="input w-full"
+            placeholder="Any additional context for the verifier"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-surface-400 mb-1">Receipt / proof image (optional, max 5MB)</label>
+          {attachmentUrl ? (
+            <div className="flex items-center gap-3">
+              <img src={attachmentUrl} alt="receipt" className="h-20 w-20 object-cover rounded border border-surface-200 dark:border-surface-700" />
+              <Button variant="secondary" size="sm" onClick={() => setAttachmentUrl(null)}>
+                Remove
+              </Button>
+            </div>
+          ) : (
+            <input type="file" accept="image/*" onChange={handleFileChange} disabled={uploading} />
+          )}
+        </div>
+        <div className="flex justify-end gap-2 pt-4 border-t border-surface-200 dark:border-surface-700">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={!canSubmit || submitMutation.isPending}
+            onClick={() => submitMutation.mutate()}
+          >
+            Submit
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
