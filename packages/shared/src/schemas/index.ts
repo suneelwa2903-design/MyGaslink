@@ -557,8 +557,21 @@ export const orderFilterSchema = paginationSchema.merge(dateRangeSchema).extend(
   search: z.string().optional(),
 });
 
+// WI-PENDING-PAYMENTS post-smoke FIX-A: `status` accepts EITHER a single
+// InvoiceStatus enum value (existing single-status callers — admin
+// invoice list filter) OR a comma-separated string that transforms
+// into an array of values (e.g. ?status=issued,partially_paid,overdue
+// used by the approval modal's open-invoices picker). The service layer
+// applies `{ in: [...] }` when an array arrives and `{ equals: ... }`
+// when a single value arrives. Matches the existing
+// `paymentFilterSchema.allocationStatus` transform pattern at line 570.
 export const invoiceFilterSchema = paginationSchema.merge(dateRangeSchema).extend({
-  status: z.nativeEnum(InvoiceStatus).optional(),
+  status: z.union([
+    z.nativeEnum(InvoiceStatus),
+    z.string().transform((val) =>
+      val.split(',').map((s) => s.trim()).filter(Boolean),
+    ),
+  ]).optional(),
   customerId: uuid.optional(),
   irnStatus: z.string().optional(),
 });

@@ -1015,6 +1015,34 @@ describe('PaymentSubmission — Pre-push RBAC / invariant additions', () => {
     expect(res.status).toBe(403);
   });
 
+  it('T42 — GET /api/invoices?status=issued,partially_paid,overdue returns only those statuses', async () => {
+    // FIX-A: invoiceFilterSchema now accepts a comma-separated string and
+    // transforms it to an array; the service applies `{ in: [...] }`.
+    // This is what the web approval modal needs for its open-invoices
+    // picker (BillingPaymentsPage.tsx ApproveSubmissionModal).
+    const res = await request(app)
+      .get('/api/invoices?status=issued,partially_paid,overdue&pageSize=100')
+      .set(auth(financeToken));
+    expect(res.status).toBe(200);
+    const invoices = res.body.data.invoices as { status: string }[];
+    expect(Array.isArray(invoices)).toBe(true);
+    // Every returned row must be one of the three requested statuses.
+    // No paid/cancelled rows should leak through.
+    const allowed = new Set(['issued', 'partially_paid', 'overdue']);
+    for (const inv of invoices) {
+      expect(allowed.has(inv.status)).toBe(true);
+    }
+    // Single-status form must still work (regression guard for the
+    // existing admin invoice list filter).
+    const single = await request(app)
+      .get('/api/invoices?status=issued&pageSize=100')
+      .set(auth(financeToken));
+    expect(single.status).toBe(200);
+    for (const inv of single.body.data.invoices) {
+      expect(inv.status).toBe('issued');
+    }
+  });
+
   it('T41 — Tally export does NOT include pending submissions (invariant guard #5)', async () => {
     // INV-4 site 13: tallyExportService reads payment_transactions only.
     // A pending submission lives in payment_submissions, not

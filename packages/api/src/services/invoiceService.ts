@@ -38,13 +38,26 @@ const invoiceInclude = detailInvoiceInclude;
 export async function listInvoices(
   distributorId: string,
   filters: {
-    status?: string; customerId?: string; irnStatus?: string;
+    // WI-PENDING-PAYMENTS post-smoke FIX-A: accepts either a single
+    // InvoiceStatus value (single-status filter from the admin invoice
+    // list) or an array of statuses (multi-status filter from the
+    // approval modal's open-invoices picker, e.g. issued +
+    // partially_paid + overdue). The shared schema's `union` transform
+    // produces one of the two shapes before this service sees it.
+    status?: string | string[];
+    customerId?: string; irnStatus?: string;
     dateFrom?: string; dateTo?: string;
     page?: number; pageSize?: number; sortBy?: string; sortOrder?: string;
   }
 ) {
   const where: Prisma.InvoiceWhereInput = { distributorId, deletedAt: null };
-  if (filters.status) where.status = filters.status as $Enums.InvoiceStatus;
+  if (filters.status) {
+    if (Array.isArray(filters.status)) {
+      where.status = { in: filters.status as $Enums.InvoiceStatus[] };
+    } else {
+      where.status = filters.status as $Enums.InvoiceStatus;
+    }
+  }
   if (filters.customerId) where.customerId = filters.customerId;
   if (filters.irnStatus) where.irnStatus = filters.irnStatus as $Enums.IrnStatus;
   if (filters.dateFrom || filters.dateTo) {
