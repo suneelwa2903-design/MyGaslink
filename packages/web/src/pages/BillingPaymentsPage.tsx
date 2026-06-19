@@ -103,11 +103,25 @@ function formatCurrency(n: number) {
 // ─── Main Page Component ─────────────────────────────────────────────────────
 
 export default function BillingPaymentsPage() {
-  const [tab, setTab] = useState<'invoices' | 'payments'>('invoices');
+  const [tab, setTab] = useState<'invoices' | 'payments' | 'pending_approval'>('invoices');
+
+  // WI-PENDING-PAYMENTS: poll the pending count for the badge.
+  // 60s polling matches the spec — pending payments are low-volume so
+  // real-time isn't needed; this keeps DB load minimal.
+  const { data: pendingCountData } = useQuery({
+    queryKey: ['payment-submissions-pending-count'],
+    queryFn: () => apiGet<{ count: number }>('/payments/pending/count'),
+    refetchInterval: 60_000,
+  });
+  const pendingCount = pendingCountData?.count ?? 0;
 
   const tabs = [
     { key: 'invoices' as const, label: 'Invoices' },
     { key: 'payments' as const, label: 'Payments' },
+    {
+      key: 'pending_approval' as const,
+      label: pendingCount > 0 ? `Pending Approval (${pendingCount})` : 'Pending Approval',
+    },
   ];
 
   return (
@@ -137,6 +151,7 @@ export default function BillingPaymentsPage() {
 
       {tab === 'invoices' && <InvoicesTab />}
       {tab === 'payments' && <PaymentsTab />}
+      {tab === 'pending_approval' && <PendingApprovalTab />}
     </div>
   );
 }
@@ -639,6 +654,417 @@ function PaymentsTab() {
         </Modal>
       )}
     </>
+  );
+}
+
+// ─── Pending Approval Tab (WI-PENDING-PAYMENTS) ───────────────────────────
+
+/** Wire shape returned by GET /payments/pending — see mapPaymentSubmission. */
+interface PendingSubmission {
+  submissionId: string;
+  distributorId: string;
+  customerId: string;
+  customerName: string;
+  customer: { customerId: string; customerName: string; currentOutstanding: number };
+  amount: number;
+  paymentMethod: string;
+  transactionDate: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  attachmentUrl: string | null;
+  pendingInvoiceIds: string[] | null;
+  status: 'pending_verification' | 'verified' | 'rejected';
+  submittedBy: 'staff' | 'driver' | 'customer';
+  submittedByDriver?: { driverId: string; driverName: string } | null;
+  submittedByDriverName?: string | null;
+  otherPendingCount: number;
+  createdAt: string;
+}
+
+function PendingApprovalTab() {
+  const queryClient = useQueryClient();
+  const [approveTarget, setApproveTarget] = useState<PendingSubmission | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<PendingSubmission | null>(null);
+  const [page, setPage] = useState(1);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['payment-submissions-pending', page],
+    queryFn: () =>
+      apiGet<{ submissions: PendingSubmission[]; meta: PaginationMeta }>(
+        '/payments/pending',
+        { page, pageSize: 25 },
+      ),
+  });
+
+  const submissions = data?.submissions ?? [];
+  const meta = data?.meta;
+
+  const invalidatePendingViews = () => {
+    queryClient.invalidateQueries({ queryKey: ['payment-submissions-pending'] });
+    queryClient.invalidateQueries({ queryKey: ['payment-submissions-pending-count'] });
+    queryClient.invalidateQueries({ queryKey: ['payments'] });
+  };
+
+  return (
+    <>
+      {isLoading ? (
+        <div className="flex justify-center py-20"><Loader size="lg" /></div>
+      ) : submissions.length === 0 ? (
+        <EmptyState
+          title="No pending payments"
+          description="Self-reported payments from drivers and customers will appear here for verification."
+        />
+      ) : (
+        <>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th>Submitted by</th>
+                  <th>Amount</th>
+                  <th>Method</th>
+                  <th>Date</th>
+                  <th>Reference</th>
+                  <th>Receipt</th>
+                  <th>Submitted</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.map((s) => (
+                  <tr key={s.submissionId}>
+                    <td className="font-medium text-surface-900 dark:text-white">
+                      <div>{s.customerName}</div>
+                      <div className="text-xs text-surface-500 dark:text-surface-400">
+                        Outstanding: {formatCurrency(s.customer.currentOutstanding ?? 0)}
+                      </div>
+                      {s.otherPendingCount > 0 && (
+                        <Badge variant="warning">
+                          ⚠ {s.otherPendingCount} other pending for this customer
+                        </Badge>
+                      )}
+                    </td>
+                    <td>
+                      <Badge variant="neutral">
+                        {s.submittedBy === 'driver'
+                          ? `Driver: ${s.submittedByDriverName ?? s.submittedByDriver?.driverName ?? 'unknown'}`
+                          : s.submittedBy === 'customer'
+                            ? 'Customer'
+                            : 'Staff'}
+                      </Badge>
+                    </td>
+                    <td className="font-medium">{formatCurrency(s.amount)}</td>
+                    <td><Badge variant="neutral">{s.paymentMethod.replace(/_/g, ' ')}</Badge></td>
+                    <td>{new Date(s.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td className="text-xs">{s.referenceNumber || '-'}</td>
+                    <td>
+                      {s.attachmentUrl ? (
+                        <a
+                          href={s.attachmentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block"
+                        >
+                          <img
+                            src={s.attachmentUrl}
+                            alt="receipt"
+                            className="h-14 w-14 object-cover rounded-md border border-surface-200 dark:border-surface-700"
+                          />
+                        </a>
+                      ) : (
+                        <span className="text-xs text-surface-400">—</span>
+                      )}
+                    </td>
+                    <td className="text-xs">
+                      {new Date(s.createdAt).toLocaleString('en-IN', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      })}
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          onClick={() => setApproveTarget(s)}
+                        >
+                          <HiOutlineShieldCheck className="h-4 w-4" /> Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => setRejectTarget(s)}
+                        >
+                          <HiOutlineXCircle className="h-4 w-4" /> Reject
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {meta && meta.totalPages > 1 && (
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-surface-500 dark:text-surface-400">
+                Page {meta.page} of {meta.totalPages}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
+                <Button variant="secondary" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {approveTarget && (
+        <ApproveSubmissionModal
+          submission={approveTarget}
+          onClose={() => setApproveTarget(null)}
+          onSuccess={() => {
+            invalidatePendingViews();
+            setApproveTarget(null);
+          }}
+        />
+      )}
+
+      {rejectTarget && (
+        <RejectSubmissionModal
+          submission={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onSuccess={() => {
+            invalidatePendingViews();
+            setRejectTarget(null);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/** Approve modal — lets office pick allocations OR delegate to auto-allocate. */
+function ApproveSubmissionModal({
+  submission,
+  onClose,
+  onSuccess,
+}: {
+  submission: PendingSubmission;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  // Pre-populate with the submitter's hinted invoices (if any). The
+  // office may edit or replace; auto-allocation runs when the array
+  // is empty at submit time.
+  const [useAutoAllocate, setUseAutoAllocate] = useState(
+    !submission.pendingInvoiceIds || submission.pendingInvoiceIds.length === 0,
+  );
+
+  // Pull the customer's open invoices so the office can build allocations
+  // by hand if auto-allocate is off.
+  const { data: invoiceData } = useQuery({
+    queryKey: ['customer-open-invoices', submission.customerId],
+    queryFn: () =>
+      apiGet<{ invoices: Invoice[]; meta: PaginationMeta }>('/invoices', {
+        customerId: submission.customerId,
+        status: 'issued,partially_paid,overdue',
+      }),
+    enabled: !useAutoAllocate,
+  });
+  const openInvoices = invoiceData?.invoices ?? [];
+
+  const [allocations, setAllocations] = useState<{ invoiceId: string; amount: string }[]>(
+    submission.pendingInvoiceIds && submission.pendingInvoiceIds.length > 0
+      ? submission.pendingInvoiceIds.map((id) => ({ invoiceId: id, amount: '' }))
+      : [],
+  );
+
+  const verifyMutation = useMutation({
+    mutationFn: () => {
+      if (useAutoAllocate) {
+        return apiPost(`/payments/${submission.submissionId}/verify`, {});
+      }
+      const payload = {
+        allocations: allocations
+          .filter((a) => a.invoiceId && Number(a.amount) > 0)
+          .map((a) => ({ invoiceId: a.invoiceId, amount: Number(a.amount) })),
+      };
+      return apiPost(`/payments/${submission.submissionId}/verify`, payload);
+    },
+    onSuccess: () => {
+      toast.success('Payment verified');
+      onSuccess();
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const submitterLabel =
+    submission.submittedBy === 'driver'
+      ? `Driver: ${submission.submittedByDriverName ?? submission.submittedByDriver?.driverName ?? 'unknown'}`
+      : submission.submittedBy === 'customer'
+        ? 'Customer'
+        : 'Staff';
+
+  return (
+    <Modal open={true} onClose={onClose} title="Approve Payment Submission" size="lg">
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div><p className="text-xs text-surface-400">Customer</p><p className="font-medium">{submission.customerName}</p></div>
+          <div><p className="text-xs text-surface-400">Amount</p><p className="font-bold">{formatCurrency(submission.amount)}</p></div>
+          <div><p className="text-xs text-surface-400">Method</p><p>{submission.paymentMethod.replace(/_/g, ' ')}</p></div>
+          <div><p className="text-xs text-surface-400">Date</p><p>{new Date(submission.transactionDate).toLocaleDateString('en-IN')}</p></div>
+          <div><p className="text-xs text-surface-400">Submitted by</p><p>{submitterLabel}</p></div>
+          <div><p className="text-xs text-surface-400">Reference</p><p>{submission.referenceNumber || '-'}</p></div>
+        </div>
+
+        {submission.attachmentUrl && (
+          <div>
+            <p className="text-xs text-surface-400 mb-1">Receipt</p>
+            <a href={submission.attachmentUrl} target="_blank" rel="noopener noreferrer">
+              <img
+                src={submission.attachmentUrl}
+                alt="receipt"
+                className="max-h-48 rounded-md border border-surface-200 dark:border-surface-700"
+              />
+            </a>
+          </div>
+        )}
+
+        <div className="border-t border-surface-200 dark:border-surface-700 pt-4">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={useAutoAllocate}
+              onChange={(e) => setUseAutoAllocate(e.target.checked)}
+            />
+            <span>Auto-allocate (FIFO by oldest invoice)</span>
+          </label>
+          {submission.pendingInvoiceIds && submission.pendingInvoiceIds.length > 0 && !useAutoAllocate && (
+            <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">
+              Submitter suggested {submission.pendingInvoiceIds.length} invoice(s) below — review and confirm amounts.
+            </p>
+          )}
+        </div>
+
+        {!useAutoAllocate && (
+          <div className="space-y-2">
+            {allocations.map((a, idx) => (
+              <div key={idx} className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <Select
+                    value={a.invoiceId}
+                    onChange={(e) => {
+                      const next = [...allocations];
+                      next[idx] = { ...next[idx], invoiceId: e.target.value };
+                      setAllocations(next);
+                    }}
+                    placeholder="Pick invoice"
+                    options={openInvoices.map((inv) => ({
+                      value: inv.invoiceId!,
+                      label: `${inv.invoiceNumber} — outstanding ${formatCurrency(inv.outstandingAmount)}`,
+                    }))}
+                  />
+                </div>
+                <div className="w-32">
+                  <Input
+                    type="number"
+                    placeholder="Amount"
+                    value={a.amount}
+                    onChange={(e) => {
+                      const next = [...allocations];
+                      next[idx] = { ...next[idx], amount: e.target.value };
+                      setAllocations(next);
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAllocations(allocations.filter((_, i) => i !== idx))}
+                  className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                  title="Remove"
+                >
+                  <HiOutlineTrash className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setAllocations([...allocations, { invoiceId: '', amount: '' }])}
+            >
+              <HiOutlinePlus className="h-4 w-4" /> Add allocation
+            </Button>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-4 border-t border-surface-200 dark:border-surface-700">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={verifyMutation.isPending}
+            onClick={() => verifyMutation.mutate()}
+          >
+            <HiOutlineShieldCheck className="h-4 w-4" /> Approve & Record
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Reject modal — requires a reason (>= 5 chars). */
+function RejectSubmissionModal({
+  submission,
+  onClose,
+  onSuccess,
+}: {
+  submission: PendingSubmission;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [reason, setReason] = useState('');
+
+  const rejectMutation = useMutation({
+    mutationFn: () => apiPost(`/payments/${submission.submissionId}/reject`, { rejectionReason: reason }),
+    onSuccess: () => {
+      toast.success('Submission rejected');
+      onSuccess();
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  return (
+    <Modal open={true} onClose={onClose} title="Reject Payment Submission" size="md">
+      <div className="space-y-4">
+        <p className="text-sm text-surface-700 dark:text-surface-300">
+          The submitter will see this reason in their app. Be specific so they can correct the issue
+          (e.g. &quot;Receipt photo unclear, please retake&quot;, &quot;Amount does not match invoice&quot;).
+        </p>
+        <div>
+          <label className="block text-xs text-surface-400 mb-1">Reason for rejection (min 5 characters)</label>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={4}
+            className="input w-full"
+            placeholder="Explain why this submission is being rejected..."
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-4 border-t border-surface-200 dark:border-surface-700">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger"
+            disabled={rejectMutation.isPending || reason.trim().length < 5}
+            onClick={() => rejectMutation.mutate()}
+          >
+            <HiOutlineXCircle className="h-4 w-4" /> Reject
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
