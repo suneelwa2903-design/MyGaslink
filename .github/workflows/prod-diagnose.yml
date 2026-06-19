@@ -1,0 +1,87 @@
+name: Prod Diagnose (DELETE AFTER USE)
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and diagnose
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 43.204.63.205
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/gaslink
+
+            echo "===== A: deployed commit ====="
+            git log --oneline -5
+            echo "HEAD: $(git rev-parse HEAD)"
+
+            echo
+            echo "===== B: PM2 list + uptime ====="
+            pm2 list
+
+            echo
+            echo "===== C: dispatch-event discriminator in built dist/ ====="
+            if grep -c "dispatchedFromDepotIds" packages/api/dist/services/dvaManifestService.js 2>/dev/null; then
+              echo "(>=1 means c721321 IS in the built dist — FLOAT-001 dispatch discriminator is live)"
+            else
+              echo "MARKER NOT FOUND — dist/ is pre-c721321 (FLOAT-001 dispatch discriminator NOT live)"
+            fi
+
+            echo
+            echo "===== D: dist mtime vs source mtime ====="
+            stat -c "dist: %y" packages/api/dist/services/dvaManifestService.js 2>/dev/null || echo "dist file missing"
+            stat -c "src:  %y" packages/api/src/services/dvaManifestService.ts 2>/dev/null
+
+            echo
+            echo "===== E: FLOAT-001 migration applied to prod DB ====="
+            ls -la packages/api/prisma/migrations/ | grep -iE "manifest|float" || echo "(no manifest migration files)"
+
+            echo
+            echo "===== F: Demo Gas Agency live data ====="
+            DB_URL=$(node -e 'const e=require("/home/ec2-user/.pm2/dump.pm2"); console.log((e[0]&&e[0].env&&e[0].env.DATABASE_URL)||"")')
+            if [ -z "$DB_URL" ]; then
+              echo "DATABASE_URL not found in pm2 dump — trying /opt/gaslink/packages/api/.env"
+              DB_URL=$(grep -E '^DATABASE_URL=' /opt/gaslink/packages/api/.env 2>/dev/null | sed 's/^DATABASE_URL=//' | tr -d '"')
+            fi
+            if [ -z "$DB_URL" ]; then
+              echo "FATAL: could not locate DATABASE_URL on this box"
+              exit 1
+            fi
+            psql "$DB_URL" -A -F'|' << 'SQL'
+            -- Confirm the actual columns on distributors (so we can adjust later queries if needed)
+            \d distributors
+            -- Total manifest rows by tenant
+            SELECT distributor_id, COUNT(*) FROM dva_load_manifests GROUP BY distributor_id;
+            -- dist-demo DVAs last 7d
+            SELECT id, status, trip_number, is_reconciled, assignment_date, dispatched_at, reconciled_at
+            FROM driver_vehicle_assignments
+            WHERE distributor_id = 'dist-demo' AND assignment_date >= CURRENT_DATE - INTERVAL '7 days'
+            ORDER BY assignment_date DESC, created_at DESC LIMIT 10;
+            -- dist-demo manifests
+            SELECT m.dva_id, m.trip_number, m.total_loaded, m.ordered_qty, m.float_qty, m.confirmed_at, ct.type_name
+            FROM dva_load_manifests m
+            JOIN cylinder_types ct ON m.cylinder_type_id = ct.id
+            WHERE m.distributor_id = 'dist-demo'
+            ORDER BY m.confirmed_at DESC LIMIT 20;
+            -- Today's orders for dist-demo
+            SELECT o.order_number, o.status, o.order_source, o.trip_number, o.delivery_date,
+                   oi.quantity, oi.delivered_quantity, ct.type_name
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            JOIN cylinder_types ct ON oi.cylinder_type_id = ct.id
+            WHERE o.distributor_id = 'dist-demo'
+              AND o.delivery_date >= CURRENT_DATE - INTERVAL '3 days'
+            ORDER BY o.created_at DESC LIMIT 20;
+            -- Dispatch inventory events last 3d (proves which orders went depot vs float)
+            SELECT event_type, reference_type, reference_id, event_date, created_at
+            FROM inventory_events
+            WHERE distributor_id = 'dist-demo'
+              AND event_date >= CURRENT_DATE - INTERVAL '3 days'
+              AND event_type = 'dispatch'
+            ORDER BY created_at DESC LIMIT 30;
+            SQL
