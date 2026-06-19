@@ -75,6 +75,16 @@ export function validateEnv(): void {
     if (!process.env.CORS_ORIGINS) {
       errors.push('CORS_ORIGINS must be set in production');
     }
+    // WI-PENDING-PAYMENTS: AWS S3 / CloudFront must be configured in prod
+    // so the payment-attachment upload flow can issue presigned URLs.
+    // The bucket policy expects writes under payment-attachments/{distributorId}/...
+    // and CloudFront is the read path returned to clients.
+    if (!config.aws.s3Bucket) {
+      errors.push('AWS_S3_BUCKET must be set in production');
+    }
+    if (!config.aws.cloudFrontUrl) {
+      errors.push('AWS_CLOUDFRONT_URL must be set in production');
+    }
   } else {
     // Dev warnings
     if (config.jwt.accessSecret === 'dev-access-secret-change-in-production') {
@@ -82,6 +92,15 @@ export function validateEnv(): void {
     }
     if (config.jwt.refreshSecret === 'dev-refresh-secret-change-in-production') {
       warnings.push('JWT_REFRESH_SECRET using dev default — set before deploying');
+    }
+    // WI-PENDING-PAYMENTS dev warnings — local dev can still boot without
+    // AWS configured; the presigned-URL endpoint will surface 500 when
+    // called, which is the right developer signal.
+    if (!config.aws.s3Bucket) {
+      warnings.push('AWS_S3_BUCKET unset — payment attachment uploads will fail');
+    }
+    if (!config.aws.cloudFrontUrl) {
+      warnings.push('AWS_CLOUDFRONT_URL unset — payment attachment uploads will fail');
     }
   }
 
