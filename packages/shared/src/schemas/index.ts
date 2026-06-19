@@ -643,14 +643,11 @@ export type CreateManifestInput = z.infer<typeof createManifestSchema>;
 
 // Driver mobile walk-in order. deliveryDate MUST equal today (server-side check
 // in routes/driversVehicles.ts). One cylinder type per call; multiple types
-// require multiple submissions (keeps the mobile flow simple). paymentMode is
-// a subset of PaymentMethod — the driver collects cash/UPI on the road or
-// flags the order as customer credit.
+// require multiple submissions (keeps the mobile flow simple).
 export const driverCreateOrderSchema = z.object({
   customerId: uuid,
   cylinderTypeId: uuid,
   quantity: z.number().int().min(1),
   deliveryDate: dateString,
-  paymentMode: z.enum(['cash', 'upi', 'credit']).optional(),
 });
 export type DriverCreateOrderInput = z.infer<typeof driverCreateOrderSchema>;

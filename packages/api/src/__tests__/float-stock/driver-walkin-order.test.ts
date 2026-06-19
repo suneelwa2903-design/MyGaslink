@@ -170,7 +170,7 @@ describe('FLOAT-001 — POST /api/drivers/me/orders + driver customer search', (
       .post('/api/drivers/me/orders')
       .set('Authorization', `Bearer ${driverToken}`)
       .send({
-        customerId, cylinderTypeId, quantity: 2, deliveryDate: TEST_DATE, paymentMode: 'cash',
+        customerId, cylinderTypeId, quantity: 2, deliveryDate: TEST_DATE,
       });
     expect(res.status).toBe(201);
     expect(res.body.data.preflightStatus).toBe('success');

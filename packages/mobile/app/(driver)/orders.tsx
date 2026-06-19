@@ -634,7 +634,6 @@ function WalkInOrderModal({
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
   const [cylinderTypeId, setCylinderTypeId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState('1');
-  const [paymentMode, setPaymentMode] = useState<'cash' | 'upi' | 'credit'>('cash');
   const [submitting, setSubmitting] = useState(false);
 
   const { data: customersResp } = useApiQuery<{ customers: CustomerRow[] }>(
@@ -669,7 +668,6 @@ function WalkInOrderModal({
     setSelectedCustomer(null);
     setCylinderTypeId(null);
     setQuantity('1');
-    setPaymentMode('cash');
     setSubmitting(false);
   };
 
@@ -697,7 +695,6 @@ function WalkInOrderModal({
         cylinderTypeId,
         quantity: qty,
         deliveryDate: todayStr,
-        paymentMode,
       });
       if (res.preflightStatus === 'success') {
         Alert.alert('Order created', `${selectedCustomer.customerName} — ${qty} × cylinder. Preflight OK.`);
@@ -798,7 +795,7 @@ function WalkInOrderModal({
               })}
             </View>
 
-            {/* 3. Quantity + Payment */}
+            {/* 3. Quantity */}
             <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Quantity</Text>
             <TextInput
               value={quantity}
@@ -807,30 +804,10 @@ function WalkInOrderModal({
               style={{ borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 8, padding: 10, marginBottom: 8, color: colors.text }}
             />
             {cylinderTypeId && (
-              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 12 }}>
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 20 }}>
                 Available on vehicle: {availableForType}
               </Text>
             )}
-
-            <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Payment</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
-              {(['cash', 'upi', 'credit'] as const).map((m) => (
-                <TouchableOpacity
-                  key={m}
-                  onPress={() => setPaymentMode(m)}
-                  style={{
-                    flex: 1,
-                    padding: 10,
-                    borderRadius: 8,
-                    borderWidth: paymentMode === m ? 2 : 1,
-                    borderColor: paymentMode === m ? ACCENT.red : colors.cardBorder,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text style={{ color: colors.text, fontWeight: paymentMode === m ? '700' : '500' }}>{m.toUpperCase()}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
 
             <Button
               title={submitting ? 'Creating…' : 'Create Order & Dispatch'}
