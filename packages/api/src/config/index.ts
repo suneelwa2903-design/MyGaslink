@@ -75,28 +75,6 @@ export function validateEnv(): void {
     if (!process.env.CORS_ORIGINS) {
       errors.push('CORS_ORIGINS must be set in production');
     }
-    // WI-PENDING-PAYMENTS POST-INCIDENT FIX (2026-06-19): downgraded
-    // from prod hard-fail to warning. The original Phase 2 spec said
-    // "match the JWT prod-fail / dev-warn pattern" — but JWT failure
-    // breaks every API call (the whole app dies), whereas missing AWS
-    // S3 / CloudFront vars only break the payment-attachment upload
-    // endpoint (POST /api/payments/attachment-upload-url and the
-    // driver/customer-portal equivalents). Promoting an opt-in feature
-    // gap to a boot-killer crashed prod at 12:25 IST today after the
-    // post-WI-PENDING-PAYMENTS rebuild — PM2 went into a 338-restart
-    // loop because /etc/environment never had AWS_S3_BUCKET on this
-    // box. See incident notes in CLAUDE.md.
-    //
-    // New rule: hard-fail validateEnv ONLY for vars whose absence
-    // would brick a code path EVERY request hits (DB, JWT, CORS).
-    // Optional-feature vars warn loudly so they're visible in startup
-    // logs but don't crash the API.
-    if (!config.aws.s3Bucket) {
-      warnings.push('AWS_S3_BUCKET unset — payment attachment uploads will return 500');
-    }
-    if (!config.aws.cloudFrontUrl) {
-      warnings.push('AWS_CLOUDFRONT_URL unset — payment attachment uploads will return 500');
-    }
   } else {
     // Dev warnings
     if (config.jwt.accessSecret === 'dev-access-secret-change-in-production') {
@@ -104,15 +82,6 @@ export function validateEnv(): void {
     }
     if (config.jwt.refreshSecret === 'dev-refresh-secret-change-in-production') {
       warnings.push('JWT_REFRESH_SECRET using dev default — set before deploying');
-    }
-    // WI-PENDING-PAYMENTS dev warnings — local dev can still boot without
-    // AWS configured; the presigned-URL endpoint will surface 500 when
-    // called, which is the right developer signal.
-    if (!config.aws.s3Bucket) {
-      warnings.push('AWS_S3_BUCKET unset — payment attachment uploads will fail');
-    }
-    if (!config.aws.cloudFrontUrl) {
-      warnings.push('AWS_CLOUDFRONT_URL unset — payment attachment uploads will fail');
     }
   }
 

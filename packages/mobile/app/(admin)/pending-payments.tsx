@@ -24,7 +24,6 @@ import {
   Modal,
   TextInput,
   Alert,
-  Image,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -67,7 +66,6 @@ export default function PendingPaymentsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [approveTarget, setApproveTarget] = useState<PendingSubmission | null>(null);
   const [rejectTarget, setRejectTarget] = useState<PendingSubmission | null>(null);
-  const [viewImage, setViewImage] = useState<string | null>(null);
 
   const { data, isLoading, refetch } = useApiQuery<ListResp>(
     ['payment-submissions-pending'],
@@ -166,16 +164,6 @@ export default function PendingPaymentsScreen() {
                 <Text style={{ fontSize: 12, color: colors.textSecondary }}>{s.notes}</Text>
               )}
 
-              {s.attachmentUrl && (
-                <TouchableOpacity onPress={() => setViewImage(s.attachmentUrl)}>
-                  <Image
-                    source={{ uri: s.attachmentUrl }}
-                    style={{ width: 80, height: 80, borderRadius: 8 }}
-                    resizeMode="cover"
-                  />
-                </TouchableOpacity>
-              )}
-
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
                 <View style={{ flex: 1 }}>
                   <Button
@@ -220,22 +208,6 @@ export default function PendingPaymentsScreen() {
         />
       )}
 
-      <Modal
-        visible={!!viewImage}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setViewImage(null)}
-      >
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => setViewImage(null)}
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}
-        >
-          {viewImage && (
-            <Image source={{ uri: viewImage }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />
-          )}
-        </TouchableOpacity>
-      </Modal>
     </SafeAreaView>
   );
 }

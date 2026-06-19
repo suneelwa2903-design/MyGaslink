@@ -8,7 +8,6 @@ import {
   Alert,
   Modal,
   TextInput,
-  Image,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -17,7 +16,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { Button, Badge, EmptyState } from '../../src/components/ui';
-import { DeliveryProofCamera } from '../../src/components/DeliveryProofCamera';
 import { useTheme, ACCENT, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
@@ -54,10 +52,8 @@ export default function DriverOrdersScreen() {
   const insets = useSafeAreaInsets();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [deliveryNotes, setDeliveryNotes] = useState('');
-  const [showCamera, setShowCamera] = useState(false);
   // FLOAT-001 (2026-06-17): walk-in order modal visibility.
   const [walkInOpen, setWalkInOpen] = useState(false);
-  const [proofPhoto, setProofPhoto] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [pendingQueue, setPendingQueue] = useState<QueuedDelivery[]>([]);
   const [deliveryItems, setDeliveryItems] = useState<Record<string, DeliveryItemEntry>>({});
@@ -120,14 +116,12 @@ export default function DriverOrdersScreen() {
       queryClient.invalidateQueries({ queryKey: ['driver-trip-ewbs'] });
       setSelectedOrder(null);
       setDeliveryNotes('');
-      setProofPhoto(null);
     } catch (err) {
       if (isNetworkError(err)) {
         await enqueueDelivery({ orderId, items, notes: deliveryNotes || undefined });
         Alert.alert('Saved offline', 'No network. Delivery will sync automatically when you\'re back online.');
         setSelectedOrder(null);
         setDeliveryNotes('');
-        setProofPhoto(null);
       } else {
         Alert.alert('Error', getErrorMessage(err));
       }
@@ -465,34 +459,6 @@ export default function DriverOrdersScreen() {
               ))
             )}
 
-            {/* Delivery Proof Photo */}
-            <View style={{ marginTop: 16 }}>
-              <Text style={{ fontSize: 13, fontWeight: '500', color: colors.textSecondary, marginBottom: 6 }}>Delivery Proof Photo</Text>
-              {proofPhoto ? (
-                <View>
-                  <Image source={{ uri: proofPhoto }} style={{ width: '100%', height: 180, borderRadius: 12 }} resizeMode="cover" />
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                    <Button title="Retake" variant="secondary" size="sm" onPress={() => setShowCamera(true)} style={{ flex: 1 }} />
-                    <Button title="Remove" variant="ghost" size="sm" onPress={() => setProofPhoto(null)} style={{ flex: 1 }} />
-                  </View>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  onPress={() => setShowCamera(true)}
-                  style={{
-                    borderWidth: 2, borderColor: colors.cardBorder, borderStyle: 'dashed',
-                    borderRadius: 12, padding: 24, alignItems: 'center',
-                    backgroundColor: dark ? colors.inputBg : undefined,
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{ fontSize: 32, marginBottom: 4 }}>📸</Text>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: ACCENT.blue }}>Take Photo</Text>
-                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>Optional proof of delivery</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
             <View style={{ marginTop: 12 }}>
               <Text style={{ fontSize: 13, fontWeight: '500', color: colors.textSecondary, marginBottom: 6 }}>Delivery Notes</Text>
               <TextInput
@@ -513,7 +479,7 @@ export default function DriverOrdersScreen() {
 
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
               <View style={{ flex: 1 }}>
-                <Button title="Close" variant="secondary" onPress={() => { setSelectedOrder(null); setDeliveryNotes(''); setProofPhoto(null); }} />
+                <Button title="Close" variant="secondary" onPress={() => { setSelectedOrder(null); setDeliveryNotes(''); }} />
               </View>
               {selectedOrder?.status === 'pending_delivery' && (
                 <View style={{ flex: 1 }}>
@@ -546,7 +512,6 @@ export default function DriverOrdersScreen() {
                     const order = selectedOrder;
                     setSelectedOrder(null);
                     setDeliveryNotes('');
-                    setProofPhoto(null);
                     router.push({
                       pathname: '/(driver)/submit-payment',
                       params: {
@@ -564,13 +529,6 @@ export default function DriverOrdersScreen() {
         </KeyboardAvoidingView>
         </SafeAreaProvider>
       </Modal>
-
-      {/* Camera Modal */}
-      <DeliveryProofCamera
-        visible={showCamera}
-        onCapture={(uri) => { setProofPhoto(uri); setShowCamera(false); }}
-        onClose={() => setShowCamera(false)}
-      />
 
       {/* FLOAT-001 (2026-06-17): walk-in order FAB + modal */}
       <TouchableOpacity

@@ -23,8 +23,6 @@
       },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "We need your location for delivery tracking",
-        "NSCameraUsageDescription": "We need camera access for delivery proof photos",
-        "NSPhotoLibraryUsageDescription": "Allow MyGasLink to save delivery proof photos",
         "ITSAppUsesNonExemptEncryption": false,
         "LSApplicationQueriesSchemes": [
           "mailto",
@@ -41,12 +39,10 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "CAMERA",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.CAMERA"
+        "android.permission.ACCESS_FINE_LOCATION"
       ],
       "intentFilters": [
         {
@@ -77,12 +73,6 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow MyGasLink to use your location for delivery tracking.",
           "isAndroidBackgroundLocationEnabled": false
-        }
-      ],
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Allow MyGasLink to access your camera for delivery proof."
         }
       ],
       "@react-native-community/datetimepicker",

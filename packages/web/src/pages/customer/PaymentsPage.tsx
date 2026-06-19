@@ -248,41 +248,6 @@ export function ReportPaymentModal({ onClose, invoiceId, invoiceOutstanding }: R
   const [transactionDate, setTransactionDate] = useState(todayStr);
   const [referenceNumber, setReferenceNumber] = useState('');
   const [notes, setNotes] = useState('');
-  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please attach an image');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Image must be under 5MB');
-      return;
-    }
-    try {
-      setUploading(true);
-      const urls = await apiPost<{ uploadUrl: string; finalUrl: string }>(
-        '/customer-portal/payments/attachment-upload-url',
-        {},
-      );
-      // PUT raw bytes directly to S3 — bypassing axios because the
-      // presigned URL has its own auth in the query string.
-      await fetch(urls.uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: { 'Content-Type': 'image/jpeg' },
-      });
-      setAttachmentUrl(urls.finalUrl);
-      toast.success('Receipt uploaded');
-    } catch (err) {
-      toast.error(getErrorMessage(err));
-    } finally {
-      setUploading(false);
-    }
-  };
 
   const submitMutation = useMutation({
     mutationFn: () =>
@@ -292,7 +257,6 @@ export function ReportPaymentModal({ onClose, invoiceId, invoiceOutstanding }: R
         transactionDate,
         referenceNumber: referenceNumber || undefined,
         notes: notes || undefined,
-        attachmentUrl: attachmentUrl || undefined,
         pendingInvoiceIds: invoiceId ? [invoiceId] : undefined,
       }),
     onSuccess: () => {
@@ -311,7 +275,7 @@ export function ReportPaymentModal({ onClose, invoiceId, invoiceOutstanding }: R
     { value: 'online', label: 'Online' },
   ];
 
-  const canSubmit = Number(amount) > 0 && transactionDate && !uploading;
+  const canSubmit = Number(amount) > 0 && !!transactionDate;
 
   return (
     <Modal open={true} onClose={onClose} title="Report a Payment" size="md">
@@ -368,19 +332,6 @@ export function ReportPaymentModal({ onClose, invoiceId, invoiceOutstanding }: R
             className="input w-full"
             placeholder="Any additional context for the verifier"
           />
-        </div>
-        <div>
-          <label className="block text-xs text-surface-400 mb-1">Receipt / proof image (optional, max 5MB)</label>
-          {attachmentUrl ? (
-            <div className="flex items-center gap-3">
-              <img src={attachmentUrl} alt="receipt" className="h-20 w-20 object-cover rounded border border-surface-200 dark:border-surface-700" />
-              <Button variant="secondary" size="sm" onClick={() => setAttachmentUrl(null)}>
-                Remove
-              </Button>
-            </div>
-          ) : (
-            <input type="file" accept="image/*" onChange={handleFileChange} disabled={uploading} />
-          )}
         </div>
         <div className="flex justify-end gap-2 pt-4 border-t border-surface-200 dark:border-surface-700">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>

@@ -942,44 +942,9 @@ describe('PaymentSubmission — Count + double-entry indicator', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// S3 PRESIGNED URL
-// ─────────────────────────────────────────────────────────────────────────
-
-describe('PaymentSubmission — S3 attachment URL', () => {
-  it('T37 — staff presigned-URL endpoint returns uploadUrl + finalUrl when AWS configured', async () => {
-    const res = await request(app)
-      .post('/api/payments/attachment-upload-url')
-      .set(auth(financeToken))
-      .send({});
-    // In a dev env with AWS not configured, this returns 500. That's the
-    // documented developer signal. In a configured env (and in CI which
-    // sets AWS env vars), it returns 200. Accept either — the goal of
-    // T37/T38 is to verify the endpoint exists and is correctly tenant-
-    // scoped when it returns success.
-    if (res.status === 200) {
-      expect(res.body.data.uploadUrl).toMatch(/^https:\/\//);
-      expect(res.body.data.finalUrl).toContain('payment-attachments/dist-001/');
-      expect(res.body.data.finalUrl).toMatch(/\.jpg$/);
-    } else {
-      // Acceptable in CI/dev without AWS_S3_BUCKET.
-      expect([400, 500]).toContain(res.status);
-    }
-  });
-
-  it('T38 — finalUrl path always contains the authenticated distributorId, never a body-supplied one', async () => {
-    const res = await request(app)
-      .post('/api/payments/attachment-upload-url')
-      .set(auth(financeToken))
-      .send({ distributorId: 'dist-002' }); // attempt forge — must be ignored
-    if (res.status === 200) {
-      expect(res.body.data.finalUrl).toContain('payment-attachments/dist-001/');
-      expect(res.body.data.finalUrl).not.toContain('dist-002');
-    } else {
-      expect([400, 500]).toContain(res.status);
-    }
-  });
-});
+// T37/T38 (S3 presigned URL) removed 2026-06-19 with the receipt-photo
+// feature. Endpoint no longer exists. Re-add tests if the feature is
+// restored in v1.1.
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pre-push smoke checklist additions — the 3 backend items the existing

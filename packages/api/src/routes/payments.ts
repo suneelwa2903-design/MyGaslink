@@ -10,7 +10,6 @@ import * as submissionService from '../services/paymentSubmissionService.js';
 import { mapPayment, mapPayments, mapPaymentSubmission, mapPaymentSubmissions, mapInvoice } from '../utils/mappers.js';
 import { prisma } from '../lib/prisma.js';
 import { toNum } from '../utils/decimal.js';
-import { generatePaymentAttachmentUploadUrl } from '../lib/s3.js';
 import { z } from 'zod';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
@@ -210,24 +209,6 @@ router.get('/ledger/:customerId',
 // clearing customer balances is another, and inventory shouldn't have the
 // second power. Deliberate tightening per WI-PENDING-PAYMENTS decision.
 // ═══════════════════════════════════════════════════════════════════════════
-
-// POST /api/payments/attachment-upload-url
-// Issues a short-lived presigned PUT URL so staff can upload a receipt
-// image they're recording on behalf of a driver/customer. distributorId
-// always comes from the authenticated session (tenant isolation).
-router.post('/attachment-upload-url',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
-  async (req, res) => {
-    try {
-      const { uploadUrl, finalUrl } = await generatePaymentAttachmentUploadUrl(
-        req.user!.distributorId!,
-      );
-      return sendSuccess(res, { uploadUrl, finalUrl });
-    } catch (err) {
-      return sendError(res, (err as Error).message, 500);
-    }
-  },
-);
 
 // GET /api/payments/pending — list pending submissions awaiting verification
 const pendingQuerySchema = z.object({

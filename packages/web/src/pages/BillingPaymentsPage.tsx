@@ -726,7 +726,6 @@ function PendingApprovalTab() {
                   <th>Method</th>
                   <th>Date</th>
                   <th>Reference</th>
-                  <th>Receipt</th>
                   <th>Submitted</th>
                   <th>Actions</th>
                 </tr>
@@ -758,24 +757,6 @@ function PendingApprovalTab() {
                     <td><Badge variant="neutral">{s.paymentMethod.replace(/_/g, ' ')}</Badge></td>
                     <td>{new Date(s.transactionDate).toLocaleDateString('en-IN')}</td>
                     <td className="text-xs">{s.referenceNumber || '-'}</td>
-                    <td>
-                      {s.attachmentUrl ? (
-                        <a
-                          href={s.attachmentUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block"
-                        >
-                          <img
-                            src={s.attachmentUrl}
-                            alt="receipt"
-                            className="h-14 w-14 object-cover rounded-md border border-surface-200 dark:border-surface-700"
-                          />
-                        </a>
-                      ) : (
-                        <span className="text-xs text-surface-400">—</span>
-                      )}
-                    </td>
                     <td className="text-xs">
                       {new Date(s.createdAt).toLocaleString('en-IN', {
                         dateStyle: 'short',
@@ -918,19 +899,6 @@ function ApproveSubmissionModal({
           <div><p className="text-xs text-surface-400">Submitted by</p><p>{submitterLabel}</p></div>
           <div><p className="text-xs text-surface-400">Reference</p><p>{submission.referenceNumber || '-'}</p></div>
         </div>
-
-        {submission.attachmentUrl && (
-          <div>
-            <p className="text-xs text-surface-400 mb-1">Receipt</p>
-            <a href={submission.attachmentUrl} target="_blank" rel="noopener noreferrer">
-              <img
-                src={submission.attachmentUrl}
-                alt="receipt"
-                className="max-h-48 rounded-md border border-surface-200 dark:border-surface-700"
-              />
-            </a>
-          </div>
-        )}
 
         <div className="border-t border-surface-200 dark:border-surface-700 pt-4">
           <label className="flex items-center gap-2 text-sm cursor-pointer">

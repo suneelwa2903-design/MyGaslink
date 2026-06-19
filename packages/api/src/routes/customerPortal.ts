@@ -17,7 +17,6 @@ import {
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../utils/logger.js';
 import { mapCustomer, mapOrder, mapOrders, mapInvoices, mapCustomerInvoiceDetail, mapPayment, mapPayments, mapPaymentSubmission, mapPaymentSubmissions } from '../utils/mappers.js';
-import { generatePaymentAttachmentUploadUrl, isOwnedPaymentAttachmentUrl } from '../lib/s3.js';
 import { z } from 'zod';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
@@ -775,22 +774,6 @@ router.post('/invoices/:id/verify-payment',
 // never from the request body (IDOR prevention).
 // ═══════════════════════════════════════════════════════════════════════════
 
-// POST /api/customer-portal/payments/attachment-upload-url
-router.post('/payments/attachment-upload-url',
-  customerPaymentLimiter,
-  requireRole('customer'),
-  async (req, res) => {
-    try {
-      const { uploadUrl, finalUrl } = await generatePaymentAttachmentUploadUrl(
-        req.user!.distributorId!,
-      );
-      return sendSuccess(res, { uploadUrl, finalUrl });
-    } catch (err) {
-      return sendError(res, (err as Error).message, 500);
-    }
-  },
-);
-
 // POST /api/customer-portal/payments/submit
 const customerSubmissionSchema = z.object({
   amount: z.number().positive(),
@@ -798,7 +781,6 @@ const customerSubmissionSchema = z.object({
   transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   referenceNumber: z.string().max(120).optional(),
   notes: z.string().max(500).optional(),
-  attachmentUrl: z.string().url().optional(),
   pendingInvoiceIds: z.array(z.string().uuid()).optional(),
 });
 
@@ -812,15 +794,6 @@ router.post('/payments/submit',
       if (!req.user!.customerId) {
         return sendError(res, 'No customer linked to this account', 400);
       }
-      // attachmentUrl must point at the same distributor's S3 prefix
-      // (defends against attempts to claim attachments uploaded under
-      // another tenant's path).
-      if (
-        req.body.attachmentUrl &&
-        !isOwnedPaymentAttachmentUrl(req.body.attachmentUrl, req.user!.distributorId!)
-      ) {
-        return sendError(res, 'attachmentUrl is not a valid payment attachment', 400);
-      }
       const submission = await submissionService.createSubmission(
         req.user!.distributorId!,
         {
@@ -830,7 +803,6 @@ router.post('/payments/submit',
           transactionDate: req.body.transactionDate,
           referenceNumber: req.body.referenceNumber,
           notes: req.body.notes,
-          attachmentUrl: req.body.attachmentUrl,
           pendingInvoiceIds: req.body.pendingInvoiceIds,
           submittedBy: 'customer',
           submittedByUserId: req.user!.userId,

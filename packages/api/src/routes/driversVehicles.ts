@@ -10,7 +10,6 @@ import * as vehicleService from '../services/vehicleService.js';
 import * as submissionService from '../services/paymentSubmissionService.js';
 import { mapDriver, mapDrivers, mapVehicle, mapVehicles, mapAssignment, mapAssignments, mapOrders, mapPaymentSubmission, mapPaymentSubmissions } from '../utils/mappers.js';
 import { startOfUtcDay } from '../utils/dateOnly.js';
-import * as driverPaymentS3 from '../lib/s3.js';
 import { z } from 'zod';
 
 /**
@@ -987,21 +986,6 @@ driverRouter.post('/me/orders',
 // behalf of another driver.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// POST /api/drivers/me/payment-submissions/attachment-upload-url
-driverRouter.post('/me/payment-submissions/attachment-upload-url',
-  requireRole('driver'),
-  async (req, res) => {
-    try {
-      const { uploadUrl, finalUrl } = await driverPaymentS3.generatePaymentAttachmentUploadUrl(
-        req.user!.distributorId!,
-      );
-      return sendSuccess(res, { uploadUrl, finalUrl });
-    } catch (err) {
-      return sendError(res, (err as Error).message, 500);
-    }
-  },
-);
-
 const driverSubmissionSchema = z.object({
   customerId: z.string().uuid(),
   amount: z.number().positive(),
@@ -1009,7 +993,6 @@ const driverSubmissionSchema = z.object({
   transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   referenceNumber: z.string().max(120).optional(),
   notes: z.string().max(500).optional(),
-  attachmentUrl: z.string().url().optional(),
   pendingInvoiceIds: z.array(z.string().uuid()).optional(),
 });
 
@@ -1025,12 +1008,6 @@ driverRouter.post('/me/payment-submissions',
       if (!driver) {
         return sendError(res, 'Driver record not found for this user', 404);
       }
-      if (
-        req.body.attachmentUrl &&
-        !driverPaymentS3.isOwnedPaymentAttachmentUrl(req.body.attachmentUrl, distributorId)
-      ) {
-        return sendError(res, 'attachmentUrl is not a valid payment attachment', 400);
-      }
       const submission = await submissionService.createSubmission(distributorId, {
         customerId: req.body.customerId,
         amount: req.body.amount,
@@ -1038,7 +1015,6 @@ driverRouter.post('/me/payment-submissions',
         transactionDate: req.body.transactionDate,
         referenceNumber: req.body.referenceNumber,
         notes: req.body.notes,
-        attachmentUrl: req.body.attachmentUrl,
         pendingInvoiceIds: req.body.pendingInvoiceIds,
         submittedBy: 'driver',
         submittedByUserId: req.user!.userId,
