@@ -64,39 +64,54 @@ export async function listPayments(
   };
 }
 
-export async function createPayment(
+// WI-PENDING-PAYMENTS: shared shape for createPayment + createPaymentInTx.
+// Exported so paymentSubmissionService.verifySubmission can construct it.
+export interface CreatePaymentData {
+  customerId: string;
+  amount: number;
+  paymentMethod: string;
+  referenceNumber?: string;
+  transactionDate: string;
+  allocations?: { invoiceId: string; amount: number }[];
+  // Phase F (2026-06-12): when the payment came from the customer-
+  // portal Razorpay "Pay Now" flow, the route passes the forensic
+  // ids through here. The service writes them onto the
+  // PaymentTransaction row but doesn't otherwise change behaviour —
+  // allocation logic + ledger update + invoice flip are identical
+  // to a manually-recorded payment. razorpaySignature is stored
+  // for audit / dispute investigation; mappers/utils never surface
+  // it in API responses.
+  razorpay?: {
+    razorpayOrderId: string;
+    razorpayPaymentId: string;
+    razorpaySignature: string;
+  };
+}
+
+/**
+ * WI-PENDING-PAYMENTS: createPayment as a transaction-client function so
+ * an OUTER caller (paymentSubmissionService.verifySubmission) can run
+ * the payment-recording + the submission-status flip atomically in ONE
+ * Prisma transaction.
+ *
+ * Validates that the customer belongs to `distributorId`; the validation
+ * uses `tx` so it sees the same snapshot as the writes that follow.
+ * Direct API callers should still use `createPayment` (below) which
+ * just wraps this in `prisma.$transaction(...)`.
+ */
+export async function createPaymentInTx(
+  tx: Prisma.TransactionClient,
   distributorId: string,
   userId: string | null,
-  data: {
-    customerId: string;
-    amount: number;
-    paymentMethod: string;
-    referenceNumber?: string;
-    transactionDate: string;
-    allocations?: { invoiceId: string; amount: number }[];
-    // Phase F (2026-06-12): when the payment came from the customer-
-    // portal Razorpay "Pay Now" flow, the route passes the forensic
-    // ids through here. The service writes them onto the
-    // PaymentTransaction row but doesn't otherwise change behaviour —
-    // allocation logic + ledger update + invoice flip are identical
-    // to a manually-recorded payment. razorpaySignature is stored
-    // for audit / dispute investigation; mappers/utils never surface
-    // it in API responses.
-    razorpay?: {
-      razorpayOrderId: string;
-      razorpayPaymentId: string;
-      razorpaySignature: string;
-    };
-  }
+  data: CreatePaymentData,
 ) {
   // Validate customer belongs to distributor
-  const customer = await prisma.customer.findFirst({
+  const customer = await tx.customer.findFirst({
     where: { id: data.customerId, distributorId, deletedAt: null },
   });
   if (!customer) throw new PaymentError('Customer not found', 404);
 
-  return prisma.$transaction(async (tx) => {
-    const payment = await tx.paymentTransaction.create({
+  const payment = await tx.paymentTransaction.create({
       data: {
         distributorId,
         customerId: data.customerId,
@@ -227,12 +242,24 @@ export async function createPayment(
       },
     });
 
-    return {
-      ...updatedPayment,
-      allocatedAmount: totalAllocated,
-      unallocatedAmount: data.amount - totalAllocated,
-    };
-  });
+  return {
+    ...updatedPayment,
+    allocatedAmount: totalAllocated,
+    unallocatedAmount: data.amount - totalAllocated,
+  };
+}
+
+/**
+ * Public createPayment — opens its own `prisma.$transaction` and delegates
+ * to `createPaymentInTx`. Existing callers (routes, Razorpay webhook,
+ * verify-payment endpoint) keep the same signature.
+ */
+export async function createPayment(
+  distributorId: string,
+  userId: string | null,
+  data: CreatePaymentData,
+) {
+  return prisma.$transaction((tx) => createPaymentInTx(tx, distributorId, userId, data));
 }
 
 /**
