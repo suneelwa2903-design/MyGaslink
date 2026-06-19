@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { apiGet } from '@/lib/api';
 import { type IconType } from 'react-icons';
 import {
   HiOutlineHome,
@@ -211,6 +212,23 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
 
   const menuItems = isCustomer ? customerMenuItems : adminMenuItems;
 
+  // WI-PENDING-PAYMENTS: red badge on the Billing & Payments nav item
+  // when there are pending payment submissions to approve. Only the
+  // roles that can actually approve (admin, finance) need the badge —
+  // the endpoint itself gates RBAC so the query just returns 0 / 403
+  // for anyone else; we skip the request entirely to avoid the noise.
+  const canSeePendingBadge =
+    userRole === UserRole.SUPER_ADMIN ||
+    userRole === UserRole.DISTRIBUTOR_ADMIN ||
+    userRole === UserRole.FINANCE;
+  const { data: pendingCountData } = useQuery({
+    queryKey: ['payment-submissions-pending-count'],
+    queryFn: () => apiGet<{ count: number }>('/payments/pending/count'),
+    refetchInterval: 60_000,
+    enabled: canSeePendingBadge,
+  });
+  const pendingCount = pendingCountData?.count ?? 0;
+
   const visibleItems = menuItems.filter((item) => {
     if (!userRole) return false;
     if (userRole === UserRole.SUPER_ADMIN) return true;
@@ -293,7 +311,7 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
                 onClick={() => onClose()}
                 className={({ isActive }) =>
                   cn(
-                    'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
+                    'relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
                     isActive
                       ? 'bg-brand-500/20 text-brand-400 dark:bg-brand-500/15 dark:text-brand-600'
                       : 'text-slate-400 dark:text-slate-600 hover:bg-slate-800 dark:hover:bg-slate-200 hover:text-white dark:hover:text-slate-900',
@@ -304,6 +322,29 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
               >
                 <item.icon className="h-5 w-5 shrink-0" />
                 <span className={cn(collapsed && 'lg:hidden')}>{labelOf(item)}</span>
+                {/* WI-PENDING-PAYMENTS: red badge on Billing & Payments.
+                    Shown both when expanded (count next to label) and
+                    collapsed (small dot at top-right of the icon). */}
+                {item.path === '/app/billing-payments' && pendingCount > 0 && (
+                  <>
+                    <span
+                      className={cn(
+                        'ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold',
+                        collapsed && 'lg:hidden',
+                      )}
+                      aria-label={`${pendingCount} pending payment approvals`}
+                    >
+                      {pendingCount > 99 ? '99+' : pendingCount}
+                    </span>
+                    <span
+                      className={cn(
+                        'hidden absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-slate-900 dark:ring-slate-100',
+                        collapsed && 'lg:block',
+                      )}
+                      aria-hidden="true"
+                    />
+                  </>
+                )}
               </NavLink>
             ),
           )}

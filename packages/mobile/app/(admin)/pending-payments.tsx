@@ -33,7 +33,7 @@ import { Stack } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
-import { useTheme, ACCENT, formatINR } from '../../src/theme';
+import { useTheme, formatINR } from '../../src/theme';
 import { Badge, Button, EmptyState } from '../../src/components/ui';
 
 interface PendingSubmission {
@@ -250,9 +250,13 @@ function ApproveModal({
   onSuccess: () => void;
 }) {
   const { dark, colors } = useTheme();
-  const [useAuto, setUseAuto] = useState(
-    !submission.pendingInvoiceIds || submission.pendingInvoiceIds.length === 0,
-  );
+  // Mobile approval is always auto-allocate (FIFO across the customer's
+  // open invoices). Manual per-invoice allocation lives in the web app —
+  // the small mobile sheet doesn't have room for an invoice picker, and a
+  // half-implemented manual toggle that silently fell back to auto was
+  // misleading. Office staff who need to split a payment across specific
+  // invoices use BillingPaymentsPage > Pending Approval > Approve in the
+  // browser.
 
   const verifyMutation = useApiMutation<unknown, { allocations?: { invoiceId: string; amount: number }[] }>(
     'post',
@@ -261,7 +265,7 @@ function ApproveModal({
 
   const handleApprove = async () => {
     try {
-      await verifyMutation.mutateAsync(useAuto ? {} : { allocations: [] });
+      await verifyMutation.mutateAsync({});
       Alert.alert('Approved', 'Payment recorded.');
       onSuccess();
     } catch (err) {
@@ -291,47 +295,25 @@ function ApproveModal({
             </Text>
           </View>
 
-          <TouchableOpacity
-            onPress={() => setUseAuto(!useAuto)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 10,
-              padding: 12,
-              backgroundColor: colors.cardBg,
-              borderRadius: 10,
-            }}
-          >
-            <Ionicons
-              name={useAuto ? 'checkbox' : 'square-outline'}
-              size={22}
-              color={useAuto ? ACCENT.blue : colors.textSecondary}
-            />
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.text, fontWeight: '600' }}>Auto-allocate (FIFO)</Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                Apply to oldest unpaid invoices first.
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {submission.pendingInvoiceIds && submission.pendingInvoiceIds.length > 0 && (
-            <View style={{
-              backgroundColor: dark ? 'rgba(59,130,246,0.10)' : '#eff6ff',
-              padding: 10,
-              borderRadius: 8,
-            }}>
-              <Text style={{ fontSize: 12, color: dark ? '#60a5fa' : '#1e40af' }}>
-                Submitter hinted {submission.pendingInvoiceIds.length} invoice(s). Auto-allocate
-                FIFO is on by default — uncheck to allocate manually via the web app for
-                finer control.
-              </Text>
-            </View>
-          )}
+          <View style={{
+            backgroundColor: dark ? 'rgba(59,130,246,0.10)' : '#eff6ff',
+            padding: 12,
+            borderRadius: 10,
+            flexDirection: 'row',
+            gap: 10,
+            alignItems: 'flex-start',
+          }}>
+            <Ionicons name="information-circle-outline" size={20} color={dark ? '#60a5fa' : '#1e40af'} />
+            <Text style={{ flex: 1, fontSize: 13, color: dark ? '#60a5fa' : '#1e40af', lineHeight: 18 }}>
+              {submission.pendingInvoiceIds && submission.pendingInvoiceIds.length > 0
+                ? `Auto-allocating to the customer's oldest unpaid invoices (FIFO). Submitter hinted ${submission.pendingInvoiceIds.length} invoice(s); use the web app if you need to allocate to specific ones.`
+                : "Auto-allocating to the customer's oldest unpaid invoices (FIFO). Use the web app if you need per-invoice allocations."}
+            </Text>
+          </View>
 
           <View style={{ marginTop: 8 }}>
             <Button
-              title={verifyMutation.isPending ? 'Approving…' : 'Confirm Approve'}
+              title={verifyMutation.isPending ? 'Approving…' : 'Confirm Approve (FIFO)'}
               variant="primary"
               onPress={handleApprove}
               disabled={verifyMutation.isPending}

@@ -980,3 +980,66 @@ describe('PaymentSubmission — S3 attachment URL', () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pre-push smoke checklist additions — the 3 backend items the existing
+// 38 tests didn't pin: inventory RBAC on submit + list, and the Tally-
+// export invariant (5th leak site from INV-4 not previously guarded).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('PaymentSubmission — Pre-push RBAC / invariant additions', () => {
+  it('T39 — inventory role hitting POST /drivers/me/payment-submissions → 403', async () => {
+    // The driver route is gated `requireRole('driver')` — inventory
+    // tries it: should be 403 not 200. Defends the smoke-checklist
+    // assertion the existing T20–T24 didn't cover for the submit path.
+    const res = await request(app)
+      .post('/api/drivers/me/payment-submissions')
+      .set(auth(inventoryToken))
+      .send({
+        customerId: dist1CustomerId,
+        amount: 100,
+        paymentMethod: 'cash',
+        transactionDate: '2099-12-31',
+      });
+    expect(res.status).toBe(403);
+  });
+
+  it('T40 — inventory role hitting GET /payments/pending → 403', async () => {
+    // The office /pending endpoint is gated to
+    // `super_admin | distributor_admin | finance` — inventory should
+    // not see the queue. Pins the deliberate-tightening decision
+    // documented in CLAUDE.md "WI-PENDING-PAYMENTS operating decisions".
+    const res = await request(app)
+      .get('/api/payments/pending')
+      .set(auth(inventoryToken));
+    expect(res.status).toBe(403);
+  });
+
+  it('T41 — Tally export does NOT include pending submissions (invariant guard #5)', async () => {
+    // INV-4 site 13: tallyExportService reads payment_transactions only.
+    // A pending submission lives in payment_submissions, not
+    // payment_transactions, so it must NEVER show in Tally output. This
+    // guard catches a future regression that added a draft/pending flag
+    // to PaymentTransaction or moved submissions into the same table.
+    const tallyService = await import('../services/tallyExportService.js');
+    // Use a recognisable probe amount and check it never appears in the
+    // emitted XML. payment_submissions rows live in their own table; the
+    // Tally builder reads payment_transactions only.
+    const PROBE_AMOUNT = 123_456;
+    const before = await tallyService.buildTallyExport('dist-001', {});
+    expect(before.xml).not.toContain(String(PROBE_AMOUNT));
+    const beforePaymentCount = before.meta.payments;
+    await seedPaymentSubmission({
+      distributorId: 'dist-001',
+      customerId: dist1CustomerId,
+      amount: PROBE_AMOUNT,
+      submittedByDriverId: driverDist1Id,
+    });
+    const after = await tallyService.buildTallyExport('dist-001', {});
+    expect(after.xml).not.toContain(String(PROBE_AMOUNT));
+    // Payment count from PaymentTransaction table is unchanged — the
+    // submission did not bleed into it.
+    expect(after.meta.payments).toBe(beforePaymentCount);
+    await cleanupPaymentSubmissions('dist-001');
+  });
+});

@@ -30,6 +30,7 @@ import { useTheme, ACCENT } from '../../src/theme';
 import { Button } from '../../src/components/ui';
 import { apiPost, getErrorMessage } from '../../src/lib/api';
 import { CameraView, useCameraPermissions } from '../../src/services/camera';
+import { localTodayISO } from '@gaslink/shared';
 
 type Method = 'cash' | 'upi' | 'bank_transfer' | 'cheque' | 'online';
 const METHODS: { value: Method; label: string }[] = [
@@ -54,7 +55,11 @@ export default function DriverSubmitPaymentScreen() {
 
   const [amount, setAmount] = useState(params.prefillAmount ?? '');
   const [method, setMethod] = useState<Method>('cash');
-  const [transactionDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // Anti-pattern #21: use localTodayISO, NOT toISOString().slice(0,10).
+  // Between 18:30 UTC and 23:59 UTC daily (00:00–05:30 IST) the UTC
+  // calendar date is yesterday-in-IST, which silently submits a date
+  // off-by-one for users entering payments during their night hours.
+  const [transactionDate] = useState(() => localTodayISO());
   const [referenceNumber, setReferenceNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);

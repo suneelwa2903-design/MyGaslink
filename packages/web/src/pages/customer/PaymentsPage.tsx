@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { HiOutlineEye, HiOutlinePlus } from 'react-icons/hi2';
 import type { Payment, PaginationMeta } from '@gaslink/shared';
-import { PaymentAllocationStatus } from '@gaslink/shared';
+import { PaymentAllocationStatus, localTodayISO } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 
@@ -238,7 +238,9 @@ export interface ReportPaymentModalProps {
 
 export function ReportPaymentModal({ onClose, invoiceId, invoiceOutstanding }: ReportPaymentModalProps) {
   const queryClient = useQueryClient();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  // Anti-pattern #21: use localTodayISO (local-TZ YYYY-MM-DD), not
+  // toISOString().slice(0,10) which returns the UTC calendar date.
+  const todayStr = localTodayISO();
   const [amount, setAmount] = useState(
     invoiceOutstanding ? invoiceOutstanding.toFixed(2) : '',
   );
