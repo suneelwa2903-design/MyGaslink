@@ -299,31 +299,11 @@ export default function DriverOrdersScreen() {
                   </View>
                 )}
               </View>
-              {/* WI-PENDING-PAYMENTS: per-order "Submit Payment" affordance.
-                  Visible on any status where the driver might collect cash
-                  (pending_delivery, delivered, modified_delivered). Routes
-                  to the dedicated submit-payment screen, pre-filling
-                  customer + outstanding context. */}
-              {(order.status === 'pending_delivery'
-                || order.status === 'delivered'
-                || order.status === 'modified_delivered') && (
-                <View style={{ marginTop: 8 }}>
-                  <Button
-                    title="Submit Payment"
-                    variant="secondary"
-                    size="sm"
-                    onPress={() => router.push({
-                      pathname: '/(driver)/submit-payment',
-                      params: {
-                        orderId: order.orderId,
-                        customerId: order.customerId,
-                        customerName: order.customerName ?? '',
-                        prefillAmount: order.totalAmount?.toFixed(2) ?? '',
-                      },
-                    })}
-                  />
-                </View>
-              )}
+              {/* WI-PENDING-PAYMENTS post-smoke FIX-B: the per-row Submit
+                  Payment button was removed. Payment submission now lives
+                  INSIDE the View Details modal (search for "Submit Payment"
+                  in the modal block below) so the driver always reviews
+                  the order before reporting a payment against it. */}
             </View>
           ))
         )}
@@ -546,6 +526,40 @@ export default function DriverOrdersScreen() {
                 </View>
               )}
             </View>
+            {/* WI-PENDING-PAYMENTS post-smoke FIX-B: Submit Payment moved
+                here from the order row. Visible when there's an amount
+                worth collecting and the order is in a status where the
+                driver might be holding cash (pending_delivery, delivered,
+                modified_delivered). Tapping closes this modal and routes
+                to submit-payment with the order + customer context
+                pre-filled. */}
+            {selectedOrder
+              && (selectedOrder.totalAmount ?? 0) > 0
+              && (selectedOrder.status === 'pending_delivery'
+                || selectedOrder.status === 'delivered'
+                || selectedOrder.status === 'modified_delivered') && (
+              <View style={{ marginTop: 10 }}>
+                <Button
+                  title="Submit Payment"
+                  variant="secondary"
+                  onPress={() => {
+                    const order = selectedOrder;
+                    setSelectedOrder(null);
+                    setDeliveryNotes('');
+                    setProofPhoto(null);
+                    router.push({
+                      pathname: '/(driver)/submit-payment',
+                      params: {
+                        orderId: order.orderId,
+                        customerId: order.customerId,
+                        customerName: order.customerName ?? '',
+                        prefillAmount: order.totalAmount?.toFixed(2) ?? '',
+                      },
+                    });
+                  }}
+                />
+              </View>
+            )}
           </View>
         </KeyboardAvoidingView>
         </SafeAreaProvider>
