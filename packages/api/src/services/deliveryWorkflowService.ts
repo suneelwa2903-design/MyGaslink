@@ -808,10 +808,21 @@ export async function confirmVehicleReconciliation(
         // → unsoldFloat=9 → Inventory showed On Vehicle = -1 for 19 KG.
         // Post-fix: identified via "no dispatch event" → soldFromFloat=1
         // → unsoldFloat=8 → On Vehicle = 0.
+        // FLOAT-001 (2026-06-19 Bug #11): `deliveryDate: tripDva.assignmentDate`
+        // is REQUIRED. Without it the query matches every historical "trip 1"
+        // order on the same (driver, cylinderType, status) across all prior
+        // days — those orders had their own per-order dispatch events on
+        // their own days, and including them inflates fromFloatQty for the
+        // CURRENT day's manifest. Live evidence dist-002 2026-06-19 ~13:19
+        // IST: 19 KG manifest's cancellation_return wrote +4 instead of +9
+        // because OSHD582 (2026-06-12) + OSHD610 (2026-06-15) + today's
+        // OSHD697 all matched (driver, tripNumber=1, 19 KG) — sum qty = 5
+        // — and 5 phantom cylinders were silently lost from depot.
         const tripOrders = await prisma.order.findMany({
           where: {
             distributorId,
             driverId: tripDva.driverId,
+            deliveryDate: tripDva.assignmentDate,
             tripNumber: manifestRow.tripNumber,
             deletedAt: null,
             status: { in: ['pending_delivery', 'preflight_in_progress', 'delivered', 'modified_delivered'] },
@@ -1147,7 +1158,7 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
     const tripDva = await prisma.driverVehicleAssignment.findFirst({
       where: { vehicleId: vehicle.id, distributorId, assignmentDate: startOfUtcDay(), status: { not: 'cancelled' } },
       orderBy: { tripNumber: 'desc' },
-      select: { id: true, driverId: true, tripNumber: true },
+      select: { id: true, driverId: true, tripNumber: true, assignmentDate: true },
     });
     let loadManifest: Array<{
       manifestId: string;
@@ -1193,10 +1204,16 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
       // over-credit that Step 2.5 wrote (Inventory On Vehicle = -1).
       for (const m of rows) {
         if (m.floatQty <= 0) continue;
+        // FLOAT-001 (2026-06-19 Bug #11): same deliveryDate scoping as the
+        // actual Step 2.5 write logic. Without it the preview pulls in
+        // historical "trip N" orders from prior days, over-stating
+        // Sold(Float) and under-stating Returning, then the actual write
+        // event matches the wrong preview.
         const tripOrders = await prisma.order.findMany({
           where: {
             distributorId,
             driverId: tripDva.driverId,
+            deliveryDate: tripDva.assignmentDate,
             tripNumber: tripDva.tripNumber,
             deletedAt: null,
             status: { in: ['pending_delivery', 'preflight_in_progress', 'delivered', 'modified_delivered'] },

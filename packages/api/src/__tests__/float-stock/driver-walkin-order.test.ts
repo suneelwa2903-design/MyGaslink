@@ -273,27 +273,30 @@ describe('FLOAT-001 — POST /api/drivers/me/orders + driver customer search', (
     expect(res.status).toBe(403);
   });
 
-  it('REGRESSION 2026-06-18 #5 — walk-in succeeds after DVA rolled to trip 2 (manifest at trip 1)', async () => {
-    // Live user repro 2026-06-18 ~21:00 IST, dist-002 Sharma:
-    //   1. Manifest 10 float on trip 1, dispatched → DVA at trip 1 loaded_and_dispatched
-    //   2. Admin added a fresh regular order mid-trip → DVA rolled to trip 2
-    //   3. Driver tried walk-in qty=3 → 207 with preflightError=NO_ACTIVE_TRIP
-    // OSHD2627000654 was created but stuck in pending_dispatch, no gst_documents.
-    // Root cause: preflightAddToTrip's floatManifestExists guard
-    // (gstPreflightService.ts:590) filtered by tripNumber=mapping.tripNumber
-    // (=2). Manifest was at trip 1 → count returned 0 → guard threw
-    // NO_ACTIVE_TRIP before any WhiteBooks call. Same bug class as Step 2.5
-    // (Bug #1) and getAvailableFullsForDriver (Bug #4) — fixed by dropping
-    // the tripNumber filter. One DVA = one truck = one float pool.
+  it('REGRESSION 2026-06-18 #5 (rewritten under Bug #7+#11) — walk-in succeeds when DVA + manifest are both at the current trip', async () => {
+    // Original Bug #5 fix dropped the tripNumber filter on
+    // preflightAddToTrip's floatManifestExists guard because manifest could
+    // be stuck at trip 1 while DVA was at trip 2. After Bug #7 (tripNumber
+    // bumps at reconciliation) and Bug #11 (manifest lookups scoped to
+    // current trip), that artificial state cannot occur — reconcile bumps
+    // the DVA and the new manifest is entered at the new trip. This
+    // rewrite mirrors that invariant: manifest + DVA both at trip 2.
     await dispatchFloatTrip(10);
-    // Simulate the trip roll that prod would do when admin dispatches a fresh
-    // regular order mid-trip via preflightDispatch's roll path.
+    // Mark trip 1 complete + roll to trip 2 + enter trip-2 manifest, just
+    // as confirmVehicleReconciliation + preflightDispatch would do in prod.
     await prisma.driverVehicleAssignment.update({
       where: { id: dvaId },
-      data: { tripNumber: 2, status: 'loaded_and_dispatched' },
+      data: { tripNumber: 2, status: 'dispatch_ready', isReconciled: true },
+    });
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 10 }], adminUserId,
+    );
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dvaId },
+      data: { status: 'loaded_and_dispatched', isReconciled: false },
     });
     // Plant a pending_delivery regular order at trip 2 so resolveEffectiveTrip
-    // resolves to 2 (the post-roll state).
+    // resolves to 2 (preflightAddToTrip's inFlightCount guard).
     await prisma.order.create({
       data: {
         orderNumber: `TEST-ROLL-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
@@ -310,20 +313,16 @@ describe('FLOAT-001 — POST /api/drivers/me/orders + driver customer search', (
         items: { create: [{ cylinderTypeId, quantity: 2, unitPrice: 500, totalPrice: 1000 }] },
       },
     });
-    // Walk-in from the driver mobile — before the fix this returned 207 with
-    // preflightError=NO_ACTIVE_TRIP.
+    // Walk-in from the driver mobile on trip 2.
     const res = await request(app)
       .post('/api/drivers/me/orders')
       .set('Authorization', `Bearer ${driverToken}`)
       .send({ customerId, cylinderTypeId, quantity: 3, deliveryDate: TEST_DATE });
-    // Bhargava is GST-disabled so preflight short-circuits to success (no
-    // WhiteBooks call). 201 confirms the floatManifestExists guard now sees
-    // the trip-1 manifest and allows the add.
+    // Bhargava is GST-disabled so preflight short-circuits to success.
     expect(res.status).toBe(201);
     expect(res.body.data.preflightStatus).toBe('success');
     const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.data.orderId } });
     expect(order.orderSource).toBe('walk_in');
-    // tripNumber stamped at preflight time — should match the current DVA trip
     expect(order.tripNumber).toBe(2);
   });
 

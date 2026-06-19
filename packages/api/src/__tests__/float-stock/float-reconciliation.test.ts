@@ -798,6 +798,56 @@ describe('FLOAT-001 — float-unsold reconciliation credit', () => {
     expect(allReturns[1].referenceId).not.toBe(trip1ManifestId);
   });
 
+  it('BUG #11 — historical orders for same (driver, tripNumber) on prior days do NOT pollute soldFromFloat', async () => {
+    // Live user repro dist-002 2026-06-19 ~13:19 IST: 19 KG manifest's
+    // cancellation_return wrote +4 instead of +9 because historical
+    // OSHD582 (2026-06-12) + OSHD610 (2026-06-15) + today's OSHD697 all
+    // matched (driver, tripNumber=1, 19 KG, active status) — sum qty=5
+    // — and 5 phantom cylinders were silently lost from depot.
+    // Fix: add deliveryDate=tripDva.assignmentDate filter so historical
+    // days don't pollute today's trip math.
+
+    // Plant a HISTORICAL delivered order at a far-past date with the
+    // same (driver, tripNumber=1, cylinderType) tuple. With the fix,
+    // Step 2.5 must NOT count this against today's manifest.
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-HIST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: priorMidnight,
+        deliveryDate: priorMidnight, // PRIOR DAY
+        status: 'delivered',
+        orderSource: 'regular',
+        tripNumber: 1, // SAME tripNumber as today's trip-1 manifest
+        totalAmount: 1000,
+        items: { create: [{ cylinderTypeId, quantity: 2, unitPrice: 500, totalPrice: 1000, deliveredQuantity: 2 }] },
+      },
+    });
+    // No per-order dispatch event for the historical order — simulates
+    // the worst case where the pollution would slip into fromFloatQty.
+
+    // Today's float-only trip: 5 fulls loaded, no orders dispatched.
+    // Pre-fix: Step 2.5 would count the historical order's qty 2 into
+    // fromFloatQty → cancellation_return = 5 - 2 = 3. Post-fix: deliveryDate
+    // filter excludes the historical order → fromFloatQty = 0 →
+    // cancellation_return = 5 (full float returned).
+    await fullCycle({ manifest: [{ cylinderTypeId, totalLoaded: 5 }] });
+
+    const returnEvents = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        eventType: 'cancellation_return',
+        referenceType: 'dva_load_manifest',
+        eventDate: todayMidnight,
+      },
+    });
+    expect(returnEvents).toHaveLength(1);
+    expect(returnEvents[0].fullsChange).toBe(5); // NOT 3 — historical order excluded
+  });
+
   it('BUG #10 — mid-trip regular order via Add to Trip consumes from float (not phantom credit)', async () => {
     // User repro 2026-06-18 ~21:04 IST, dist-002: OSHD677 was a regular
     // order added mid-trip via "+ Add to Trip" for 1 cylinder of 19 KG.

@@ -244,61 +244,43 @@ describe('FLOAT-001 — getAvailableFullsForDriver', () => {
 
   // ── Bug #4 regression tests (2026-06-18) ─────────────────────────────────
 
-  it('BUG #4 CASE 1 — DVA rolled to trip 2: float still available (manifest at trip 1)', async () => {
-    // Manifest written at trip 1 (floatQty=10). DVA then rolls to trip 2
-    // (regular order added + dispatched mid-day). Original code keyed the
-    // manifest lookup on `tripNumber: effectiveTrip` (=2) → manifest miss
-    // → returned 0 → driver could not create walk-ins despite physical
-    // fulls on the truck. Fix: lookup ignores tripNumber.
-    //
-    // Bug #10 (2026-06-19): the planted trip-2 order must ALSO have a
-    // per-order dispatch event for it to NOT subtract from float — that's
-    // what marks it as "pre-booked depot-debited" vs "mid-trip from-float".
-    // Without the dispatch event the order is treated as having consumed
-    // float (correctly — see BUG #10 CASE below). For this test we want
-    // a pre-booked-style order so the floatQty=10 is preserved.
-    await createOrUpdateManifest(
-      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 10 }], adminUserId,
-    );
-    // Simulate roll: bump DVA to trip 2 + loaded_and_dispatched (mimics what
-    // preflightDispatch does when a fresh order comes in after trip 1
-    // completed delivery).
+  it('BUG #4 CASE 1 (rewritten under Bug #7+#11) — DVA at trip 2 with manifest at trip 2 returns trip-2 float', async () => {
+    // Bug #4 originally tested the artificial state "DVA at trip 2 but
+    // manifest stayed at trip 1". After Bug #7 (tripNumber bumps at
+    // reconciliation) and Bug #11 (current-trip manifest filter), that
+    // state cannot occur in production — reconcile bumps the DVA AND
+    // settles the prior trip's manifest; the admin then enters a fresh
+    // manifest for the new trip. This rewrite pins the post-Bug-#7
+    // invariant: DVA + manifest move together.
     await prisma.driverVehicleAssignment.update({
       where: { id: dvaId },
-      data: { tripNumber: 2, status: 'loaded_and_dispatched', dispatchedAt: new Date() },
+      data: { tripNumber: 2, status: 'dispatch_ready' },
     });
-    // Plant a pre-booked regular order at trip 2 WITH a per-order dispatch
-    // event (= depot was directly debited; not from float).
-    const preBooked = await prisma.order.create({
-      data: {
-        orderNumber: `TEST-AF-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-        distributorId: DIST, customerId, driverId, vehicleId,
-        orderDate: todayMidnight, deliveryDate: todayMidnight,
-        status: 'pending_delivery', orderSource: 'regular', tripNumber: 2, totalAmount: 1000,
-        items: { create: [{ cylinderTypeId, quantity: 2, unitPrice: 500, totalPrice: 1000 }] },
-      },
-    });
-    await prisma.inventoryEvent.create({
-      data: {
-        distributorId: DIST,
-        cylinderTypeId,
-        eventType: 'dispatch',
-        fullsChange: -2, emptiesChange: 0,
-        eventDate: todayMidnight,
-        referenceId: preBooked.id,
-        referenceType: 'order',
-        createdBy: adminUserId,
-      },
-    });
-    const avail = await getAvailableFullsForDriver(DIST, driverId, cylinderTypeId);
-    expect(avail).toBe(10); // floatQty (10) − no float-consumers = 10
-  });
-
-  it('BUG #4 CASE 2 — walk-ins span trip roll: trip-1 walk-in still counted against float', async () => {
     await createOrUpdateManifest(
       DIST, dvaId, [{ cylinderTypeId, totalLoaded: 10 }], adminUserId,
     );
-    // Walk-in taken at trip 1
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dvaId },
+      data: { status: 'loaded_and_dispatched', dispatchedAt: new Date() },
+    });
+    const avail = await getAvailableFullsForDriver(DIST, driverId, cylinderTypeId);
+    expect(avail).toBe(10); // current trip's floatQty, no consumers
+  });
+
+  it('BUG #4 CASE 2 (rewritten under Bug #7+#11) — walk-in on the CURRENT trip subtracts from float', async () => {
+    // Pre-Bug-#7 this tested "walk-in at trip 1 still counts after DVA
+    // rolls to trip 2 with no new manifest" — impossible scenario now.
+    // New contract: walk-ins on the current trip subtract from that
+    // trip's float. Settled prior trips' walk-ins are irrelevant
+    // (already accounted for at that trip's reconcile).
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 10 }], adminUserId,
+    );
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dvaId },
+      data: { status: 'loaded_and_dispatched', dispatchedAt: new Date() },
+    });
+    // Walk-in taken on the current trip (DVA still at trip 1)
     await prisma.order.create({
       data: {
         orderNumber: `TEST-AF-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
@@ -308,13 +290,8 @@ describe('FLOAT-001 — getAvailableFullsForDriver', () => {
         items: { create: [{ cylinderTypeId, quantity: 3, unitPrice: 500, totalPrice: 1500 }] },
       },
     });
-    // DVA rolls to trip 2
-    await prisma.driverVehicleAssignment.update({
-      where: { id: dvaId },
-      data: { tripNumber: 2, status: 'loaded_and_dispatched', dispatchedAt: new Date() },
-    });
     const avail = await getAvailableFullsForDriver(DIST, driverId, cylinderTypeId);
-    expect(avail).toBe(7); // floatQty 10 − walk-in 3 (across all trips) = 7
+    expect(avail).toBe(7); // floatQty 10 − walk-in 3 on current trip = 7
   });
 
   it('BUG #4 CASE 3 (rewritten under Bug #10) — pre-booked regulars (WITH dispatch event) do NOT subtract; mid-trip regulars (NO dispatch event) DO', async () => {

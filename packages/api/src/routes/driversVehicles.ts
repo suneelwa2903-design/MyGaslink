@@ -535,22 +535,25 @@ driverRouter.get('/me/trip-stock',
       const dvaRow = await prisma.driverVehicleAssignment.findFirst({
         where: { driverId: driver.id, distributorId, assignmentDate: today, status: { not: 'cancelled' } },
         orderBy: { tripNumber: 'desc' },
-        select: { id: true },
+        select: { id: true, tripNumber: true },
       });
       if (dvaRow) {
-        // FLOAT-001 (2026-06-18): manifest lookup decoupled from tripNumber.
-        // After a DVA roll (trip 1 → trip 2) the manifest stays at trip 1
-        // but the truck is still physically the same — filtering by
-        // effectiveTrip=2 caused the merge to miss every row, leaving
-        // manifestTotalLoaded=0 and the float chips hidden on Vehicle Stock.
-        // Same fix family as the Bug #4 getAvailableFullsForDriver rewrite.
-        // orderBy ascending so the EARLIEST manifest wins on the (cylinderType)
-        // key during the merge below — matches getAvailableFullsForDriver's
-        // "take earliest" semantics.
+        // FLOAT-001 (2026-06-19 Bug #11): scope manifest lookup to the
+        // CURRENT trip only. Prior fix (2026-06-18 Bug #1) had removed the
+        // tripNumber filter to handle the "DVA rolled to trip 2 but manifest
+        // stayed at trip 1" race — but Bug #7 closed that race (tripNumber
+        // bumps at reconciliation), and now the unfiltered merge pulls in
+        // SETTLED prior-trip manifests + the current trip's, painting the
+        // driver's Vehicle Stock with cylinders that aren't physically on
+        // the truck any more (already returned at reconcile). User repro
+        // dist-002 2026-06-19: trip 1 loaded only 19 KG (reconciled), trip 2
+        // loaded only 425 KG, but Vehicle Stock kept showing 19 KG. Scoping
+        // back to dva.tripNumber gives the right "what's on the truck NOW"
+        // view; the cross-trip "credit-back" responsibility lives in Step
+        // 2.5's own all-trips manifest sweep, which is unaffected by this.
         const manifestRows = await prisma.dVALoadManifest.findMany({
-          where: { dvaId: dvaRow.id, distributorId },
+          where: { dvaId: dvaRow.id, distributorId, tripNumber: dvaRow.tripNumber },
           include: { cylinderType: { select: { id: true, typeName: true } } },
-          orderBy: { tripNumber: 'asc' },
         });
         for (const m of manifestRows) {
           const key = m.cylinderTypeId;

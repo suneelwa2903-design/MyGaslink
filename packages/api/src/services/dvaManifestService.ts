@@ -288,7 +288,7 @@ export async function getAvailableFullsForDriver(
       status: { not: 'cancelled' },
     },
     orderBy: { tripNumber: 'desc' },
-    select: { id: true, status: true, isReconciled: true },
+    select: { id: true, status: true, isReconciled: true, tripNumber: true },
   });
   if (!dva) return 0;
   if (dva.isReconciled || dva.status === 'cancelled') return 0;
@@ -316,20 +316,21 @@ export async function getAvailableFullsForDriver(
   // what the driver TAKES OUT for a walk-in, regardless of whether the
   // customer ultimately accepted it. Shortfalls flow through the
   // CancelledStockEvent path. Same logic as Step 2.5 fix #3.
-  // Earliest (= original) manifest for this DVA + cylinderType. In normal
-  // flow there's exactly one row because manifests can only be confirmed
-  // when DVA.status='dispatch_ready' (pre-dispatch); the unique key includes
-  // tripNumber only because reconciliation could in theory loop you back to
-  // dispatch_ready for a fresh load. Take the lowest tripNumber so a
-  // hypothetical second manifest after a reconcile-and-redispatch wouldn't
-  // accidentally count both pools.
+  // FLOAT-001 (2026-06-19 Bug #11): scope manifest lookup to the CURRENT
+  // trip only. Prior fix (2026-06-18 Bug #4) had removed the tripNumber
+  // filter for the "DVA rolled to trip 2 but manifest stayed at trip 1"
+  // race — but Bug #7 closed that race (tripNumber bumps at reconciliation),
+  // so the only un-settled manifest for an active DVA is the current trip's.
+  // Without this filter, "earliest manifest" returned trip-1's SETTLED row
+  // after reconcile → availability reflected a pool that no longer existed
+  // on the truck.
   const manifestRow = await prisma.dVALoadManifest.findFirst({
     where: {
       dvaId: dva.id,
       cylinderTypeId,
       distributorId,
+      tripNumber: dva.tripNumber,
     },
-    orderBy: { tripNumber: 'asc' },
     select: { floatQty: true },
   });
   if (!manifestRow) return 0;
