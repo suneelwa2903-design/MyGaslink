@@ -47,6 +47,17 @@ import manifestsRoutes from './routes/manifests.js';
 export function createApp() {
   const app = express();
 
+  // Trust the FIRST hop (nginx on the EC2 box in front of us). Without this,
+  // express-rate-limit refuses to honour `X-Forwarded-For` and logs
+  // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every request, defaulting to
+  // socket.remoteAddress (always 127.0.0.1 via nginx) — so rate limits would
+  // bucket every client into the same key. `1` = exactly one trusted proxy.
+  // SECURITY: do NOT raise this without first confirming nothing reaches
+  // Express directly bypassing nginx (i.e., security group must NOT expose
+  // port 5000 to the public internet). A higher value would let attackers
+  // spoof X-Forwarded-For by adding their own hops.
+  app.set('trust proxy', 1);
+
   // ─── Global Middleware ───────────────────────────────────────────────────────
 
   app.use(requestId);

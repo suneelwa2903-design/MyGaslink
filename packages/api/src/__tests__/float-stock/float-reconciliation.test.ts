@@ -58,8 +58,26 @@ describe('FLOAT-001 — float-unsold reconciliation credit', () => {
   let customerId: string;
 
   // Flip flag inside each test (setup.ts deletes it globally per beforeEach).
-  beforeEach(() => {
+  // Also wipe any pre-existing pending_dispatch orders for THIS test's
+  // (driver, deliveryDate) so manifest creation sees orderedQty=0 — defends
+  // against contamination from prior test files in the same serial run
+  // (pool: 'forks' + singleFork: true means files share a DB). Without this,
+  // the "Float-only trip" tests in this suite see whatever pending_dispatch
+  // orders the broader suite or seed has left on the shared dist-001 driver
+  // for today's UTC date and hit `TOTAL_BELOW_ORDERED` at the manifest guard.
+  beforeEach(async () => {
     process.env.INVENTORY_DISPATCH_DEBIT = 'true';
+    if (driverId) {
+      await prisma.orderItem.deleteMany({
+        where: { order: { distributorId: DIST, driverId, deliveryDate: todayMidnight } },
+      });
+      await prisma.orderStatusLog.deleteMany({
+        where: { order: { distributorId: DIST, driverId, deliveryDate: todayMidnight } },
+      });
+      await prisma.order.deleteMany({
+        where: { distributorId: DIST, driverId, deliveryDate: todayMidnight },
+      });
+    }
   });
 
   beforeAll(async () => {
