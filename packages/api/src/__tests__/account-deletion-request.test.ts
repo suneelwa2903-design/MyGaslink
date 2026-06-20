@@ -38,9 +38,9 @@ let saUserId: string;
 let financeToken: string;
 let financeUserId: string;
 
-// Second distributor_admin row created on demand for sole-admin tests.
-const SECOND_ADMIN_EMAIL = 'd14-sole-admin-2@gasagency.com';
-let secondAdminId: string | null = null;
+// Reserved for a future sole-admin variant that needs a 2nd admin row.
+// Kept null in this revision — the existing test creates none.
+const secondAdminId: string | null = null;
 
 beforeAll(async () => {
   app = createApp();
