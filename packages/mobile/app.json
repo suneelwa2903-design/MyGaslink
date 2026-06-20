@@ -36,13 +36,10 @@
         "backgroundColor": "#338dff"
       },
       "package": "com.mygaslink.app",
+      "softwareKeyboardLayoutMode": "pan",
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "RECEIVE_BOOT_COMPLETED",
-        "VIBRATE",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "ACCESS_COARSE_LOCATION"
       ],
       "intentFilters": [
         {
@@ -76,7 +73,25 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-font"
+      "expo-font",
+      "./plugins/withResizeableActivity",
+      [
+        "expo-navigation-bar",
+        {
+          "position": "absolute",
+          "visibility": "sticky-immersive"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "minSdkVersion": 24
+          }
+        }
+      ]
     ],
     "scheme": "mygaslink",
     "extra": {
