@@ -187,6 +187,12 @@ enum PaymentAllocationStatus {
 // stored on the PaymentTransaction row (that table's invariant is
 // "every row is a cleared money event"; pending claims would leak
 // into computeCustomerOverdue, Tally export, analytics KPIs, etc.).
+enum AccountDeletionStatus {
+  pending
+  cancelled
+  completed
+}
+
 enum PaymentSubmissionStatus {
   pending_verification
   verified
@@ -516,6 +522,9 @@ model User {
   // WI-PENDING-PAYMENTS: submissions this user submitted (customer/staff path) and verified (office path).
   paymentSubmissionsSubmitted PaymentSubmission[] @relation("SubmittedByUser")
   paymentSubmissionsVerified  PaymentSubmission[] @relation("VerifiedByUser")
+  // M14 v1.0 (IOS-ACCOUNT-DELETION-SPEC §3): at most ONE pending/cancelled/completed
+  // deletion request per user. Auth middleware joins this on every authenticate() call.
+  accountDeletionRequest AccountDeletionRequest?
 
   @@index([email])
   @@index([distributorId])
@@ -2100,4 +2109,33 @@ model EmailLog {
   @@index([type, createdAt])
   @@index([userId])
   @@map("email_logs")
+}
+
+/// M14 v1.0 (IOS-ACCOUNT-DELETION-SPEC §3): user-initiated account deletion
+/// request. Inserted by POST /api/users/me/deletion-request; processed by the
+/// v1.1 cron worker once scheduledCompletionAt is reached. While
+/// status='pending' the auth middleware blocks the user from every endpoint
+/// except cancel + status + logout.
+model AccountDeletionRequest {
+  id                       String   @id @default(uuid())
+  userId                   String   @unique @map("user_id")
+  /// Preserved at request time so the v1.1 worker can scope its
+  /// anonymization queries even after User.distributorId is nulled mid-transform.
+  distributorId            String?  @map("distributor_id")
+  requestedAt              DateTime @default(now()) @map("requested_at")
+  /// requestedAt + 30 days. The v1.1 worker only acts when now() >= this.
+  scheduledCompletionAt    DateTime @map("scheduled_completion_at")
+  completedAt              DateTime? @map("completed_at")
+  cancelledAt              DateTime? @map("cancelled_at")
+  status                   AccountDeletionStatus @default(pending)
+  /// Optional free-text reason captured on the confirm screen.
+  reason                   String?  @db.Text
+  requestIp                String?  @map("request_ip")
+  requestUserAgent         String?  @map("request_user_agent") @db.Text
+
+  user                     User @relation(fields: [userId], references: [id])
+
+  @@index([status, scheduledCompletionAt])
+  @@index([distributorId])
+  @@map("account_deletion_requests")
 }

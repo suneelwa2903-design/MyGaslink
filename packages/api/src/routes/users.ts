@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import accountDeletionRoutes from './accountDeletionRoutes.js';
 import { param } from '../utils/params.js';
 import { requireRole } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
@@ -14,6 +15,10 @@ import { config } from '../config/index.js';
 type ServiceError = { message: string; statusCode?: number; code?: string };
 
 const router = Router();
+
+// M14 v1.0 — account deletion endpoints. Mounted BEFORE any :id-style routes
+// so the literal `/me/deletion-request*` paths take precedence.
+router.use('/', accountDeletionRoutes);
 
 // GET /api/users/profile - get current user profile (must be before :id)
 router.get('/profile', async (req, res) => {

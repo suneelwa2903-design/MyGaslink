@@ -49,10 +49,20 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   try {
     const decoded = jwt.verify(token, config.jwt.accessSecret) as JwtPayload;
 
-    // Verify user still exists and is active
+    // Verify user still exists and is active. M14 v1.0
+    // (IOS-ACCOUNT-DELETION-SPEC §5.1): also join the active deletion
+    // request — the middleware blocks every endpoint except cancel /
+    // status / logout when a user has one pending.
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, status: true, role: true, distributorId: true, customerId: true },
+      select: {
+        id: true, status: true, role: true, distributorId: true, customerId: true,
+        // 1:1 relation — Prisma include can't filter on a unique-side
+        // relation, so we fetch the row (any status) and check it below.
+        accountDeletionRequest: {
+          select: { id: true, status: true, scheduledCompletionAt: true },
+        },
+      },
     });
 
     if (!user || user.status !== 'active') {
@@ -66,6 +76,32 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       distributorId: decoded.distributorId,
       customerId: decoded.customerId,
     };
+
+    // M14 v1.0 (spec §5.1): pending-deletion gate. Only cancel + status
+    // + logout are reachable. Everything else gets 403 with the special
+    // `account_pending_deletion` code so the mobile axios interceptor
+    // can route to the pending-deletion screen.
+    if (user.accountDeletionRequest && user.accountDeletionRequest.status === 'pending') {
+      const path = req.originalUrl.split('?')[0];
+      const method = req.method;
+      const ALLOWED: Array<{ method: string; path: string }> = [
+        { method: 'POST', path: '/api/users/me/deletion-request/cancel' },
+        { method: 'GET', path: '/api/users/me/deletion-request' },
+        { method: 'POST', path: '/api/auth/logout' },
+      ];
+      const allowed = ALLOWED.some((e) => e.method === method && e.path === path);
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          data: null,
+          error: 'account_pending_deletion',
+          code: 'ACCOUNT_PENDING_DELETION',
+          context: {
+            scheduledCompletionAt: user.accountDeletionRequest.scheduledCompletionAt,
+          },
+        });
+      }
+    }
 
     next();
   } catch (err) {
