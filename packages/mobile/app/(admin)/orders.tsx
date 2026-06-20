@@ -22,6 +22,7 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
 import { api, getErrorMessage } from '../../src/lib/api';
 import { Badge, DateInput } from '../../src/components/ui';
+import { LoadListDispatchModal } from '../../src/components/LoadListDispatchModal';
 import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -225,6 +226,20 @@ export default function AdminOrdersScreen() {
   const [dispatchResult, setDispatchResult] = useState<DispatchResponse | null>(null);
   const [dispatchResultVisible, setDispatchResultVisible] = useState(false);
 
+  // FLOAT-001 (Round 2): two-step Load List → Dispatch flow. Tapping the
+  // Dispatch button on a regular dispatch group opens this modal first;
+  // the modal saves the load list, then hands off to the existing
+  // handleDispatch via onDispatchNow. If the vehicle mapping has not yet
+  // surfaced an assignmentId (rare), fall through to direct dispatch.
+  const [loadListContext, setLoadListContext] = useState<{
+    group: ReadyToDispatchGroup;
+    driverName: string;
+    vehicleNumber: string | null;
+    assignmentId: string;
+    tripNumber: number;
+    orderItems: Array<{ cylinderTypeId: string; quantity: number }>;
+  } | null>(null);
+
   // In-transit trip sheet download
   const [downloadingAssignmentId, setDownloadingAssignmentId] = useState<string | null>(null);
 
@@ -291,6 +306,29 @@ export default function AdminOrdersScreen() {
     ['admin-in-transit'],
     '/orders/in-transit',
     { date: getTodayISO() },
+  );
+
+  // FLOAT-001 (Round 2): today's vehicle mappings keyed by driver. The
+  // LoadList modal needs assignmentId (DVA id) and tripNumber to read/save
+  // the manifest. Same endpoint the web OrdersPage uses for its dispatch
+  // card mapping lookup — returned shape mirrors what's documented there.
+  const { data: vehicleMappingsData } = useApiQuery<{
+    recommendations: Array<{
+      driverId: string;
+      vehicleNumber: string | null;
+      assignmentId?: string;
+      tripNumber?: number;
+      status: string;
+    }>;
+  }>(
+    ['admin-vehicle-mappings', getTodayISO()],
+    '/assignments/vehicle-mappings',
+    { date: getTodayISO() },
+    { staleTime: 60 * 1000 },
+  );
+  const mappingByDriver = useMemo(
+    () => new Map((vehicleMappingsData?.recommendations ?? []).map((m) => [m.driverId, m])),
+    [vehicleMappingsData],
   );
 
   // ─── Mutations ──────────────────────────────────────────────────────────
@@ -767,7 +805,32 @@ export default function AdminOrdersScreen() {
                           styles.dispatchBtn,
                           { opacity: isDispatching || dispatchingDriverId !== null ? 0.6 : 1 },
                         ]}
-                        onPress={() => handleDispatch(group)}
+                        onPress={() => {
+                          const mapping = mappingByDriver.get(group.driverId);
+                          // FLOAT-001 (Round 2): open the Load List modal when
+                          // we have a DVA. Fall through to direct dispatch if
+                          // the day's mapping hasn't surfaced an assignmentId
+                          // yet (preflight uses driverId + date, not DVA id).
+                          if (mapping?.assignmentId) {
+                            const driverOrders = orders.filter((o) => o.driverId === group.driverId && o.status === 'pending_dispatch');
+                            const orderItems = driverOrders.flatMap((o) =>
+                              (o.items ?? []).map((it) => ({
+                                cylinderTypeId: it.cylinderTypeId,
+                                quantity: it.quantity,
+                              })),
+                            );
+                            setLoadListContext({
+                              group,
+                              driverName: group.driverName,
+                              vehicleNumber: mapping.vehicleNumber ?? null,
+                              assignmentId: mapping.assignmentId,
+                              tripNumber: mapping.tripNumber ?? 1,
+                              orderItems,
+                            });
+                          } else {
+                            handleDispatch(group);
+                          }
+                        }}
                         disabled={isDispatching || dispatchingDriverId !== null}
                       >
                         {isDispatching ? (
@@ -948,6 +1011,30 @@ export default function AdminOrdersScreen() {
           isSubmitting={cancelMutation.isPending}
           onSubmit={(reason) => cancelMutation.mutate({ orderId: cancelOrder.orderId, reason })}
           dark={dark}
+        />
+      )}
+
+      {/* FLOAT-001 (Round 2): Load List → Dispatch two-step modal. Mounts only
+          when the user taps Dispatch on a regular dispatch group with a
+          confirmed vehicle mapping. The modal saves the load list and then
+          calls onDispatchNow, which closes the modal and fires the existing
+          handleDispatch (preflight + per-order result Alert). */}
+      {loadListContext && (
+        <LoadListDispatchModal
+          visible
+          driverName={loadListContext.driverName}
+          vehicleNumber={loadListContext.vehicleNumber}
+          assignmentId={loadListContext.assignmentId}
+          tripNumber={loadListContext.tripNumber}
+          orderItems={loadListContext.orderItems}
+          onClose={() => setLoadListContext(null)}
+          onDispatchNow={() => {
+            const ctx = loadListContext;
+            setLoadListContext(null);
+            // Defer to next tick so the modal's close animation can start
+            // before the dispatch result alert / state changes fire.
+            setTimeout(() => handleDispatch(ctx.group), 0);
+          }}
         />
       )}
     </SafeAreaView>

@@ -211,7 +211,7 @@ export default function InventoryPage() {
         // Happy path — fall back to 0 on each count so the template never
         // renders `undefined` if the server omits an optional field.
         toast.success(
-          `Reconciliation complete: ${result.cancelledStockReturned ?? 0} stock returned, ${result.undeliveredOrdersCancelled ?? 0} orders cancelled, ${result.emptiesReturned ?? 0} empties verified`,
+          `Vehicle return complete: ${result.cancelledStockReturned ?? 0} stock returned, ${result.undeliveredOrdersCancelled ?? 0} orders cancelled, ${result.emptiesReturned ?? 0} empties verified`,
         );
       }
       queryClient.invalidateQueries({ queryKey: ['reconciliation-pending'] });
@@ -1005,10 +1005,10 @@ function VehicleReturnCard({
       {(vehicle.floatSummary ?? []).length > 0 && (
         <div className="mb-5">
           <h4 className="text-sm font-medium text-surface-800 dark:text-surface-200 mb-1">
-            Float Stock Summary
+            Spare Stock Summary
           </h4>
           <p className="text-xs text-surface-500 mb-2">
-            Unsold float stock will be automatically returned to depot inventory on reconciliation.
+            Unsold spare stock will be automatically returned to depot inventory on vehicle return.
           </p>
           <div className="table-container">
             <table className="table">
@@ -1016,9 +1016,9 @@ function VehicleReturnCard({
                 <tr>
                   <th>Cylinder Type</th>
                   <th className="text-center">Loaded</th>
-                  <th className="text-center">Ordered</th>
-                  <th className="text-center">Float</th>
-                  <th className="text-center">Sold (Float)</th>
+                  <th className="text-center">Booked</th>
+                  <th className="text-center">Spare</th>
+                  <th className="text-center">Walk-in Sales</th>
                   <th className="text-center">Returning to Depot</th>
                 </tr>
               </thead>

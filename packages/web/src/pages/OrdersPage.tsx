@@ -40,6 +40,7 @@ import {
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState, CustomerSearchInput } from '@/components/ui';
+import { LoadListDispatchModal } from '@/components/LoadListDispatchModal';
 import { cn } from '@/lib/cn';
 
 function formatCurrency(amount: number): string {
@@ -1315,6 +1316,22 @@ function AssignmentsTab() {
     mode?: 'new_trip' | 'add_to_trip';
   } | null>(null);
 
+  // FLOAT-001 (Round 2): two-step Load List → Dispatch flow. Clicking the
+  // Dispatch button on a regular (non add-to-trip) dispatch group opens this
+  // context-bearing modal first; the modal saves the load list, then hands
+  // off to the existing DispatchProgressModal via setDispatchDriver. The
+  // add-to-trip path still goes straight to dispatch (no load list step —
+  // cylinders come from existing float on the truck).
+  const [loadListContext, setLoadListContext] = useState<{
+    driverId: string;
+    driverName: string;
+    vehicleNumber: string | null;
+    assignmentId: string;
+    tripNumber: number;
+    orders: Order[];
+    orderItems: Array<{ cylinderTypeId: string; quantity: number }>;
+  } | null>(null);
+
   const { data: pendingOrders, isLoading } = useQuery({
     queryKey: ['pending-orders'],
     queryFn: () =>
@@ -1789,38 +1806,74 @@ function AssignmentsTab() {
                       <Button
                         size="sm"
                         disabled={!canDispatch}
-                        onClick={() =>
-                          setDispatchDriver({
-                            driverId: g.driverId,
-                            driverName: g.driverName,
-                            vehicleNumber: g.vehicleNumber,
-                            assignmentId: mapping?.assignmentId ?? null,
-                            orders: g.orders,
-                          })
-                        }
+                        onClick={() => {
+                          const orderItems = g.orders.flatMap((o) =>
+                            (o.items ?? []).map((it) => ({
+                              cylinderTypeId: it.cylinderTypeId,
+                              quantity: it.quantity,
+                            })),
+                          );
+                          // FLOAT-001 (Round 2): when we have a DVA, open the
+                          // Load List modal first so the admin can confirm
+                          // booked + spare before NIC is hit. If the day's
+                          // vehicle mapping hasn't surfaced an assignmentId
+                          // yet, fall through to the legacy direct-dispatch
+                          // path (preflight uses driverId + date, not DVA id).
+                          if (mapping?.assignmentId) {
+                            setLoadListContext({
+                              driverId: g.driverId,
+                              driverName: g.driverName,
+                              vehicleNumber: g.vehicleNumber,
+                              assignmentId: mapping.assignmentId,
+                              tripNumber: mapping.tripNumber ?? 1,
+                              orders: g.orders,
+                              orderItems,
+                            });
+                          } else {
+                            setDispatchDriver({
+                              driverId: g.driverId,
+                              driverName: g.driverName,
+                              vehicleNumber: g.vehicleNumber,
+                              assignmentId: null,
+                              orders: g.orders,
+                            });
+                          }
+                        }}
                       >
                         Dispatch {g.driverName.split(' ')[0]} ▶
                       </Button>
                     )}
                   </div>
-                  {/* FLOAT-001 (2026-06-17): inline load-manifest editor.
-                      Optional — admin can dispatch without it (pre-booked-only
-                      trip). Float qty entered here is the EXTRA stock loaded
-                      onto the vehicle beyond order-sum, debited from depot at
-                      dispatch and credited back as cancellation_return at
-                      reconcile for whatever didn't sell. */}
-                  {mapping?.assignmentId && (
-                    <LoadManifestPanel
-                      assignmentId={mapping.assignmentId}
-                      tripNumber={mapping.tripNumber ?? 1}
-                      orderItems={g.orders.flatMap((o) => (o.items ?? []).map((it) => ({ cylinderTypeId: it.cylinderTypeId, quantity: it.quantity })))}
-                    />
-                  )}
                 </div>
               );
             })}
           </div>
         </div>
+      )}
+
+      {loadListContext && (
+        <LoadListDispatchModal
+          open
+          driverName={loadListContext.driverName}
+          vehicleNumber={loadListContext.vehicleNumber}
+          assignmentId={loadListContext.assignmentId}
+          tripNumber={loadListContext.tripNumber}
+          orderItems={loadListContext.orderItems}
+          onClose={() => setLoadListContext(null)}
+          onDispatchNow={() => {
+            // Hand off to the existing DispatchProgressModal — it owns the
+            // preflight call + per-order result UI. We only close ourselves.
+            const ctx = loadListContext;
+            setLoadListContext(null);
+            setDispatchDriver({
+              driverId: ctx.driverId,
+              driverName: ctx.driverName,
+              vehicleNumber: ctx.vehicleNumber,
+              assignmentId: ctx.assignmentId,
+              orders: ctx.orders,
+            });
+          }}
+        />
       )}
 
       {dispatchDriver && (
@@ -1836,263 +1889,6 @@ function AssignmentsTab() {
   );
 }
 
-// ─── FLOAT-001: Load Manifest Panel ─────────────────────────────────────────
-// Optional inline editor inside each dispatch card. Lets the admin declare
-// per-cylinder-type quantities loaded onto the vehicle (ordered + float).
-// On confirm, POSTs /api/manifests so preflightDispatch will debit depot
-// for the float portion AND the reconcile flow will credit unsold back.
-
-// FLOAT-001 (2026-06-18) — field is `cylinderTypeId` not `id` in the
-// /api/cylinder-types response envelope. Using the wrong key was the root
-// cause of "Ordered always 0, all inputs share value, typing 7 → all 7":
-// `t.id` evaluated to undefined, the Map lookup missed every row, and
-// `floatByType[undefined]` was a single shared cell across every input.
-type CylinderTypeRow = { cylinderTypeId: string; typeName: string };
-type LoadManifestPanelProps = {
-  assignmentId: string;
-  // FLOAT-001 (2026-06-18): current DVA tripNumber for cache-key scoping.
-  // Without this the panel keeps showing trip 1's manifest after a roll —
-  // user repro 2026-06-18 ~08:25 IST on dist-002.
-  tripNumber: number;
-  // FLOAT-001 (2026-06-18): live ordered items from the dispatch card.
-  // Used to populate the Ordered column BEFORE the first manifest is
-  // confirmed. After confirm, manifest.orderedQty (server snapshot) wins.
-  orderItems: Array<{ cylinderTypeId: string; quantity: number }>;
-};
-
-// FLOAT-001 (2026-06-18) — rewritten to fix 3 live-testing bugs:
-//   BUG 2 — Ordered column now reads `orderedQty` from the manifest GET
-//     response (server-computed, single source of truth). The previous
-//     client-side flatMap over o.items returned 0 for every row because
-//     orderItems aren't included in the dispatchGroups orders payload.
-//   BUG 3 — Inputs default to empty string. Saved float shows as a
-//     placeholder. handleSave only POSTs rows the admin explicitly
-//     typed into (or where the existing manifest had a non-zero value
-//     the admin chose to KEEP — implicit confirm via clicking Save
-//     without clearing the field). Empty/untouched rows are omitted.
-//     After save: panel collapses inputs into a read-only summary with
-//     an Edit button to re-open.
-//   BUG 4 — All .map outputs key={t.id}; static header siblings stay
-//     keyless (React only requires keys on array children, not on
-//     ordinary sibling elements).
-function LoadManifestPanel({ assignmentId, tripNumber, orderItems }: LoadManifestPanelProps) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-  // Inputs are strings — empty string means "leave as-is / no change".
-  const [floatByType, setFloatByType] = useState<Record<string, string>>({});
-
-  const { data: cylTypes } = useQuery({
-    queryKey: ['cylinder-types-list'],
-    queryFn: () => apiGet<{ cylinderTypes: CylinderTypeRow[] }>('/cylinder-types'),
-    enabled: open,
-    staleTime: 5 * 60 * 1000,
-  });
-  const types = cylTypes?.cylinderTypes ?? [];
-
-  // Existing manifest — orderedQty here is the server-computed snapshot
-  // taken at confirm time, so it's the source of truth for the Ordered
-  // column display.
-  const { data: existing } = useQuery({
-    queryKey: ['manifest', assignmentId, tripNumber],
-    queryFn: () =>
-      apiGet<{
-        manifest: Array<{
-          cylinderTypeId: string;
-          cylinderTypeName?: string;
-          totalLoaded: number;
-          orderedQty: number;
-          floatQty: number;
-        }>;
-      }>(`/manifests/dva/${assignmentId}`),
-    enabled: open,
-    staleTime: 30_000,
-  });
-  const existingByType = new Map((existing?.manifest ?? []).map((m) => [m.cylinderTypeId, m]));
-  // Live ordered count from current dispatch card orders — used as the
-  // Ordered column fallback BEFORE any manifest is confirmed.
-  const liveOrderedByType = new Map<string, number>();
-  for (const it of orderItems) {
-    liveOrderedByType.set(it.cylinderTypeId, (liveOrderedByType.get(it.cylinderTypeId) ?? 0) + it.quantity);
-  }
-
-  const saveMutation = useMutation({
-    mutationFn: (items: Array<{ cylinderTypeId: string; totalLoaded: number }>) =>
-      apiPost<{
-        manifest: Array<{
-          cylinderTypeId: string;
-          cylinderTypeName?: string;
-          totalLoaded: number;
-          orderedQty: number;
-          floatQty: number;
-        }>;
-      }>('/manifests', { dvaId: assignmentId, items }),
-    onSuccess: (saved) => {
-      toast.success('Manifest confirmed');
-      // FLOAT-001 (2026-06-18 Issue A): optimistic cache update so the
-      // badge ('30 total · 26 float') and read-only table reflect the
-      // just-saved values on the very next render. Without this the UI
-      // re-renders from the stale cache for the 50-200ms window before
-      // the refetch returns, leaving the user staring at old numbers.
-      // The POST returns ONLY the upserted rows (if the admin edited
-      // only 19 KG, only the 19 KG row is in `saved.manifest`) so we
-      // MERGE into the existing cache by cylinderTypeId — replacing
-      // the cache wholesale would lose any types not in this save.
-      // The invalidate below is belt-and-braces — confirms server state
-      // matches our optimism, no-op if it does.
-      type ManifestRow = {
-        cylinderTypeId: string;
-        cylinderTypeName?: string;
-        totalLoaded: number;
-        orderedQty: number;
-        floatQty: number;
-      };
-      if (saved && Array.isArray(saved.manifest)) {
-        queryClient.setQueryData<{ manifest: ManifestRow[] }>(
-          ['manifest', assignmentId, tripNumber],
-          (prev) => {
-            const merged = new Map<string, ManifestRow>();
-            for (const m of prev?.manifest ?? []) merged.set(m.cylinderTypeId, m);
-            for (const m of saved.manifest) merged.set(m.cylinderTypeId, m);
-            return { manifest: Array.from(merged.values()) };
-          },
-        );
-      }
-      setEditing(false);
-      setFloatByType({});
-      queryClient.invalidateQueries({ queryKey: ['manifest', assignmentId, tripNumber] });
-    },
-    onError: (err: unknown) => {
-      // BUG 1 fix surface: include the server's detailed error body so
-      // failures like INVALID_CYLINDER_TYPE / TOTAL_BELOW_ORDERED show
-      // their actual reason instead of a generic "Failed".
-      toast.error(getErrorMessage(err) ?? 'Failed to save manifest');
-    },
-  });
-
-  const confirmedCount = (existing?.manifest ?? []).reduce((sum, m) => sum + m.totalLoaded, 0);
-  const confirmedFloat = (existing?.manifest ?? []).reduce((sum, m) => sum + m.floatQty, 0);
-  const isReadOnly = !editing && (existing?.manifest ?? []).length > 0;
-
-  const handleSave = () => {
-    // BUG 3 fix: only build payload rows from cylinder types where the
-    // admin explicitly entered a number. Empty inputs = omit. Server
-    // upserts by (dvaId, cylinderTypeId, tripNumber) so omitted rows
-    // leave any prior manifest row for that type untouched.
-    const items: Array<{ cylinderTypeId: string; totalLoaded: number }> = [];
-    for (const t of types) {
-      const raw = floatByType[t.cylinderTypeId];
-      if (raw === undefined || raw.trim() === '') continue;
-      const float = Math.max(0, Math.floor(Number(raw) || 0));
-      // Use the same Ordered we DISPLAY to the admin so totalLoaded matches
-      // the on-screen Total column exactly.
-      const ordered = existingByType.get(t.cylinderTypeId)?.orderedQty ?? liveOrderedByType.get(t.cylinderTypeId) ?? 0;
-      const totalLoaded = ordered + float;
-      if (totalLoaded <= 0) continue;
-      items.push({ cylinderTypeId: t.cylinderTypeId, totalLoaded });
-    }
-    if (items.length === 0) {
-      toast.error('Enter float qty for at least one cylinder type');
-      return;
-    }
-    saveMutation.mutate(items);
-  };
-
-  const handleEdit = () => {
-    setEditing(true);
-    setFloatByType({});
-  };
-
-  return (
-    <div className="border-t border-surface-200 dark:border-surface-700 pt-3">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300 hover:underline"
-      >
-        <span>{open ? '▾' : '▸'}</span>
-        <span className="font-medium">Vehicle Load Manifest</span>
-        {confirmedCount > 0 && (
-          <span className="text-xs text-surface-500 dark:text-surface-400">
-            ({confirmedCount} total · {confirmedFloat} float)
-          </span>
-        )}
-      </button>
-      {open && (
-        <div className="mt-3 space-y-2">
-          <p className="text-xs text-surface-500 dark:text-surface-400">
-            Float = extra cylinders loaded for walk-in customers (beyond ordered qty).
-            Total = ordered + float, debits depot at dispatch.
-          </p>
-          <div className="grid gap-2 max-w-2xl">
-            <div className="grid grid-cols-4 gap-2 text-xs text-surface-500 dark:text-surface-400 font-medium">
-              <div>Cylinder Type</div>
-              <div className="text-right">Ordered</div>
-              <div className="text-right">Float</div>
-              <div className="text-right">Total Loaded</div>
-            </div>
-            {types.map((t) => {
-              const saved = existingByType.get(t.cylinderTypeId);
-              // Prefer saved snapshot (post-confirm) — falls back to live
-              // pending_dispatch count from the current order list pre-confirm.
-              const orderedDisplay = saved?.orderedQty ?? liveOrderedByType.get(t.cylinderTypeId) ?? 0;
-              const savedFloat = saved?.floatQty ?? 0;
-              const inputRaw = floatByType[t.cylinderTypeId] ?? '';
-              const inputNum = inputRaw === '' ? null : Math.max(0, Math.floor(Number(inputRaw) || 0));
-              const totalDisplay = isReadOnly
-                ? saved?.totalLoaded ?? 0
-                : orderedDisplay + (inputNum ?? savedFloat);
-              return (
-                <div key={t.cylinderTypeId} className="grid grid-cols-4 gap-2 items-center">
-                  <div className="text-sm text-surface-900 dark:text-white">{t.typeName}</div>
-                  <div className="text-right text-sm text-surface-600 dark:text-surface-300">
-                    {orderedDisplay}
-                  </div>
-                  {isReadOnly ? (
-                    <div className="text-right text-sm text-surface-900 dark:text-white">
-                      {savedFloat}
-                    </div>
-                  ) : (
-                    <input
-                      key={t.cylinderTypeId}
-                      type="number"
-                      min={0}
-                      value={inputRaw}
-                      placeholder={savedFloat > 0 ? String(savedFloat) : '0'}
-                      onChange={(e) =>
-                        setFloatByType((prev) => ({ ...prev, [t.cylinderTypeId]: e.target.value }))
-                      }
-                      className="input py-1 text-sm w-full text-right"
-                    />
-                  )}
-                  <div className="text-right text-sm font-medium text-surface-900 dark:text-white">
-                    {totalDisplay}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {isReadOnly ? (
-            <Button size="sm" variant="secondary" onClick={handleEdit}>
-              Edit Manifest
-            </Button>
-          ) : (
-            <div className="flex gap-2">
-              <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending}>
-                {saveMutation.isPending ? 'Saving…' : 'Confirm Manifest'}
-              </Button>
-              {(existing?.manifest ?? []).length > 0 && (
-                <Button size="sm" variant="secondary" onClick={() => { setEditing(false); setFloatByType({}); }}>
-                  Cancel
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── Dispatch Progress Modal ────────────────────────────────────────────────
 // WI-036: Calls POST /api/orders/preflight-dispatch, shows per-order

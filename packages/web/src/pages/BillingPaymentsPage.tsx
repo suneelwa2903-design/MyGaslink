@@ -48,6 +48,7 @@ import { formatNoteCountLabel } from '@/utils/noteBadge';
 import { useAuthStore, selectDistributorId, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { CancelGstModal } from '@/components/CancelGstModal';
+import { isWithin24Hours } from '@/utils/gstWindows';
 import { cn } from '@/lib/cn';
 
 // ─── Shared constants ────────────────────────────────────────────────────────
@@ -1068,8 +1069,17 @@ function InvoiceDetailModal({
     enabled: gstEnabled && showGstDocs,
   });
 
-  const isIrnSuccess = invoice.irnStatus === IrnStatus.SUCCESS;
-  const isEwbActive = invoice.ewbStatus === EwbStatus.ACTIVE;
+  // NIC IRN/EWB cancellation window (same gating as InvoicesPage). NIC
+  // rejects cancels >24h after IRN ack. Retry stays accessible for the
+  // cancel_failed state regardless of window (anti-pattern #15 — cancel
+  // retry is safe and idempotent at NIC). EWB uses ackDate as a 99%-accurate
+  // proxy since EWB is generated seconds after IRN.
+  const irnWithinWindow = isWithin24Hours(invoice.ackDate);
+  const canCancelIrn = invoice.irnStatus === IrnStatus.SUCCESS && irnWithinWindow;
+  const irnExpired = invoice.irnStatus === IrnStatus.SUCCESS && !irnWithinWindow;
+  const needsIrnRetry = invoice.irnStatus === IrnStatus.CANCEL_FAILED;
+  const canCancelEwb = invoice.ewbStatus === EwbStatus.ACTIVE && irnWithinWindow;
+  const ewbExpired = invoice.ewbStatus === EwbStatus.ACTIVE && !irnWithinWindow;
   const canGenerateGst = gstEnabled
     && invoice.status !== InvoiceStatus.CANCELLED
     && invoice.irnStatus !== IrnStatus.SUCCESS
@@ -1123,7 +1133,7 @@ function InvoiceDetailModal({
         {gstEnabled && (
           <>
             {/* IRN / AckNo / EWB info */}
-            {(invoice.irn || invoice.ackNo || isEwbActive) && (
+            {(invoice.irn || invoice.ackNo || invoice.ewbStatus === EwbStatus.ACTIVE) && (
               <div className="space-y-2 p-3 bg-accent-50 dark:bg-accent-500/10 rounded-xl">
                 {invoice.irn && (
                   <div>
@@ -1166,7 +1176,7 @@ function InvoiceDetailModal({
                   Generate GST
                 </Button>
               )}
-              {isIrnSuccess && (
+              {canCancelIrn && (
                 <Button
                   size="sm"
                   variant="danger"
@@ -1176,7 +1186,23 @@ function InvoiceDetailModal({
                   Cancel IRN
                 </Button>
               )}
-              {isEwbActive && (
+              {needsIrnRetry && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  title="IRN cancellation attempted but failed at NIC. Retry stays available regardless of the 24h window."
+                  onClick={() => onCancelIrn(invoice)}
+                >
+                  <HiOutlineXCircle className="h-4 w-4 mr-1" />
+                  Retry IRN Cancel
+                </Button>
+              )}
+              {irnExpired && (
+                <span className="text-xs text-surface-500 dark:text-surface-400 self-center">
+                  IRN cancellation window expired — issue Credit Note
+                </span>
+              )}
+              {canCancelEwb && (
                 <Button
                   size="sm"
                   variant="danger"
@@ -1185,6 +1211,11 @@ function InvoiceDetailModal({
                   <HiOutlineXCircle className="h-4 w-4 mr-1" />
                   Cancel EWB
                 </Button>
+              )}
+              {ewbExpired && (
+                <span className="text-xs text-surface-500 dark:text-surface-400 self-center">
+                  EWB cancellation window expired — issue Credit Note
+                </span>
               )}
               {canRegenerate && (
                 <Button

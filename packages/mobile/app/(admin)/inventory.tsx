@@ -2877,7 +2877,7 @@ function ReconcileTab() {
     }
   >('post', (vars) => `/delivery/reconciliation/confirm/${vars.vehicleId}`, {
     invalidateKeys: [['reconciliation-pending']],
-    successMessage: 'Reconciliation completed',
+    successMessage: 'Vehicle return completed',
   });
 
   const [mismatchVehicle, setMismatchVehicle] = useState<ReconciliationVehicle | null>(null);
@@ -3107,10 +3107,10 @@ function ReconcileTab() {
           {v.floatSummary && v.floatSummary.length > 0 && (
             <View style={{ marginBottom: 14 }}>
               <Text style={{ fontSize: 11, fontWeight: '700', color: t.textMuted, marginBottom: 6 }}>
-                FLOAT STOCK SUMMARY
+                SPARE STOCK SUMMARY
               </Text>
               <Text style={{ fontSize: 10, color: t.textMuted, marginBottom: 6 }}>
-                Unsold float returns to depot automatically on reconciliation.
+                Unsold spare returns to depot automatically on vehicle return.
               </Text>
               {v.floatSummary.map((f) => (
                 <View

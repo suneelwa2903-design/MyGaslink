@@ -290,7 +290,7 @@ export default function AnalyticsPage() {
         <div className="card p-8 text-center">
           <h2 className="text-lg font-semibold text-surface-900 dark:text-white mb-2">Please use the mobile app</h2>
           <p className="text-sm text-surface-500 dark:text-surface-400">
-            Driver workflows (trips, deliveries, reconciliation) are designed for the mobile app. Open Re-New GasLink on your phone to continue.
+            Driver workflows (trips, deliveries, vehicle return) are designed for the mobile app. Open Re-New GasLink on your phone to continue.
           </p>
         </div>
       )}
@@ -450,11 +450,11 @@ export default function AnalyticsPage() {
               <>
                 <div className="card p-5">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold text-surface-900 dark:text-white">Vehicles pending reconciliation</h3>
+                    <h3 className="font-semibold text-surface-900 dark:text-white">Vehicles pending return</h3>
                     <button onClick={() => navigate('/app/inventory?tab=reconciliation')} className="text-xs font-medium text-brand-600 dark:text-brand-400">View →</button>
                   </div>
                   {!pendingReconciliation?.length ? (
-                    <p className="text-sm text-surface-500">No vehicles awaiting reconciliation.</p>
+                    <p className="text-sm text-surface-500">No vehicles awaiting return.</p>
                   ) : (
                     <div className="space-y-2">
                       {pendingReconciliation.slice(0, 8).map((a) => (

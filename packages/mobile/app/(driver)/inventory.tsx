@@ -125,7 +125,7 @@ export default function DriverInventoryScreen() {
                       paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignItems: 'center',
                     }}>
                       <Text style={{ fontSize: 11, color: dark ? '#a78bfa' : '#6d28d9' }}>
-                        Float: <Text style={{ fontWeight: '800' }}>{item.floatQty}</Text>
+                        Spare: <Text style={{ fontWeight: '800' }}>{item.floatQty}</Text>
                       </Text>
                     </View>
                   )}

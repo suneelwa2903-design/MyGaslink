@@ -101,7 +101,7 @@ export function ReportMismatchModal({
       if (result.autoClose?.closed) {
         toast.success('Mismatch recorded — trip closed and vehicle marked idle');
       } else if (result.autoClose?.reason === 'gap_remaining') {
-        toast.success('Mismatch recorded — gap partial, vehicle still pending reconciliation');
+        toast.success('Mismatch recorded — gap partial, vehicle still pending return');
       } else if (result.autoClose?.reason === 'close_failed') {
         toast.error(
           `Mismatch recorded but auto-close failed: ${result.autoClose.closeError ?? 'unknown error'}. Please retry Confirm & Reconcile.`,

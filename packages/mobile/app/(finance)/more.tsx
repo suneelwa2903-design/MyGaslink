@@ -56,7 +56,7 @@ export default function FinanceMoreScreen() {
     {
       icon: 'cube-outline',
       label: 'Inventory',
-      subtitle: 'Stock levels, movements, reconciliation',
+      subtitle: 'Stock levels, movements, vehicle return',
       onPress: () => router.push('/(finance)/inventory'),
     },
     {
