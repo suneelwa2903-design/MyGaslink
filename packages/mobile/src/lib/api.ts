@@ -68,6 +68,26 @@ api.interceptors.response.use(
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
     if (original?.url?.includes('/auth/')) return Promise.reject(error);
 
+    // M14 v1.0 (IOS-ACCOUNT-DELETION-SPEC §5.2): the server returns 403
+    // with error='account_pending_deletion' for any non-allowlisted request
+    // by a user with a pending deletion. Bounce to the pending-deletion
+    // screen so the user can cancel or sign out. Skip when the call IS
+    // the deletion-status / cancel endpoint (the screen needs them).
+    if (
+      error.response?.status === 403
+      && (error.response.data as { error?: string } | undefined)?.error === 'account_pending_deletion'
+      && !original?.url?.includes('/users/me/deletion-request')
+    ) {
+      try {
+        // Lazy import to dodge any module-init cycle with expo-router.
+        const { router } = await import('expo-router');
+        router.replace('/(shared)/pending-deletion');
+      } catch {
+        // Best-effort; the 403 still rejects below.
+      }
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
 
