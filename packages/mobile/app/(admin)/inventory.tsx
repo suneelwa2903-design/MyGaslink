@@ -276,7 +276,7 @@ export default function AdminInventoryScreen() {
   const [historyDateTo, setHistoryDateTo] = useState(todayString());
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: t.bg }}>
+    <SafeAreaView edges={Platform.OS === 'ios' ? ['left', 'right'] : ['top', 'left', 'right']} style={{ flex: 1, backgroundColor: t.bg }}>
       {/* Header */}
       <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
         <Text style={{ fontSize: 22, fontWeight: '800', color: t.text }}>Inventory</Text>
@@ -671,6 +671,7 @@ function SummaryTab({
             onPress={() => openModal('incoming')}
             style={{
               flex: 1,
+              minWidth: 0,
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
@@ -683,13 +684,19 @@ function SummaryTab({
             }}
           >
             <Ionicons name="arrow-down-circle-outline" size={16} color={t.green} />
-            <Text style={{ fontSize: 12, fontWeight: '700', color: t.green }}>Incoming Fulls</Text>
+            <Text
+              style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.green, textAlign: 'center' }}
+              numberOfLines={2}
+            >
+              Incoming Fulls
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={() => openModal('outgoing')}
             style={{
               flex: 1,
+              minWidth: 0,
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
@@ -702,13 +709,19 @@ function SummaryTab({
             }}
           >
             <Ionicons name="arrow-up-circle-outline" size={16} color={t.orange} />
-            <Text style={{ fontSize: 12, fontWeight: '700', color: t.orange }}>Outgoing Empties</Text>
+            <Text
+              style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.orange, textAlign: 'center' }}
+              numberOfLines={2}
+            >
+              Outgoing Empties
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={() => openModal('adjust')}
             style={{
               flex: 1,
+              minWidth: 0,
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
@@ -721,7 +734,12 @@ function SummaryTab({
             }}
           >
             <Ionicons name="create-outline" size={16} color={t.blue} />
-            <Text style={{ fontSize: 12, fontWeight: '700', color: t.blue }}>Adjust Stock</Text>
+            <Text
+              style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.blue, textAlign: 'center' }}
+              numberOfLines={2}
+            >
+              Adjust Stock
+            </Text>
           </TouchableOpacity>
         </View>
 

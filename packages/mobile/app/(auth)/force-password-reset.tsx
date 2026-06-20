@@ -74,7 +74,7 @@ export default function ForcePasswordResetScreen() {
         case 'driver': router.replace('/(driver)/orders'); break;
         case 'super_admin': router.replace('/(super-admin)/dashboard'); break;
         case 'finance': router.replace('/(finance)/dashboard'); break;
-        case 'inventory': router.replace('/(inventory)/summary'); break;
+        case 'inventory': router.replace('/(inventory)/analytics'); break;
         default: router.replace('/(admin)/dashboard'); break;
       }
     } catch (err) {
