@@ -47,11 +47,22 @@ let payableCycleId: string;
 let paidCycleId: string;
 let crossCycleId: string;
 
+// Save the real env so afterAll can restore it. We unconditionally
+// FORCE mock mode for the route-level tests in this file (the pure
+// crypto helpers above exercise real-mode HMAC explicitly). Without
+// this, a local .env with a real RAZORPAY_KEY_ID would override the
+// `??=` fallback and route tests would hit the actual Razorpay
+// sandbox + fail on fake signatures — those are mock-fixture
+// assertions, not integration coverage. CI has no env set so the
+// `??=` would already work; this is the local-dev safety net.
+const _envBackup = {
+  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID,
+  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET,
+};
+
 beforeAll(async () => {
-  // Save / restore env around tests — every other test in the suite
-  // assumes default env state.
-  process.env.RAZORPAY_KEY_ID ??= 'rzp_test_mock_phaseE';
-  process.env.RAZORPAY_KEY_SECRET ??= 'mock_secret_phaseE';
+  process.env.RAZORPAY_KEY_ID = 'rzp_test_mock_phaseE';
+  process.env.RAZORPAY_KEY_SECRET = 'mock_secret_phaseE';
 
   app = createApp();
   distAdminToken = (await loginAsDistAdmin()).token;
@@ -111,6 +122,18 @@ afterAll(async () => {
   await prisma.billingCycle.deleteMany({
     where: { id: { in: [payableCycleId, paidCycleId, crossCycleId] } },
   });
+  // Restore real env so subsequent files (or the next live-flow probe
+  // by the dev) see the actual RAZORPAY_KEY_ID from .env.
+  if (_envBackup.RAZORPAY_KEY_ID !== undefined) {
+    process.env.RAZORPAY_KEY_ID = _envBackup.RAZORPAY_KEY_ID;
+  } else {
+    delete process.env.RAZORPAY_KEY_ID;
+  }
+  if (_envBackup.RAZORPAY_KEY_SECRET !== undefined) {
+    process.env.RAZORPAY_KEY_SECRET = _envBackup.RAZORPAY_KEY_SECRET;
+  } else {
+    delete process.env.RAZORPAY_KEY_SECRET;
+  }
 });
 
 beforeEach(async () => {
