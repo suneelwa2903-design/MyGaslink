@@ -7,7 +7,8 @@
       "namespace": "android_app",
       "package_name": "com.mygaslink.app",
       "sha256_cert_fingerprints": [
-        "74:B1:A0:35:B8:CE:68:5A:DE:87:A7:06:FF:B2:27:BA:ED:D3:2A:E2:C1:F6:AB:00:01:4E:78:42:E5:7C:3E:38"
+        "74:B1:A0:35:B8:CE:68:5A:DE:87:A7:06:FF:B2:27:BA:ED:D3:2A:E2:C1:F6:AB:00:01:4E:78:42:E5:7C:3E:38",
+        "66:1A:96:2C:88:75:6D:6C:B8:BC:A2:5A:D0:47:9A:31:42:92:5E:3F:DC:4E:16:17:1C:47:FA:9E:31:51:48:FF"
       ]
     }
   }
