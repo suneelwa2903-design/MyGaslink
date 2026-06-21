@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.mygaslink.app",
+      "sha256_cert_fingerprints": [
+        "74:B1:A0:35:B8:CE:68:5A:DE:87:A7:06:FF:B2:27:BA:ED:D3:2A:E2:C1:F6:AB:00:01:4E:78:42:E5:7C:3E:38"
+      ]
+    }
+  }
+]
