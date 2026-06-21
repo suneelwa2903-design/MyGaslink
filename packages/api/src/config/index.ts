@@ -14,7 +14,17 @@ export const config = {
     accessSecret: process.env.JWT_ACCESS_SECRET || 'dev-access-secret-change-in-production',
     refreshSecret: process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-change-in-production',
     accessExpiresIn: '15m',
-    refreshExpiresIn: '7d',
+    // Persistent-login refresh TTL (bumped 2026-06-21 from 7d → 180d).
+    // Token rotation already implemented in authService.refreshTokens —
+    // every successful refresh issues a NEW refresh token and writes it
+    // to User.refreshToken, invalidating the old one. With this TTL +
+    // rotation, an active user (opens the app at least once every 180
+    // days) stays logged in indefinitely. Dormant users get logged out
+    // at 180d. Mirrors the Swiggy/Rapido/Zomato session pattern.
+    // Security tradeoff: lost/stolen phone retains a logged-in session
+    // for up to 180d unless the user explicitly logs out OR an admin
+    // nulls User.refreshToken via direct DB write.
+    refreshExpiresIn: '180d',
   },
 
   smtp: {

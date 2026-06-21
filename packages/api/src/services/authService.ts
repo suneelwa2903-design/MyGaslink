@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
+import crypto, { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/index.js';
 import { prisma } from '../lib/prisma.js';
@@ -66,9 +66,17 @@ export function generateTokens(payload: JwtPayload): AuthTokens {
   const accessToken = jwt.sign(payload, config.jwt.accessSecret, {
     expiresIn: config.jwt.accessExpiresIn,
   });
-  const refreshToken = jwt.sign(payload, config.jwt.refreshSecret, {
-    expiresIn: config.jwt.refreshExpiresIn,
-  });
+  // 2026-06-21: add a per-issuance JWT ID (RFC 7519 §4.1.7) so two refresh
+  // tokens issued within the same second for the same user are guaranteed
+  // to be distinct strings. Without this, a rapid login → refresh sequence
+  // could produce identical JWTs (same iat + payload + secret), defeating
+  // server-side rotation invalidation. Real users never hit the 1-second
+  // collision but the security guarantee should not depend on that.
+  const refreshToken = jwt.sign(
+    { ...payload, jti: randomUUID() },
+    config.jwt.refreshSecret,
+    { expiresIn: config.jwt.refreshExpiresIn },
+  );
   return { accessToken, refreshToken };
 }
 
