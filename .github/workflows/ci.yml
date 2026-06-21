@@ -149,6 +149,14 @@ jobs:
           name: web-dist
           path: packages/web/dist/
           retention-days: 7
+          # actions/upload-artifact@v4 defaults include-hidden-files=false,
+          # which strips dot-prefixed directories. Without this, the
+          # dist/.well-known/ folder (assetlinks.json + future AASA) is
+          # silently dropped from the artifact and deploy-production never
+          # uploads it to S3 — verified 2026-06-21 against run 27892593058
+          # where logs showed every dist/assets/*.js uploaded but zero
+          # /.well-known/ entries.
+          include-hidden-files: true
 
   deploy-staging:
     if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
