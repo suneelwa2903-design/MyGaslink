@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme } from '../../src/theme';
 import { Card, Badge } from '../../src/components/ui';
+import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 
 interface MenuItem {
   icon: keyof typeof Ionicons.glyphMap;
@@ -176,6 +177,10 @@ export default function FinanceMoreScreen() {
             </TouchableOpacity>
           ))}
         </Card>
+
+        {/* M14 v1.0 — every authenticated role needs a deletion entry point
+            per Apple §5.1.1(v) + DPDP §12. Finance previously had none. */}
+        <DeleteAccountButton variant="inline" />
 
         <Text style={{ textAlign: 'center', fontSize: 11, color: colors.textMuted, marginTop: 8 }}>
           MyGasLink v1.0.0

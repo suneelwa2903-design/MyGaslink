@@ -11,6 +11,7 @@
  * intentionally read-only.
  */
 import { useState } from 'react';
+import { DeleteAccountButton } from '../components/DeleteAccountButton';
 import {
   View,
   Text,
@@ -279,6 +280,12 @@ export function ProfileScreen({ accent }: ProfileScreenProps) {
               </Text>
             )}
           </TouchableOpacity>
+
+          {/* M14 v1.0 — defence in depth: profile tab also exposes the
+              deletion entry. Roles still get it on More/Settings too. */}
+          <View style={{ marginTop: 16 }}>
+            <DeleteAccountButton variant="inline" />
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
 

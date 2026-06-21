@@ -34,6 +34,7 @@ const GstActivationPage = lazy(() => import('@/pages/admin/GstActivationPage'));
 const BillingSuspendedPage = lazy(() => import('@/pages/BillingSuspendedPage'));
 const HealthMonitoringPage = lazy(() => import('@/pages/HealthMonitoringPage'));
 const DeletionRequestsPage = lazy(() => import('@/pages/DeletionRequestsPage'));
+const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const ProviderCatalogPage = lazy(() => import('@/pages/ProviderCatalogPage'));
 
 // Customer pages
@@ -311,6 +312,25 @@ export function AppRoutes() {
             }
           >
             <Route index element={<DeletionRequestsPage />} />
+          </Route>
+
+          {/* Staff profile (admin / finance / inventory / super_admin / driver).
+              Customer role still routes through /app/customer/account. */}
+          <Route
+            path="profile"
+            element={
+              <ProtectedRoute
+                allowedRoles={[
+                  UserRole.SUPER_ADMIN,
+                  UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
+                  UserRole.INVENTORY,
+                  UserRole.DRIVER,
+                ]}
+              />
+            }
+          >
+            <Route index element={<ProfilePage />} />
           </Route>
 
           {/* Customer portal routes */}

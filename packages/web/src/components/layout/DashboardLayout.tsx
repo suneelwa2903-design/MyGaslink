@@ -87,7 +87,7 @@ export function DashboardLayout() {
   function handleProfile() {
     setUserMenuOpen(false);
     const isCustomer = user?.role === UserRole.CUSTOMER;
-    navigate(isCustomer ? '/app/customer/account' : '/app/settings');
+    navigate(isCustomer ? '/app/customer/account' : '/app/profile');
   }
 
   return (
