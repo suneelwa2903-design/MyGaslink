@@ -33,6 +33,7 @@ const DistributorDetailPage = lazy(() => import('@/pages/DistributorDetailPage')
 const GstActivationPage = lazy(() => import('@/pages/admin/GstActivationPage'));
 const BillingSuspendedPage = lazy(() => import('@/pages/BillingSuspendedPage'));
 const HealthMonitoringPage = lazy(() => import('@/pages/HealthMonitoringPage'));
+const DeletionRequestsPage = lazy(() => import('@/pages/DeletionRequestsPage'));
 const ProviderCatalogPage = lazy(() => import('@/pages/ProviderCatalogPage'));
 
 // Customer pages
@@ -299,6 +300,17 @@ export function AppRoutes() {
             }
           >
             <Route index element={<HealthMonitoringPage />} />
+          </Route>
+
+          <Route
+            path="deletion-requests"
+            element={
+              <ProtectedRoute
+                allowedRoles={[UserRole.SUPER_ADMIN]}
+              />
+            }
+          >
+            <Route index element={<DeletionRequestsPage />} />
           </Route>
 
           {/* Customer portal routes */}

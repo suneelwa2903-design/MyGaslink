@@ -982,3 +982,22 @@ export interface InventoryForecast {
   recommendedReorderQty: number;
   trendDirection: 'increasing' | 'stable' | 'decreasing';
 }
+
+// M14 v1.0 — super-admin read-only monitor for account deletion requests.
+// Row shape returned by GET /api/super-admin/deletion-requests. Status is
+// computed server-side at query time from completedAt/cancelledAt/scheduledAt.
+export interface DeletionRequestSummary {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userPhone: string;
+  userRole: string;
+  distributorName: string | null;
+  requestedAt: string;
+  scheduledAt: string;
+  daysRemaining: number;
+  status: 'pending' | 'overdue' | 'executed' | 'cancelled';
+  executedAt: string | null;
+  cancelledAt: string | null;
+}

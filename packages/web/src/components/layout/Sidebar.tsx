@@ -18,6 +18,7 @@ import {
   HiOutlineArrowRightOnRectangle,
   HiOutlineServerStack,
   HiOutlineDocumentText,
+  HiOutlineUserMinus,
   HiOutlineRectangleStack,
   HiChevronDoubleLeft,
   HiChevronDoubleRight,
@@ -147,6 +148,12 @@ const adminMenuItems: MenuItem[] = [
     labelKey: 'nav.health',
     path: '/app/health',
     icon: HiOutlineServerStack,
+    roles: [UserRole.SUPER_ADMIN],
+  },
+  {
+    label: 'Account Deletions',
+    path: '/app/deletion-requests',
+    icon: HiOutlineUserMinus,
     roles: [UserRole.SUPER_ADMIN],
   },
   {

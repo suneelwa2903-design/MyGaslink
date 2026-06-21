@@ -296,6 +296,61 @@ describe('M14 v1.0 — auth middleware pending-deletion gate (spec §5)', () => 
   });
 });
 
+describe('M14 v1.0 — GET /api/super-admin/deletion-requests (read-only monitor)', () => {
+  it('T17 — super_admin can fetch the list with correct fields + computed status', async () => {
+    // Seed a pending request for the customer.
+    await request(app).post('/api/users/me/deletion-request')
+      .set('Authorization', `Bearer ${custToken}`)
+      .send({ confirmText: 'DELETE MY ACCOUNT', reason: 'T17 monitor seed' });
+
+    const res = await request(app)
+      .get('/api/super-admin/deletion-requests')
+      .set('Authorization', `Bearer ${saToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    const row = (res.body.data as Array<Record<string, unknown>>).find((r) => r.userId === custUserId);
+    expect(row).toBeDefined();
+    expect(row!.status).toBe('pending');
+    expect(row!.userEmail).toBe('royal@kitchen.com');
+    expect(row!.userRole).toBe('customer');
+    expect(typeof row!.daysRemaining).toBe('number');
+    expect(row!.daysRemaining).toBeGreaterThanOrEqual(29);
+    expect(row!.daysRemaining).toBeLessThanOrEqual(30);
+    expect(row!.distributorName).toBe('Bhargava Gas Agency');
+    expect(row!.executedAt).toBeNull();
+    expect(row!.cancelledAt).toBeNull();
+  });
+
+  it('T18 — cancelled request shows status=cancelled with cancelledAt set', async () => {
+    await request(app).post('/api/users/me/deletion-request')
+      .set('Authorization', `Bearer ${custToken}`)
+      .send({ confirmText: 'DELETE MY ACCOUNT' });
+    await request(app).post('/api/users/me/deletion-request/cancel')
+      .set('Authorization', `Bearer ${custToken}`);
+
+    const res = await request(app)
+      .get('/api/super-admin/deletion-requests')
+      .set('Authorization', `Bearer ${saToken}`);
+    expect(res.status).toBe(200);
+    const row = (res.body.data as Array<Record<string, unknown>>).find((r) => r.userId === custUserId);
+    expect(row).toBeDefined();
+    expect(row!.status).toBe('cancelled');
+    expect(row!.cancelledAt).not.toBeNull();
+  });
+
+  it('T19 — distributor_admin gets 403 (not super_admin)', async () => {
+    const res = await request(app)
+      .get('/api/super-admin/deletion-requests')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('T20 — unauthenticated returns 401', async () => {
+    const res = await request(app).get('/api/super-admin/deletion-requests');
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('M14 v1.0 — multi-tenant guard (spec §11.1, CLAUDE.md tenant rule)', () => {
   it('T16 — dist-001 customer deletion request does not touch dist-002 customers', async () => {
     // Snapshot dist-002 customer count.

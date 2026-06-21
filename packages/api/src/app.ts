@@ -16,6 +16,7 @@ import authRoutes from './routes/auth.js';
 import healthRoutes from './routes/health.js';
 import contactRoutes from './routes/contact.js';
 import userRoutes from './routes/users.js';
+import superAdminDeletionRoutes from './routes/superAdminDeletionRoutes.js';
 import distributorRoutes from './routes/distributors.js';
 import customerRoutes from './routes/customers.js';
 import cylinderTypeRoutes from './routes/cylinderTypes.js';
@@ -139,6 +140,8 @@ export function createApp() {
   // login_history table. Currently exposes /purge-old; a scheduled job
   // should replace this in a follow-up sprint.
   app.use('/api/admin/login-history', loginHistoryRoutes);
+  // M14 v1.0 — super-admin read-only deletion-request monitor.
+  app.use('/api/super-admin', authenticate, superAdminDeletionRoutes);
   app.use('/api/customers', authenticate, resolveDistributor, requireDistributor, customerRoutes);
   app.use('/api/cylinder-types', authenticate, resolveDistributor, requireDistributor, cylinderTypeRoutes);
   app.use('/api/orders', authenticate, resolveDistributor, requireDistributor, orderRoutes);

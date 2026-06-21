@@ -35,7 +35,7 @@ export function DashboardLayout() {
 
   // Super admin always sees the distributor selector — they need to pick one for any data page
   // Hide only on purely platform-level pages (Distributors list, Provider Catalog, Health)
-  const platformOnlyPaths = ['/app/distributors', '/app/provider-catalog', '/app/health'];
+  const platformOnlyPaths = ['/app/distributors', '/app/provider-catalog', '/app/health', '/app/deletion-requests'];
   const showDistributorSelector =
     isSuperAdmin &&
     !platformOnlyPaths.some((p) => location.pathname.startsWith(p));
