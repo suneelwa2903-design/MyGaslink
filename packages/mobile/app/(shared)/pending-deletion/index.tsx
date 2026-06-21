@@ -98,7 +98,7 @@ export default function PendingDeletionScreen() {
               be recovered.
             </Text>
             <Text style={{ fontSize: 14, lineHeight: 20, color: colors.textSecondary }}>
-              If you've changed your mind, cancel below — your account will resume normally.
+              If you&apos;ve changed your mind, cancel below — your account will resume normally.
             </Text>
           </>
         )}
