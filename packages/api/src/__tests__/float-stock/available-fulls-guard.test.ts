@@ -364,4 +364,97 @@ describe('FLOAT-001 — getAvailableFullsForDriver', () => {
     // because they have dispatch events (depot was already debited for them).
     expect(avail).toBe(6);
   });
+
+  // ── Bug #12 regression (2026-06-22) ──────────────────────────────────────
+  // dist-demo live evidence: trip 1 walk-in of 10 cyl delivered + reconciled
+  // OK. Trip 2 manifest loaded 11 (10 float). Trip 2 walk-in attempt for any
+  // qty returned available=0 because the tripOrders query inside
+  // getAvailableFullsForDriver lacked a `tripNumber` filter — trip 1's
+  // walk-in order (status='delivered', deliveryDate=today) was counted
+  // against trip 2's float pool, collapsing availability to 0.
+  //
+  // The 60cc3ed fix added tripNumber scope to the MANIFEST lookup in this
+  // same function but missed the adjacent ORDERS lookup. Companion-query
+  // miss, same class as anti-patterns #9 / #16 / #17 in CLAUDE.md.
+  it('BUG #12 — trip-2 walk-in availability ignores prior-trip walk-ins (companion miss to 60cc3ed)', async () => {
+    // ── TRIP 1 ────────────────────────────────────────────────────────────
+    // Manifest: totalLoaded=10, no pre-existing orders so floatQty=10.
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 10 }], adminUserId,
+    );
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dvaId },
+      data: { status: 'loaded_and_dispatched', dispatchedAt: new Date() },
+    });
+
+    // Trip 1 walk-in: 4 cyl, delivered (consumed 4 from trip-1 float pool).
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-T1WI-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST, customerId, driverId, vehicleId,
+        orderDate: todayMidnight, deliveryDate: todayMidnight,
+        status: 'delivered', orderSource: 'walk_in', tripNumber: 1, totalAmount: 2000,
+        items: {
+          create: [{ cylinderTypeId, quantity: 4, deliveredQuantity: 4, unitPrice: 500, totalPrice: 2000 }],
+        },
+      },
+    });
+
+    // Sanity: mid-trip-1 available = 10 − 4 = 6.
+    expect(await getAvailableFullsForDriver(DIST, driverId, cylinderTypeId)).toBe(6);
+
+    // ── RECONCILE TRIP 1 + ROLL TO TRIP 2 ───────────────────────────────────
+    // Simulate confirmVehicleReconciliation: DVA gets tripNumber=2 and
+    // returns to dispatch_ready so a new manifest can be entered. The
+    // trip-1 manifest row stays in DB (it's not deleted; cancellation_return
+    // event in production handles the depot-credit side, but that's outside
+    // the unit boundary of getAvailableFullsForDriver).
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dvaId },
+      data: {
+        tripNumber: 2,
+        status: 'dispatch_ready',
+        isReconciled: false,    // ready for next dispatch, not closed
+        dispatchedAt: null,
+        returnedAt: null,
+        reconciledAt: null,
+      },
+    });
+
+    // ── TRIP 2 ────────────────────────────────────────────────────────────
+    // Fresh manifest for trip 2: totalLoaded=11, floatQty=11 (no pre-booked
+    // orders for trip 2 yet either, so orderedQty=0).
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 11 }], adminUserId,
+    );
+    await prisma.driverVehicleAssignment.update({
+      where: { id: dvaId },
+      data: { status: 'loaded_and_dispatched', dispatchedAt: new Date() },
+    });
+
+    // ── CORE ASSERTION ──────────────────────────────────────────────────────
+    // PRE-FIX: 11 (trip-2 floatQty) − 4 (trip-1 walk-in counted!) = 7
+    //          → real-world fail: driver couldn't even attempt 5-cyl walk-in
+    //            on dist-demo when trip-2 had 10 float and trip-1 walk-in
+    //            was 10.
+    // POST-FIX: 11 − 0 (trip-1 walk-in is on tripNumber=1, scoped out) = 11
+    const availMidTrip2 = await getAvailableFullsForDriver(DIST, driverId, cylinderTypeId);
+    expect(availMidTrip2).toBe(11);
+
+    // ── ADD A TRIP-2 WALK-IN, VERIFY IT NOW DOES SUBTRACT ──────────────────
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-T2WI-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST, customerId, driverId, vehicleId,
+        orderDate: todayMidnight, deliveryDate: todayMidnight,
+        status: 'pending_delivery', orderSource: 'walk_in', tripNumber: 2, totalAmount: 2500,
+        items: { create: [{ cylinderTypeId, quantity: 5, unitPrice: 500, totalPrice: 2500 }] },
+      },
+    });
+
+    // Trip 2 float (11) minus trip-2 walk-in (5) = 6. Trip-1 walk-in still
+    // ignored.
+    const availAfterT2Walkin = await getAvailableFullsForDriver(DIST, driverId, cylinderTypeId);
+    expect(availAfterT2Walkin).toBe(6);
+  });
 });

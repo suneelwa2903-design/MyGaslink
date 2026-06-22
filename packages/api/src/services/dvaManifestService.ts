@@ -347,11 +347,26 @@ export async function getAvailableFullsForDriver(
   // Pre-fix this counted orderSource='walk_in' only, so a mid-trip
   // regular order would not subtract from availableFulls → driver could
   // create a walk-in qty exceeding what was physically left on the truck.
+  //
+  // FLOAT-001 (2026-06-22 Bug #12): scope tripOrders to the CURRENT
+  // tripNumber, identical reasoning to the manifest lookup above. After
+  // reconcile bumps the DVA from trip N to trip N+1, prior trip walk-ins
+  // remain in the DB with status='delivered' and deliveryDate=today; the
+  // unfiltered query counted them against the CURRENT trip's float pool,
+  // collapsing availability to 0 on every trip-2+ walk-in attempt.
+  // Live evidence dist-demo 2026-06-22: trip 1 had walk-in of 10 cyl;
+  // reconciled OK; trip 2 manifest had 10 float; trip 2 walk-in attempt
+  // computed available = 10 - 10 (trip 1's walk-in counted!) = 0. Bug
+  // is the companion to 60cc3ed which fixed the manifest-side scope but
+  // missed this orders-side scope in the same function. Anti-pattern:
+  // "scope filter added to one query in a function with multiple queries
+  // needing the same scope" — always grep for adjacent queries.
   const tripOrders = await prisma.order.findMany({
     where: {
       distributorId,
       driverId,
       deliveryDate: today,
+      tripNumber: dva.tripNumber,
       deletedAt: null,
       status: {
         in: [
