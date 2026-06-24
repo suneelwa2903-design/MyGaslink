@@ -304,6 +304,11 @@ export interface Order {
   // Buyer's PO number (B2B). Null when not provided. Max 16 chars at API edge
   // to match NIC PoDtls.PoNo. Surfaced on invoice PDF + IRN payload when set.
   poNumber: string | null;
+  // Customer self-collects from godown. No vehicle, no driver, no EWB.
+  // Defaults false; existing orders are unaffected. Set this at create
+  // time only — flipping it later doesn't retroactively change the
+  // downstream invoice/inventory writes.
+  isGodownPickup: boolean;
   // Flat alias of customer.customerType ('B2B' | 'B2C'). Surfaced by mapOrder
   // so the web edit-order modal can gate B2B-only fields without traversing
   // the nested customer relation. Null when the customer has been deleted.

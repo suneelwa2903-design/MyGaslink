@@ -315,6 +315,13 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
   // Get credential email once for all GST API calls
   const credEmail = (await getCredentials(distributorId, 'einvoice'))!.email;
 
+  // Godown pickup: customer self-collects from the depot — no vehicle
+  // movement, so no EWB is legally required. IRN still fires for B2B
+  // (the supply happened, just without our truck). Every EWB branch
+  // below short-circuits when this is true. Note: invoice.order may be
+  // null for manual invoices — null-safe access.
+  const skipEwb = !!invoice.order?.isGodownPickup;
+
   // Step 1: Generate IRN (B2B only)
   //
   // CRITICAL: track IRN success in a local flag. The historical bug here
@@ -378,7 +385,11 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
         data: {
           irn, ackNo: ackNo?.toString(), ackDate: ackDt ? new Date(ackDt) : null,
           irnStatus: 'success',
-          ...(hasIrnEwb ? { ewbStatus: 'active' } : {}),
+          // Inline EWB from NIC's IRN response is anti-pattern #10 dead
+          // code today, but defensively skip it for godown orders so a
+          // future NIC API change can't backdoor an EWB onto a
+          // self-collection invoice.
+          ...(hasIrnEwb && !skipEwb ? { ewbStatus: 'active' } : {}),
         },
       });
       // From this point on, IRN is committed to the DB. Any thrown error
@@ -393,7 +404,7 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           docType: 'INV', gstDocNo: invoice.invoiceNumber,
           irnStatus: 'success', irn, ackNo: ackNo?.toString(),
           ackDate: ackDt ? new Date(ackDt) : null, signedQr,
-          ...(hasIrnEwb ? {
+          ...(hasIrnEwb && !skipEwb ? {
             ewbStatus: 'active',
             ewbNo: irnEwbNo?.toString(),
             ewbDate: irnEwbDt ? new Date(irnEwbDt) : null,
@@ -425,8 +436,9 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           });
         }
       }
-      // Step 2: Generate EWB (skip if already returned with IRN above)
-      if (!hasIrnEwb) {
+      // Step 2: Generate EWB (skip if already returned with IRN above
+      // OR if this is a godown pickup — no vehicle movement, no EWB).
+      if (!hasIrnEwb && !skipEwb) {
         // Check if dispatch EWB already exists (generated on dispatch)
         const existingEwb = await prisma.gstDocument.findFirst({
           where: { orderId: invoice.orderId, ewbNo: { not: null }, ewbStatus: 'active' },
@@ -548,8 +560,9 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
           recoveredIrn,
         };
 
-        // Still try to generate EWB even if IRN is duplicate
-        if (invoice.order?.vehicle) {
+        // Still try to generate EWB even if IRN is duplicate — but
+        // never for godown pickup (no vehicle movement).
+        if (invoice.order?.vehicle && !skipEwb) {
           try {
             const dupIrnPayload = buildIrnPayload(invoiceData);
             const ewbPayload = buildEwbPayload(dupIrnPayload, {
@@ -652,8 +665,10 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
         await createPendingAction(distributorId, invoiceId, 'EWB_GENERATION', irnErrMessage);
       }
     }
-  } else {
-    // B2C: No IRN needed. Always generate EWB — every vehicle carrying LPG needs one.
+  } else if (!skipEwb) {
+    // B2C: No IRN needed. Always generate EWB — every vehicle carrying
+    // LPG needs one. Godown pickup skips this entire branch: B2C +
+    // self-collection → no IRN, no EWB, just the invoice + PDF.
     // Check if dispatch EWB already covers this
     const existingDispatchEwb = await prisma.gstDocument.findFirst({
       where: { orderId: invoice.orderId, ewbNo: { not: null }, ewbStatus: 'active' },

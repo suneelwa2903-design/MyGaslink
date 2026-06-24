@@ -58,6 +58,8 @@ interface Order {
   specialInstructions?: string;
   // Buyer's PO snapshot. Null/undefined when the order has no PO.
   poNumber?: string | null;
+  // Customer self-collected from godown — no driver/vehicle/EWB.
+  isGodownPickup?: boolean;
   items: OrderItem[];
 }
 
@@ -1071,6 +1073,7 @@ function CreateOrderModal({
   const [deliveryDate, setDeliveryDate] = useState(getTodayISO());
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [poNumber, setPoNumber] = useState('');
+  const [isGodownPickup, setIsGodownPickup] = useState(false);
   const [items, setItems] = useState([{ cylinderTypeId: '', quantity: '1' }]);
 
   const createMutation = useApiMutation<unknown, unknown>(
@@ -1127,6 +1130,7 @@ function CreateOrderModal({
       deliveryDate,
       specialInstructions: specialInstructions || undefined,
       poNumber: poNumber.trim() || undefined,
+      isGodownPickup,
       items: validItems.map((it) => ({
         cylinderTypeId: it.cylinderTypeId,
         quantity: parseInt(it.quantity, 10),
@@ -1283,6 +1287,51 @@ function CreateOrderModal({
                   autoCapitalize="characters"
                 />
               </>
+            )}
+
+            {/* Godown Pickup toggle — skips driver assignment + dispatch.
+                Mirrors web OrdersPage create modal. */}
+            <TouchableOpacity
+              onPress={() => setIsGodownPickup((v) => !v)}
+              activeOpacity={0.7}
+              style={{
+                marginTop: 16,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                paddingVertical: 4,
+              }}
+            >
+              <View
+                style={{
+                  width: 22, height: 22, borderRadius: 4,
+                  borderWidth: 2,
+                  borderColor: isGodownPickup ? ACCENT : C.inputBorder,
+                  backgroundColor: isGodownPickup ? ACCENT : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                {isGodownPickup ? (
+                  <Ionicons name="checkmark" size={16} color="#ffffff" />
+                ) : null}
+              </View>
+              <Text style={{ color: C.text, fontSize: 14, fontWeight: '500', flex: 1 }}>
+                Godown Pickup (customer self-collects)
+              </Text>
+            </TouchableOpacity>
+            {isGodownPickup && (
+              <View style={{
+                marginTop: 8,
+                padding: 10,
+                borderRadius: 8,
+                backgroundColor: dark ? 'rgba(245, 158, 11, 0.15)' : '#fffbeb',
+                borderWidth: 1,
+                borderColor: dark ? 'rgba(245, 158, 11, 0.35)' : '#fde68a',
+              }}>
+                <Text style={{ fontSize: 12, color: dark ? '#fbbf24' : '#92400e' }}>
+                  No driver/vehicle assigned. Confirm pickup via Confirm Delivery once the customer collects. No e-Way Bill generated.
+                </Text>
+              </View>
             )}
 
             {/* Order items */}

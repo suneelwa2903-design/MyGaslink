@@ -105,6 +105,12 @@ export async function createOrder(
     // schema. Persisted on Order.poNumber and snapshotted onto Invoice.poNumber
     // at issue time so IRN + PDF + GSTR-1 stay aligned through reissue.
     poNumber?: string;
+    // Customer self-collects from godown (no vehicle/driver/EWB). When true,
+    // the order skips the preferred-driver lookup, the DVA INSERT, and the
+    // initial pending_driver_assignment / pending_dispatch states; it goes
+    // straight to pending_delivery so confirmDelivery can close it via
+    // the existing "confirm delivery" flow.
+    isGodownPickup?: boolean;
     items: { cylinderTypeId: string; quantity: number }[];
   },
   options?: {
@@ -225,12 +231,22 @@ export async function createOrder(
 
   const totalAmount = computeOrderTotal(itemsWithPrices, toNum(customer.transportChargePerCylinder));
 
+  // Godown pickup: customer collects from the depot. No driver, no
+  // vehicle, no dispatch. Order goes straight to pending_delivery so
+  // confirmDelivery can close it via the existing "confirm delivery"
+  // flow. Walk-in and preferred-driver lookups are short-circuited.
+  const isGodownPickup = data.isGodownPickup ?? false;
+
   // Check preferred driver availability
   let driverId: string | null = null;
   let vehicleId: string | null = null;
   let status: string = 'pending_driver_assignment';
 
-  if (options?.walkIn) {
+  if (isGodownPickup) {
+    // Skip the entire driver/vehicle/dispatch path. Stay on null
+    // driver+vehicle and land in pending_delivery from the start.
+    status = 'pending_delivery';
+  } else if (options?.walkIn) {
     // FLOAT-001: walk-in path bypasses the preferredDriverId lookup. The driver
     // is creating this order from their own mobile app for a customer they're
     // standing in front of — the active DVA is the source of truth for which
@@ -280,6 +296,7 @@ export async function createOrder(
         // Trim and null-fold empty strings so the IRN payload-emit gate
         // (data.poNumber?.trim()) is symmetric with what's stored.
         poNumber: data.poNumber?.trim() || null,
+        isGodownPickup,
         items: { create: itemsWithPrices },
       },
       include: orderInclude,
@@ -617,6 +634,14 @@ export async function assignDriver(
     where: { id: orderId, distributorId, deletedAt: null },
   });
   if (!order) throw new OrderError('Order not found', 404);
+  if (order.isGodownPickup) {
+    // Self-collection orders have no driver. Admin/finance closes them
+    // via POST /api/orders/:id/confirm-delivery directly.
+    throw new OrderError(
+      'Cannot assign a driver to a godown pickup order. Use Confirm Delivery to record the customer collection.',
+      400,
+    );
+  }
   if (!['pending_driver_assignment', 'pending_dispatch'].includes(order.status)) {
     throw new OrderError('Order is not in a state that allows driver assignment', 400);
   }
@@ -902,6 +927,29 @@ export async function confirmDelivery(
     }
   }
 
+  // GODOWN PICKUP — INSUFFICIENT_STOCK gate. The normal flow checks stock
+  // at preflight (gstPreflightService.ts) and refuses to dispatch if depot
+  // closingFulls < delivered qty. Godown skips preflight, so the only
+  // place to catch insufficient stock is here. Without this guard a
+  // pickup could drive closingFulls negative.
+  if (order.isGodownPickup) {
+    for (const item of data.items) {
+      if (item.deliveredQuantity <= 0) continue;
+      const summary = await prisma.inventorySummary.findFirst({
+        where: { distributorId, cylinderTypeId: item.cylinderTypeId },
+        orderBy: { summaryDate: 'desc' },
+        select: { closingFulls: true },
+      });
+      const available = summary?.closingFulls ?? 0;
+      if (available < item.deliveredQuantity) {
+        throw new OrderError(
+          `Insufficient stock: ${available} available, ${item.deliveredQuantity} requested`,
+          400,
+        );
+      }
+    }
+  }
+
   // `<` (not `!==`) — defence in depth. After the bounds check above,
   // deliveredQuantity > ordered can no longer happen, but the `<`
   // wording makes the intent explicit.
@@ -968,6 +1016,28 @@ export async function confirmDelivery(
     // using static import
     for (const item of data.items) {
       if (item.deliveredQuantity > 0) {
+        // GODOWN PICKUP — write a SYNTHETIC dispatch inventory event here.
+        // The normal flow has gstPreflightService.preflightDispatch write
+        // the dispatch event (which drives InventorySummary.dispatchedQty).
+        // Godown orders skip preflight entirely, so without this synthetic
+        // event closingFulls would never debit. Under the production
+        // `INVENTORY_DISPATCH_DEBIT=true` flag depot stock would inflate by
+        // every godown pickup. Reference: TRANSACTION AUDIT in
+        // docs/GODOWN-PICKUP-INVESTIGATION.md, Step C.
+        if (order.isGodownPickup) {
+          await createInventoryEvent(tx, {
+            distributorId,
+            cylinderTypeId: item.cylinderTypeId,
+            eventType: 'dispatch',
+            fullsChange: -item.deliveredQuantity,
+            emptiesChange: 0,
+            eventDate: order.deliveryDate,
+            referenceId: orderId,
+            referenceType: 'godown_pickup',
+            createdBy: userId,
+            notes: `Godown pickup ${order.orderNumber} — synthetic dispatch event`,
+          });
+        }
         await createInventoryEvent(tx, {
           distributorId,
           cylinderTypeId: item.cylinderTypeId,
@@ -1020,6 +1090,18 @@ export async function confirmDelivery(
       const orderItem = order.items.find(i => i.cylinderTypeId === item.cylinderTypeId);
       if (orderItem && item.deliveredQuantity < orderItem.quantity) {
         const cancelledQty = orderItem.quantity - item.deliveredQuantity;
+        // Status precedence:
+        //   - godown pickup: cylinders never left the depot, so they go
+        //     STRAIGHT to returned_to_depot. There's no vehicle to
+        //     reconcile against and no on_vehicle phase ever happened.
+        //   - has vehicle: on_vehicle (existing flow — reconciliation
+        //     later rolls it to returned_to_depot)
+        //   - no vehicle and not godown: legacy pending_return path
+        const cancelledStatus = order.isGodownPickup
+          ? 'returned_to_depot'
+          : order.vehicleId
+            ? 'on_vehicle'
+            : 'pending_return';
         await tx.cancelledStockEvent.create({
           data: {
             orderId,
@@ -1029,7 +1111,7 @@ export async function confirmDelivery(
             distributorId,
             quantity: cancelledQty,
             cancellationDate: order.deliveryDate,
-            status: order.vehicleId ? 'on_vehicle' : 'pending_return',
+            status: cancelledStatus,
           },
         });
       }

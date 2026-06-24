@@ -209,6 +209,12 @@ export async function preflightDispatch(params: {
       driverId,
       deliveryDate: targetDate,
       status: 'pending_dispatch',
+      // Defence in depth: godown-pickup orders are created in
+      // pending_delivery (not pending_dispatch) so this filter is
+      // structurally redundant, but explicit is better than implicit —
+      // a future state-machine change won't accidentally sweep them
+      // into dispatch.
+      isGodownPickup: false,
       deletedAt: null,
     },
     include: orderInclude,
@@ -631,6 +637,10 @@ export async function preflightAddToTrip(params: {
       driverId,
       deliveryDate: targetDate,
       status: 'pending_dispatch',
+      // Same defence-in-depth as preflightDispatch — godown orders never
+      // reach pending_dispatch, but we filter explicitly so a future
+      // state-machine change can't accidentally pull them in.
+      isGodownPickup: false,
       deletedAt: null,
     },
     include: orderInclude,

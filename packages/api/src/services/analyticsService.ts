@@ -43,11 +43,15 @@ export async function getDashboardStats(distributorId: string) {
         status: { in: ['pending_driver_assignment', 'pending_dispatch'] },
       },
     }),
-    // In-flight: dispatched, awaiting delivery.
+    // In-flight: dispatched, awaiting delivery. Godown-pickup orders are
+    // also in pending_delivery but never went on a truck — they're
+    // sitting in the depot waiting for the customer. The "trucks
+    // in-flight" KPI must exclude them or the number is wrong.
     prisma.order.count({
       where: {
         distributorId, deletedAt: null,
         status: 'pending_delivery',
+        isGodownPickup: false,
       },
     }),
     prisma.invoice.count({

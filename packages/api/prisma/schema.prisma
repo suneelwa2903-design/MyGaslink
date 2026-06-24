@@ -795,6 +795,18 @@ model Order {
   // for ordered + manifest-float; whatever float remained at reconcile is credited
   // back via `cancellation_return` events. Default `regular` covers every legacy row.
   orderSource           OrderSource @default(regular) @map("order_source")
+  // Customer collects cylinders directly from the godown (no vehicle
+  // dispatch, no driver, no EWB). Default false preserves the existing
+  // delivery-flow semantics for every legacy row. When true:
+  //   - createOrder skips driver assignment and goes straight to
+  //     pending_delivery
+  //   - preflightDispatch + assign-driver are blocked
+  //   - processInvoiceGst emits IRN for B2B but SKIPS EWB
+  //   - confirmDelivery writes a synthetic dispatch inventory event so
+  //     closingFulls debits correctly under INVENTORY_DISPATCH_DEBIT=true
+  //   - dashboard inFlight KPI excludes godown rows
+  // See docs/GODOWN-PICKUP-INVESTIGATION.md (incl. TRANSACTION AUDIT).
+  isGodownPickup        Boolean     @default(false) @map("is_godown_pickup")
   totalAmount           Decimal     @default(0) @map("total_amount") @db.Decimal(18, 4)
   // Buyer's Purchase Order number. B2B customers raise an internal PO before
   // placing the order; capturing it lets the IRN payload emit PoDtls (NIC

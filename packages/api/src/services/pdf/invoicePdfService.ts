@@ -88,6 +88,10 @@ interface InvoiceForPdf {
     ewbValidTill: Date | null;
     isLatest: boolean;
   }>;
+  // Optional Order relation. Used for the self-collection caption — null
+  // for manual invoices (no parent Order). Add only the fields the PDF
+  // actually reads to keep the projection tight.
+  order: { isGodownPickup: boolean } | null;
 }
 
 // ─── Layout Constants ───────────────────────────────────────────────────────
@@ -237,6 +241,10 @@ function drawHeader(
     // Buyer's Purchase Order number. Rendered right-column below EWB (or
     // below GST Doc No when EWB absent). Omitted entirely when null/empty.
     poNumber?: string | null;
+    // Godown pickup — emits a small caption under the meta row so the
+    // reader can tell at a glance that this invoice carries no vehicle
+    // movement (no EWB, no driver, customer collected at the depot).
+    isGodownPickup?: boolean;
   },
   startY: number,
 ): number {
@@ -306,7 +314,20 @@ function drawHeader(
   const ptW = doc.widthOfString(ptText);
   doc.text(ptText, rightMargin - ptW, metaY, { width: ptW + 10 });
 
-  return metaY + 14 - startY;
+  // Self-collection caption — emitted under the meta row when this is a
+  // godown pickup so the reader can tell at a glance that this invoice
+  // carries no vehicle movement (no EWB, no driver). Inline italic so
+  // it sits visually quieter than the meta labels above it.
+  let captionH = 0;
+  if (meta.isGodownPickup) {
+    const capY = metaY + 14;
+    doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
+    doc.text('Self-collection — customer picked up from godown, no vehicle dispatch.',
+      leftX, capY, { width: rightMargin - leftX });
+    captionH = 12;
+  }
+
+  return metaY + 14 + captionH - startY;
 }
 
 function drawParties(
@@ -747,6 +768,9 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
         orderBy: { createdAt: 'desc' },
         take: 1,
       },
+      // Self-collection caption needs Order.isGodownPickup. Null for
+      // manual invoices (no parent Order).
+      order: { select: { isGodownPickup: true } },
     },
   }) as unknown as (InvoiceForPdf & { isOpeningBalance?: boolean; notes?: string | null }) | null;
 
@@ -809,6 +833,8 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
     ewbNo: gstDoc?.ewbNo ?? null,
     // Renders below EWB in drawHeader. Omitted entirely when null/empty.
     poNumber: invoice.poNumber ?? null,
+    // Drives the self-collection caption under the meta row.
+    isGodownPickup: !!invoice.order?.isGodownPickup,
   };
 
   // Compute items

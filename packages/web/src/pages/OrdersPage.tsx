@@ -474,7 +474,7 @@ function CreateOrderModal({
 }) {
   const queryClient = useQueryClient();
 
-  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<CreateOrderInput>({
+  const { register, handleSubmit, control, setValue, watch, formState: { errors } } = useForm<CreateOrderInput>({
     resolver: zodResolver(createOrderSchema),
     defaultValues: {
       customerId: '',
@@ -482,9 +482,11 @@ function CreateOrderModal({
       deliveryDate: localTodayISO(),
       specialInstructions: '',
       poNumber: '',
+      isGodownPickup: false,
       items: [{ cylinderTypeId: '', quantity: 1 }],
     },
   });
+  const isGodownPickup = watch('isGodownPickup');
 
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
 
@@ -544,6 +546,24 @@ function CreateOrderModal({
             {...register('poNumber')}
           />
         )}
+
+        <div>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              {...register('isGodownPickup')}
+              className="h-4 w-4 rounded border-surface-300 dark:border-surface-600"
+            />
+            <span className="text-sm font-medium text-surface-900 dark:text-white">
+              Godown Pickup (customer self-collects)
+            </span>
+          </label>
+          {isGodownPickup && (
+            <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-300">
+              No driver will be assigned. Admin or finance confirms pickup after the customer collects. No e-Way Bill is generated.
+            </div>
+          )}
+        </div>
 
         <div>
           <label className="label">Order Items</label>
@@ -661,6 +681,11 @@ function OrderDetailModal({
             <div>
               <p className="text-xs uppercase tracking-wide text-surface-500">PO No.</p>
               <p className="font-medium">{order.poNumber}</p>
+            </div>
+          )}
+          {order.isGodownPickup && (
+            <div className="col-span-2">
+              <Badge variant="warning">Godown Pickup — self-collection, no vehicle</Badge>
             </div>
           )}
         </div>
