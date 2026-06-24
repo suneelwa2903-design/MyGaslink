@@ -301,6 +301,13 @@ export interface Order {
   orderSource?: OrderSource;
   totalAmount: number;
   specialInstructions: string | null;
+  // Buyer's PO number (B2B). Null when not provided. Max 16 chars at API edge
+  // to match NIC PoDtls.PoNo. Surfaced on invoice PDF + IRN payload when set.
+  poNumber: string | null;
+  // Flat alias of customer.customerType ('B2B' | 'B2C'). Surfaced by mapOrder
+  // so the web edit-order modal can gate B2B-only fields without traversing
+  // the nested customer relation. Null when the customer has been deleted.
+  customerType: 'B2B' | 'B2C' | null;
   items: OrderItem[];
   // WI-127: customer dispute lifecycle (drives the order-card dispute UI).
   customerDisputeReason?: string | null;
@@ -365,6 +372,8 @@ export interface Invoice {
   cgstValue: number;
   sgstValue: number;
   igstValue: number;
+  // Snapshot of Order.poNumber at issue time. Survives reissue + GSTR-1 export.
+  poNumber: string | null;
   isGaslinkBilling: boolean;
   // Group 1 (2026-06-11): true when this invoice was created by the
   // opening-balance CSV importer (no Order, no GST exchange). The billing

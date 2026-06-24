@@ -478,6 +478,13 @@ export default function DriverTripScreen() {
                       </Text>
                     );
                   })}
+                  {/* PO reference — only shown when set. Driver can quote
+                      the buyer's PO on the physical delivery note. */}
+                  {order.poNumber ? (
+                    <Text style={{ fontSize: 12, color: colors.textSecondary, fontStyle: 'italic' }}>
+                      PO: {order.poNumber}
+                    </Text>
+                  ) : null}
                 </View>
               </Card>
             ))}

@@ -185,6 +185,10 @@ export const createOrderSchema = z.object({
   customerId: uuid,
   deliveryDate: dateString,
   specialInstructions: z.string().max(500).optional(),
+  // Buyer's PO number (B2B). 16 chars max — NIC PoDtls.PoNo cap. UI hides the
+  // field for B2C customers but the schema accepts it from any caller; the
+  // IRN payload builder gates emission on customerType === 'B2B'.
+  poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
   items: z.array(orderItemSchema).min(1, 'At least one item is required'),
   orderType: z.enum(['delivery', 'returns_only']).default('delivery').optional(),
   cancelledStockEventId: uuid.optional(),
@@ -211,6 +215,10 @@ export const returnsConfirmationSchema = z.object({
 export const updateOrderSchema = z.object({
   deliveryDate: dateString.optional(),
   specialInstructions: z.string().max(500).optional(),
+  // PO number is editable until the invoice is issued; after issue the
+  // denormalised Invoice.poNumber snapshot still reflects the value at
+  // creation time, so post-issue edits are visual-only on the Order view.
+  poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
   items: z.array(orderItemSchema).min(1).optional(),
 });
 

@@ -29,7 +29,9 @@ export function computeOrderTotal(
 }
 
 const orderInclude = {
-  customer: { select: { id: true, customerName: true, stopSupply: true, creditPeriodDays: true } },
+  // customerType added so mapOrder can flat-alias it onto the order DTO —
+  // the web edit-order modal needs it to gate the B2B-only PO number input.
+  customer: { select: { id: true, customerName: true, customerType: true, stopSupply: true, creditPeriodDays: true } },
   driver: { select: { id: true, driverName: true } },
   vehicle: { select: { id: true, vehicleNumber: true } },
   items: { include: { cylinderType: { select: { typeName: true } } } },
@@ -99,6 +101,10 @@ export async function createOrder(
     customerId: string;
     deliveryDate: string;
     specialInstructions?: string;
+    // Buyer's PO number (B2B). Max 16 chars enforced upstream at the Zod
+    // schema. Persisted on Order.poNumber and snapshotted onto Invoice.poNumber
+    // at issue time so IRN + PDF + GSTR-1 stay aligned through reissue.
+    poNumber?: string;
     items: { cylinderTypeId: string; quantity: number }[];
   },
   options?: {
@@ -271,6 +277,9 @@ export async function createOrder(
         orderSource: options?.walkIn ? 'walk_in' : 'regular',
         totalAmount,
         specialInstructions: data.specialInstructions || null,
+        // Trim and null-fold empty strings so the IRN payload-emit gate
+        // (data.poNumber?.trim()) is symmetric with what's stored.
+        poNumber: data.poNumber?.trim() || null,
         items: { create: itemsWithPrices },
       },
       include: orderInclude,
@@ -425,6 +434,7 @@ export async function createOrderFromCancelledStock(
     deliveryDate: string;
     cancelledStockEventId: string;
     specialInstructions?: string;
+    poNumber?: string;
   }
 ) {
   // Verify cancelled stock is on a vehicle and available
@@ -475,6 +485,7 @@ export async function createOrderFromCancelledStock(
         status: 'pending_delivery',  // Already on the vehicle, skip assignment/dispatch
         totalAmount: totalPrice,
         specialInstructions: data.specialInstructions || `From cancelled stock on vehicle`,
+        poNumber: data.poNumber?.trim() || null,
         cancelledStockEventId: data.cancelledStockEventId,
         items: {
           create: [{
@@ -516,6 +527,7 @@ export async function updateOrder(
   data: {
     deliveryDate?: string;
     specialInstructions?: string;
+    poNumber?: string;
     items?: { cylinderTypeId: string; quantity: number }[];
   }
 ) {
@@ -532,6 +544,11 @@ export async function updateOrder(
     const updateData: Prisma.OrderUpdateInput = {};
     if (data.deliveryDate) updateData.deliveryDate = new Date(data.deliveryDate);
     if (data.specialInstructions !== undefined) updateData.specialInstructions = data.specialInstructions;
+    // PO is editable until invoice issue. Empty/whitespace input clears the
+    // field (null), matching the trim+null-fold convention used at create.
+    if (data.poNumber !== undefined) {
+      updateData.poNumber = data.poNumber.trim() || null;
+    }
 
     if (data.items) {
       // Delete old items and create new ones

@@ -27,6 +27,9 @@ type CreateOrderVars = {
   promisedDate?: string;
   promisedAmount?: number;
   acknowledged?: boolean;
+  // B2B customers may attach their internal PO. The dashboard returns
+  // customerType so the UI can gate this input to B2B only.
+  poNumber?: string;
 };
 
 // WI-122: the overdue gate returns a 409 with one of these shapes.
@@ -81,6 +84,8 @@ export default function CustomerOrdersScreen() {
 
   const [showForm, setShowForm] = useState(false);
   const [orderItems, setOrderItems] = useState<Record<string, number>>({});
+  // PO Number — surfaced only when dashboard reports customerType==='B2B'.
+  const [poNumberInput, setPoNumberInput] = useState('');
   // WI-125: selected delivery date for the New Order + Modify flows.
   const [orderDate, setOrderDate] = useState(defaultDeliveryISO);
   const [modifyDate, setModifyDate] = useState(todayISO);
@@ -115,7 +120,13 @@ export default function CustomerOrdersScreen() {
   );
   const orders: Order[] = ordersResponse?.orders ?? [];
 
-  const { data: dashboard } = useApiQuery<{ outstandingAmount?: number; cylinderTypes?: CylinderType[] }>(
+  const { data: dashboard } = useApiQuery<{
+    outstandingAmount?: number;
+    cylinderTypes?: CylinderType[];
+    // 'B2B' surfaces the PO input on the new-order modal; 'B2C' hides it.
+    // null when the dashboard hasn't loaded yet (default-hidden, safe).
+    customerType?: 'B2B' | 'B2C' | null;
+  }>(
     ['customer-dashboard'],
     '/customer-portal/dashboard',
   );
@@ -155,6 +166,7 @@ export default function CustomerOrdersScreen() {
       setLastOrderVars(null);
       setAck(false);
       setOrderDate(defaultDeliveryISO());
+      setPoNumberInput('');
     },
     // WI-122: intercept the overdue-gate 409 and route to the commitment
     // prompt instead of showing a raw error alert.
@@ -254,7 +266,11 @@ export default function CustomerOrdersScreen() {
       return;
     }
 
-    const vars: CreateOrderVars = { deliveryDate: orderDate, items };
+    const vars: CreateOrderVars = {
+      deliveryDate: orderDate,
+      items,
+      poNumber: poNumberInput.trim() || undefined,
+    };
     setLastOrderVars(vars);
     createOrder.mutate(vars);
   };
@@ -670,6 +686,29 @@ export default function CustomerOrdersScreen() {
                     </View>
                   </View>
                 </View>
+              )}
+
+              {/* B2B only — surface a PO Number field so finance can reference
+                  their internal purchase order. Mirrors the IRN PoDtls gate. */}
+              {dashboard?.customerType === 'B2B' && (
+                <>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginTop: 12, marginBottom: 6 }}>
+                    PO Number (optional)
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 8,
+                      paddingHorizontal: 12, paddingVertical: 10, color: colors.text,
+                      backgroundColor: colors.inputBg, fontSize: 15,
+                    }}
+                    value={poNumberInput}
+                    onChangeText={(v) => setPoNumberInput(v.slice(0, 16))}
+                    placeholder="Your purchase order number"
+                    placeholderTextColor={colors.textMuted}
+                    maxLength={16}
+                    autoCapitalize="characters"
+                  />
+                </>
               )}
 
               {renderQuantityPicker(orderItems, setOrderItems)}

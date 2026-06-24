@@ -79,7 +79,10 @@ type ChildWithCylinderType = HasId & WithCylinderType;
 
 interface CustomerInput extends HasId {
   customerName?: string | null;
-  customerType?: string | null;
+  // Used both for the nested customer mapping AND for flat aliasing onto
+  // mapOrder's output so the web UI can gate B2B-only fields (e.g. PO
+  // number input) without traversing the nested relation.
+  customerType?: 'B2B' | 'B2C' | string | null;
   contacts?: HasId[];
   cylinderDiscounts?: ChildWithCylinderType[];
   inventoryBalances?: ChildWithCylinderType[];
@@ -142,6 +145,9 @@ export function mapOrder(o: OrderInput | null | undefined): MappedRecord | null 
   // or the join can come back null — fall back to a label instead of a
   // blank cell.
   mapped.customerName = o.customer?.customerName ?? 'Deleted Customer';
+  // Flat customerType alias — the web edit-order modal needs to know whether
+  // to render the B2B-only PO number input. Same pattern as customerName.
+  mapped.customerType = o.customer?.customerType ?? null;
   if (o.driver) mapped.driver = mapDriver(o.driver);
   // Flat driverName for the orders list table. assignDriver() does set
   // order.driverId + status correctly, but the table reads order.driverName

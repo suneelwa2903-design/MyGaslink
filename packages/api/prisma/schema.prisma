@@ -796,6 +796,13 @@ model Order {
   // back via `cancellation_return` events. Default `regular` covers every legacy row.
   orderSource           OrderSource @default(regular) @map("order_source")
   totalAmount           Decimal     @default(0) @map("total_amount") @db.Decimal(18, 4)
+  // Buyer's Purchase Order number. B2B customers raise an internal PO before
+  // placing the order; capturing it lets the IRN payload emit PoDtls (NIC
+  // v1.1 optional block) and the invoice PDF / customer statement show the
+  // buyer's reference. Optional; max 16 chars to match NIC PoDtls.PoNo cap.
+  // Denormalised onto Invoice at issue time so reissue + GSTR-1 stay aligned
+  // even if the order row is later mutated (same pattern as customerGstinSnapshot).
+  poNumber              String?     @map("po_number")
   specialInstructions   String?     @map("special_instructions")
   deliveryLatitude      Float?      @map("delivery_latitude")
   deliveryLongitude     Float?      @map("delivery_longitude")
@@ -1141,6 +1148,10 @@ model Invoice {
   placeOfSupplyCode     String?       @map("place_of_supply_code")
   reverseCharge         Boolean       @default(false) @map("reverse_charge")
   customerGstinSnapshot String?       @map("customer_gstin_snapshot")
+  // Snapshot of Order.poNumber at invoice creation time. Same denormalisation
+  // discipline as customerGstinSnapshot — historic invoices keep the PO they
+  // were issued under even if the Order's poNumber is later edited.
+  poNumber              String?       @map("po_number")
   isGaslinkBilling      Boolean       @default(false) @map("is_gaslink_billing")
   isOpeningBalance      Boolean       @default(false) @map("is_opening_balance")
   // WI-037: set when a post-delivery reissue (cancel + regenerate IRN/EWB

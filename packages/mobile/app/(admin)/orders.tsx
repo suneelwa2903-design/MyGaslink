@@ -46,6 +46,9 @@ interface Order {
   orderNumber: string;
   customerId: string;
   customerName: string;
+  // Flat alias surfaced by mapOrder. Used to gate the B2B-only PO Number
+  // input in the edit modal.
+  customerType?: 'B2B' | 'B2C' | null;
   deliveryDate: string;
   status: string;
   totalAmount: number;
@@ -53,6 +56,8 @@ interface Order {
   driverId?: string;
   vehicleId?: string;
   specialInstructions?: string;
+  // Buyer's PO snapshot. Null/undefined when the order has no PO.
+  poNumber?: string | null;
   items: OrderItem[];
 }
 
@@ -60,6 +65,8 @@ interface Customer {
   customerId: string;
   customerName: string;
   phone?: string;
+  // 'B2B' (gstin present) vs 'B2C' (no gstin). Drives B2B-only UI fields.
+  customerType?: 'B2B' | 'B2C' | null;
 }
 
 interface Driver {
@@ -1063,6 +1070,7 @@ function CreateOrderModal({
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState(getTodayISO());
   const [specialInstructions, setSpecialInstructions] = useState('');
+  const [poNumber, setPoNumber] = useState('');
   const [items, setItems] = useState([{ cylinderTypeId: '', quantity: '1' }]);
 
   const createMutation = useApiMutation<unknown, unknown>(
@@ -1076,6 +1084,10 @@ function CreateOrderModal({
   );
 
   const selectedCustomer = customers.find((c) => c.customerId === customerId);
+  // PO number is B2B-only; the input hides for B2C customers. Matches the
+  // IRN payload emit gate in payloadBuilders so the wire shape and the UI
+  // affordance stay in lock-step.
+  const isB2bCustomer = selectedCustomer?.customerType === 'B2B';
 
   const filteredCustomers = useMemo(() => {
     if (!customerSearch.trim()) return customers;
@@ -1114,6 +1126,7 @@ function CreateOrderModal({
       customerId,
       deliveryDate,
       specialInstructions: specialInstructions || undefined,
+      poNumber: poNumber.trim() || undefined,
       items: validItems.map((it) => ({
         cylinderTypeId: it.cylinderTypeId,
         quantity: parseInt(it.quantity, 10),
@@ -1249,6 +1262,28 @@ function CreateOrderModal({
               onChange={setDeliveryDate}
               placeholder="Select delivery date"
             />
+
+            {/* PO Number — B2B only. Mirrors the IRN PoDtls emit gate so the
+                input is visible exactly where the field flows to NIC. */}
+            {isB2bCustomer && (
+              <>
+                <Text style={[styles.fieldLabel, { color: C.text, marginTop: 16 }]}>
+                  PO Number
+                </Text>
+                <TextInput
+                  style={[
+                    styles.textInput,
+                    { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text },
+                  ]}
+                  value={poNumber}
+                  onChangeText={(v) => setPoNumber(v.slice(0, 16))}
+                  placeholder="Buyer's PO (max 16 chars)"
+                  placeholderTextColor={C.textMuted}
+                  maxLength={16}
+                  autoCapitalize="characters"
+                />
+              </>
+            )}
 
             {/* Order items */}
             <View style={styles.itemsHeader}>
@@ -2253,12 +2288,17 @@ function EditOrderModal({
 
   const [deliveryDate, setDeliveryDate] = useState(String(order.deliveryDate).split('T')[0]);
   const [specialInstructions, setSpecialInstructions] = useState(order.specialInstructions ?? '');
+  const [poNumber, setPoNumber] = useState(order.poNumber ?? '');
   const [items, setItems] = useState(
     (order.items ?? []).map((it) => ({
       cylinderTypeId: it.cylinderTypeId,
       quantity: String(it.quantity),
     })),
   );
+  // PO is shown only when the order is for a B2B customer. mapOrder
+  // surfaces customerType flat onto the wire shape so we can read it
+  // here without traversing the nested customer relation.
+  const isB2bCustomer = order.customerType === 'B2B';
 
   const mutation = useApiMutation<unknown, unknown>(
     'put',
@@ -2285,6 +2325,7 @@ function EditOrderModal({
     mutation.mutate({
       deliveryDate,
       specialInstructions: specialInstructions || undefined,
+      poNumber: poNumber.trim() || undefined,
       items: validItems.map((it) => ({
         cylinderTypeId: it.cylinderTypeId,
         quantity: parseInt(it.quantity, 10),
@@ -2319,6 +2360,21 @@ function EditOrderModal({
               onChange={setDeliveryDate}
               placeholder="Select delivery date"
             />
+
+            {isB2bCustomer && (
+              <>
+                <Text style={[styles.fieldLabel, { color: C.text }]}>PO Number</Text>
+                <TextInput
+                  style={[styles.textInput, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+                  value={poNumber}
+                  onChangeText={(v) => setPoNumber(v.slice(0, 16))}
+                  placeholder="Buyer's PO (max 16 chars)"
+                  placeholderTextColor={C.textMuted}
+                  maxLength={16}
+                  autoCapitalize="characters"
+                />
+              </>
+            )}
 
             <Text style={[styles.fieldLabel, { color: C.text }]}>Items *</Text>
             {items.map((item, i) => (
@@ -2417,6 +2473,13 @@ function OrderDetailModal({
 
           <Text style={[styles.fieldLabel, { color: C.textSecondary, fontSize: 12 }]}>Driver</Text>
           <Text style={[{ color: C.text, fontSize: 15, marginBottom: 12 }]}>{order.driverName || 'Unassigned'}</Text>
+
+          {order.poNumber ? (
+            <>
+              <Text style={[styles.fieldLabel, { color: C.textSecondary, fontSize: 12 }]}>PO No.</Text>
+              <Text style={[{ color: C.text, fontSize: 15, marginBottom: 12 }]}>{order.poNumber}</Text>
+            </>
+          ) : null}
 
           <Text style={[styles.fieldLabel, { color: C.textSecondary, fontSize: 12 }]}>Total Amount</Text>
           <Text style={[{ color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16 }]}>

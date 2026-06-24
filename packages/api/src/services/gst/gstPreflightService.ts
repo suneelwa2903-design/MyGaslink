@@ -1198,6 +1198,9 @@ async function buildInvoiceData(
       gstRate: item.gstRate || 18,
     })),
     isInterState: sellerStateCode !== buyerStateCode,
+    // Snapshot from Invoice — preserved through reissue. Reads the inv row
+    // returned by findFirstOrThrow above (no select → all scalars present).
+    poNumber: inv.poNumber ?? undefined,
     transport,
   };
   return data;

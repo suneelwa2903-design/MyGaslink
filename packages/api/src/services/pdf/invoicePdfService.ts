@@ -31,6 +31,9 @@ interface InvoiceForPdf {
   cgstValue: number;
   sgstValue: number;
   igstValue: number;
+  // Buyer's PO snapshot — read by drawHeader and rendered in the right
+  // column when present. Null for invoices without a PO.
+  poNumber: string | null;
   distributor: {
     businessName: string;
     legalName: string;
@@ -225,7 +228,16 @@ function drawPill(doc: PDFKit.PDFDocument, x: number, y: number, text: string, f
 function drawHeader(
   doc: PDFKit.PDFDocument,
   seller: { name: string; gstin: string | null },
-  meta: { gstDocNo: string; invoiceDate: string; dueDate: string; paymentTerms: string; ewbNo?: string | null },
+  meta: {
+    gstDocNo: string;
+    invoiceDate: string;
+    dueDate: string;
+    paymentTerms: string;
+    ewbNo?: string | null;
+    // Buyer's Purchase Order number. Rendered right-column below EWB (or
+    // below GST Doc No when EWB absent). Omitted entirely when null/empty.
+    poNumber?: string | null;
+  },
   startY: number,
 ): number {
   const T = LAYOUT.THEME;
@@ -267,6 +279,15 @@ function drawHeader(
     const ewbText = `EWB No: ${meta.ewbNo}`;
     const ewbW = doc.widthOfString(ewbText);
     doc.text(ewbText, rightMargin - ewbW, rightY, { width: ewbW + 10 });
+    rightY += 14;
+  }
+
+  // Buyer's PO number (when set). Sits below EWB so the order of references
+  // reads top-down: doc identity → e-way bill → buyer's own reference.
+  if (meta.poNumber) {
+    const poText = `PO No: ${meta.poNumber}`;
+    const poW = doc.widthOfString(poText);
+    doc.text(poText, rightMargin - poW, rightY, { width: poW + 10 });
     rightY += 14;
   }
 
@@ -780,7 +801,15 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
   const dueDate = formatDate(invoice.dueDate);
   const creditDays = cust?.creditPeriodDays ?? 30;
   const paymentTerms = `Net ${creditDays}`;
-  const meta = { gstDocNo, invoiceDate, dueDate, paymentTerms, ewbNo: gstDoc?.ewbNo ?? null };
+  const meta = {
+    gstDocNo,
+    invoiceDate,
+    dueDate,
+    paymentTerms,
+    ewbNo: gstDoc?.ewbNo ?? null,
+    // Renders below EWB in drawHeader. Omitted entirely when null/empty.
+    poNumber: invoice.poNumber ?? null,
+  };
 
   // Compute items
   const { computed: computedItems } = computeItems(invoice.items);

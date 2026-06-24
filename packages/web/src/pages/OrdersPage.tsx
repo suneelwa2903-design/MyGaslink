@@ -480,11 +480,17 @@ function CreateOrderModal({
       // Phase D (2026-06-12): local TZ.
       deliveryDate: localTodayISO(),
       specialInstructions: '',
+      poNumber: '',
       items: [{ cylinderTypeId: '', quantity: 1 }],
     },
   });
 
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
+
+  // Track the picked customer's type so the PO input is gated on B2B. The
+  // CustomerSearchInput onChange passes the full Customer object; we keep
+  // just the type locally (avoids re-fetching). Cleared on Clear-selection.
+  const [selectedCustomerType, setSelectedCustomerType] = useState<'B2B' | 'B2C' | null>(null);
 
   const mutation = useMutation({
     mutationFn: (data: CreateOrderInput) => apiPost('/orders', data),
@@ -510,7 +516,13 @@ function CreateOrderModal({
           label="Customer"
           required
           value={customerId}
-          onChange={(id) => setValue('customerId', id, { shouldValidate: true })}
+          onChange={(id, customer) => {
+            setValue('customerId', id, { shouldValidate: true });
+            // Empty id ⇒ user cleared the selection ⇒ drop the cached type
+            // so the PO field hides immediately (anti-pattern #18 cohesion:
+            // dependent UI state invalidates with its source).
+            setSelectedCustomerType(id ? (customer?.customerType ?? null) : null);
+          }}
           error={errors.customerId?.message}
         />
 
@@ -521,6 +533,16 @@ function CreateOrderModal({
           error={errors.deliveryDate?.message}
           {...register('deliveryDate')}
         />
+
+        {selectedCustomerType === 'B2B' && (
+          <Input
+            label="PO Number"
+            placeholder="Buyer's purchase order number"
+            maxLength={16}
+            error={errors.poNumber?.message}
+            {...register('poNumber')}
+          />
+        )}
 
         <div>
           <label className="label">Order Items</label>
@@ -634,6 +656,12 @@ function OrderDetailModal({
             <p className="text-xs uppercase tracking-wide text-surface-500">Vehicle</p>
             <p className="font-medium">{order.vehicleNumber || '—'}</p>
           </div>
+          {order.poNumber && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-surface-500">PO No.</p>
+              <p className="font-medium">{order.poNumber}</p>
+            </div>
+          )}
         </div>
 
         <div>
@@ -750,6 +778,7 @@ function EditOrderModal({
       // PUT /orders/:id fails zod validation with a 400.
       deliveryDate: order.deliveryDate?.split('T')[0] ?? order.deliveryDate,
       specialInstructions: order.specialInstructions || '',
+      poNumber: order.poNumber || '',
       items: order.items.map((i) => ({
         cylinderTypeId: i.cylinderTypeId,
         quantity: i.quantity,
@@ -760,7 +789,7 @@ function EditOrderModal({
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
 
   const mutation = useMutation({
-    mutationFn: (data: { deliveryDate?: string; specialInstructions?: string; items?: { cylinderTypeId: string; quantity: number }[] }) =>
+    mutationFn: (data: { deliveryDate?: string; specialInstructions?: string; poNumber?: string; items?: { cylinderTypeId: string; quantity: number }[] }) =>
       apiPut(`/orders/${order.orderId}`, data),
     onSuccess: () => {
       toast.success('Order updated successfully');
@@ -781,6 +810,16 @@ function EditOrderModal({
           error={errors.deliveryDate?.message}
           {...register('deliveryDate')}
         />
+
+        {order.customerType === 'B2B' && (
+          <Input
+            label="PO Number"
+            placeholder="Buyer's purchase order number"
+            maxLength={16}
+            error={errors.poNumber?.message}
+            {...register('poNumber')}
+          />
+        )}
 
         <div>
           <label className="label">Order Items</label>

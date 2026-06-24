@@ -808,6 +808,9 @@ async function buildInvoiceDataForIrn(
       gstRate: item.gstRate || 18,
     })),
     isInterState: sellerStateCode !== buyerStateCode,
+    // Reissue must preserve the original PO — read from the denormalised
+    // Invoice.poNumber snapshot, NOT the live Order.poNumber.
+    poNumber: inv.poNumber ?? undefined,
   };
 }
 

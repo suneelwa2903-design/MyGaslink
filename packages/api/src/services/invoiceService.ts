@@ -304,6 +304,10 @@ export async function createInvoiceFromOrder(
   const taxableValue = gstEnabled ? Math.round(totalBaseAmount * 100) / 100 : totalAmount;
   const placeOfSupplyCode = deriveStateCode(order.customer?.gstin, order.customer?.billingState);
   const customerGstinSnapshot = order.customer?.gstin || null;
+  // Snapshot Order.poNumber onto Invoice. Same write-time discipline as
+  // customerGstinSnapshot — a later edit to Order.poNumber does NOT mutate
+  // the historic invoice's PO, so reissue + GSTR-1 export stay aligned.
+  const poNumberSnapshot = order.poNumber?.trim() || null;
 
   const invoice = await tx.invoice.create({
     data: {
@@ -316,6 +320,7 @@ export async function createInvoiceFromOrder(
       totalAmount,
       outstandingAmount: totalAmount,
       status: 'issued',
+      poNumber: poNumberSnapshot,
       cgstValue,
       sgstValue,
       igstValue,

@@ -99,6 +99,9 @@ router.post('/orders',
       cylinderTypeId: z.string().uuid(),
       quantity: z.number().int().positive(),
     })).min(1),
+    // B2B customers may attach a PO number. 16-char cap matches NIC
+    // PoDtls.PoNo. Trim + null-fold happens in orderService.createOrder.
+    poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
     // WI-122: optional payment-commitment fields supplied when the customer
     // confirms a promise-to-pay after the overdue gate prompts them.
     promisedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

@@ -15,9 +15,11 @@ export async function getCustomerDashboard(
 ) {
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
-    // status is needed by the customer mobile dashboard so it can render the
-    // "supply paused" / "account closed" banner without a second round trip.
-    select: { id: true, customerName: true, status: true, stopSupply: true, creditPeriodDays: true },
+    // status: drives the "supply paused" / "account closed" banner.
+    // customerType: drives the New Order modal's PO Number input visibility —
+    //   B2B only. Surfaced flat on the dashboard payload below so the mobile
+    //   client knows its own type without a second round trip.
+    select: { id: true, customerName: true, customerType: true, status: true, stopSupply: true, creditPeriodDays: true },
   });
   if (!customer) throw new PortalError('Customer not found', 404);
 
@@ -66,6 +68,7 @@ export async function getCustomerDashboard(
       range: periodRange,
       supplyStopped: true,
       status: customer.status,
+      customerType: customer.customerType,
     };
   }
 
@@ -147,6 +150,9 @@ export async function getCustomerDashboard(
     cylinderTypes,
     supplyStopped: false,
     status: customer.status,
+    // Surfaced so the mobile New Order modal can render the B2B-only PO
+    // Number input (gated to customerType === 'B2B').
+    customerType: customer.customerType,
   };
 }
 
@@ -274,6 +280,7 @@ export async function createMyOrder(
   data: {
     deliveryDate: string;
     specialInstructions?: string;
+    poNumber?: string;
     items: { cylinderTypeId: string; quantity: number }[];
     // WI-122: optional commitment fields when re-submitting after the gate.
     promisedDate?: string;
@@ -297,6 +304,7 @@ export async function createMyOrder(
     customerId,
     deliveryDate: data.deliveryDate,
     specialInstructions: data.specialInstructions,
+    poNumber: data.poNumber,
     items: data.items,
   }, options);
 }

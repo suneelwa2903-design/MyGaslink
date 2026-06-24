@@ -62,6 +62,12 @@ interface InvoiceData {
   buyer: BuyerInfo;
   items: InvoiceItem[];
   isInterState: boolean;
+  // Buyer's PO number (B2B). Optional. When non-empty after trim AND the
+  // recipient is B2B (gstin present, !== URP), buildIrnPayload emits the
+  // optional NIC PoDtls block. NEVER emitted for B2C — that would carry
+  // an unregistered buyer's internal reference into NIC and serves no
+  // GSTR-1 purpose. NEVER emit an empty PoNo string per anti-pattern #10.
+  poNumber?: string | null;
   // For CRN/DBN
   originalDocNumber?: string;
   originalDocDate?: Date;
@@ -127,6 +133,12 @@ export interface IrnPayload {
     InvRm: string;
     PrecDocDtls: Array<{ InvNo: string; InvDt: string; OthRefNo: string }>;
   };
+  // NIC v1.1 optional PoDtls block — buyer's purchase order reference.
+  // PoNo: max 16 chars (NIC schema cap). PoDt: same dd/MM/yyyy format as
+  // DocDtls.Dt. Emitted only when (a) buyer is B2B and (b) data.poNumber
+  // is non-empty after trim — empty values must omit the block entirely
+  // per anti-pattern #10 (NIC may reject `{ PoNo: '', PoDt: '' }`).
+  PoDtls?: { PoNo: string; PoDt: string };
   // Inline EwbDtls is intentionally never emitted (anti-pattern #10 — the
   // two-step IRN→EWB pattern is used instead). Declared optional only so the
   // payload-shape guard test can assert it is absent.
@@ -343,6 +355,19 @@ export function buildIrnPayload(data: InvoiceData): IrnPayload {
         InvDt: data.originalDocDate ? formatDate(data.originalDocDate) : formatDate(data.docDate),
         OthRefNo: sanitize(data.reason, 20, data.docType === 'CRN' ? 'Credit Note' : 'Debit Note'),
       }],
+    };
+  }
+
+  // NIC v1.1 optional PoDtls block — buyer's purchase order reference. Emit
+  // only for B2B AND when poNumber is non-empty after trim. PoDt defaults to
+  // the doc date (same dd/MM/yyyy formatter as DocDtls.Dt) since we don't
+  // capture PO date separately. Anti-pattern #10: NEVER send `{ PoNo: '' }` —
+  // omit the entire block when empty. NIC's behaviour on an empty PoNo is
+  // unverified; the safe contract is "omit unless present".
+  if (!isB2C && data.poNumber?.trim()) {
+    payload.PoDtls = {
+      PoNo: data.poNumber.trim().slice(0, 16),
+      PoDt: formatDate(data.docDate),
     };
   }
 

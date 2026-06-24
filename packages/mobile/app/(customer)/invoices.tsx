@@ -37,6 +37,8 @@ interface InvoiceDetail {
   orderStatus: string | null;
   customerName: string;
   customerGstin: string | null;
+  // Snapshot of the order's PO at issue time. Null when no PO was attached.
+  poNumber: string | null;
   billingAddress: string | null;
   items: Array<{
     cylinderTypeName: string;
@@ -262,6 +264,12 @@ export default function CustomerInvoicesScreen() {
                       <Text style={{ fontSize: 13, color: colors.textSecondary }}>Due Date</Text>
                       <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }}>{formatDate(invoiceDetail.dueDate)}</Text>
                     </View>
+                    {invoiceDetail.poNumber ? (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ fontSize: 13, color: colors.textSecondary }}>PO No.</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }}>{invoiceDetail.poNumber}</Text>
+                      </View>
+                    ) : null}
                   </View>
                 </View>
 

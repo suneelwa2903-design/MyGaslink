@@ -307,6 +307,9 @@ export async function processInvoiceGst(invoiceId: string, distributorId: string
       gstRate: item.gstRate || 18,
     })),
     isInterState,
+    // Snapshot from Invoice (not Order) so reissue preserves the PO that
+    // was on the original IRN even if the operator later edits Order.poNumber.
+    poNumber: invoice.poNumber ?? undefined,
   };
 
   // Get credential email once for all GST API calls
@@ -811,6 +814,9 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
       gstRate: dispatchGstRate,
     })),
     isInterState,
+    // Dispatch EWB uses the order's PO (invoice may not exist yet at
+    // dispatch time). The buyer reference matches the eventual invoice.
+    poNumber: order.poNumber ?? undefined,
   };
 
   try {
