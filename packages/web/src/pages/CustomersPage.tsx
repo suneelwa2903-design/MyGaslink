@@ -737,8 +737,8 @@ function CustomerFormModal({
                     value={String(field.value ?? 18)}
                     onChange={(e) => field.onChange(Number(e.target.value) as 5 | 18)}
                     options={[
-                      { value: '18', label: '18% (Standard)' },
-                      { value: '5', label: '5% (Food Service)' },
+                      { value: '18', label: '18%' },
+                      { value: '5', label: '5%' },
                     ]}
                   />
                 )}

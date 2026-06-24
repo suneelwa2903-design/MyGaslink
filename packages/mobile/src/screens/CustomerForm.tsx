@@ -1030,7 +1030,7 @@ export function CustomerForm({
                       color: selected ? ACCENT : colors.text,
                     }}
                   >
-                    {opt === '18' ? '18% (Standard)' : '5% (Food Service)'}
+                    {opt === '18' ? '18%' : '5%'}
                   </Text>
                 </TouchableOpacity>
               );
