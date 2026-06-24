@@ -414,6 +414,11 @@ function CustomerFormModal({
           shippingPincode: customer.shippingPincode || '',
           creditPeriodDays: customer.creditPeriodDays,
           transportChargePerCylinder: customer.transportChargePerCylinder ?? 0,
+          // 5%-eligible food-service customer vs default 18%. Stored as
+          // either 5 or null (we map null → 18 for the select; 18 sent
+          // back is harmless because the service writes null when the
+          // value matches the platform default).
+          gstRateOverride: (customer.gstRateOverride === 5 ? 5 : 18) as 5 | 18,
           contacts: customer.contacts.map((c) => ({ name: c.name, phone: c.phone, email: c.email || '', isPrimary: c.isPrimary })),
           cylinderDiscounts: customer.cylinderDiscounts.map((d) => ({ cylinderTypeId: d.cylinderTypeId, discountPerUnit: d.discountPerUnit })),
         }
@@ -422,6 +427,7 @@ function CustomerFormModal({
           phone: '',
           creditPeriodDays: 30,
           transportChargePerCylinder: 0,
+          gstRateOverride: 18 as 5 | 18,
           contacts: [],
           cylinderDiscounts: [],
         },
@@ -716,6 +722,31 @@ function CustomerFormModal({
                 {...register('transportChargePerCylinder', { valueAsNumber: true })}
               />
             )}
+            {/* Per-customer GST rate. 5% applies to food-service customers
+                (hotels / restaurants / canteens using LPG for cooking) per
+                the commercial-LPG-eligibility rate notification. 18% is
+                the default for everyone else. Driver of InvoiceItem.gstRate
+                at issue time — see invoiceService.createInvoiceFromOrder. */}
+            <div>
+              <Controller
+                control={control}
+                name="gstRateOverride"
+                render={({ field }) => (
+                  <Select
+                    label="GST Rate"
+                    value={String(field.value ?? 18)}
+                    onChange={(e) => field.onChange(Number(e.target.value) as 5 | 18)}
+                    options={[
+                      { value: '18', label: '18% (Standard)' },
+                      { value: '5', label: '5% (Food Service)' },
+                    ]}
+                  />
+                )}
+              />
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+                5% applies to customers using LPG for food preparation (hotels, restaurants, canteens).
+              </p>
+            </div>
           </div>
         </div>
 

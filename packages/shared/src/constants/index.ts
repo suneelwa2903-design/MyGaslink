@@ -1,11 +1,25 @@
 // ─── GST Constants ───────────────────────────────────────────────────────────
 
+// Legacy decimal-form GST rates retained for the inter-state CGST/SGST vs
+// IGST split where the per-line rate is the platform default (18%). New
+// code paths derive the split dynamically from InvoiceItem.gstRate so a
+// per-customer override (Customer.gstRateOverride) flows through correctly
+// — see invoiceService.createInvoiceFromOrder + createManualInvoice.
 export const GST_RATES = {
   CGST: 0.09,
   SGST: 0.09,
   IGST: 0.18,
   CESS: 0,
 } as const;
+
+// Permitted values for Customer.gstRateOverride and InvoiceItem.gstRate at
+// the API boundary. 5% applies to food-service customers (hotels,
+// restaurants, canteens — commercial LPG used for food preparation); 18%
+// is the default for everyone else. New rates require BOTH a Zod schema
+// update AND a NIC-sandbox A/B verification per CLAUDE.md anti-pattern #10
+// (the HSN→rate compatibility matrix at NIC is not in our control).
+export const ALLOWED_GST_RATES = [5, 18] as const;
+export type AllowedGstRate = typeof ALLOWED_GST_RATES[number];
 
 export const GST_DEFAULT_HSN = '27111900'; // LPG HSN code
 export const GST_DEFAULT_UOM = 'NOS'; // Numbers

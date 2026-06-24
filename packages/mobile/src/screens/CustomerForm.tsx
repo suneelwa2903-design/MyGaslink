@@ -112,6 +112,9 @@ export interface CustomerFormState {
   cylinderDiscounts: CustomerDiscountRow[];
   creditPeriodDays: string;
   transportChargePerCylinder: string;
+  // GST rate (percent). Stored as a string '5' | '18' for picker
+  // consistency with the rest of the form; parsed on submit.
+  gstRateOverride: '5' | '18';
 }
 
 /**
@@ -140,6 +143,10 @@ export interface CustomerFormSubmit {
   cylinderDiscounts?: { cylinderTypeId: string; discountPerUnit: number }[];
   creditPeriodDays: number;
   transportChargePerCylinder?: number;
+  // 5 → food-service (commercial-LPG-eligible) customer. 18 → standard.
+  // Sent as a number; null when caller passes 18 to keep the platform
+  // default semantics (caller code at api layer normalises).
+  gstRateOverride: 5 | 18;
 }
 
 export type CustomerFormInitial = Partial<CustomerFormState>;
@@ -182,6 +189,7 @@ function emptyFormState(): CustomerFormState {
     cylinderDiscounts: [],
     creditPeriodDays: '30',
     transportChargePerCylinder: '0',
+    gstRateOverride: '18',
   };
 }
 
@@ -224,6 +232,7 @@ export function customerToFormInitial(c: SharedCustomer): CustomerFormInitial {
     })),
     creditPeriodDays: String(c.creditPeriodDays ?? 30),
     transportChargePerCylinder: String(c.transportChargePerCylinder ?? 0),
+    gstRateOverride: c.gstRateOverride === 5 ? '5' : '18',
   };
 }
 
@@ -503,6 +512,7 @@ export function CustomerForm({
       ...shipping,
       creditPeriodDays: credit,
       transportChargePerCylinder: transport,
+      gstRateOverride: (form.gstRateOverride === '5' ? 5 : 18) as 5 | 18,
       contacts: form.contacts.length
         ? form.contacts.map((c) => ({
             name: c.name.trim(),
@@ -991,6 +1001,44 @@ export function CustomerForm({
               />
             </>
           )}
+
+          {/* GST Rate — 5% for food-service customers (hotels, restaurants,
+              canteens), 18% standard. Drives InvoiceItem.gstRate at issue
+              time in invoiceService.createInvoiceFromOrder. */}
+          <FieldLabel label="GST Rate" colors={colors} />
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 4 }}>
+            {(['18', '5'] as const).map((opt) => {
+              const selected = form.gstRateOverride === opt;
+              return (
+                <TouchableOpacity
+                  key={opt}
+                  onPress={() => set('gstRateOverride', opt)}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 12,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: selected ? ACCENT : colors.inputBorder,
+                    backgroundColor: selected ? ACCENT + '14' : colors.inputBg,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '700',
+                      color: selected ? ACCENT : colors.text,
+                    }}
+                  >
+                    {opt === '18' ? '18% (Standard)' : '5% (Food Service)'}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 14 }}>
+            5% for hotels, restaurants, canteens using LPG for cooking.
+          </Text>
 
           {/* Action row */}
           <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>

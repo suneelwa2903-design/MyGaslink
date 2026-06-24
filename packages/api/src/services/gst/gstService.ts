@@ -776,6 +776,12 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
   const buyerStateCode = order.customer?.gstin ? order.customer.gstin.substring(0, 2) : sellerStateCode;
   const isInterState = sellerStateCode !== buyerStateCode;
 
+  // Dispatch EWB rate must match the rate the eventual invoice will
+  // carry, otherwise NIC sees the EWB at one rate and the IRN at another
+  // for the same docNumber. Sourced from the customer's gstRateOverride
+  // (5 for food-service, 18 default) — same resolver invoiceService uses.
+  const dispatchGstRate = (order.customer?.gstRateOverride ?? 18) as 5 | 18;
+
   // Build a simplified payload for EWB (using order amounts, not invoice)
   const invoiceData = {
     docType: 'INV' as const,
@@ -802,7 +808,7 @@ export async function generateDispatchEwb(orderId: string, distributorId: string
       unit: 'NOS',
       unitPrice: toNum(item.unitPrice),
       discountPerUnit: toNum(item.discountPerUnit),
-      gstRate: 18,
+      gstRate: dispatchGstRate,
     })),
     isInterState,
   };

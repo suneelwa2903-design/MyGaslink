@@ -9,9 +9,11 @@
 import { format } from 'date-fns';
 import { getTransDistance } from '../../utils/pincodeDistance.js';
 
-const GST_RATE = 18;
-const CGST_RATE = 9;
-const SGST_RATE = 9;
+// All GST rates are now sourced per line from InvoiceItem.gstRate. The
+// previous module-level CGST_RATE / SGST_RATE / GST_RATE constants
+// (=9/9/18) silently bypassed per-line rates and were removed when the
+// 5%-override path landed. Inter-state lines use item.gstRate; intra-
+// state lines split item.gstRate equally across CGST/SGST.
 
 interface SellerInfo {
   gstin: string;
@@ -207,8 +209,13 @@ export function buildIrnPayload(data: InvoiceData): IrnPayload {
     if (data.isInterState) {
       igstAmt = Math.round(assAmt * (item.gstRate / 100) * 100) / 100;
     } else {
-      cgstAmt = Math.round(assAmt * (CGST_RATE / 100) * 100) / 100;
-      sgstAmt = Math.round(assAmt * (SGST_RATE / 100) * 100) / 100;
+      // Intra-state CGST + SGST each carry half the per-item rate. A 5%
+      // line ⇒ 2.5+2.5; an 18% line ⇒ 9+9. Previously hardcoded to
+      // CGST_RATE/SGST_RATE constants (=9), which sent NIC the wrong
+      // CgstAmt/SgstAmt for any non-18% line.
+      const halfRate = item.gstRate / 2;
+      cgstAmt = Math.round(assAmt * (halfRate / 100) * 100) / 100;
+      sgstAmt = Math.round(assAmt * (halfRate / 100) * 100) / 100;
     }
 
     const totItemVal = Math.round((assAmt + igstAmt + cgstAmt + sgstAmt) * 100) / 100;
@@ -551,9 +558,15 @@ export function buildEwbPayload(
       productDesc: `Supply of LPG - ${item.PrdDesc}`,
       quantity: item.Qty,
       qtyUnit: item.Unit,
-      cgstRate: item.CgstAmt > 0 ? CGST_RATE : 0,
-      sgstRate: item.SgstAmt > 0 ? SGST_RATE : 0,
-      igstRate: item.IgstAmt > 0 ? GST_RATE : 0,
+      // EWB wire-shape: source the rate from the IRN line itself
+      // (item.GstRt is the per-line percent — 5 or 18). Intra-state lines
+      // split that rate equally across CGST/SGST. Previously hardcoded to
+      // CGST_RATE=9 / SGST_RATE=9 / GST_RATE=18, which made every EWB
+      // line on a 5%-override invoice echo the wrong rate label even
+      // when the amounts (CgstAmt etc.) were correct.
+      cgstRate: item.CgstAmt > 0 ? item.GstRt / 2 : 0,
+      sgstRate: item.SgstAmt > 0 ? item.GstRt / 2 : 0,
+      igstRate: item.IgstAmt > 0 ? item.GstRt : 0,
       cessRate: 0,
     })),
 

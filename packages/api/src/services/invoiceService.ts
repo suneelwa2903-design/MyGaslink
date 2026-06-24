@@ -1,8 +1,28 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient, $Enums } from '@prisma/client';
-import { GST_RATES, deriveStateCode } from '@gaslink/shared';
+import { ALLOWED_GST_RATES, deriveStateCode } from '@gaslink/shared';
+import type { AllowedGstRate } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
 import { allocateNumber } from './numberingService.js';
+
+// Customer-level GST rate override (5% / 18%): resolve the rate every
+// invoice-creation path will write into InvoiceItem.gstRate. Used at
+// invoice issue time only — historic invoices keep their snapshotted
+// rate forever (see CLAUDE.md anti-pattern #16 on write-time discipline).
+// Throws if a malformed value (e.g. injected via SQL or a future schema
+// drift) reaches the service — Zod blocks bad inputs at the API edge.
+function resolveCustomerGstRate(
+  override: number | null | undefined,
+): AllowedGstRate {
+  const rate = override ?? 18;
+  if (!ALLOWED_GST_RATES.includes(rate as AllowedGstRate)) {
+    throw new InvoiceError(
+      `Invalid GST rate ${rate} on customer. Allowed: ${ALLOWED_GST_RATES.join(', ')}`,
+      400,
+    );
+  }
+  return rate as AllowedGstRate;
+}
 
 // WI-108: legacy random number generators, kept as the fallback when a
 // distributor has no docCode set (structured numbering not activated).
@@ -106,7 +126,7 @@ export async function createInvoiceFromOrder(
     where: { id: orderId, distributorId, deletedAt: null },
     include: {
       items: { include: { cylinderType: true } },
-      customer: { select: { creditPeriodDays: true, gstin: true, billingState: true, transportChargePerCylinder: true } },
+      customer: { select: { creditPeriodDays: true, gstin: true, billingState: true, transportChargePerCylinder: true, gstRateOverride: true } },
     },
   });
 
@@ -131,6 +151,14 @@ export async function createInvoiceFromOrder(
   const isInterState = gstEnabled && distributor?.state && order.customer?.billingState
     ? distributor.state !== order.customer.billingState
     : false;
+
+  // Resolve the per-customer GST rate ONCE. Drives both InvoiceItem.gstRate
+  // (per-line snapshot) and the inclusive→base reverse calc. 5%-eligible
+  // food-service customers ⇒ effectiveGstRate=5; everyone else ⇒ 18.
+  // gstFactor is the decimal form (0.05 or 0.18) used in / (1+factor) and
+  // base*factor. Intra-state split is factor/2 for CGST and SGST.
+  const effectiveGstRate = resolveCustomerGstRate(order.customer?.gstRateOverride);
+  const gstFactor = effectiveGstRate / 100;
 
   const issueDate = new Date();
   // WI-108: structured number when docCode is set, else legacy random.
@@ -168,9 +196,10 @@ export async function createInvoiceFromOrder(
       // base is computed ONCE here, only for the Invoice.cgstValue/sgstValue/
       // igstValue aggregates. Downstream readers (invoicePdfService.computeItems
       // and gst/payloadBuilders.buildIrnPayload) assume inclusive and apply a
-      // single /1.18 of their own. Storing base here was the historical bug
-      // that produced ₹42,000 → ₹30,163.75 (= /1.18²) in IRN AssAmt.
-      const basePrice = effectivePrice / (1 + GST_RATES.IGST);
+      // single /(1+gstFactor) of their own. The factor was previously hardcoded
+      // to 1.18 — now it derives from the customer's effective rate so a 5%
+      // food-service customer's lines reverse-calc against 1.05.
+      const basePrice = effectivePrice / (1 + gstFactor);
       totalBaseAmount += basePrice * qty;
 
       invoiceItems.push({
@@ -180,10 +209,10 @@ export async function createInvoiceFromOrder(
         quantity: qty,
         unitPrice: toNum(oi.unitPrice), // GST-inclusive, BEFORE discount
         discountPerUnit: oi.discountPerUnit, // GST-inclusive
-        gstRate: 18,
+        gstRate: effectiveGstRate,
         totalPrice: lineTotal, // GST-inclusive, AFTER discount = (unitPrice − discountPerUnit) × qty
         // Phase 5 (2026-06-12): GSTR-1 Table 12 (HSN summary) inputs.
-        // taxableValue = post-discount inclusive line total / (1 + 18%).
+        // taxableValue = post-discount inclusive line total / (1 + rate).
         // uom defaults to 'NOS' in schema; left implicit here.
         taxableValue: basePrice * qty,
       });
@@ -204,16 +233,18 @@ export async function createInvoiceFromOrder(
     }
   }
 
-  // Inward transport charge (HSN 996511, 18%): optional per-customer fee of
+  // Inward transport charge (HSN 996511): optional per-customer fee of
   // ₹X (GST-inclusive) per delivered cylinder. Stored as a separate invoice
   // line, identical shape to cylinder lines so it flows through the PDF, IRN
   // (IsServc='Y' for 99xxxx) and EWB the same way. Skipped when rate is 0.
+  // Transport tax rate inherits the customer's effective rate — per-
+  // customer eligibility model means the whole invoice is single-rate.
   const transportRate = toNum(order.customer?.transportChargePerCylinder);
   if (transportRate > 0 && totalDeliveredQty > 0) {
     const transportTotal = transportRate * totalDeliveredQty; // GST-inclusive
     totalAmount += transportTotal;
     if (gstEnabled) {
-      const transportBase = transportRate / (1 + GST_RATES.IGST);
+      const transportBase = transportRate / (1 + gstFactor);
       totalBaseAmount += transportBase * totalDeliveredQty;
       invoiceItems.push({
         cylinderTypeId: null,
@@ -222,7 +253,7 @@ export async function createInvoiceFromOrder(
         quantity: totalDeliveredQty,
         unitPrice: transportRate, // GST-inclusive — see anti-pattern #16
         discountPerUnit: 0,
-        gstRate: 18,
+        gstRate: effectiveGstRate,
         totalPrice: transportTotal,
         // Phase 5: HSN 996511 (services) — taxable value pre-tax.
         taxableValue: transportBase * totalDeliveredQty,
@@ -250,10 +281,15 @@ export async function createInvoiceFromOrder(
 
   if (gstEnabled) {
     if (isInterState) {
-      igstValue = Math.round(totalBaseAmount * GST_RATES.IGST * 100) / 100;
+      igstValue = Math.round(totalBaseAmount * gstFactor * 100) / 100;
     } else {
-      cgstValue = Math.round(totalBaseAmount * GST_RATES.CGST * 100) / 100;
-      sgstValue = Math.round(totalBaseAmount * GST_RATES.SGST * 100) / 100;
+      // Intra-state: CGST + SGST each carry half the rate (5% → 2.5+2.5,
+      // 18% → 9+9). Derived from gstFactor (not GST_RATES constant) so a
+      // 5%-override customer's invoice header reconciles with the per-line
+      // gstRate=5 snapshots, preventing the mixed-rate footer bug.
+      const halfFactor = gstFactor / 2;
+      cgstValue = Math.round(totalBaseAmount * halfFactor * 100) / 100;
+      sgstValue = Math.round(totalBaseAmount * halfFactor * 100) / 100;
     }
   }
 
@@ -338,7 +374,8 @@ export async function createManualInvoice(
   const customer = await prisma.customer.findFirst({
     where: { id: data.customerId, distributorId, deletedAt: null },
     // Phase 5: pull gstin for placeOfSupplyCode + customerGstinSnapshot.
-    select: { billingState: true, gstin: true },
+    // gstRateOverride: falls back to per-item rate when caller omits.
+    select: { billingState: true, gstin: true, gstRateOverride: true },
   });
 
   if (!customer) throw new InvoiceError('Customer not found', 404);
@@ -347,24 +384,57 @@ export async function createManualInvoice(
     ? distributor.state !== customer.billingState
     : false;
 
+  // Manual-invoice fallback rate: explicit per-item value wins (caller-wins
+  // semantics — the API has no UI surface today and existing programmatic
+  // callers expect their per-line rate to be honoured), else the customer
+  // override, else 18. Aggregate cgst/sgst/igst are computed PER LINE to
+  // correctly handle a mixed-rate invoice (rare today but possible if a
+  // future caller passes different rates per line).
+  const customerFallbackRate = resolveCustomerGstRate(customer.gstRateOverride);
+
   // createManualInvoice accepts EXCLUSIVE input prices at the API boundary
   // (caller specifies pre-tax unit price + gstRate). To keep the storage
   // convention identical to createInvoiceFromOrder (CLAUDE.md anti-pattern
   // #16: InvoiceItem.unitPrice is GST-INCLUSIVE), we convert per-item to
-  // inclusive units before persisting. Total math (base → cgst/sgst/igst →
-  // total) stays exactly as before.
+  // inclusive units before persisting.
   let totalBeforeGst = 0;
+  let totalCgst = 0;
+  let totalSgst = 0;
+  let totalIgst = 0;
 
   const invoiceItems = data.items.map(item => {
     const discount = item.discountPerUnit ?? 0;
     const effectivePrice = Math.max(item.unitPrice - discount, 0);
     const exclLineTotal = effectivePrice * item.quantity;
     totalBeforeGst += exclLineTotal;
-    const rate = item.gstRate ?? 18;
-    const mult = 1 + rate / 100;
+    // Caller's explicit per-item rate wins; otherwise customer override.
+    // Per-item rates accept 0 in addition to ALLOWED_GST_RATES to support
+    // GST-disabled tenants who book manual invoices with no tax (matches
+    // the createInvoiceFromOrder branch that writes gstRate=0 when
+    // distributor.gstMode='disabled'). A stray gstRate like 12 still
+    // fails — preserves the anti-pattern #10 guarantee on the IRN path.
+    const rate = item.gstRate ?? customerFallbackRate;
+    const allowedLineRates: number[] = [0, ...ALLOWED_GST_RATES];
+    if (!allowedLineRates.includes(rate)) {
+      throw new InvoiceError(
+        `Invalid item GST rate ${rate}. Allowed: ${allowedLineRates.join(', ')}`,
+        400,
+      );
+    }
+    const factor = rate / 100;
+    const mult = 1 + factor;
     const inclUnitPrice = Math.round(item.unitPrice * mult * 100) / 100;
     const inclDiscount = Math.round(discount * mult * 100) / 100;
     const inclLineTotal = Math.round(exclLineTotal * mult * 100) / 100;
+    // Per-line tax contribution to the invoice header. Mixed-rate-safe:
+    // each line contributes at its own rate, totals sum correctly.
+    if (isInterState) {
+      totalIgst += exclLineTotal * factor;
+    } else {
+      const half = factor / 2;
+      totalCgst += exclLineTotal * half;
+      totalSgst += exclLineTotal * half;
+    }
     return {
       cylinderTypeId: item.cylinderTypeId || null,
       description: item.description,
@@ -379,9 +449,9 @@ export async function createManualInvoice(
     };
   });
 
-  const cgstValue = isInterState ? 0 : totalBeforeGst * GST_RATES.CGST;
-  const sgstValue = isInterState ? 0 : totalBeforeGst * GST_RATES.SGST;
-  const igstValue = isInterState ? totalBeforeGst * GST_RATES.IGST : 0;
+  const cgstValue = Math.round(totalCgst * 100) / 100;
+  const sgstValue = Math.round(totalSgst * 100) / 100;
+  const igstValue = Math.round(totalIgst * 100) / 100;
   const totalAmount = totalBeforeGst + cgstValue + sgstValue + igstValue;
 
   const invoice = await prisma.$transaction(async (tx) => {

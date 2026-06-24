@@ -26,6 +26,8 @@ interface CustomerUpdateData {
   shippingPincode?: string | null;
   creditPeriodDays?: number;
   transportChargePerCylinder?: number;
+  // 5 or 18 only (enforced by createCustomerSchema). null → use platform default 18%.
+  gstRateOverride?: number | null;
   status?: $Enums.CustomerStatus;
   contacts?: Array<{ name: string; phone?: string; email?: string | null; isPrimary?: boolean }>;
   cylinderDiscounts?: Array<{ cylinderTypeId: string; discountPerUnit: number }>;
@@ -114,6 +116,8 @@ export async function createCustomer(
     shippingPincode?: string;
     creditPeriodDays?: number;
     transportChargePerCylinder?: number;
+    // 5 or 18 only (enforced by createCustomerSchema upstream).
+    gstRateOverride?: number | null;
     contacts?: { name: string; phone?: string; email?: string; isPrimary?: boolean }[];
     cylinderDiscounts?: { cylinderTypeId: string; discountPerUnit: number }[];
   }
@@ -168,6 +172,8 @@ export async function createCustomer(
       shippingPincode: data.shippingPincode || null,
       creditPeriodDays: data.creditPeriodDays ?? 30,
       transportChargePerCylinder: data.transportChargePerCylinder ?? 0,
+      // null when omitted → invoice paths fall back to platform default 18%.
+      gstRateOverride: data.gstRateOverride ?? null,
       contacts: data.contacts && data.contacts.length > 0
         ? { create: data.contacts.map(c => ({ name: c.name, phone: c.phone || '', email: c.email || null, isPrimary: c.isPrimary ?? false })) }
         : undefined,
@@ -219,7 +225,7 @@ export async function updateCustomer(
       'customerName', 'businessName', 'gstin', 'phone', 'email', 'transportChargePerCylinder',
       'billingAddressLine1', 'billingCity', 'billingState', 'billingPincode',
       'shippingAddressLine1', 'shippingCity', 'shippingState', 'shippingPincode',
-      'creditPeriodDays', 'status',
+      'creditPeriodDays', 'gstRateOverride', 'status',
     ];
     const existingRecord = existing as Record<string, unknown>;
     for (const field of trackFields) {
@@ -288,6 +294,10 @@ export async function updateCustomer(
     if (data.shippingPincode !== undefined) updateData.shippingPincode = data.shippingPincode;
     if (data.creditPeriodDays !== undefined) updateData.creditPeriodDays = data.creditPeriodDays;
     if (data.transportChargePerCylinder !== undefined) updateData.transportChargePerCylinder = data.transportChargePerCylinder;
+    // gstRateOverride (5 | 18 | null): only changes future invoices'
+    // InvoiceItem.gstRate snapshots — historic invoices keep their original
+    // rates regardless. Schema validation guarantees 5 / 18 / null only.
+    if (data.gstRateOverride !== undefined) updateData.gstRateOverride = data.gstRateOverride;
     // Status (active/suspended/inactive) — also mirrored to stopSupply so the
     // legacy boolean stays consistent with the new canonical field. Route
     // handler enforces the role guard before this point.

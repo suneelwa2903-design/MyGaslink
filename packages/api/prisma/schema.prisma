@@ -557,6 +557,15 @@ model Customer {
   // Optional per-customer inward transportation charge (₹ per delivered
   // cylinder, GST-inclusive — same basis as cylinder rates). 0 = no charge.
   transportChargePerCylinder Decimal        @default(0) @map("transport_charge_per_cylinder") @db.Decimal(18, 4)
+  // GST rate (percent) applied to this customer's invoice lines. Null = use
+  // platform default 18%. Only values in ALLOWED_GST_RATES (5 | 18) are
+  // accepted at the API boundary. Customer-eligibility model (not cylinder-
+  // type-eligibility): a 5%-eligible food-service customer's invoices price
+  // every line at 5%; an 18%-default customer's invoices price every line at
+  // 18%. Threaded into createInvoiceFromOrder + createManualInvoice. PDF /
+  // IRN / EWB read InvoiceItem.gstRate (per-line snapshot) so historic
+  // invoices keep their original rate when this field is changed later.
+  gstRateOverride            Float?         @map("gst_rate_override")
   status                     CustomerStatus @default(active)
   stopSupply                 Boolean        @default(false) @map("stop_supply")
   preferredDriverId          String?        @map("preferred_driver_id")

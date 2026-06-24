@@ -158,6 +158,12 @@ export const createCustomerSchema = z.object({
   creditPeriodDays: z.number().int().min(0).max(365).default(30),
   // Optional inward transport charge, ₹ per delivered cylinder (GST-inclusive). 0 = none.
   transportChargePerCylinder: z.number().min(0).max(100000).default(0),
+  // GST rate override (percent). null/omitted → platform default 18%. Only
+  // 5 (food-service: hotels/restaurants/canteens) or 18 (standard) are
+  // accepted. Free-form numbers are rejected to keep the IRN payload
+  // building safe — every new rate needs an NIC-sandbox A/B verification
+  // per CLAUDE.md anti-pattern #10.
+  gstRateOverride: z.union([z.literal(5), z.literal(18)]).nullable().optional(),
   contacts: z.array(customerContactSchema).optional(),
   cylinderDiscounts: z.array(cylinderDiscountSchema).optional(),
 });

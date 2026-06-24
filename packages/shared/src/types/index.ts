@@ -209,6 +209,10 @@ export interface Customer {
   shippingPincode: string | null;
   creditPeriodDays: number;
   transportChargePerCylinder: number;
+  // GST rate (percent) applied to this customer's invoice lines. null = use
+  // platform default 18%. Only values from ALLOWED_GST_RATES (5 | 18) are
+  // accepted at the API boundary.
+  gstRateOverride: number | null;
   status: CustomerStatus;
   stopSupply: boolean;
   preferredDriverId: string | null;
