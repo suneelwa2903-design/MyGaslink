@@ -27,7 +27,9 @@ import logo from '../../assets/logo.png';
  * routes them straight to their role's home, so we don't block them.
  */
 const DPDP_CONSENT_KEY = 'dpdp_consent_v1';
-const PRIVACY_POLICY_URL = 'https://mygaslink.com/privacy';
+const PRIVACY_POLICY_URL = Platform.OS === 'ios'
+  ? 'https://mygaslink.com/legal/privacy'
+  : 'https://mygaslink.com/privacy';
 
 const FEATURE_HIGHLIGHTS = [
   { key: 'tracking', icon: 'location-outline' as const, label: 'Real-time Tracking' },
@@ -234,7 +236,7 @@ export default function LoginScreen() {
                 login; persisted in SecureStore as `dpdp_consent_v1` so a
                 returning user only ticks it once per install. The
                 Privacy Policy text inside the label is its own tap target
-                — it opens https://mygaslink.com/privacy without toggling
+                and opens the platform-specific legal page without toggling
                 the checkbox. */}
             <View
               style={{

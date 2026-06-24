@@ -16,6 +16,9 @@ const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 const PrivacyPolicyPage = lazy(() => import('@/pages/PrivacyPolicyPage'));
 const TermsOfServicePage = lazy(() => import('@/pages/TermsOfServicePage'));
+const PrivacyPolicyAppPage = lazy(() => import('@/pages/PrivacyPolicyAppPage'));
+const TermsOfServiceAppPage = lazy(() => import('@/pages/TermsOfServiceAppPage'));
+const SupportAppPage = lazy(() => import('@/pages/SupportAppPage'));
 
 // Admin pages
 const OrdersPage = lazy(() => import('@/pages/OrdersPage'));
@@ -82,6 +85,9 @@ export function AppRoutes() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/privacy" element={<PrivacyPolicyPage />} />
         <Route path="/terms" element={<TermsOfServicePage />} />
+        <Route path="/legal/privacy" element={<PrivacyPolicyAppPage />} />
+        <Route path="/legal/terms" element={<TermsOfServiceAppPage />} />
+        <Route path="/legal/support" element={<SupportAppPage />} />
 
         {/* Protected app routes */}
         <Route

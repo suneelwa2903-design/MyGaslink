@@ -68,7 +68,9 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Allow MyGasLink to use your location for delivery tracking.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "locationWhenInUsePermission": "Allow MyGasLink to use your location for delivery tracking.",
           "isAndroidBackgroundLocationEnabled": false
         }
       ],
