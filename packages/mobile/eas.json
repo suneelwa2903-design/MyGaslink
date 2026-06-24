@@ -45,6 +45,11 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6783034856",
+        "appleId": "suneelmarriboina@icloud.com"
+      }
+    }
   }
 }
