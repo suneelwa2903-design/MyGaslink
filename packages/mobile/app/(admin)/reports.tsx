@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { localTodayISO, localDateISO } from '@gaslink/shared';
 
 import { api, getErrorMessage } from '../../src/lib/api';
 import { useApiQuery } from '../../src/hooks/useApi';
@@ -87,12 +88,12 @@ const REPORTS: ReportDef[] = [
 ];
 
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localTodayISO();
 }
 function monthAgoISO(): string {
   const d = new Date();
   d.setMonth(d.getMonth() - 1);
-  return d.toISOString().slice(0, 10);
+  return localDateISO(d);
 }
 
 function fmtCell(value: ReportCellValue, money?: boolean): string {

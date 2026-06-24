@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
+import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { apiGet, apiPost, getErrorMessage } from '../../src/lib/api';
 import { useTheme, ACCENT } from '../../src/theme';
@@ -213,13 +214,13 @@ const TABS: { key: TabKey; label: string; icon: keyof typeof Ionicons.glyphMap }
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function todayString(): string {
-  return new Date().toISOString().split('T')[0];
+  return localTodayISO();
 }
 
 function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr);
   d.setDate(d.getDate() + days);
-  return d.toISOString().split('T')[0];
+  return localDateISO(d);
 }
 
 function formatDate(dateStr: string): string {
@@ -3324,7 +3325,7 @@ function ReportMismatchModal({
     try {
       await apiPost('/inventory/mismatch-reports', {
         vehicleId: vehicle.vehicleId,
-        tripDate: new Date().toISOString().slice(0, 10),
+        tripDate: localTodayISO(),
         accountableParty,
         driverId: accountableParty === 'driver' ? driverId : undefined,
         customerId: accountableParty === 'customer' ? customerId : undefined,

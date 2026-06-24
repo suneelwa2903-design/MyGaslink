@@ -23,6 +23,7 @@ import { useAuthStore } from '../../src/stores/authStore';
 // already exists end-to-end (Zustand + SecureStore persistence). Admin
 // just lacked the toggle UI.
 import { useThemeStore, useIsDark } from '../../src/stores/themeStore';
+import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
 import { DateInput } from '../../src/components/ui';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
@@ -899,7 +900,7 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
   const [addOpen, setAddOpen] = useState(false);
   const [addCylinderTypeId, setAddCylinderTypeId] = useState('');
   const [addPrice, setAddPrice] = useState('');
-  const [addEffectiveDate, setAddEffectiveDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [addEffectiveDate, setAddEffectiveDate] = useState(() => localTodayISO());
 
   const createMutation = useApiMutation<unknown, { cylinderTypeId: string; price: number; effectiveDate: string }>(
     'post',
@@ -911,7 +912,7 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
         setAddOpen(false);
         setAddCylinderTypeId('');
         setAddPrice('');
-        setAddEffectiveDate(new Date().toISOString().slice(0, 10));
+        setAddEffectiveDate(localTodayISO());
       },
       onError: (err: unknown) => {
         Alert.alert('Could not add price', (err as Error)?.message ?? 'Unknown error');
@@ -1045,7 +1046,7 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
                       {formatCurrency(Number(p.price ?? 0))}
                     </Text>
                     <Text style={{ flex: 1, fontSize: 11, color: theme.textMuted, textAlign: 'right' }}>
-                      {p.effectiveDate ? new Date(p.effectiveDate).toISOString().slice(0, 10) : '—'}
+                      {p.effectiveDate ? localDateISO(new Date(p.effectiveDate)) : '—'}
                     </Text>
                     <TouchableOpacity
                       onPress={() => handleDelete(p)}

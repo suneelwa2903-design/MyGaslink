@@ -13,6 +13,7 @@ import {
   HiOutlineShieldCheck,
 } from 'react-icons/hi2';
 import type { Distributor, BillingCycle } from '@gaslink/shared';
+import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { api } from '@/lib/api';
 import { Badge, Button, Loader, Modal, Select } from '@/components/ui';
@@ -350,11 +351,11 @@ function GenerateInvoiceModal({ distributorId, distributor, lastCycleEndDate, on
       // Day after last billing period ends
       const d = new Date(lastCycleEndDate);
       d.setDate(d.getDate() + 1);
-      return d.toISOString().split('T')[0];
+      return localDateISO(d);
     }
     const d = new Date();
     d.setDate(1);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
   const [addOns, setAddOns] = useState<AddOn[]>([]);
   // Phase 4b (2026-06-12): ad-hoc discount applied to the generated cycle.
@@ -386,7 +387,7 @@ function GenerateInvoiceModal({ distributorId, distributor, lastCycleEndDate, on
     const multiplierMap: Record<string, number> = { monthly: 1, quarterly: 3, half_yearly: 6, yearly: 12 };
     d.setMonth(d.getMonth() + (multiplierMap[periodType] || 1));
     d.setDate(d.getDate() - 1);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   })();
 
   // Calculate cost preview
@@ -719,7 +720,7 @@ function GoLiveDateEditor({ distributorId, initial }: { distributorId: string; i
           type="date"
           className="input py-1.5 block"
           value={val}
-          max={new Date().toISOString().split('T')[0]}
+          max={localTodayISO()}
           onChange={(e) => setVal(e.target.value)}
         />
       </div>

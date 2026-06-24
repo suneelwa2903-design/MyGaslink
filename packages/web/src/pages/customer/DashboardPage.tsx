@@ -9,7 +9,7 @@ import {
   HiOutlineDocumentArrowDown,
 } from 'react-icons/hi2';
 import type { Order, Invoice } from '@gaslink/shared';
-import { orderStatusLabel, invoiceStatusLabel } from '@gaslink/shared';
+import { orderStatusLabel, invoiceStatusLabel, localTodayISO, localDateISO } from '@gaslink/shared';
 import { api, apiGet } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Badge, Button, Loader, EmptyState } from '@/components/ui';
@@ -30,9 +30,9 @@ export default function CustomerDashboardPage() {
   const customerId = user?.customerId;
   const [stmtFrom, setStmtFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
-  const [stmtTo, setStmtTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [stmtTo, setStmtTo] = useState(() => localTodayISO());
   const [downloading, setDownloading] = useState(false);
 
   const handleDownloadStatement = async () => {

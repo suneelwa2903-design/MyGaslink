@@ -164,7 +164,17 @@ export const INDIAN_STATE_NAMES: readonly string[] = Array.from(
 // helpers.ts > today() is the same impl, kept duplicated only because
 // tests can't easily import from @gaslink/shared without a build cycle.
 export function localTodayISO(): string {
-  const d = new Date();
+  return localDateISO(new Date());
+}
+
+// Companion to localTodayISO — same anti-pattern #21 fix applied to ANY
+// in-memory Date (typically one computed by mutating a `new Date()` —
+// e.g. "30 days ago" via `setDate(getDate() - 30)`). The previous
+// codebase pattern `d.toISOString().split('T')[0]` returns the UTC
+// calendar date and inherits the same midnight-rollover bug as the
+// bare `new Date()` form. Use this for ANY Date you want as YYYY-MM-DD
+// in the user's local timezone. Pure function; safe to use in tests.
+export function localDateISO(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');

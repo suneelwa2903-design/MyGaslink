@@ -8,6 +8,7 @@ import { Card, Badge, EmptyState } from '../../src/components/ui';
 import { useTheme } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
 import type { Driver, Vehicle } from '@gaslink/shared';
+import { localTodayISO } from '@gaslink/shared';
 
 // The fleet endpoints can return a couple of legacy/aliased fields the screen
 // reads defensively (e.g. `firstName`/`phoneNumber` vs `driverName`/`phone`).
@@ -122,7 +123,7 @@ export default function FleetScreen() {
   const { selectedDistributorId } = useDistributorStore();
 
   const distParams = selectedDistributorId ? { distributorId: selectedDistributorId } : {};
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localTodayISO();
 
   // Drivers
   const { data: driversData, isLoading: driversLoading, refetch: refetchDrivers } = useApiQuery<

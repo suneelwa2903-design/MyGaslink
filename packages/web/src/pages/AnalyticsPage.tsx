@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { UserRole } from '@gaslink/shared';
+import { UserRole, localTodayISO, localDateISO } from '@gaslink/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -68,9 +68,9 @@ export default function AnalyticsPage() {
   const [resolveAction, setResolveAction] = useState<PendingAction | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [dateFrom, setDateFrom] = useState(() => {
-    const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().split('T')[0];
+    const d = new Date(); d.setMonth(d.getMonth() - 1); return localDateISO(d);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(() => localTodayISO());
 
   // Super admin needs a distributor selected to view analytics data
   const hasDistributor = isSuperAdmin ? !!selectedDistributorId : true;

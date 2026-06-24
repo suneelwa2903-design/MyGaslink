@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
+import { localTodayISO } from '@gaslink/shared';
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge } from '@/components/ui';
 
@@ -128,7 +129,7 @@ export function ReportMismatchModal({
     if (!canSubmit) return;
     mutation.mutate({
       vehicleId: vehicle.vehicleId,
-      tripDate: new Date().toISOString().slice(0, 10),
+      tripDate: localTodayISO(),
       accountableParty,
       driverId: accountableParty === 'driver' ? driverId : undefined,
       customerId: accountableParty === 'customer' ? customerId : undefined,

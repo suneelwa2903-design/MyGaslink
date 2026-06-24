@@ -18,7 +18,7 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, ACCENT as ACCENT_COLORS } from '../../src/theme';
 import { DateInput } from '../../src/components/ui';
 import { useAuthStore } from '../../src/stores/authStore';
-import { UserRole } from '@gaslink/shared';
+import { UserRole, localTodayISO } from '@gaslink/shared';
 
 const ACCENT = ACCENT_COLORS.red;
 
@@ -262,7 +262,7 @@ export default function AdminFleetScreen() {
   const vehicles: Vehicle[] = vehiclesResponse?.vehicles ?? [];
 
   const [mappingDate, setMappingDate] = useState<string>(
-    () => new Date().toISOString().split('T')[0],
+    () => localTodayISO(),
   );
   const [pickerForDriverId, setPickerForDriverId] = useState<string | null>(null);
 

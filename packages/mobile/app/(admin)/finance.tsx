@@ -28,6 +28,8 @@ import {
   invoiceStatusVariant,
   noteStatusLabel,
   noteStatusVariant,
+  localTodayISO,
+  localDateISO,
 } from '@gaslink/shared';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -133,7 +135,7 @@ const IRN_STATUS_TABS = [
 function getDateNDaysAgoISO(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString().split('T')[0];
+  return localDateISO(d);
 }
 
 const PAYMENT_METHOD_COLORS: Record<string, { bg: string; text: string }> = {
@@ -195,7 +197,7 @@ function formatDate(dateStr: string | undefined): string {
 }
 
 function getTodayISO(): string {
-  return new Date().toISOString().split('T')[0];
+  return localTodayISO();
 }
 
 function capitalizeStatus(status: string): string {

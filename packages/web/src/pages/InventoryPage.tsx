@@ -28,6 +28,8 @@ import {
   outgoingEmptiesSchema,
   type OutgoingEmptiesInput,
   type ManualAdjustmentInput,
+  localTodayISO,
+  localDateISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -35,13 +37,13 @@ import { ReportMismatchModal, MismatchLogSection } from '@/components/inventory/
 import { cn } from '@/lib/cn';
 
 function todayString(): string {
-  return new Date().toISOString().split('T')[0];
+  return localTodayISO();
 }
 
 function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr);
   d.setDate(d.getDate() + days);
-  return d.toISOString().split('T')[0];
+  return localDateISO(d);
 }
 
 interface PendingOrderSummary {

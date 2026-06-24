@@ -3,6 +3,7 @@ import { View, Text, ScrollView, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { MetricCard, Card, Button, DateInput, MIN_DATE_FLOOR, todayLocalIso } from '../../src/components/ui';
 import { useAuthStore } from '../../src/stores/authStore';
@@ -32,7 +33,7 @@ interface CustomerDashboard {
 
 function firstOfMonth(): string {
   const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  return localDateISO(new Date(d.getFullYear(), d.getMonth(), 1));
 }
 
 export default function CustomerDashboardScreen() {
@@ -51,9 +52,9 @@ export default function CustomerDashboardScreen() {
   const customerId = useAuthStore((s) => s.user?.customerId);
   const [stmtFrom, setStmtFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
-  const [stmtTo, setStmtTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [stmtTo, setStmtTo] = useState(() => localTodayISO());
   const [downloading, setDownloading] = useState(false);
 
   const handleDownloadStatement = async () => {

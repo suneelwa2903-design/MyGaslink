@@ -18,6 +18,7 @@ import {
   createPaymentSchema,
   type CreatePaymentInput,
   localTodayISO,
+  localDateISO,
 } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
@@ -39,9 +40,9 @@ export default function PaymentsPage() {
   const [methodFilter, setMethodFilter] = useState('');
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(() => localTodayISO());
   const [createOpen, setCreateOpen] = useState(false);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
 

@@ -28,6 +28,7 @@ import {
   type CreateDebitNoteInput,
   PaymentMethod,
   localTodayISO,
+  localDateISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
@@ -96,9 +97,9 @@ export default function InvoicesPage() {
   const [irnFilter, setIrnFilter] = useState('');
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(() => localTodayISO());
   const [viewInvoice, setViewInvoice] = useState<Invoice | null>(null);
   const [creditNoteInvoice, setCreditNoteInvoice] = useState<Invoice | null>(null);
   const [debitNoteInvoice, setDebitNoteInvoice] = useState<Invoice | null>(null);

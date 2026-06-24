@@ -12,7 +12,7 @@ import { Button, Badge, EmptyState, DateInput, todayLocalIso } from '../../src/c
 import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useTheme, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
-import { orderStatusLabel, orderStatusVariant, localTodayISO } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant, localTodayISO, localDateISO } from '@gaslink/shared';
 
 interface CylinderType {
   id: string;
@@ -104,7 +104,7 @@ export default function CustomerOrdersScreen() {
   const [commitmentPrompt, setCommitmentPrompt] = useState<CommitmentPrompt | null>(null);
   const [promisedDate, setPromisedDate] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 7);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
   const [ack, setAck] = useState(false);
   const [lastOrderVars, setLastOrderVars] = useState<CreateOrderVars | null>(null);

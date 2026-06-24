@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
+import { localTodayISO } from '@gaslink/shared';
 import { Button, Loader, Modal } from '@/components/ui';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
@@ -222,7 +223,7 @@ function OpeningStockModal({ onClose }: { onClose: () => void }) {
   const [entries, setEntries] = useState<Record<string, { fulls: string; empties: string }>>({});
   // Group 2 (2026-06-11): as-of-date picker. Defaults to today; max=today
   // (cannot future-date opening stock).
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localTodayISO();
   const [eventDate, setEventDate] = useState<string>(todayStr);
 
   // Group 2: 409 OPENING_STOCK_CONFLICT confirmation state. When the

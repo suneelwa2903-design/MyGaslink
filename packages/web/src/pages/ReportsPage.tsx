@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { HiOutlineArrowDownTray, HiOutlineDocumentArrowDown } from 'react-icons/hi2';
+import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { api, apiGet, getErrorMessage } from '@/lib/api';
 import { Button, Select, Loader, EmptyState } from '@/components/ui';
 import TallyExportPanel from '@/components/reports/TallyExportPanel';
@@ -30,8 +31,8 @@ const REPORTS: ReportDef[] = [
 const fmtMoney = (v: ReportCellValue | undefined) => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const isOverdueRow = (r: Record<string, ReportCellValue>) => Number(r.b31_60 || 0) > 0 || Number(r.b60plus || 0) > 0;
 
-function todayStr() { return new Date().toISOString().slice(0, 10); }
-function monthAgoStr() { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 10); }
+function todayStr() { return localTodayISO(); }
+function monthAgoStr() { const d = new Date(); d.setMonth(d.getMonth() - 1); return localDateISO(d); }
 
 export default function ReportsPage() {
   const [reportKey, setReportKey] = useState('sales-summary');

@@ -24,6 +24,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { prisma } from '../lib/prisma.js';
 import { returnCancelledStock } from '../services/inventoryService.js';
+import { today } from './helpers.js';
 
 const DIST = 'dist-001'; // GST-disabled, simpler fixture
 // A historical date — guaranteed not "today" in any timezone.
@@ -129,7 +130,7 @@ describe('returnCancelledStock — cancellation_return eventDate pins to cse.can
     //    data.returnDate = today's ISO; the service used to stamp the
     //    inventory_event with this date. After the fix it must use
     //    cse.cancellationDate instead.
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = today();
     await returnCancelledStock(DIST, driverUserId, {
       eventIds: [cse.id],
       returnDate: todayIso,
@@ -157,7 +158,7 @@ describe('returnCancelledStock — cancellation_return eventDate pins to cse.can
 
     await returnCancelledStock(DIST, driverUserId, {
       eventIds: [cse.id],
-      returnDate: new Date().toISOString().slice(0, 10),
+      returnDate: today(),
       notes: `${cleanupTag} return click 2`,
     });
 

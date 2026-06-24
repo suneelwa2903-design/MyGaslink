@@ -42,6 +42,7 @@ import {
   noteStatusLabel,
   type StatusVariant,
   localTodayISO,
+  localDateISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
@@ -167,9 +168,9 @@ function InvoicesTab() {
   const [irnFilter, setIrnFilter] = useState('');
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(() => localTodayISO());
   const [viewInvoice, setViewInvoice] = useState<Invoice | null>(null);
   const [creditNoteInvoice, setCreditNoteInvoice] = useState<Invoice | null>(null);
   const [debitNoteInvoice, setDebitNoteInvoice] = useState<Invoice | null>(null);
@@ -478,9 +479,9 @@ function PaymentsTab() {
   const [methodFilter, setMethodFilter] = useState('');
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(() => localTodayISO());
   const [createOpen, setCreateOpen] = useState(false);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
   const [allocatePayment, setAllocatePayment] = useState<Payment | null>(null);

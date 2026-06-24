@@ -36,6 +36,7 @@ import {
   orderStatusLabel,
   orderStatusVariant,
   localTodayISO,
+  localDateISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole } from '@/stores/authStore';
@@ -71,9 +72,9 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(() => localTodayISO());
   const [createOpen, setCreateOpen] = useState(false);
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
@@ -1429,7 +1430,7 @@ function AssignmentsTab() {
   // status === 'confirmed' have a real DriverVehicleAssignment row for today;
   // 'recommended' (yesterday's mapping copied forward but not confirmed) and
   // 'unassigned' both lack one and would be rejected by the API.
-  const today = new Date().toISOString().split('T')[0];
+  const today = localTodayISO();
   const { data: vehicleMappings } = useQuery({
     queryKey: ['vehicle-mappings', today],
     queryFn: () =>
@@ -1971,7 +1972,7 @@ function DispatchProgressModal({
   driver: DispatchDriverContext;
   onClose: () => void;
 }) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = localTodayISO();
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
   const [result, setResult] = useState<PreflightResponseEnvelope | null>(null);
   const [error, setError] = useState<string | null>(null);

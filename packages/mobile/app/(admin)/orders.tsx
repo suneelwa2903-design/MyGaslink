@@ -23,7 +23,7 @@ import { useTheme } from '../../src/theme';
 import { api, getErrorMessage } from '../../src/lib/api';
 import { Badge, DateInput } from '../../src/components/ui';
 import { LoadListDispatchModal } from '../../src/components/LoadListDispatchModal';
-import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant, localTodayISO, localDateISO } from '@gaslink/shared';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ const STATUS_TABS = [
 function getDateNDaysAgoISO(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString().split('T')[0];
+  return localDateISO(d);
 }
 
 const ACCENT = '#dc2626';
@@ -199,7 +199,7 @@ function formatDate(dateStr: string): string {
 }
 
 function getTodayISO(): string {
-  return new Date().toISOString().split('T')[0];
+  return localTodayISO();
 }
 
 // ─── Main Screen ────────────────────────────────────────────────────────────

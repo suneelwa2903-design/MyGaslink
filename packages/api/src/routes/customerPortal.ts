@@ -17,6 +17,7 @@ import {
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../utils/logger.js';
 import { mapCustomer, mapOrder, mapOrders, mapInvoices, mapCustomerInvoiceDetail, mapPayment, mapPayments, mapPaymentSubmission, mapPaymentSubmissions } from '../utils/mappers.js';
+import { localTodayISO } from '@gaslink/shared';
 import { z } from 'zod';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
@@ -749,7 +750,7 @@ router.post('/invoices/:id/verify-payment',
                                 // updated later; default to upi for
                                 // the most common case.
           referenceNumber: razorpayPaymentId,
-          transactionDate: new Date().toISOString().slice(0, 10),
+          transactionDate: localTodayISO(),
           allocations: [{ invoiceId: invoice.id, amount }],
           razorpay: { razorpayOrderId, razorpayPaymentId, razorpaySignature },
         },

@@ -24,6 +24,7 @@ import * as paymentService from '../services/paymentService.js';
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../utils/logger.js';
 import { param } from '../utils/params.js';
+import { localTodayISO } from '@gaslink/shared';
 
 const router = Router();
 
@@ -138,7 +139,7 @@ router.post('/:distributorId',
           amount,
           paymentMethod: mapRazorpayMethod(payment?.method),
           referenceNumber: razorpayPaymentId,
-          transactionDate: new Date().toISOString().slice(0, 10),
+          transactionDate: localTodayISO(),
           allocations: [{ invoiceId, amount }],
           razorpay: {
             razorpayOrderId,

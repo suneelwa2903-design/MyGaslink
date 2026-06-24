@@ -26,6 +26,8 @@ import {
   type CreateCustomerInput,
   UserRole,
   INDIAN_STATE_NAMES,
+  localTodayISO,
+  localDateISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Combobox, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -948,9 +950,9 @@ function CustomerDetailModal({
 
   const [ledgerFrom, setLedgerFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   });
-  const [ledgerTo, setLedgerTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [ledgerTo, setLedgerTo] = useState(() => localTodayISO());
 
   const handleDownloadStatement = async () => {
     try {

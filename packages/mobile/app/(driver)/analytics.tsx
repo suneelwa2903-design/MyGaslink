@@ -8,7 +8,7 @@ import { Card, MetricCard, DateInput, MIN_DATE_FLOOR, todayLocalIso, Button } fr
 import { useTheme, ACCENT, formatINR } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 import { Badge } from '../../src/components/ui';
-import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant, localDateISO } from '@gaslink/shared';
 
 // WI-PENDING-PAYMENTS post-smoke FIX-C: wire shape returned by
 // GET /api/drivers/me/payment-submissions for the recent-submissions
@@ -49,7 +49,7 @@ interface DriverPerformanceRow {
 function offsetDate(offsetDays: number): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
+  return localDateISO(d);
 }
 
 export default function DriverAnalyticsScreen() {

@@ -21,7 +21,7 @@ import {
   computeCustomerOverdue,
   getCustomerLedger,
 } from '../services/paymentService.js';
-import { loginAsDistAdmin } from './helpers.js';
+import { loginAsDistAdmin, today } from './helpers.js';
 
 const TRACK = 'FixC-Overdue';
 let distributorId: string;
@@ -132,7 +132,7 @@ describe('Fix C — computeCustomerOverdue includes OB invoices', () => {
   it('positive: OB + partial payment → overdue = OB - payment', async () => {
     const ninetyDaysAgo = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
     await seedOB(15000, ninetyDaysAgo);
-    await seedPayment(5000, new Date().toISOString().slice(0, 10));
+    await seedPayment(5000, today());
     const overdue = await computeCustomerOverdue(distributorId, customerId);
     expect(overdue).toBe(10000);
   });
@@ -144,8 +144,8 @@ describe('Fix C — computeCustomerOverdue includes OB invoices', () => {
   });
 
   it('negative: OB issued today (within credit window) does NOT count as overdue', async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    await seedOB(15000, today);
+    const todayStr = today();
+    await seedOB(15000, todayStr);
     const overdue = await computeCustomerOverdue(distributorId, customerId);
     expect(overdue).toBe(0); // within 30-day credit window
   });

@@ -13,6 +13,7 @@ import {
   type Vehicle,
   DriverStatus,
   VehicleStatus,
+  localTodayISO,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole } from '@/stores/authStore';
@@ -103,7 +104,7 @@ type MappingRow = {
 
 function VehicleMappingTab() {
   const queryClient = useQueryClient();
-  const today = new Date().toISOString().split('T')[0];
+  const today = localTodayISO();
   const [selectedDate, setSelectedDate] = useState(today);
   // editingDriverId: which row's vehicle cell is currently in edit mode.
   // Null cells (no vehicle assigned) still render a select directly.

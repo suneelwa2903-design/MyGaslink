@@ -18,6 +18,7 @@ import { DateInput } from '../../src/components/ui';
 // STAGE-A A6: PendingAction type import dropped — the PA section/query were
 // both removed from the dashboard, so the type is no longer referenced.
 import type { DashboardStats, OverdueCallListEntry } from '@gaslink/shared';
+import { localDateISO } from '@gaslink/shared';
 
 // ─── Briefing row types ──────────────────────────────────────────────────────
 
@@ -187,9 +188,9 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
 
 // ─── Date helpers (mirror STEP-3A pattern) ───────────────────────────────────
 
-function toIsoDate(d: Date): string {
-  return d.toISOString().split('T')[0];
-}
+// Anti-pattern #21: localDateISO returns local-TZ YYYY-MM-DD instead of
+// the UTC split that drifts by one day between 00:00–05:30 IST.
+const toIsoDate = localDateISO;
 
 function getDateNDaysAgoISO(n: number): string {
   const d = new Date();
