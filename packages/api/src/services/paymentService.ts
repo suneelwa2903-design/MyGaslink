@@ -401,6 +401,14 @@ export async function getCustomerLedger(
         where: { id: { in: invoiceIds } },
         select: {
           id: true,
+          // LIVE invoice number — supersedes the frozen text in
+          // CustomerLedgerEntry.narration. When an invoice is reissued
+          // (delivery mismatch / regenerate), gstReissueService updates
+          // invoice.invoiceNumber in-place from ISHD… → RSHD… but the
+          // narration text stays at the original ISHD value. The ledger
+          // now renders the live number so it stays aligned with the
+          // billing list, GSTR-1, and the PDF download.
+          invoiceNumber: true,
           isOpeningBalance: true,
           orderId: true,
           items: {
@@ -523,12 +531,23 @@ export async function getCustomerLedger(
 
         if (!emit) return;
 
+        // Narration: prefer the LIVE invoice number from the joined Invoice
+        // row over the frozen ledger-entry text. After a reissue the entry
+        // narration still says "Invoice ISHD…" but invoice.invoiceNumber
+        // has flipped to "RSHD…" — the billing list shows the new number,
+        // so the ledger must too. Falls back to entry.narration when the
+        // invoice row isn't found (orphaned ledger entry — shouldn't happen
+        // but defended against).
+        const liveInvoiceNarration = inv?.invoiceNumber
+          ? `Invoice ${inv.invoiceNumber}`
+          : (entry.narration ?? 'Invoice');
+
         if (!inv?.items?.length) {
           emitRow({
             orderDate: dateStr,
             cylinderType: '',
             amount: delta,
-            narration: entry.narration ?? 'Invoice',
+            narration: liveInvoiceNarration,
             kind: 'invoice',
           });
           return;
@@ -571,7 +590,8 @@ export async function getCustomerLedger(
             emptyCylsCollected: agg.collected,
             pendingEmptyCyls: pendingForType,
             emptyCylsCost: pendingForType * emptyPrice,
-            narration: entry.narration ?? '',
+            // Live invoice number — see liveInvoiceNarration above.
+            narration: liveInvoiceNarration,
             kind: 'invoice',
           });
         }

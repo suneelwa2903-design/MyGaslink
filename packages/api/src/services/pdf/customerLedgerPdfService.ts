@@ -55,6 +55,36 @@ function num(n: number): string {
   return Number(n || 0).toLocaleString('en-IN');
 }
 
+// Truncate text so it always fits its cell width — pdfkit's default
+// `text(...)` wraps onto a second line when the string is longer than
+// `options.width`, which collides with the next row's content (visible on
+// long test-fixture cylinder type names like
+// "WI4-TEST-1781334799052"). One line per cell, ellipsised when needed.
+function fitCell(s: string, maxChars: number): string {
+  if (!s) return '';
+  if (s.length <= maxChars) return s;
+  return s.slice(0, Math.max(1, maxChars - 1)) + '…';
+}
+
+// Per-column character caps. Numeric columns rarely overflow (formatted
+// money + en-IN locale grouping fits in 12 chars even for crore figures),
+// but the Type and Narration columns receive free text and need clamping.
+// Indexed to match the COLS array order.
+const COL_CHAR_CAP: number[] = [
+  10, // Date
+  12, // Type — handles "Opening Balance", "Credit Note", real cylinder names
+  18, // Narration — fits "Invoice RSHD2627025053" exactly
+  6,  // Delivered
+  12, // Amount
+  6,  // Empties Coll.
+  6,  // Pending Emp.
+  12, // Empties Cost
+  14, // Total Amount
+  12, // Received
+  12, // Due Amount
+  12, // Overdue
+];
+
 function drawTableHeader(doc: PDFKit.PDFDocument, y: number): number {
   let x = MARGIN.left;
   doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT + 2).fill(THEME.PRIMARY);
@@ -79,7 +109,17 @@ function drawRow(
   doc.fillColor(THEME.TEXT).font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(TYPO.BODY);
   let x = MARGIN.left;
   for (let i = 0; i < COLS.length; i++) {
-    doc.text(cells[i] ?? '', x + 3, y + 4, { width: COLS[i].width - 6, align: COLS[i].align });
+    // lineBreak:false forces single-line rendering inside the cell width
+    // (pdfkit otherwise wraps onto a second line that overlaps the next
+    // row). fitCell ellipsises the source text so the visible content
+    // matches what was actually rendered.
+    const text = fitCell(cells[i] ?? '', COL_CHAR_CAP[i] ?? 999);
+    doc.text(text, x + 3, y + 4, {
+      width: COLS[i].width - 6,
+      align: COLS[i].align,
+      lineBreak: false,
+      ellipsis: true,
+    });
     x += COLS[i].width;
   }
   return ROW_HEIGHT;
@@ -231,6 +271,54 @@ export async function generateCustomerLedgerPdf(
   let totalCollected = 0;
   let zebra = false;
 
+  // Per-page subtotal state. Resets after each page break; emitted as a
+  // dedicated bold row before the page advances so a multi-page statement
+  // shows the operator how much activity fell on each page. The single-
+  // page case never sees a subtotal row — the grand Total row covers it.
+  let pageNum = 1;
+  let pageDelivered = 0;
+  let pageCollected = 0;
+  let pageAmount = 0;
+  let pageEmptyCost = 0;
+  let pageReceived = 0;
+  // Cumulative running balance at the end of the last data row drawn —
+  // used as the "Total / Due" cumulative values on the page subtotal row
+  // so the reader sees where the running balance stood at page end.
+  let lastTotalAmount = 0;
+  let lastDueAmount = 0;
+  let pageHasData = false;
+
+  function emitPageSubtotal(): void {
+    if (!pageHasData) return; // nothing to summarise — skip empty page
+    const cells = [
+      '',
+      `Page ${pageNum} subtotal`,
+      '',
+      pageDelivered ? num(pageDelivered) : '',
+      pageAmount ? formatMoney(pageAmount) : '',
+      pageCollected ? num(pageCollected) : '',
+      '',
+      pageEmptyCost ? formatMoney(pageEmptyCost) : '',
+      formatMoney(lastTotalAmount),
+      pageReceived ? formatMoney(pageReceived) : '',
+      formatMoney(lastDueAmount),
+      '',
+    ];
+    // Light divider above the subtotal so it's clearly bounded.
+    doc.moveTo(MARGIN.left, y).lineTo(MARGIN.left + TABLE_WIDTH, y)
+      .strokeColor(THEME.BORDER).lineWidth(0.5).stroke();
+    y += drawRow(doc, y + 1, cells, { bold: true });
+    // Reset per-page state for the next page (cumulative values do NOT
+    // reset — they carry across pages so the next page's subtotal still
+    // shows the live running total).
+    pageDelivered = 0;
+    pageCollected = 0;
+    pageAmount = 0;
+    pageEmptyCost = 0;
+    pageReceived = 0;
+    pageHasData = false;
+  }
+
   // Customer-facing PDF — the Type column shows the cylinder type name
   // for invoice rows ("19 KG", "425 KG"), "Payment" for credits,
   // "Opening Balance" for the b/f row. Mirrors the legacy WI-092 PDF that
@@ -258,11 +346,15 @@ export async function generateCustomerLedgerPdf(
   }
 
   for (const row of ledger.rows) {
-    // page break — reserve enough room for the b/f row's extra padding +
-    // separator (12px) so it doesn't get clipped at the page foot.
-    const needed = row.kind === 'opening' ? ROW_HEIGHT + 12 : ROW_HEIGHT;
+    // page break — reserve room for the b/f row's extra padding + separator
+    // (12px) AND for the page-subtotal row (ROW_HEIGHT + 4) so neither gets
+    // clipped at the page foot.
+    const baseNeeded = row.kind === 'opening' ? ROW_HEIGHT + 12 : ROW_HEIGHT;
+    const needed = baseNeeded + ROW_HEIGHT + 4;
     if (y + needed > PAGE_HEIGHT - MARGIN.bottom - 30) {
+      emitPageSubtotal();
       doc.addPage({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
+      pageNum += 1;
       y = MARGIN.top;
       y += drawTableHeader(doc, y);
       zebra = false;
@@ -332,11 +424,41 @@ export async function generateCustomerLedgerPdf(
     }
     y += drawRow(doc, y, cells, { zebra });
     zebra = !zebra;
+
+    // Accumulate per-page state AFTER drawing — keeps the page-break
+    // pre-check above accurate. lastTotalAmount / lastDueAmount track the
+    // cumulative running balance at the end of the row just drawn so the
+    // page-subtotal row can show where the running figures stood at page
+    // end (NOT a sum of cumulative values, which would be meaningless).
+    pageHasData = true;
+    if (row.fullCylsDelivered > 0) pageDelivered += row.fullCylsDelivered;
+    if (row.emptyCylsCollected > 0) pageCollected += row.emptyCylsCollected;
+    if (row.amount > 0) pageAmount += row.amount;
+    if (row.emptyCylsCost > 0) pageEmptyCost += row.emptyCylsCost;
+    if (row.receivedAmount > 0) pageReceived += row.receivedAmount;
+    lastTotalAmount = row.totalAmount;
+    lastDueAmount = row.dueAmount;
+  }
+
+  // ── Final-page subtotal (only when multi-page) ──
+  // On a single-page statement the grand "Total" row covers everything;
+  // showing a page-1 subtotal AND a grand total would be redundant. On
+  // a multi-page statement, the last page also deserves a subtotal so
+  // every page has a footer summary.
+  if (pageNum > 1) {
+    emitPageSubtotal();
   }
 
   // ── Summary / Closing Balance row ──
   if (y + ROW_HEIGHT + 4 > PAGE_HEIGHT - MARGIN.bottom - 20) {
+    // If we're already multi-page and the summary doesn't fit, flush any
+    // unflushed page state. (pageHasData is normally false here because
+    // the final-page subtotal above already emitted, but a summary-only
+    // page break can still happen on a single-page case — pageNum guard
+    // prevents a spurious "Page 1 subtotal" row in that case.)
+    if (pageNum > 1) emitPageSubtotal();
     doc.addPage({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
+    pageNum += 1;
     y = MARGIN.top;
     y += drawTableHeader(doc, y);
   }
