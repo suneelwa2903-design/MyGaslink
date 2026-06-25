@@ -807,6 +807,12 @@ model Order {
   //   - dashboard inFlight KPI excludes godown rows
   // See docs/GODOWN-PICKUP-INVESTIGATION.md (incl. TRANSACTION AUDIT).
   isGodownPickup        Boolean     @default(false) @map("is_godown_pickup")
+  // Brief 3: distributor admin enters a delivery that already happened
+  // (paper trail / on-demand invoicing). Order lands in `delivered`
+  // immediately; orderDate/deliveryDate/deliveredAt are backdated to
+  // the entered date while createdAt stays "now" (audit trail).
+  // No inventory events, no CustomerInventoryBalance update — by design.
+  isBackdated           Boolean     @default(false) @map("is_backdated")
   totalAmount           Decimal     @default(0) @map("total_amount") @db.Decimal(18, 4)
   // Buyer's Purchase Order number. B2B customers raise an internal PO before
   // placing the order; capturing it lets the IRN payload emit PoDtls (NIC

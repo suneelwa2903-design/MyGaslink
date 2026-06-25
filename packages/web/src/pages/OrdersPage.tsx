@@ -25,6 +25,8 @@ import {
   OrderType,
   UserRole,
   createOrderSchema,
+  backdatedOrderSchema,
+  type BackdatedOrderInput,
   type CreateOrderInput,
   assignDriverSchema,
   type AssignDriverInput,
@@ -77,6 +79,8 @@ export default function OrdersPage() {
   const [dateTo, setDateTo] = useState(() => localTodayISO());
   const [createOpen, setCreateOpen] = useState(false);
   const [returnsOpen, setReturnsOpen] = useState(false);
+  // Brief 3: distributor_admin-only on-demand backdated order modal.
+  const [backdatedOpen, setBackdatedOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
   const [viewOrder, setViewOrder] = useState<Order | null>(null);
   const [assignOrder, setAssignOrder] = useState<Order | null>(null);
@@ -116,8 +120,10 @@ export default function OrdersPage() {
 
   // Vehicles list kept warm for the Order Detail / Delivery modals (those
   // still surface the day's assigned vehicle); the assign-driver flow no
-  // longer needs it.
-  useQuery({
+  // longer needs it. The backdated-order modal (distributor_admin only)
+  // also reads this — vehicle is optional there, but when picked drives
+  // EWB generation post-commit.
+  const { data: vehicles } = useQuery({
     queryKey: ['vehicles-list'],
     queryFn: () => apiGet<{ vehicles: Vehicle[] }>('/vehicles', { status: 'idle' }),
     staleTime: 5 * 60 * 1000,
@@ -170,6 +176,12 @@ export default function OrdersPage() {
               <HiOutlineArrowUturnLeft className="h-4 w-4" />
               Returns Order
             </Button>
+            {role === UserRole.DISTRIBUTOR_ADMIN && (
+              <Button variant="secondary" onClick={() => setBackdatedOpen(true)}>
+                <HiOutlinePlus className="h-4 w-4" />
+                Backdated Order
+              </Button>
+            )}
             <Button onClick={() => setCreateOpen(true)}>
               <HiOutlinePlus className="h-4 w-4" />
               New Order
@@ -304,9 +316,16 @@ export default function OrdersPage() {
                       )}
                     </td>
                     <td>
-                      <Badge variant={orderStatusVariant(order.status)}>
-                        {orderStatusLabel(order.status)}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge variant={orderStatusVariant(order.status)}>
+                          {orderStatusLabel(order.status)}
+                        </Badge>
+                        {order.isBackdated && (
+                          <span title="On-demand entry for a delivery that already happened">
+                            <Badge variant="warning">Backdated</Badge>
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div className="flex items-center gap-1">
@@ -402,6 +421,17 @@ export default function OrdersPage() {
           open={returnsOpen}
           onClose={() => setReturnsOpen(false)}
           cylinderTypes={cylinderTypes ?? []}
+        />
+      )}
+
+      {/* Brief 3 — Backdated Order Modal (distributor_admin only) */}
+      {backdatedOpen && (
+        <BackdatedOrderModal
+          open={backdatedOpen}
+          onClose={() => setBackdatedOpen(false)}
+          cylinderTypes={cylinderTypes ?? []}
+          drivers={drivers?.drivers ?? []}
+          vehicles={vehicles?.vehicles ?? []}
         />
       )}
 
@@ -640,6 +670,388 @@ function CreateOrderModal({
   );
 }
 
+// ─── Backdated Order Modal ───────────────────────────────────────────────────
+// Brief 3 — distributor_admin-only on-demand order+invoice for deliveries
+// that already happened. Two-step UX: first the GST document type
+// (E-Invoice+EWB vs E-Invoice only, B2B only — auto-collapsed to invoice-
+// only for B2C), then the order details with optional driver/vehicle and
+// payment.
+//
+// Date picker constraints: localTodayISO()-derived min/max — same-month,
+// before today. Anti-pattern #21 guard at the schema edge + service edge.
+
+type BackdatedFormInput = BackdatedOrderInput & { recordPayment?: boolean };
+
+function BackdatedOrderModal({
+  open, onClose, cylinderTypes, drivers, vehicles,
+}: {
+  open: boolean;
+  onClose: () => void;
+  cylinderTypes: CylinderType[];
+  drivers: Driver[];
+  vehicles: Vehicle[];
+}) {
+  const queryClient = useQueryClient();
+  // Step 1 = GST doc-type pick (B2B only). Step 2 = order details. B2C
+  // auto-jumps to Step 2 with gstDocType locked to 'invoice_only'.
+  const [step, setStep] = useState<1 | 2>(1);
+  const [gstDocType, setGstDocType] = useState<'invoice_ewb' | 'invoice_only'>('invoice_ewb');
+  const [selectedCustomerType, setSelectedCustomerType] = useState<'B2B' | 'B2C' | null>(null);
+
+  // Local-TZ min/max for the date picker — never use toISOString().split('T')[0].
+  const todayISO = localTodayISO();
+  const monthStart = todayISO.slice(0, 8) + '01';
+  // Max date = yesterday (todayISO − 1 day). Build via Date math but
+  // serialise with localDateISO so the wire string stays in local TZ.
+  const maxDateObj = new Date(todayISO + 'T12:00:00');
+  maxDateObj.setDate(maxDateObj.getDate() - 1);
+  const maxDateISO = localDateISO(maxDateObj);
+  // Defensive: if today is the 1st of the month there's no valid backdated
+  // slot at all. The button still opens the modal so the operator sees the
+  // explanation rather than a silent no-op.
+  const noValidDates = maxDateISO < monthStart;
+
+  const {
+    register, handleSubmit, control, setValue, watch, formState: { errors },
+  } = useForm<BackdatedFormInput>({
+    resolver: zodResolver(backdatedOrderSchema),
+    defaultValues: {
+      customerId: '',
+      issueDate: maxDateISO,
+      items: [{ cylinderTypeId: '', quantity: 1 }],
+      specialInstructions: '',
+      poNumber: '',
+      driverId: undefined,
+      vehicleId: undefined,
+      payment: undefined,
+      recordPayment: false,
+    },
+  });
+  const { fields, append, remove } = useFieldArray({ control, name: 'items' });
+  const customerId = useWatch({ control, name: 'customerId' });
+  const recordPayment = watch('recordPayment');
+  const driverId = watch('driverId');
+  const vehicleId = watch('vehicleId');
+
+  const mutation = useMutation({
+    mutationFn: (data: BackdatedOrderInput) => apiPost('/orders/backdated', data),
+    onSuccess: () => {
+      toast.success('Backdated order created');
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      onClose();
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const cylinderOptions = cylinderTypes.map((ct) => ({
+    value: ct.cylinderTypeId, label: `${ct.typeName} (${ct.capacity}${ct.unit})`,
+  }));
+  const driverOptions = drivers.map((d) => ({ value: d.driverId, label: d.driverName }));
+  const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
+
+  const requiresVehicle = gstDocType === 'invoice_ewb';
+  const showVehicleSection = selectedCustomerType === 'B2B' ? true : true; // always visible; required only on invoice_ewb
+
+  const onSubmit = handleSubmit((data) => {
+    // Strip the UI-only `recordPayment` flag + clear `payment` when not
+    // toggled on. Also drop empty driver/vehicle so optional-uuid Zod
+    // refines pass.
+    const payload: BackdatedOrderInput = {
+      customerId: data.customerId,
+      issueDate: data.issueDate,
+      items: data.items,
+      specialInstructions: data.specialInstructions || undefined,
+      poNumber: data.poNumber || undefined,
+      driverId: data.driverId || undefined,
+      vehicleId: data.vehicleId || undefined,
+      payment: data.recordPayment && data.payment?.amount ? data.payment : undefined,
+    };
+    mutation.mutate(payload);
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title="New Backdated Order" size="lg">
+      <div className="space-y-4">
+        <p className="text-xs text-surface-500 dark:text-surface-400">
+          For deliveries already made but not yet billed. Status: <strong>Delivered</strong>.
+          Inventory is NOT auto-adjusted — this is a paper-trail entry.
+        </p>
+
+        {/* STEP 1 — only meaningful for B2B. B2C jumps straight to Step 2. */}
+        {step === 1 && selectedCustomerType !== 'B2C' && (
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-surface-700 dark:text-surface-300">
+              Step 1 — GST document type
+            </p>
+            {/* Customer picker shown here so we know whether to auto-skip. */}
+            <CustomerSearchInput
+              label="Customer"
+              required
+              value={customerId}
+              onChange={(id, customer) => {
+                setValue('customerId', id, { shouldValidate: true });
+                const t = id ? (customer?.customerType ?? null) : null;
+                setSelectedCustomerType(t);
+                if (t === 'B2C') {
+                  setGstDocType('invoice_only');
+                  setStep(2);
+                }
+              }}
+              error={errors.customerId?.message}
+            />
+            {selectedCustomerType === 'B2B' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setGstDocType('invoice_ewb')}
+                  className={cn(
+                    'text-left rounded-lg border p-3 transition',
+                    gstDocType === 'invoice_ewb'
+                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-500/10'
+                      : 'border-surface-200 hover:border-surface-300 dark:border-surface-700',
+                  )}
+                >
+                  <p className="text-sm font-medium">E-Invoice + EWB</p>
+                  <p className="mt-1 text-xs text-surface-500">Vehicle + driver required. Generates IRN and EWB.</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGstDocType('invoice_only')}
+                  className={cn(
+                    'text-left rounded-lg border p-3 transition',
+                    gstDocType === 'invoice_only'
+                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-500/10'
+                      : 'border-surface-200 hover:border-surface-300 dark:border-surface-700',
+                  )}
+                >
+                  <p className="text-sm font-medium">E-Invoice Only</p>
+                  <p className="mt-1 text-xs text-surface-500">No vehicle movement. Generates IRN only.</p>
+                </button>
+              </div>
+            )}
+            <div className="flex justify-end gap-3 pt-2">
+              <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button type="button" disabled={!customerId || !selectedCustomerType} onClick={() => setStep(2)}>
+                Next →
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 2 — order details */}
+        {step === 2 && (
+          <form onSubmit={onSubmit} className="space-y-4">
+            {/* Show the customer summary + step-1 selection so the operator can confirm. */}
+            <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3 text-xs space-y-1">
+              <p>
+                <span className="text-surface-500">Customer:</span>{' '}
+                <strong>{selectedCustomerType ?? '—'}</strong>
+              </p>
+              {selectedCustomerType === 'B2C' ? (
+                <p className="text-surface-500">
+                  B2C customer — IRN not applicable. EWB will be generated if vehicle is provided.
+                </p>
+              ) : (
+                <p>
+                  <span className="text-surface-500">GST:</span>{' '}
+                  <strong>{gstDocType === 'invoice_ewb' ? 'E-Invoice + EWB' : 'E-Invoice Only'}</strong>
+                </p>
+              )}
+              {selectedCustomerType !== 'B2C' && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setStep(1)} className="!p-0 !h-auto">
+                  ← Change
+                </Button>
+              )}
+            </div>
+
+            {/* For B2C the customer picker is here — Step 1 was skipped. */}
+            {selectedCustomerType !== 'B2B' && (
+              <CustomerSearchInput
+                label="Customer"
+                required
+                value={customerId}
+                onChange={(id, customer) => {
+                  setValue('customerId', id, { shouldValidate: true });
+                  const t = id ? (customer?.customerType ?? null) : null;
+                  setSelectedCustomerType(t);
+                  if (t === 'B2B') {
+                    // Reset to Step 1 so the operator picks doc-type explicitly.
+                    setStep(1);
+                  }
+                }}
+                error={errors.customerId?.message}
+              />
+            )}
+
+            <div>
+              <Input
+                label="Delivery Date (backdated)"
+                type="date"
+                required
+                min={monthStart}
+                max={maxDateISO}
+                error={errors.issueDate?.message}
+                {...register('issueDate')}
+              />
+              <p className="mt-1 text-xs text-surface-500">
+                {noValidDates
+                  ? "Today is the 1st of the month — no valid backdated slot. Wait until tomorrow."
+                  : `Must be between ${monthStart} and ${maxDateISO} (within the current month, before today).`}
+              </p>
+            </div>
+
+            <div>
+              <label className="label">Order Items</label>
+              <div className="space-y-3">
+                {fields.map((field, index) => (
+                  <div key={field.id} className="flex items-start gap-2">
+                    <div className="flex-1">
+                      <Select
+                        options={cylinderOptions}
+                        placeholder="Select cylinder"
+                        required
+                        error={errors.items?.[index]?.cylinderTypeId?.message}
+                        {...register(`items.${index}.cylinderTypeId`)}
+                      />
+                    </div>
+                    <div className="w-24">
+                      <Input
+                        type="number"
+                        placeholder="Qty"
+                        min={1}
+                        required
+                        error={errors.items?.[index]?.quantity?.message}
+                        {...register(`items.${index}.quantity`, { valueAsNumber: true })}
+                      />
+                    </div>
+                    {fields.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => remove(index)}
+                        className="mt-1 p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10"
+                      >
+                        <HiOutlineTrash className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {errors.items?.message && <p className="error-text">{errors.items.message}</p>}
+              <Button
+                type="button" variant="ghost" size="sm" className="mt-2"
+                onClick={() => append({ cylinderTypeId: '', quantity: 1 })}
+              >
+                <HiOutlinePlus className="h-3 w-3" /> Add Item
+              </Button>
+            </div>
+
+            {selectedCustomerType === 'B2B' && (
+              <Input
+                label="PO Number"
+                placeholder="Buyer's purchase order number"
+                maxLength={16}
+                error={errors.poNumber?.message}
+                {...register('poNumber')}
+              />
+            )}
+
+            {/* Driver + Vehicle: required on invoice_ewb, optional otherwise.
+                For B2C, optional always — EWB still fires if vehicle picked. */}
+            {showVehicleSection && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Select
+                    label={requiresVehicle ? 'Driver' : 'Driver (optional)'}
+                    options={driverOptions}
+                    placeholder="—"
+                    error={errors.driverId?.message ?? (requiresVehicle && !driverId ? 'Driver required for E-Invoice + EWB' : undefined)}
+                    {...register('driverId')}
+                  />
+                </div>
+                <div>
+                  <Select
+                    label={requiresVehicle ? 'Vehicle' : 'Vehicle (optional)'}
+                    options={vehicleOptions}
+                    placeholder="—"
+                    error={errors.vehicleId?.message ?? (requiresVehicle && !vehicleId ? 'Vehicle required for E-Invoice + EWB' : undefined)}
+                    {...register('vehicleId')}
+                  />
+                </div>
+                {selectedCustomerType === 'B2C' && !requiresVehicle && (
+                  <p className="sm:col-span-2 text-xs text-surface-500">
+                    EWB will be generated if vehicle is provided.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <Input
+              label="Special Instructions"
+              placeholder="Optional notes…"
+              error={errors.specialInstructions?.message}
+              {...register('specialInstructions')}
+            />
+
+            {/* Payment toggle */}
+            <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" {...register('recordPayment')} className="h-4 w-4 rounded" />
+                <span className="text-sm font-medium">Record payment received</span>
+              </label>
+              {recordPayment && (
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Input
+                    label="Amount"
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    error={errors.payment?.amount?.message}
+                    {...register('payment.amount', { valueAsNumber: true })}
+                  />
+                  <Select
+                    label="Payment Method"
+                    options={[
+                      { value: 'cash', label: 'Cash' },
+                      { value: 'upi', label: 'UPI' },
+                      { value: 'cheque', label: 'Cheque' },
+                      { value: 'neft', label: 'NEFT' },
+                      { value: 'rtgs', label: 'RTGS' },
+                      { value: 'other', label: 'Other' },
+                    ]}
+                    error={errors.payment?.paymentMethod?.message}
+                    {...register('payment.paymentMethod')}
+                  />
+                  <Input
+                    label="Reference"
+                    placeholder="Transaction / cheque number"
+                    error={errors.payment?.referenceNumber?.message}
+                    {...register('payment.referenceNumber')}
+                  />
+                  <Input
+                    label="Payment Date (optional)"
+                    type="date"
+                    max={maxDateISO}
+                    error={errors.payment?.transactionDate?.message}
+                    {...register('payment.transactionDate')}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4">
+              <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button type="submit" loading={mutation.isPending} disabled={noValidDates}>
+                Create Backdated Order
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Order Detail (View) Modal ───────────────────────────────────────────────
 // Read-only view of an order. Used for delivered/cancelled orders (which
 // have no edit/assign actions) and also as a quick lookup for orders in any
@@ -658,6 +1070,13 @@ function OrderDetailModal({
   return (
     <Modal open={open} onClose={onClose} title={`Order ${order.orderNumber}`} size="lg">
       <div className="space-y-4 text-sm">
+        {/* Brief 3 — backdated banner with the audit-trail entry timestamp. */}
+        {order.isBackdated && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-300">
+            <p className="font-semibold">Backdated — delivery recorded for {new Date(order.deliveryDate).toLocaleDateString('en-IN')}.</p>
+            <p className="mt-1">Inventory not auto-updated. Entered on: {new Date(order.createdAt).toLocaleString('en-IN')}.</p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <p className="text-xs uppercase tracking-wide text-surface-500">Status</p>

@@ -60,6 +60,9 @@ interface Order {
   poNumber?: string | null;
   // Customer self-collected from godown — no driver/vehicle/EWB.
   isGodownPickup?: boolean;
+  // Brief 3: on-demand backdated paper-trail entry. Display-only on mobile.
+  isBackdated?: boolean;
+  createdAt?: string;
   items: OrderItem[];
 }
 
@@ -520,7 +523,14 @@ export default function AdminOrdersScreen() {
               </TouchableOpacity>
               <Text style={[styles.customerName, { color: ACCENT }]}>{order.customerName}</Text>
             </View>
-            {renderStatusBadge(order.status)}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {order.isBackdated && (
+                <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fbbf24' }}>
+                  <Text style={{ color: '#92400e', fontSize: 10, fontWeight: '700' }}>BACKDATED</Text>
+                </View>
+              )}
+              {renderStatusBadge(order.status)}
+            </View>
           </View>
 
           {/* Info row */}
@@ -2516,6 +2526,19 @@ function OrderDetailModal({
             <Text style={[styles.customerName, { color: ACCENT, flex: 1 }]}>{order.customerName}</Text>
             <Badge variant={orderStatusVariant(order.status)} label={orderStatusLabel(order.status)} />
           </View>
+
+          {/* Brief 3 — backdated banner for the audit trail. */}
+          {order.isBackdated && (
+            <View style={{ marginBottom: 12, padding: 10, borderRadius: 6, backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fbbf24' }}>
+              <Text style={{ color: '#92400e', fontSize: 12, fontWeight: '700' }}>
+                Backdated order
+              </Text>
+              <Text style={{ color: '#92400e', fontSize: 11, marginTop: 2 }}>
+                Delivery recorded for {formatDate(order.deliveryDate)}. Inventory not auto-updated.
+                {order.createdAt ? ` Entered on ${new Date(order.createdAt).toLocaleDateString('en-IN')}.` : ''}
+              </Text>
+            </View>
+          )}
 
           <Text style={[styles.fieldLabel, { color: C.textSecondary, fontSize: 12 }]}>Delivery Date</Text>
           <Text style={[{ color: C.text, fontSize: 15, marginBottom: 12 }]}>{formatDate(order.deliveryDate)}</Text>

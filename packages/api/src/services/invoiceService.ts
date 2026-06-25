@@ -119,12 +119,18 @@ export async function getInvoiceById(id: string, distributorId: string) {
 
 /**
  * Create invoice from a delivered order. Auto-calculates GST.
+ *
+ * Brief 3 — `options.issueDateOverride` lets the backdated-order flow set
+ * a historical issueDate while keeping everything else (numbering, GST,
+ * due-date) consistent. Default `new Date()` is preserved so every
+ * existing caller is untouched.
  */
 export async function createInvoiceFromOrder(
   tx: TxClient,
   orderId: string,
   distributorId: string,
-  userId: string
+  userId: string,
+  options?: { issueDateOverride?: Date },
 ) {
   const order = await tx.order.findFirst({
     where: { id: orderId, distributorId, deletedAt: null },
@@ -164,13 +170,18 @@ export async function createInvoiceFromOrder(
   const effectiveGstRate = resolveCustomerGstRate(order.customer?.gstRateOverride);
   const gstFactor = effectiveGstRate / 100;
 
-  const issueDate = new Date();
+  const issueDate = options?.issueDateOverride ?? new Date();
   // WI-108: structured number when docCode is set, else legacy random.
   // Allocated on `tx` so it rolls back with the invoice on failure.
+  // Note: allocator keys by (distributor, type, FY) — backdated issueDate
+  // gets the next sequential number for THAT FY (Apr–Mar). See
+  // numberingService.ts:30-84.
   const invoiceNumber = distributor?.docCode
     ? await allocateNumber(tx, distributorId, 'I', issueDate, distributor.docCode)
     : legacyNumber('INV');
-  const dueDate = new Date();
+  // Due date is creditPeriod days from the (possibly backdated) issueDate,
+  // matching how an on-time invoice would have aged.
+  const dueDate = new Date(issueDate);
   dueDate.setDate(dueDate.getDate() + (order.customer?.creditPeriodDays ?? 30));
 
   // Build invoice items from order items using delivered quantities

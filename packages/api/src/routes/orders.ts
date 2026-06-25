@@ -8,9 +8,11 @@ import {
   createOrderSchema, updateOrderSchema, deliveryConfirmationSchema,
   assignDriverSchema, bulkAssignDriverSchema, orderFilterSchema,
   returnsOnlyOrderSchema, returnsConfirmationSchema,
+  backdatedOrderSchema,
   localTodayISO,
 } from '@gaslink/shared';
 import * as orderService from '../services/orderService.js';
+import { createBackdatedOrder } from '../services/backdatedOrderService.js';
 import { preflightDispatch, preflightAddToTrip, PreflightError } from '../services/gst/gstPreflightService.js';
 import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
 import { mapOrder, mapOrders } from '../utils/mappers.js';
@@ -84,6 +86,30 @@ router.post('/returns-only',
       return sendError(res, e.message, e.statusCode || 500);
     }
   }
+);
+
+// POST /api/orders/backdated - Brief 3: on-demand backdated order+invoice
+// (distributor_admin only). Route MUST be registered before GET /:id so the
+// literal segment wins the router match — matches the same defensive
+// ordering as /in-transit below.
+router.post('/backdated',
+  requireRole('distributor_admin'),
+  validate(backdatedOrderSchema),
+  auditLog('create_backdated', 'order'),
+  async (req, res) => {
+    try {
+      const result = await createBackdatedOrder(
+        req.user!.distributorId!, req.user!.userId, req.body,
+      );
+      return sendCreated(res, {
+        order: mapOrder(result.order),
+        invoice: result.invoice ? { id: result.invoice.id, invoiceNumber: result.invoice.invoiceNumber } : null,
+      });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
 );
 
 // POST /api/orders/from-cancelled-stock - Create order from cancelled stock on vehicle

@@ -3,7 +3,7 @@ import {
   UserRole, PaymentMethod, OrderStatus, InvoiceStatus,
   CustomerStatus, GstMode, AccountabilityType,
 } from '../enums/index.js';
-import { GSTIN_REGEX, IFSC_REGEX, UPI_REGEX } from '../constants/index.js';
+import { GSTIN_REGEX, IFSC_REGEX, UPI_REGEX, localTodayISO } from '../constants/index.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -227,6 +227,45 @@ export const updateOrderSchema = z.object({
   poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
   items: z.array(orderItemSchema).min(1).optional(),
 });
+
+// Brief 3 — backdated / on-demand order create. Same-month, before-today
+// guard at the schema edge plus a defence-in-depth recheck in the service.
+// Both edges use `localTodayISO()` from constants — never
+// `new Date().toISOString().split('T')[0]` (banned by anti-pattern #21
+// and the check-tz-patterns.sh CI guard).
+export const backdatedOrderSchema = z.object({
+  customerId: uuid,
+  issueDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD')
+    .refine((date) => {
+      const now = new Date();
+      const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      return date.startsWith(currentYM);
+    }, 'Backdated date must be within the current calendar month')
+    .refine((date) => {
+      const todayStr = localTodayISO();
+      return date < todayStr;
+    }, 'Backdated date must be before today'),
+  items: z.array(z.object({
+    cylinderTypeId: uuid,
+    quantity: z.number().int().min(1),
+  })).min(1),
+  specialInstructions: z.string().max(500).optional(),
+  driverId: uuid.optional(),
+  vehicleId: uuid.optional(),
+  poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
+  payment: z.object({
+    amount: z.number().positive(),
+    paymentMethod: z.enum(['cash', 'upi', 'cheque', 'neft', 'rtgs', 'other']),
+    referenceNumber: z.string().optional(),
+    transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).optional(),
+}).refine(
+  (data) => !(data.vehicleId && !data.driverId),
+  { message: 'Driver is required when vehicle is provided', path: ['driverId'] },
+);
+
+export type BackdatedOrderInput = z.infer<typeof backdatedOrderSchema>;
 
 export const deliveryConfirmationSchema = z.object({
   // WI-109: individual items may be 0 (legitimate partial delivery — some
