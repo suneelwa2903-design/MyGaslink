@@ -160,7 +160,7 @@ describe('createBackdatedOrder — service', () => {
     const result = await createBackdatedOrder(D1, 'test-user', {
       customerId: customer.id,
       issueDate,
-      items: [{ cylinderTypeId: ctId, quantity: 2 }],
+      items: [{ cylinderTypeId: ctId, quantity: 2, emptiesCollected: 0 }],
     });
     trackedOrderIds.push(result.order.id);
     if (result.invoice) trackedInvoiceIds.push(result.invoice.id);
@@ -199,7 +199,7 @@ describe('createBackdatedOrder — service', () => {
     const result = await createBackdatedOrder(D1, 'test-user', {
       customerId: customer.id,
       issueDate: yesterdayLocalISO(),
-      items: [{ cylinderTypeId: ctId, quantity: 1 }],
+      items: [{ cylinderTypeId: ctId, quantity: 1, emptiesCollected: 0 }],
       payment: {
         amount: 1000, paymentMethod: 'cash',
         referenceNumber: 'BACKDATED-PAY-1',
@@ -229,7 +229,7 @@ describe('createBackdatedOrder — service', () => {
     const result = await createBackdatedOrder(D1, 'test-user', {
       customerId: customer.id,
       issueDate: yesterdayLocalISO(),
-      items: [{ cylinderTypeId: ctId, quantity: 1 }],
+      items: [{ cylinderTypeId: ctId, quantity: 1, emptiesCollected: 0 }],
     });
     trackedOrderIds.push(result.order.id);
     if (result.invoice) trackedInvoiceIds.push(result.invoice.id);
@@ -251,7 +251,7 @@ describe('createBackdatedOrder — service', () => {
       createBackdatedOrder(D1, 'test-user', {
         customerId: other.id,
         issueDate: yesterdayLocalISO(),
-        items: [{ cylinderTypeId: ctId, quantity: 1 }],
+        items: [{ cylinderTypeId: ctId, quantity: 1, emptiesCollected: 0 }],
       }),
     ).rejects.toThrow(/Customer not found/i);
   });
@@ -265,7 +265,7 @@ describe('createBackdatedOrder — service', () => {
     await expect(
       createBackdatedOrder(D1, 'test-user', {
         customerId: customer.id, issueDate: stale,
-        items: [{ cylinderTypeId: ctId, quantity: 1 }],
+        items: [{ cylinderTypeId: ctId, quantity: 1, emptiesCollected: 0 }],
       }),
     ).rejects.toThrow(/within the current calendar month/i);
   });
@@ -276,7 +276,7 @@ describe('createBackdatedOrder — service', () => {
     await expect(
       createBackdatedOrder(D1, 'test-user', {
         customerId: customer.id, issueDate: localTodayISO(),
-        items: [{ cylinderTypeId: ctId, quantity: 1 }],
+        items: [{ cylinderTypeId: ctId, quantity: 1, emptiesCollected: 0 }],
       }),
     ).rejects.toThrow(/before today/i);
   });

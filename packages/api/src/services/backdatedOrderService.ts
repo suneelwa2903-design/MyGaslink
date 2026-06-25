@@ -92,6 +92,10 @@ export async function createBackdatedOrder(
       unitPrice,
       discountPerUnit,
       totalPrice,
+      // Empties handed back at the historical delivery — feeds the
+      // reconciliation_empties_return event written by
+      // applyBackdatedInventoryAdjustment. Defaults to 0 via Zod.
+      emptiesCollected: item.emptiesCollected ?? 0,
     };
   }));
   const totalAmount = computeOrderTotal(itemsWithPrices, toNum(customer.transportChargePerCylinder));
@@ -139,6 +143,10 @@ export async function createBackdatedOrder(
             // entered quantity IS the delivered quantity. No partial
             // pickup workflow for historical entries.
             deliveredQuantity: it.quantity,
+            // Empties picked up at the historical delivery (0 by default).
+            // applyBackdatedInventoryAdjustment guards on > 0 before
+            // writing the reconciliation_empties_return event.
+            emptiesCollected: it.emptiesCollected,
           })),
         },
       },

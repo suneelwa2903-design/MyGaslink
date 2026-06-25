@@ -249,6 +249,15 @@ export const backdatedOrderSchema = z.object({
   items: z.array(z.object({
     cylinderTypeId: uuid,
     quantity: z.number().int().min(1),
+    // Empties the customer handed back at the historical delivery.
+    // 0 (default) is fine — many backdated deliveries have no
+    // empties yet. The apply-inventory-adjustment step writes a
+    // reconciliation_empties_return event only when this is > 0.
+    // `.default(0).optional()` keeps both Zod input and output
+    // optional — react-hook-form's TFieldValues uses the input
+    // type, the service layer normalises with `?? 0`. Same pattern
+    // as isGodownPickup in createOrderSchema (Brief 2 lesson).
+    emptiesCollected: z.number().int().min(0).default(0).optional(),
   })).min(1),
   specialInstructions: z.string().max(500).optional(),
   driverId: uuid.optional(),

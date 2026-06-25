@@ -696,7 +696,7 @@ export default function InventoryPage() {
               />
             ) : (
               <div className="table-container">
-                <table className="table-base">
+                <table className="table">
                   <thead>
                     <tr>
                       <th>Order #</th>
@@ -709,9 +709,16 @@ export default function InventoryPage() {
                   </thead>
                   <tbody>
                     {backdatedPending.map((row) => {
+                      // "2× 19 KG (1 empty), 1× 47.5 KG" — surface
+                      // empties only when > 0 so the column stays tidy.
                       const itemSummary = row.items
                         .filter((it) => it.deliveredQty > 0)
-                        .map((it) => `${it.deliveredQty}× ${it.cylinderTypeName}`)
+                        .map((it) => {
+                          const base = `${it.deliveredQty}× ${it.cylinderTypeName}`;
+                          return it.emptiesCollected > 0
+                            ? `${base} (${it.emptiesCollected} empty)`
+                            : base;
+                        })
                         .join(', ');
                       return (
                         <tr key={row.orderId}>
@@ -721,7 +728,7 @@ export default function InventoryPage() {
                           <td>{new Date(row.createdAt).toLocaleDateString('en-IN')}</td>
                           <td className="text-xs text-surface-600 dark:text-surface-300">{itemSummary || '—'}</td>
                           <td>
-                            <Button size="sm" onClick={() => setConfirmAdjustOrder(row)}>
+                            <Button size="sm" variant="secondary" onClick={() => setConfirmAdjustOrder(row)}>
                               Apply Adjustment
                             </Button>
                           </td>
@@ -750,36 +757,55 @@ export default function InventoryPage() {
                 description="History will appear here once you apply an adjustment above."
               />
             ) : (
-              <div className="table-container">
-                <table className="table-base">
-                  <thead>
-                    <tr>
-                      <th>Date Applied</th>
-                      <th>Cylinder Type</th>
-                      <th>Fulls Adjusted</th>
-                      <th>Empties Adjusted</th>
-                      <th>Order #</th>
-                      <th>Delivery Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {backdatedHistory.map((h) => (
-                      <tr key={h.eventId}>
-                        <td>{new Date(h.eventDate).toLocaleDateString('en-IN')}</td>
-                        <td>{h.cylinderTypeName}</td>
-                        <td className={h.fullsChange !== 0 ? 'font-medium' : 'text-surface-400'}>
-                          {h.fullsChange !== 0 ? h.fullsChange : '—'}
-                        </td>
-                        <td className={h.emptiesChange !== 0 ? 'font-medium' : 'text-surface-400'}>
-                          {h.emptiesChange !== 0 ? `+${h.emptiesChange}` : '—'}
-                        </td>
-                        <td>{h.orderNumber ?? '—'}</td>
-                        <td>{h.deliveryDate ? new Date(h.deliveryDate).toLocaleDateString('en-IN') : '—'}</td>
+              <>
+                <div className="table-container">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Date Applied</th>
+                        <th>Cylinder Type</th>
+                        <th>Fulls Adjusted</th>
+                        <th>Empties Adjusted</th>
+                        <th>Order #</th>
+                        <th>Delivery Date</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {backdatedHistory.map((h) => {
+                        // Negative fulls land in red so depot debits read
+                        // instantly. Empties show as positive with a +
+                        // prefix (always a credit).
+                        const fullsClass = h.fullsChange < 0
+                          ? 'font-medium text-red-600 dark:text-red-400'
+                          : h.fullsChange > 0
+                            ? 'font-medium'
+                            : 'text-surface-400';
+                        const emptiesClass = h.emptiesChange > 0
+                          ? 'font-medium'
+                          : 'text-surface-400';
+                        return (
+                          <tr key={h.eventId}>
+                            <td>{new Date(h.eventDate).toLocaleDateString('en-IN')}</td>
+                            <td>{h.cylinderTypeName}</td>
+                            <td className={fullsClass}>
+                              {h.fullsChange !== 0 ? h.fullsChange : 0}
+                            </td>
+                            <td className={emptiesClass}>
+                              {h.emptiesChange > 0 ? `+${h.emptiesChange}` : 0}
+                            </td>
+                            <td>{h.orderNumber ?? '—'}</td>
+                            <td>{h.deliveryDate ? new Date(h.deliveryDate).toLocaleDateString('en-IN') : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">
+                  <strong>Fulls Adjusted</strong> — negative = cylinders debited from depot stock.
+                  &nbsp;<strong>Empties Adjusted</strong> — positive = empties credited back to depot.
+                </p>
+              </>
             )}
           </div>
         </>
@@ -819,7 +845,9 @@ export default function InventoryPage() {
               <Button variant="secondary" onClick={() => setConfirmAdjustOrder(null)} disabled={applyAdjustment.isPending}>
                 Cancel
               </Button>
-              <Button onClick={() => applyAdjustment.mutate(confirmAdjustOrder.orderId)} loading={applyAdjustment.isPending}>
+              {/* Accent (not bright primary blue) — this is a follow-up
+                  commit on an existing order, not a fresh creation. */}
+              <Button variant="accent" onClick={() => applyAdjustment.mutate(confirmAdjustOrder.orderId)} loading={applyAdjustment.isPending}>
                 Apply Adjustment
               </Button>
             </div>

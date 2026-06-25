@@ -718,7 +718,7 @@ function BackdatedOrderModal({
     defaultValues: {
       customerId: '',
       issueDate: maxDateISO,
-      items: [{ cylinderTypeId: '', quantity: 1 }],
+      items: [{ cylinderTypeId: '', quantity: 1, emptiesCollected: 0 }],
       specialInstructions: '',
       poNumber: '',
       driverId: undefined,
@@ -930,6 +930,15 @@ function BackdatedOrderModal({
                         {...register(`items.${index}.quantity`, { valueAsNumber: true })}
                       />
                     </div>
+                    <div className="w-20">
+                      <Input
+                        type="number"
+                        placeholder="Empties"
+                        min={0}
+                        error={errors.items?.[index]?.emptiesCollected?.message}
+                        {...register(`items.${index}.emptiesCollected`, { valueAsNumber: true })}
+                      />
+                    </div>
                     {fields.length > 1 && (
                       <button
                         type="button"
@@ -942,10 +951,13 @@ function BackdatedOrderModal({
                   </div>
                 ))}
               </div>
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+                Empties = empty cylinders the customer returns to you.
+              </p>
               {errors.items?.message && <p className="error-text">{errors.items.message}</p>}
               <Button
                 type="button" variant="ghost" size="sm" className="mt-2"
-                onClick={() => append({ cylinderTypeId: '', quantity: 1 })}
+                onClick={() => append({ cylinderTypeId: '', quantity: 1, emptiesCollected: 0 })}
               >
                 <HiOutlinePlus className="h-3 w-3" /> Add Item
               </Button>
