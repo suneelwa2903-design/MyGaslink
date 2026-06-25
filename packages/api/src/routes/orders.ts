@@ -236,9 +236,11 @@ router.get('/in-transit',
 // Settle today's stock for a backdated order. Writes manual_adjustment
 // (fulls) + reconciliation_empties_return (empties) events dated TODAY
 // and stamps Order.inventoryAdjustedAt to block double-apply. No
-// historical cascade. distributor_admin + inventory only.
+// historical cascade. distributor_admin + inventory + finance — finance
+// can close the billing loop (the apply step is what makes the
+// backdated invoice's stock figures real).
 router.post('/:id/apply-inventory-adjustment',
-  requireRole('distributor_admin', 'inventory'),
+  requireRole('distributor_admin', 'inventory', 'finance'),
   auditLog('apply_inventory_adjustment', 'order'),
   async (req, res) => {
     try {

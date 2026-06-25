@@ -14,6 +14,9 @@
  *   - Event notes carry order number + backdated delivery date
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import request from 'supertest';
+import type { Express } from 'express';
+import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { localTodayISO } from '@gaslink/shared';
 import {
@@ -22,6 +25,7 @@ import {
   getBackdatedAdjustmentHistory,
   BackdatedAdjustmentError,
 } from '../services/backdatedAdjustmentService.js';
+import { loginAsFinance, loginAsInventory, loginAsCustomer } from './helpers.js';
 
 const D1 = 'dist-001';
 const D2 = 'dist-002';
@@ -256,6 +260,80 @@ describe('BackdatedAdjustmentError shape', () => {
     const e = new BackdatedAdjustmentError('test', 409);
     expect(e.statusCode).toBe(409);
     expect(e).toBeInstanceOf(Error);
+  });
+});
+
+describe('POST /api/orders/:id/apply-inventory-adjustment — role gate', () => {
+  let app: Express;
+  let financeToken: string;
+  let inventoryToken: string;
+  let customerToken: string;
+  let ctId: string;
+
+  beforeAll(async () => {
+    app = createApp();
+    financeToken = (await loginAsFinance()).token;
+    inventoryToken = (await loginAsInventory()).token;
+    customerToken = (await loginAsCustomer()).token;
+    const ct = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId: D1, isActive: true } });
+    ctId = ct.id;
+  });
+
+  async function freshOrder() {
+    const cust = await prisma.customer.create({
+      data: {
+        distributorId: D1,
+        customerName: `RoleGateCust-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+        customerType: 'B2B', phone: '+919999999999', gstin: '29ABCDE1234F1Z5',
+        billingAddressLine1: 'Test', billingState: 'Karnataka', billingPincode: '560001', billingCity: 'Bengaluru',
+        status: 'active', creditPeriodDays: 30,
+      },
+      select: { id: true },
+    });
+    trackedCustomerIds.push(cust.id);
+    const o = await prisma.order.create({
+      data: {
+        distributorId: D1, customerId: cust.id,
+        orderNumber: `OBKROLE-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+        orderDate: new Date('2099-12-15'),
+        deliveryDate: new Date('2099-12-15'),
+        deliveredAt: new Date('2099-12-15'),
+        status: 'delivered', isBackdated: true, totalAmount: 1000,
+        items: { create: [{ cylinderTypeId: ctId, quantity: 1, deliveredQuantity: 1, emptiesCollected: 0, unitPrice: 1000, totalPrice: 1000 }] },
+      },
+      select: { id: true },
+    });
+    trackedOrderIds.push(o.id);
+    return o.id;
+  }
+
+  it('finance can close the billing loop — POST returns 200', async () => {
+    const orderId = await freshOrder();
+    const res = await request(app)
+      .post(`/api/orders/${orderId}/apply-inventory-adjustment`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({});
+    expect(res.status).toBe(200);
+    const updated = await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { inventoryAdjustedAt: true } });
+    expect(updated.inventoryAdjustedAt).not.toBeNull();
+  });
+
+  it('inventory role still allowed (regression) — POST returns 200', async () => {
+    const orderId = await freshOrder();
+    const res = await request(app)
+      .post(`/api/orders/${orderId}/apply-inventory-adjustment`)
+      .set('Authorization', `Bearer ${inventoryToken}`)
+      .send({});
+    expect(res.status).toBe(200);
+  });
+
+  it('customer role rejected with 403', async () => {
+    const orderId = await freshOrder();
+    const res = await request(app)
+      .post(`/api/orders/${orderId}/apply-inventory-adjustment`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({});
+    expect(res.status).toBe(403);
   });
 });
 
