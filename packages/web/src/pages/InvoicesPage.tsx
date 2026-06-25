@@ -404,10 +404,15 @@ function InvoiceDetailModal({
   const needsIrnRetry = invoice.irnStatus === IrnStatus.CANCEL_FAILED;
   const canCancelEwb = invoice.ewbStatus === EwbStatus.ACTIVE && irnWithinWindow;
   const ewbExpired = invoice.ewbStatus === EwbStatus.ACTIVE && !irnWithinWindow;
+  // B2C godown pickup: no IRN, no EWB — nothing to generate. Hide the
+  // button so we don't mislead operators. B2B godown keeps the button
+  // (IRN still fires + may need a retry).
+  const isB2CGodown = !!invoice.isGodownPickup && invoice.customerType === 'B2C';
   const canGenerateGst = gstEnabled
     && invoice.status !== InvoiceStatus.CANCELLED
     && invoice.irnStatus !== IrnStatus.SUCCESS
-    && invoice.irnStatus !== IrnStatus.PENDING;
+    && invoice.irnStatus !== IrnStatus.PENDING
+    && !isB2CGodown;
   const canRegenerate = invoice.orderId
     && invoice.status !== InvoiceStatus.CANCELLED;
 

@@ -44,7 +44,11 @@ const listInvoiceInclude = {
 } satisfies Prisma.InvoiceInclude;
 
 const detailInvoiceInclude = {
-  customer: { select: { id: true, customerName: true, gstin: true, billingState: true } },
+  // customerType: detail view was missing this, so /api/invoices/:id returned
+  // customerType: null even for B2B customers. Any consumer that gates on
+  // customerType (e.g. the Brief-2 B2C-godown "Generate GST" hide) would
+  // misclassify. Mirror the list shape.
+  customer: { select: { id: true, customerName: true, gstin: true, billingState: true, customerType: true } },
   items: { include: { cylinderType: { select: { typeName: true } } } },
   order: { select: { id: true, orderNumber: true, isGodownPickup: true } },
   paymentAllocations: { include: { payment: { select: { id: true, paymentMethod: true } } } },

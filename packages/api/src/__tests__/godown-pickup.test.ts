@@ -22,6 +22,7 @@ import { prisma } from '../lib/prisma.js';
 import { createOrderSchema } from '@gaslink/shared';
 import { createOrder, assignDriver, confirmDelivery } from '../services/orderService.js';
 import { getDashboardStats } from '../services/analyticsService.js';
+import { mapInvoice } from '../utils/mappers.js';
 
 const D1 = 'dist-001';
 
@@ -388,5 +389,60 @@ describe('analyticsService — inFlight KPI excludes godown', () => {
     const stats = await getDashboardStats(D1);
     expect(typeof stats.inFlight).toBe('number');
     expect(stats.inFlight).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('Invoice API response shape — isGodownPickup + customerType', () => {
+  // Wire-shape guard (anti-pattern #9). The web `Generate GST` button
+  // hides for B2C godown invoices by reading `invoice.isGodownPickup`
+  // and `invoice.customerType` off the API response. Both fields must
+  // round-trip on every invoice — list AND detail — or the button
+  // gate silently misclassifies.
+
+  it('B2C godown order → mapped invoice has isGodownPickup=true and customerType=B2C', () => {
+    const raw = {
+      id: 'inv-1', invoiceNumber: 'INV-1',
+      customer: { id: 'c1', customerName: 'B2C cust', customerType: 'B2C', gstin: null },
+      order: { id: 'o1', orderNumber: 'O-1', isGodownPickup: true, status: 'delivered' },
+      items: [], paymentAllocations: [], creditNotes: [], debitNotes: [],
+    };
+    const m = mapInvoice(raw) as Record<string, unknown>;
+    expect(m.isGodownPickup).toBe(true);
+    expect(m.customerType).toBe('B2C');
+  });
+
+  it('B2B godown order → mapped invoice has isGodownPickup=true and customerType=B2B', () => {
+    const raw = {
+      id: 'inv-2', invoiceNumber: 'INV-2',
+      customer: { id: 'c2', customerName: 'B2B cust', customerType: 'B2B', gstin: '29AAAAA0000A1Z5' },
+      order: { id: 'o2', orderNumber: 'O-2', isGodownPickup: true, status: 'delivered' },
+      items: [], paymentAllocations: [], creditNotes: [], debitNotes: [],
+    };
+    const m = mapInvoice(raw) as Record<string, unknown>;
+    expect(m.isGodownPickup).toBe(true);
+    expect(m.customerType).toBe('B2B');
+  });
+
+  it('Normal (non-godown) order → mapped invoice has isGodownPickup=false', () => {
+    const raw = {
+      id: 'inv-3', invoiceNumber: 'INV-3',
+      customer: { id: 'c3', customerName: 'B2B cust', customerType: 'B2B', gstin: '29AAAAA0000A1Z5' },
+      order: { id: 'o3', orderNumber: 'O-3', isGodownPickup: false, status: 'delivered' },
+      items: [], paymentAllocations: [], creditNotes: [], debitNotes: [],
+    };
+    const m = mapInvoice(raw) as Record<string, unknown>;
+    expect(m.isGodownPickup).toBe(false);
+    expect(m.customerType).toBe('B2B');
+  });
+
+  it('Manual invoice (no parent order) → mapped invoice has isGodownPickup=false (safe default)', () => {
+    const raw = {
+      id: 'inv-4', invoiceNumber: 'INV-4',
+      customer: { id: 'c4', customerName: 'B2B cust', customerType: 'B2B', gstin: '29AAAAA0000A1Z5' },
+      order: null,
+      items: [], paymentAllocations: [], creditNotes: [], debitNotes: [],
+    };
+    const m = mapInvoice(raw) as Record<string, unknown>;
+    expect(m.isGodownPickup).toBe(false);
   });
 });

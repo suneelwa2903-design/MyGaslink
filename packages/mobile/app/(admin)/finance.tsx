@@ -63,6 +63,10 @@ interface Invoice {
   ewbStatus?: string | null;
   orderId?: string | null;
   customerType?: string | null;
+  // Brief 2 hotfix follow-up: flat alias of order.isGodownPickup so the
+  // Generate-GST button can hide for B2C godown invoices (nothing to
+  // generate — no IRN, no EWB). Threaded by mapInvoice.
+  isGodownPickup?: boolean | null;
 }
 
 interface Payment {
@@ -647,12 +651,19 @@ function InvoicesTab({
       // Only Generate-GST remains on mobile. Cancel-IRN / Cancel-EWB /
       // Regenerate now require a NIC reason code (1-4) + free-text remark
       // captured at the call site, so they're web-only.
+      //
+      // B2C godown pickup invoices have nothing to generate — no IRN (URP,
+      // skipped at /api/customer-portal level too) and no EWB (godown skip).
+      // Hide the button to avoid misleading the operator. B2B godown KEEPS
+      // the button (IRN still fires + may need a retry).
+      const isB2CGodown = !!inv.isGodownPickup && inv.customerType === 'B2C';
       const showGenerateGst =
         gstEnabled &&
         canDoGstActions &&
         inv.status !== 'cancelled' &&
         inv.irnStatus !== 'success' &&
-        inv.irnStatus !== 'pending';
+        inv.irnStatus !== 'pending' &&
+        !isB2CGodown;
       const anyGstAction = showGenerateGst;
 
       return (
