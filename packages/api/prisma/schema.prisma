@@ -813,6 +813,11 @@ model Order {
   // the entered date while createdAt stays "now" (audit trail).
   // No inventory events, no CustomerInventoryBalance update — by design.
   isBackdated           Boolean     @default(false) @map("is_backdated")
+  // Backdated-Inventory-Adjustment: timestamp the operator clicked
+  // "Apply Adjustment" on a backdated order to mint the inventory
+  // events dated TODAY (no historical cascade). Nullable — null = not
+  // yet adjusted. Double-apply blocked by checking this column.
+  inventoryAdjustedAt   DateTime?   @map("inventory_adjusted_at")
   totalAmount           Decimal     @default(0) @map("total_amount") @db.Decimal(18, 4)
   // Buyer's Purchase Order number. B2B customers raise an internal PO before
   // placing the order; capturing it lets the IRN payload emit PoDtls (NIC

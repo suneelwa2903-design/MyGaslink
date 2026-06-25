@@ -311,8 +311,12 @@ export interface Order {
   isGodownPickup: boolean;
   // Brief 3: a backdated/on-demand order — entered after the fact for a
   // delivery that already happened. orderDate/deliveryDate/deliveredAt are
-  // historical; createdAt stays at "now". No inventory writes.
+  // historical; createdAt stays at "now". No inventory writes at creation.
   isBackdated: boolean;
+  // Backdated-Inventory-Adjustment: timestamp the operator settled
+  // today's stock for this backdated order. null = pending (shows in
+  // the Backdated Adjustments tab). Setting this is idempotent-blocking.
+  inventoryAdjustedAt?: string | null;
   // Flat alias of customer.customerType ('B2B' | 'B2C'). Surfaced by mapOrder
   // so the web edit-order modal can gate B2B-only fields without traversing
   // the nested customer relation. Null when the customer has been deleted.

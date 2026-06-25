@@ -13,6 +13,7 @@ import {
 } from '@gaslink/shared';
 import * as orderService from '../services/orderService.js';
 import { createBackdatedOrder } from '../services/backdatedOrderService.js';
+import { applyBackdatedInventoryAdjustment } from '../services/backdatedAdjustmentService.js';
 import { preflightDispatch, preflightAddToTrip, PreflightError } from '../services/gst/gstPreflightService.js';
 import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
 import { mapOrder, mapOrders } from '../utils/mappers.js';
@@ -228,6 +229,31 @@ router.get('/in-transit',
       return sendError(res, e.message, e.statusCode || 500);
     }
   }
+);
+
+// POST /api/orders/:id/apply-inventory-adjustment
+// Settle today's stock for a backdated order. Writes manual_adjustment
+// (fulls) + reconciliation_empties_return (empties) events dated TODAY
+// and stamps Order.inventoryAdjustedAt to block double-apply. No
+// historical cascade. distributor_admin + inventory only.
+router.post('/:id/apply-inventory-adjustment',
+  requireRole('distributor_admin', 'inventory'),
+  auditLog('apply_inventory_adjustment', 'order'),
+  async (req, res) => {
+    try {
+      const result = await applyBackdatedInventoryAdjustment(
+        req.user!.distributorId!, req.user!.userId, param(req.params.id),
+      );
+      return sendSuccess(res, {
+        message: `Inventory adjusted for order ${result.order.orderNumber}`,
+        eventsWritten: result.eventsWritten,
+        order: result.order,
+      });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
 );
 
 // GET /api/orders/:id

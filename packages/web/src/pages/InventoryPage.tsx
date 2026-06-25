@@ -124,6 +124,29 @@ type ReconciliationConfirmResult =
       message: string;
     };
 
+// Wire shapes returned by /api/inventory/backdated-adjustments/{pending,history}
+interface BackdatedPendingRow {
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  deliveryDate: string;
+  createdAt: string;
+  items: { cylinderTypeId: string; cylinderTypeName: string; deliveredQty: number; emptiesCollected: number }[];
+}
+interface BackdatedHistoryRow {
+  eventId: string;
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  eventType: string;
+  fullsChange: number;
+  emptiesChange: number;
+  eventDate: string;
+  createdAt: string;
+  orderId: string | null;
+  orderNumber: string | null;
+  deliveryDate: string | null;
+}
+
 export default function InventoryPage() {
   const queryClient = useQueryClient();
   const [selectedDate, setSelectedDate] = useState(todayString());
@@ -131,9 +154,9 @@ export default function InventoryPage() {
   // "AI Demand Forecast" header button → /app/inventory?tab=forecast).
   const initialTab = (typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('tab')
-    : null) as ('daily' | 'depot' | 'onboarding' | 'forecast' | 'customer' | 'reconciliation') | null;
-  const validTabs = ['daily', 'depot', 'onboarding', 'forecast', 'customer', 'reconciliation'];
-  const [tab, setTab] = useState<'daily' | 'depot' | 'onboarding' | 'forecast' | 'customer' | 'reconciliation'>(
+    : null) as ('daily' | 'depot' | 'onboarding' | 'forecast' | 'customer' | 'reconciliation' | 'backdated') | null;
+  const validTabs = ['daily', 'depot', 'onboarding', 'forecast', 'customer', 'reconciliation', 'backdated'];
+  const [tab, setTab] = useState<'daily' | 'depot' | 'onboarding' | 'forecast' | 'customer' | 'reconciliation' | 'backdated'>(
     initialTab && validTabs.includes(initialTab) ? initialTab : 'daily',
   );
   const [incomingOpen, setIncomingOpen] = useState(false);
@@ -191,6 +214,32 @@ export default function InventoryPage() {
     queryKey: ['reconciliation-pending'],
     queryFn: () => apiGet<ReconciliationVehicle[]>('/delivery/reconciliation/pending'),
     enabled: tab === 'reconciliation',
+  });
+
+  // Backdated Inventory Adjustments — pending list + history. Loaded only
+  // when the operator opens the tab to keep landing-page cost flat.
+  const { data: backdatedPending, isLoading: backdatedPendingLoading } = useQuery({
+    queryKey: ['backdated-adjustments-pending'],
+    queryFn: () => apiGet<BackdatedPendingRow[]>('/inventory/backdated-adjustments/pending'),
+    enabled: tab === 'backdated',
+  });
+  const { data: backdatedHistory, isLoading: backdatedHistoryLoading } = useQuery({
+    queryKey: ['backdated-adjustments-history'],
+    queryFn: () => apiGet<BackdatedHistoryRow[]>('/inventory/backdated-adjustments/history'),
+    enabled: tab === 'backdated',
+  });
+  const [confirmAdjustOrder, setConfirmAdjustOrder] = useState<BackdatedPendingRow | null>(null);
+  const applyAdjustment = useMutation({
+    mutationFn: (orderId: string) => apiPost(`/orders/${orderId}/apply-inventory-adjustment`),
+    onSuccess: (_, orderId) => {
+      const ord = backdatedPending?.find((p) => p.orderId === orderId);
+      toast.success(`Inventory adjusted${ord ? ` for order ${ord.orderNumber}` : ''}`);
+      queryClient.invalidateQueries({ queryKey: ['backdated-adjustments-pending'] });
+      queryClient.invalidateQueries({ queryKey: ['backdated-adjustments-history'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setConfirmAdjustOrder(null);
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
   });
 
   const reconciliationConfirm = useMutation({
@@ -287,6 +336,7 @@ export default function InventoryPage() {
     { key: 'forecast' as const, label: 'AI Demand Forecast' },
     { key: 'customer' as const, label: 'Customer Balances' },
     { key: 'reconciliation' as const, label: 'Vehicle Return' },
+    { key: 'backdated' as const, label: 'Backdated Adjustments' },
   ];
 
   return (
@@ -624,6 +674,157 @@ export default function InventoryPage() {
           {/* WI-4 — Mismatch & Correction Log (collapsible) */}
           <MismatchLogSection />
         </>
+      )}
+
+      {/* Backdated Adjustments tab */}
+      {tab === 'backdated' && (
+        <>
+          {/* Section 1 — Pending */}
+          <div className="card p-4">
+            <div className="mb-3">
+              <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Pending Inventory Adjustments</h2>
+              <p className="text-xs text-surface-500 dark:text-surface-400">
+                Backdated orders whose stock has not yet been adjusted. Applying writes events dated <strong>today</strong> — past daily summaries are not changed.
+              </p>
+            </div>
+            {backdatedPendingLoading ? (
+              <Loader />
+            ) : !backdatedPending?.length ? (
+              <EmptyState
+                title="No pending adjustments"
+                description="All backdated orders have been adjusted."
+              />
+            ) : (
+              <div className="table-container">
+                <table className="table-base">
+                  <thead>
+                    <tr>
+                      <th>Order #</th>
+                      <th>Customer</th>
+                      <th>Delivery Date</th>
+                      <th>Entered On</th>
+                      <th>Items</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backdatedPending.map((row) => {
+                      const itemSummary = row.items
+                        .filter((it) => it.deliveredQty > 0)
+                        .map((it) => `${it.deliveredQty}× ${it.cylinderTypeName}`)
+                        .join(', ');
+                      return (
+                        <tr key={row.orderId}>
+                          <td className="font-medium text-surface-900 dark:text-white">{row.orderNumber}</td>
+                          <td>{row.customerName}</td>
+                          <td>{new Date(row.deliveryDate).toLocaleDateString('en-IN')}</td>
+                          <td>{new Date(row.createdAt).toLocaleDateString('en-IN')}</td>
+                          <td className="text-xs text-surface-600 dark:text-surface-300">{itemSummary || '—'}</td>
+                          <td>
+                            <Button size="sm" onClick={() => setConfirmAdjustOrder(row)}>
+                              Apply Adjustment
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Section 2 — History (inline below) */}
+          <div className="card p-4 mt-4">
+            <div className="mb-3">
+              <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Adjustment History</h2>
+              <p className="text-xs text-surface-500 dark:text-surface-400">
+                Inventory events applied from backdated orders (most recent first).
+              </p>
+            </div>
+            {backdatedHistoryLoading ? (
+              <Loader />
+            ) : !backdatedHistory?.length ? (
+              <EmptyState
+                title="No adjustments applied yet"
+                description="History will appear here once you apply an adjustment above."
+              />
+            ) : (
+              <div className="table-container">
+                <table className="table-base">
+                  <thead>
+                    <tr>
+                      <th>Date Applied</th>
+                      <th>Cylinder Type</th>
+                      <th>Fulls Adjusted</th>
+                      <th>Empties Adjusted</th>
+                      <th>Order #</th>
+                      <th>Delivery Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backdatedHistory.map((h) => (
+                      <tr key={h.eventId}>
+                        <td>{new Date(h.eventDate).toLocaleDateString('en-IN')}</td>
+                        <td>{h.cylinderTypeName}</td>
+                        <td className={h.fullsChange !== 0 ? 'font-medium' : 'text-surface-400'}>
+                          {h.fullsChange !== 0 ? h.fullsChange : '—'}
+                        </td>
+                        <td className={h.emptiesChange !== 0 ? 'font-medium' : 'text-surface-400'}>
+                          {h.emptiesChange !== 0 ? `+${h.emptiesChange}` : '—'}
+                        </td>
+                        <td>{h.orderNumber ?? '—'}</td>
+                        <td>{h.deliveryDate ? new Date(h.deliveryDate).toLocaleDateString('en-IN') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Confirmation modal for the apply-adjustment action. Built inline
+          (not a separate component) because it's small and reads directly
+          from the parent's row state + mutation. */}
+      {confirmAdjustOrder && (
+        <Modal
+          open
+          onClose={() => setConfirmAdjustOrder(null)}
+          title="Apply Inventory Adjustment"
+          size="md"
+        >
+          <div className="space-y-3 text-sm">
+            <p>
+              This will update today&apos;s stock for order{' '}
+              <strong>{confirmAdjustOrder.orderNumber}</strong>:
+            </p>
+            <ul className="text-xs text-surface-700 dark:text-surface-300 list-disc pl-5 space-y-1">
+              {confirmAdjustOrder.items.map((it) => (
+                <span key={it.cylinderTypeId} className="contents">
+                  {it.deliveredQty > 0 && (
+                    <li>Deduct {it.deliveredQty}× {it.cylinderTypeName} fulls</li>
+                  )}
+                  {it.emptiesCollected > 0 && (
+                    <li>Credit {it.emptiesCollected}× {it.cylinderTypeName} empties</li>
+                  )}
+                </span>
+              ))}
+            </ul>
+            <p className="text-xs text-surface-500 dark:text-surface-400">
+              Stock will be updated as of today. Past daily summaries will not be changed.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="secondary" onClick={() => setConfirmAdjustOrder(null)} disabled={applyAdjustment.isPending}>
+                Cancel
+              </Button>
+              <Button onClick={() => applyAdjustment.mutate(confirmAdjustOrder.orderId)} loading={applyAdjustment.isPending}>
+                Apply Adjustment
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {/* WI-4 — Report Mismatch Modal */}

@@ -10,6 +10,10 @@ import {
   localTodayISO,
 } from '@gaslink/shared';
 import * as inventoryService from '../services/inventoryService.js';
+import {
+  getPendingBackdatedAdjustments,
+  getBackdatedAdjustmentHistory,
+} from '../services/backdatedAdjustmentService.js';
 import { mapInventorySummaries, mapInventoryEvent, mapInventoryEvents } from '../utils/mappers.js';
 import { z } from 'zod';
 
@@ -203,6 +207,38 @@ router.patch('/manual-adjustments/:id',
       return sendError(res, e.message, e.statusCode ?? 500);
     }
   }
+);
+
+// GET /api/inventory/backdated-adjustments/pending
+// Backdated orders whose stock has not yet been settled. Drives the
+// pending list on the Backdated Adjustments tab.
+router.get('/backdated-adjustments/pending',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const rows = await getPendingBackdatedAdjustments(req.user!.distributorId!);
+      return sendSuccess(res, rows);
+    } catch (err) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode ?? 500);
+    }
+  },
+);
+
+// GET /api/inventory/backdated-adjustments/history
+// The most-recent backdated_inventory_adjustment events (50). Drives
+// the inline history section on the Backdated Adjustments tab.
+router.get('/backdated-adjustments/history',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const rows = await getBackdatedAdjustmentHistory(req.user!.distributorId!);
+      return sendSuccess(res, rows);
+    } catch (err) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode ?? 500);
+    }
+  },
 );
 
 // GET /api/inventory/depot-history
