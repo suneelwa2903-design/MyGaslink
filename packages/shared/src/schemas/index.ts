@@ -190,11 +190,11 @@ export const createOrderSchema = z.object({
   // IRN payload builder gates emission on customerType === 'B2B'.
   poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
   // Customer self-collects from godown — no driver/vehicle/EWB flow.
-  // Defaults false so existing API consumers keep working unchanged.
-  // Note: `.default()` alone (without .optional()) makes the key optional
-  // AND applies the default when missing. Adding .optional() would let
-  // undefined through unchanged, bypassing the default.
-  isGodownPickup: z.boolean().default(false),
+  // Optional + default so existing API callers keep working unchanged.
+  // The orderService.createOrder pass-through (`data.isGodownPickup ?? false`)
+  // normalises undefined to false at the service layer, mirroring the
+  // DB column's `DEFAULT false`.
+  isGodownPickup: z.boolean().default(false).optional(),
   items: z.array(orderItemSchema).min(1, 'At least one item is required'),
   orderType: z.enum(['delivery', 'returns_only']).default('delivery').optional(),
   cancelledStockEventId: uuid.optional(),

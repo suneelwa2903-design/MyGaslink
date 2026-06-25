@@ -292,7 +292,17 @@ export default function OrdersPage() {
                     <td>{new Date(order.deliveryDate).toLocaleDateString('en-IN')}</td>
                     <td>{order.items.length} items</td>
                     <td className="font-medium">{formatCurrency(order.totalAmount)}</td>
-                    <td>{order.driverName || <span className="text-surface-400">Unassigned</span>}</td>
+                    <td>
+                      {order.driverName ? (
+                        order.driverName
+                      ) : order.isGodownPickup ? (
+                        <span className="text-surface-400" title="Customer self-collects from godown">
+                          N/A — Godown
+                        </span>
+                      ) : (
+                        <span className="text-surface-400">Unassigned</span>
+                      )}
+                    </td>
                     <td>
                       <Badge variant={orderStatusVariant(order.status)}>
                         {orderStatusLabel(order.status)}
@@ -671,11 +681,15 @@ function OrderDetailModal({
           </div>
           <div>
             <p className="text-xs uppercase tracking-wide text-surface-500">Driver</p>
-            <p className="font-medium">{order.driverName || '—'}</p>
+            <p className="font-medium">
+              {order.driverName || (order.isGodownPickup ? 'N/A — Godown' : '—')}
+            </p>
           </div>
           <div>
             <p className="text-xs uppercase tracking-wide text-surface-500">Vehicle</p>
-            <p className="font-medium">{order.vehicleNumber || '—'}</p>
+            <p className="font-medium">
+              {order.vehicleNumber || (order.isGodownPickup ? 'N/A — Godown' : '—')}
+            </p>
           </div>
           {order.poNumber && (
             <div>

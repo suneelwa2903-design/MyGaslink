@@ -350,7 +350,18 @@ function InvoicesTab() {
                             {inv.customerType === 'B2B' && (
                               <Badge variant={IRN_VARIANTS[inv.irnStatus] || 'neutral'}>IRN</Badge>
                             )}
-                            <Badge variant={EWB_VARIANTS[inv.ewbStatus] || 'neutral'}>EWB</Badge>
+                            {/* Godown pickup: EWB is intentionally skipped (no
+                                vehicle dispatch). Show a neutral "N/A" chip
+                                instead of the misleading red "failed" badge
+                                that the raw not_attempted/failed status would
+                                otherwise drive. */}
+                            {inv.isGodownPickup ? (
+                              <span title="Godown pickup — no vehicle, no e-Way Bill">
+                                <Badge variant="neutral">EWB N/A</Badge>
+                              </span>
+                            ) : (
+                              <Badge variant={EWB_VARIANTS[inv.ewbStatus] || 'neutral'}>EWB</Badge>
+                            )}
                           </div>
                         )}
                       </td>
@@ -1158,7 +1169,13 @@ function InvoiceDetailModal({
                   </div>
                   <div>
                     <p className="text-xs text-surface-400">EWB Status</p>
-                    <Badge variant={EWB_VARIANTS[invoice.ewbStatus] || 'neutral'}>{invoice.ewbStatus.replace(/_/g, ' ')}</Badge>
+                    {invoice.isGodownPickup ? (
+                      <span title="Godown pickup — no vehicle dispatch, no e-Way Bill">
+                        <Badge variant="neutral">N/A — Godown</Badge>
+                      </span>
+                    ) : (
+                      <Badge variant={EWB_VARIANTS[invoice.ewbStatus] || 'neutral'}>{invoice.ewbStatus.replace(/_/g, ' ')}</Badge>
+                    )}
                   </div>
                 </div>
               </div>

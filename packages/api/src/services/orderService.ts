@@ -1064,6 +1064,32 @@ export async function confirmDelivery(
           createdBy: userId,
           notes: `Order ${order.orderNumber} empties collected`,
         });
+        // GODOWN PICKUP — write a SYNTHETIC reconciliation_empties_return
+        // event too. Under the new inventory model (inventoryService.ts:194)
+        // closingEmpties is fed ONLY by reconciliation_empties_return events
+        // (supervisor-verified at vehicle return). Godown pickup never has
+        // a vehicle return, so without this synthetic event the collected
+        // empties get stuck in `emptiesOnVehicle` forever (computed as
+        // collectedEmpties − emptiesReturnedVerified = N − 0 = N) and
+        // closingEmpties never credits.
+        //
+        // Symptom hit on 2026-06-25 (OSHD2627000747, Maruthi 19 KG):
+        // 2 empties collected via godown stayed "on vehicle" while
+        // closingEmpties was undercounted by 2.
+        if (order.isGodownPickup) {
+          await createInventoryEvent(tx, {
+            distributorId,
+            cylinderTypeId: item.cylinderTypeId,
+            eventType: 'reconciliation_empties_return',
+            fullsChange: 0,
+            emptiesChange: item.emptiesCollected,
+            eventDate: order.deliveryDate,
+            referenceId: orderId,
+            referenceType: 'godown_pickup',
+            createdBy: userId,
+            notes: `Godown pickup ${order.orderNumber} — synthetic empties return (no vehicle reconcile)`,
+          });
+        }
       }
 
       // Update customer inventory balance

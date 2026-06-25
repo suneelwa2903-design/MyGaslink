@@ -379,6 +379,11 @@ export interface Invoice {
   igstValue: number;
   // Snapshot of Order.poNumber at issue time. Survives reissue + GSTR-1 export.
   poNumber: string | null;
+  // Flat alias from invoice.order.isGodownPickup so the billing UI can
+  // render a "EWB N/A — Godown" chip instead of a misleading red
+  // "EWB failed" pill on self-collection invoices. Defaults to false for
+  // manual invoices (no parent Order) and legacy rows.
+  isGodownPickup?: boolean;
   isGaslinkBilling: boolean;
   // Group 1 (2026-06-11): true when this invoice was created by the
   // opening-balance CSV importer (no Order, no GST exchange). The billing

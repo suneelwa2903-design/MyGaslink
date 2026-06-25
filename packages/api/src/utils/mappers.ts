@@ -179,7 +179,7 @@ interface InvoiceInput extends HasId {
   invoiceNumber?: string | null;
   items?: ChildWithCylinderType[];
   customer?: CustomerInput | null;
-  order?: (OrderInput & { status?: unknown }) | null;
+  order?: (OrderInput & { status?: unknown; isGodownPickup?: boolean }) | null;
   paymentAllocations?: HasId[];
   creditNotes?: HasId[];
   debitNotes?: HasId[];
@@ -211,6 +211,11 @@ export function mapInvoice(inv: InvoiceInput | null | undefined): MappedRecord |
   // WI-126: flat orderStatus for the customer app's PDF-download gate. Captured
   // from the raw relation before mapOrder rewrites the nested object.
   mapped.orderStatus = inv.order?.status ?? null;
+  // Brief 2: flat isGodownPickup so the billing UI can render a neutral
+  // "EWB N/A" chip instead of a misleading red "EWB failed" badge on
+  // self-collection invoices. Defaults to false (covers null order,
+  // manual invoices, and legacy rows).
+  mapped.isGodownPickup = inv.order?.isGodownPickup ?? false;
   if (inv.order) mapped.order = mapOrder(inv.order);
   if (mapped.paymentAllocations) {
     mapped.paymentAllocations = (mapped.paymentAllocations as HasId[]).map((a) => renameId(a, 'allocationId'));

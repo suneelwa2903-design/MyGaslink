@@ -38,7 +38,7 @@ type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transa
 const listInvoiceInclude = {
   customer: { select: { id: true, customerName: true, gstin: true, billingState: true, customerType: true } },
   items: { include: { cylinderType: { select: { typeName: true } } } },
-  order: { select: { id: true, orderNumber: true } },
+  order: { select: { id: true, orderNumber: true, isGodownPickup: true } },
   paymentAllocations: { include: { payment: { select: { id: true, paymentMethod: true } } } },
   _count: { select: { creditNotes: true, debitNotes: true } },
 } satisfies Prisma.InvoiceInclude;
@@ -46,7 +46,7 @@ const listInvoiceInclude = {
 const detailInvoiceInclude = {
   customer: { select: { id: true, customerName: true, gstin: true, billingState: true } },
   items: { include: { cylinderType: { select: { typeName: true } } } },
-  order: { select: { id: true, orderNumber: true } },
+  order: { select: { id: true, orderNumber: true, isGodownPickup: true } },
   paymentAllocations: { include: { payment: { select: { id: true, paymentMethod: true } } } },
   creditNotes: true,
   debitNotes: true,
