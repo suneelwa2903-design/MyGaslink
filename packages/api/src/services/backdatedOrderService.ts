@@ -4,8 +4,15 @@ import { computeOrderTotal } from './orderService.js';
 import { getEffectivePrice } from './cylinderTypeService.js';
 import { createInvoiceFromOrder } from './invoiceService.js';
 import { createPaymentInTx } from './paymentService.js';
+import { allocateNumber } from './numberingService.js';
 import { toNum } from '../utils/decimal.js';
 import { logger } from '../utils/logger.js';
+
+// Fallback when distributor has no docCode set (matches the createOrder
+// behaviour at orderService.ts — random alphanumeric prefixed with ORD).
+function legacyOrderNumber(prefix: string): string {
+  return `${prefix}-${(Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).toUpperCase()}`;
+}
 
 export class BackdatedOrderError extends Error {
   constructor(message: string, public statusCode: number = 400) {
@@ -62,6 +69,13 @@ export async function createBackdatedOrder(
     throw new BackdatedOrderError('Customer is on stop-supply', 400);
   }
 
+  // Pre-load distributor docCode for the order-number allocator inside
+  // the transaction below. Same pattern as orderService.createOrder.
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { docCode: true },
+  });
+
   // Per-item price resolution mirrors orderService.createOrder.
   const issueDate = new Date(data.issueDate);
   const itemsWithPrices = await Promise.all(data.items.map(async (item) => {
@@ -84,6 +98,15 @@ export async function createBackdatedOrder(
 
   // Atomic create: Order + status log + Invoice + (optional) Payment.
   const result = await prisma.$transaction(async (tx) => {
+    // Structured order number — same allocator the rest of the system
+    // uses (numberingService keys by `(distributor, type='O', FY)`,
+    // derives FY from the supplied date so a backdated order in June
+    // lands in FY 2627 regardless of when it was entered). Allocated
+    // on `tx` so a rollback frees the sequence — see numberingService
+    // doc-block (gapless invariant).
+    const orderNumber = distributor?.docCode
+      ? await allocateNumber(tx, distributorId, 'O', issueDate, distributor.docCode)
+      : legacyOrderNumber('ORD');
     const order = await tx.order.create({
       data: {
         distributorId,
@@ -104,7 +127,7 @@ export async function createBackdatedOrder(
         deliveredAt: issueDate,
         specialInstructions: data.specialInstructions ?? null,
         totalAmount,
-        orderNumber: `OBK-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`.toUpperCase(),
+        orderNumber,
         items: {
           create: itemsWithPrices.map((it) => ({
             cylinderTypeId: it.cylinderTypeId,

@@ -754,9 +754,14 @@ function BackdatedOrderModal({
   const showVehicleSection = selectedCustomerType === 'B2B' ? true : true; // always visible; required only on invoice_ewb
 
   const onSubmit = handleSubmit((data) => {
-    // Strip the UI-only `recordPayment` flag + clear `payment` when not
-    // toggled on. Also drop empty driver/vehicle so optional-uuid Zod
-    // refines pass.
+    // The `recordPayment` toggle is UI-only — it's NOT in
+    // backdatedOrderSchema, so zodResolver strips it from `data` before
+    // this handler runs (Zod's default: drop unknown keys). Read the
+    // toggle from the live form state via `recordPayment` (the
+    // `useWatch`-driven local var) instead of `data.recordPayment`,
+    // which is always undefined here.
+    //
+    // Also drop empty driver/vehicle so optional-uuid Zod refines pass.
     const payload: BackdatedOrderInput = {
       customerId: data.customerId,
       issueDate: data.issueDate,
@@ -765,7 +770,7 @@ function BackdatedOrderModal({
       poNumber: data.poNumber || undefined,
       driverId: data.driverId || undefined,
       vehicleId: data.vehicleId || undefined,
-      payment: data.recordPayment && data.payment?.amount ? data.payment : undefined,
+      payment: recordPayment && data.payment?.amount ? data.payment : undefined,
     };
     mutation.mutate(payload);
   });
