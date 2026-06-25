@@ -30,7 +30,13 @@ router.get('/',
   async (req, res) => {
     try {
       const result = await invoiceService.listInvoices(req.user!.distributorId!, (req.validated?.query || req.query) as InvoiceFilterInput);
-      return sendSuccess(res, { invoices: mapInvoices(result.data) }, 200, result.meta);
+      // meta also nested inside data: the web consumes
+      // `apiGet<{ invoices, meta }>('/invoices', …)` which only sees
+      // `res.data.data`. The 4th-arg `meta` lands at the envelope root
+      // and gets stripped before the page sees it — old pagination
+      // silently never rendered. Keep the 4th arg for the few external
+      // callers that read the envelope root directly (if any).
+      return sendSuccess(res, { invoices: mapInvoices(result.data), meta: result.meta }, 200, result.meta);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

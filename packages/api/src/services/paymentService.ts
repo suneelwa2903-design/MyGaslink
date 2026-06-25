@@ -12,6 +12,9 @@ export async function listPayments(
     page?: number; pageSize?: number;
     sortBy?: 'createdAt' | 'amount' | 'transactionDate';
     sortOrder?: 'asc' | 'desc';
+    // Free-text: customer.customerName, referenceNumber. If the search
+    // token parses as a positive number, also exact-match on amount.
+    search?: string;
   }
 ) {
   const where: Prisma.PaymentTransactionWhereInput = { distributorId, deletedAt: null };
@@ -25,6 +28,21 @@ export async function listPayments(
     where.transactionDate = {};
     if (filters.dateFrom) where.transactionDate.gte = new Date(filters.dateFrom);
     if (filters.dateTo) where.transactionDate.lte = new Date(filters.dateTo);
+  }
+  const search = filters.search?.trim();
+  if (search) {
+    const orClauses: Prisma.PaymentTransactionWhereInput[] = [
+      { referenceNumber: { contains: search, mode: 'insensitive' } },
+      { customer: { customerName: { contains: search, mode: 'insensitive' } } },
+    ];
+    // Numeric tokens also exact-match the amount column. Treat NaN /
+    // <=0 as text-only (no amount match) so a customer named "001"
+    // doesn't silently land on every ₹1 payment.
+    const numeric = Number(search);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      orClauses.push({ amount: numeric });
+    }
+    where.OR = orClauses;
   }
 
   const page = filters.page || 1;

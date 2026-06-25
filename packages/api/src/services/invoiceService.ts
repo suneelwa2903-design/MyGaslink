@@ -72,6 +72,11 @@ export async function listInvoices(
     customerId?: string; irnStatus?: string;
     dateFrom?: string; dateTo?: string;
     page?: number; pageSize?: number; sortBy?: string; sortOrder?: string;
+    // Free-text: invoiceNumber, customer.customerName, poNumber. Case-
+    // insensitive ILIKE. Tenant-scoped via the outer distributorId clause
+    // (anti-pattern #1 / #13 — the customer.is filter still has to live
+    // under the same `where` root).
+    search?: string;
   }
 ) {
   const where: Prisma.InvoiceWhereInput = { distributorId, deletedAt: null };
@@ -88,6 +93,14 @@ export async function listInvoices(
     where.issueDate = {};
     if (filters.dateFrom) where.issueDate.gte = new Date(filters.dateFrom);
     if (filters.dateTo) where.issueDate.lte = new Date(filters.dateTo);
+  }
+  const search = filters.search?.trim();
+  if (search) {
+    where.OR = [
+      { invoiceNumber: { contains: search, mode: 'insensitive' } },
+      { poNumber: { contains: search, mode: 'insensitive' } },
+      { customer: { customerName: { contains: search, mode: 'insensitive' } } },
+    ];
   }
 
   const page = filters.page || 1;

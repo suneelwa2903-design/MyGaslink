@@ -32,7 +32,9 @@ import {
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { Button, Input, Select, Modal, Badge, Loader, EmptyState, Pagination } from '@/components/ui';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
+import { HiOutlineMagnifyingGlass, HiOutlineXMark } from 'react-icons/hi2';
 import { CancelGstModal } from '@/components/CancelGstModal';
 import { isWithin24Hours } from '@/utils/gstWindows';
 import { cn } from '@/lib/cn';
@@ -106,6 +108,11 @@ export default function InvoicesPage() {
   const [payInvoice, setPayInvoice] = useState<Invoice | null>(null);
   const [cancelIrnInvoice, setCancelIrnInvoice] = useState<Invoice | null>(null);
   const [cancelEwbInvoice, setCancelEwbInvoice] = useState<Invoice | null>(null);
+  // Free-text search: invoiceNumber, customerName, poNumber. Debounced
+  // 300ms on the query; page reset fires from the input handler
+  // synchronously (React Compiler bans setState-in-useEffect).
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput, 300);
 
   // Check if distributor has GST enabled — skip when super admin has no
   // distributor selected (server would return empty anyway).
@@ -117,11 +124,12 @@ export default function InvoicesPage() {
   });
   const gstEnabled = settings?.gstMode !== undefined && settings.gstMode !== GstMode.DISABLED;
 
-  const queryParams: Record<string, unknown> = { page, pageSize: 25 };
+  const queryParams: Record<string, unknown> = { page, pageSize: 20 };
   if (statusFilter) queryParams.status = statusFilter;
   if (irnFilter) queryParams.irnStatus = irnFilter;
   if (dateFrom) queryParams.dateFrom = dateFrom;
   if (dateTo) queryParams.dateTo = dateTo;
+  if (search.trim()) queryParams.search = search.trim();
 
   const { data, isLoading } = useQuery({
     queryKey: ['invoices', queryParams],
@@ -172,7 +180,27 @@ export default function InvoicesPage() {
       </div>
 
       {/* Filters */}
-      <div className="card p-4">
+      <div className="card p-4 space-y-3">
+        <div className="relative">
+          <HiOutlineMagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-surface-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
+            placeholder="Search by invoice #, customer name, or PO number"
+            className="input w-full pl-9 pr-9"
+          />
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => { setSearchInput(''); setPage(1); }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-surface-400 hover:text-surface-700 hover:bg-surface-100 dark:hover:bg-surface-700"
+              aria-label="Clear search"
+            >
+              <HiOutlineXMark className="h-4 w-4" />
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Select
             options={Object.values(InvoiceStatus).map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))}
@@ -280,16 +308,15 @@ export default function InvoicesPage() {
             </table>
           </div>
 
-          {meta && meta.totalPages > 1 && (
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-surface-500 dark:text-surface-400">
-                Page {meta.page} of {meta.totalPages} ({meta.total} total)
-              </p>
-              <div className="flex gap-2">
-                <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-                <Button variant="secondary" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage(page + 1)}>Next</Button>
-              </div>
-            </div>
+          {meta && (
+            <Pagination
+              page={meta.page}
+              pageSize={meta.pageSize}
+              total={meta.total}
+              totalPages={meta.totalPages}
+              onChange={setPage}
+              itemLabel="invoices"
+            />
           )}
         </>
       )}

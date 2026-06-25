@@ -633,6 +633,10 @@ export const invoiceFilterSchema = paginationSchema.merge(dateRangeSchema).exten
   ]).optional(),
   customerId: uuid.optional(),
   irnStatus: z.string().optional(),
+  // Free-text search across invoiceNumber, customerName, poNumber.
+  // Trimmed + length-bounded so a 4MB query string can't pivot into a
+  // pathological ILIKE.
+  search: z.string().max(120).optional(),
 });
 
 export const paymentFilterSchema = paginationSchema.merge(dateRangeSchema).extend({
@@ -644,6 +648,9 @@ export const paymentFilterSchema = paginationSchema.merge(dateRangeSchema).exten
   ),
   sortBy: z.enum(['createdAt', 'amount', 'transactionDate']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
+  // Free-text: customerName, referenceNumber. If parseable as a positive
+  // number, also exact-match on amount.
+  search: z.string().max(120).optional(),
 });
 
 export const customerFilterSchema = paginationSchema.extend({

@@ -47,7 +47,9 @@ import {
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
 import { useAuthStore, selectDistributorId, selectRole } from '@/stores/authStore';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { Button, Input, Select, Modal, Badge, Loader, EmptyState, Pagination } from '@/components/ui';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
+import { HiOutlineMagnifyingGlass, HiOutlineXMark } from 'react-icons/hi2';
 import { CancelGstModal } from '@/components/CancelGstModal';
 import { isWithin24Hours } from '@/utils/gstWindows';
 import { cn } from '@/lib/cn';
@@ -160,12 +162,23 @@ export default function BillingPaymentsPage() {
 
 // ─── Invoices Tab ────────────────────────────────────────────────────────────
 
+const INVOICES_PAGE_SIZE = 20;
+const PAYMENTS_PAGE_SIZE = 20;
+
 function InvoicesTab() {
   const queryClient = useQueryClient();
   const distributorId = useAuthStore(selectDistributorId);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [irnFilter, setIrnFilter] = useState('');
+  // Free-text search: invoiceNumber, customerName, poNumber. 300ms
+  // debounce on the query, but page reset fires synchronously on the
+  // input change (same pattern as the status/date filters) — React
+  // Compiler bans setState-in-useEffect (cascading-renders rule), and
+  // the worst the user perceives is a fresh page=1 a tick before the
+  // new results arrive.
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput, 300);
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
     return localDateISO(d);
@@ -188,11 +201,12 @@ function InvoicesTab() {
   });
   const gstEnabled = settings?.gstMode !== undefined && settings.gstMode !== GstMode.DISABLED;
 
-  const queryParams: Record<string, unknown> = { page, pageSize: 25 };
+  const queryParams: Record<string, unknown> = { page, pageSize: INVOICES_PAGE_SIZE };
   if (statusFilter) queryParams.status = statusFilter;
   if (irnFilter) queryParams.irnStatus = irnFilter;
   if (dateFrom) queryParams.dateFrom = dateFrom;
   if (dateTo) queryParams.dateTo = dateTo;
+  if (search.trim()) queryParams.search = search.trim();
 
   const { data, isLoading } = useQuery({
     queryKey: ['invoices', queryParams],
@@ -237,7 +251,28 @@ function InvoicesTab() {
   return (
     <>
       {/* Filters */}
-      <div className="card p-4">
+      <div className="card p-4 space-y-3">
+        {/* Free-text search row */}
+        <div className="relative">
+          <HiOutlineMagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-surface-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
+            placeholder="Search by invoice #, customer name, or PO number"
+            className="input w-full pl-9 pr-9"
+          />
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => { setSearchInput(''); setPage(1); }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-surface-400 hover:text-surface-700 hover:bg-surface-100 dark:hover:bg-surface-700"
+              aria-label="Clear search"
+            >
+              <HiOutlineXMark className="h-4 w-4" />
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Select
             options={Object.values(InvoiceStatus).map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))}
@@ -403,16 +438,15 @@ function InvoicesTab() {
             </table>
           </div>
 
-          {meta && meta.totalPages > 1 && (
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-surface-500 dark:text-surface-400">
-                Page {meta.page} of {meta.totalPages} ({meta.total} total)
-              </p>
-              <div className="flex gap-2">
-                <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-                <Button variant="secondary" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage(page + 1)}>Next</Button>
-              </div>
-            </div>
+          {meta && (
+            <Pagination
+              page={meta.page}
+              pageSize={meta.pageSize}
+              total={meta.total}
+              totalPages={meta.totalPages}
+              onChange={setPage}
+              itemLabel="invoices"
+            />
           )}
         </>
       )}
@@ -496,11 +530,17 @@ function PaymentsTab() {
   const [createOpen, setCreateOpen] = useState(false);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
   const [allocatePayment, setAllocatePayment] = useState<Payment | null>(null);
+  // Free-text search: customerName, referenceNumber, exact amount.
+  // 300ms debounce on the query; page reset fires from the input
+  // handler synchronously (React Compiler bans setState-in-useEffect).
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput, 300);
 
-  const queryParams: Record<string, unknown> = { page, pageSize: 25 };
+  const queryParams: Record<string, unknown> = { page, pageSize: PAYMENTS_PAGE_SIZE };
   if (methodFilter) queryParams.paymentMethod = methodFilter;
   if (dateFrom) queryParams.dateFrom = dateFrom;
   if (dateTo) queryParams.dateTo = dateTo;
+  if (search.trim()) queryParams.search = search.trim();
 
   const { data, isLoading } = useQuery({
     queryKey: ['payments', queryParams],
@@ -521,7 +561,27 @@ function PaymentsTab() {
         </Button>
       </div>
 
-      <div className="card p-4">
+      <div className="card p-4 space-y-3">
+        <div className="relative">
+          <HiOutlineMagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-surface-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
+            placeholder="Search by customer name, reference number, or amount"
+            className="input w-full pl-9 pr-9"
+          />
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => { setSearchInput(''); setPage(1); }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-surface-400 hover:text-surface-700 hover:bg-surface-100 dark:hover:bg-surface-700"
+              aria-label="Clear search"
+            >
+              <HiOutlineXMark className="h-4 w-4" />
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Select options={methodOptions} placeholder="All Methods" value={methodFilter} onChange={(e) => { setMethodFilter(e.target.value); setPage(1); }} />
           <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="input py-2" />
@@ -610,14 +670,15 @@ function PaymentsTab() {
             </table>
           </div>
 
-          {meta && meta.totalPages > 1 && (
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-surface-500 dark:text-surface-400">Page {meta.page} of {meta.totalPages}</p>
-              <div className="flex gap-2">
-                <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-                <Button variant="secondary" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage(page + 1)}>Next</Button>
-              </div>
-            </div>
+          {meta && (
+            <Pagination
+              page={meta.page}
+              pageSize={meta.pageSize}
+              total={meta.total}
+              totalPages={meta.totalPages}
+              onChange={setPage}
+              itemLabel="payments"
+            />
           )}
         </>
       )}

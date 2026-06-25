@@ -28,7 +28,8 @@ router.get('/',
   async (req, res) => {
     try {
       const result = await paymentService.listPayments(req.user!.distributorId!, (req.validated?.query || req.query) as Parameters<typeof paymentService.listPayments>[1]);
-      return sendSuccess(res, { payments: mapPayments(result.data) }, 200, result.meta);
+      // meta also nested inside data — see comment in invoices.ts list.
+      return sendSuccess(res, { payments: mapPayments(result.data), meta: result.meta }, 200, result.meta);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }
