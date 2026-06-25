@@ -28,7 +28,8 @@ router.get('/',
   async (req, res) => {
     try {
       const result = await customerService.listCustomers(req.user!.distributorId!, (req.validated?.query || req.query) as Parameters<typeof customerService.listCustomers>[1]);
-      return sendSuccess(res, { customers: mapCustomers(result.data) }, 200, result.meta);
+      // meta nested in data — see invoices.ts list comment (commit 4faa018).
+      return sendSuccess(res, { customers: mapCustomers(result.data), meta: result.meta }, 200, result.meta);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

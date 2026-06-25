@@ -66,7 +66,8 @@ router.get('/orders',
         pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
       }
     );
-    return sendSuccess(res, { orders: mapOrders(result.data) }, 200, result.meta);
+    // meta nested in data — see invoices.ts list comment.
+    return sendSuccess(res, { orders: mapOrders(result.data), meta: result.meta }, 200, result.meta);
   } catch (err) {
     return sendError(res, (err as Error).message);
   }
@@ -229,7 +230,8 @@ router.get('/invoices',
         pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
       }
     );
-    return sendSuccess(res, { invoices: mapInvoices(result.data) }, 200, result.meta);
+    // meta nested in data — see invoices.ts list comment.
+    return sendSuccess(res, { invoices: mapInvoices(result.data), meta: result.meta }, 200, result.meta);
   } catch (err) {
     return sendError(res, (err as Error).message);
   }
@@ -392,7 +394,8 @@ router.get('/payments',
         pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
       }
     );
-    return sendSuccess(res, { payments: mapPayments(result.data) }, 200, result.meta);
+    // meta nested in data — see invoices.ts list comment.
+    return sendSuccess(res, { payments: mapPayments(result.data), meta: result.meta }, 200, result.meta);
   } catch (err) {
     return sendError(res, (err as Error).message);
   }

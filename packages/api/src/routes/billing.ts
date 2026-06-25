@@ -33,7 +33,8 @@ router.get('/cycles', async (req, res) => {
       page: req.query.page ? parseInt(req.query.page as string, 10) : undefined,
       pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
     });
-    return sendSuccess(res, { cycles: mapBillingCycles(result.data) }, 200, result.meta);
+    // meta nested in data — see invoices.ts list comment (commit 4faa018).
+    return sendSuccess(res, { cycles: mapBillingCycles(result.data), meta: result.meta }, 200, result.meta);
   } catch (err) {
     return sendError(res, (err as Error).message);
   }

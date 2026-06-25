@@ -28,7 +28,9 @@ router.get('/',
         pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
       }
     );
-    return sendSuccess(res, { logs: mapAccountabilityLogs(result.data) }, 200, result.meta);
+    // meta nested in data so apiGet (returns res.data.data) sees it.
+    // 4th-arg envelope-root meta kept for any external root reader.
+    return sendSuccess(res, { logs: mapAccountabilityLogs(result.data), meta: result.meta }, 200, result.meta);
   } catch (err) {
     return sendError(res, (err as Error).message);
   }

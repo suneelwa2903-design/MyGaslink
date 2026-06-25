@@ -64,7 +64,8 @@ router.get('/',
       }
 
       const result = await orderService.listOrders(req.user!.distributorId!, filters);
-      return sendSuccess(res, { orders: mapOrders(result.data) }, 200, result.meta);
+      // meta nested in data — see invoices.ts list comment.
+      return sendSuccess(res, { orders: mapOrders(result.data), meta: result.meta }, 200, result.meta);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }
