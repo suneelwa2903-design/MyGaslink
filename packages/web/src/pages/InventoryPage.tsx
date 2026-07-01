@@ -336,7 +336,7 @@ export default function InventoryPage() {
     { key: 'forecast' as const, label: 'AI Demand Forecast' },
     { key: 'customer' as const, label: 'Customer Balances' },
     { key: 'reconciliation' as const, label: 'Vehicle Return' },
-    { key: 'backdated' as const, label: 'Backdated Adjustments' },
+    { key: 'backdated' as const, label: 'On-Demand Adjustments' },
   ];
 
   return (
@@ -684,7 +684,7 @@ export default function InventoryPage() {
             <div className="mb-3">
               <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Pending Inventory Adjustments</h2>
               <p className="text-xs text-surface-500 dark:text-surface-400">
-                Backdated orders whose stock has not yet been adjusted. Applying writes events dated <strong>today</strong> — past daily summaries are not changed.
+                On-demand orders whose stock has not yet been adjusted. Applying writes events dated <strong>today</strong> — past daily summaries are not changed.
               </p>
             </div>
             {backdatedPendingLoading ? (
@@ -692,7 +692,7 @@ export default function InventoryPage() {
             ) : !backdatedPending?.length ? (
               <EmptyState
                 title="No pending adjustments"
-                description="All backdated orders have been adjusted."
+                description="All on-demand orders have been adjusted."
               />
             ) : (
               <div className="table-container">
@@ -746,7 +746,7 @@ export default function InventoryPage() {
             <div className="mb-3">
               <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Adjustment History</h2>
               <p className="text-xs text-surface-500 dark:text-surface-400">
-                Inventory events applied from backdated orders (most recent first).
+                Inventory events applied from on-demand orders (most recent first).
               </p>
             </div>
             {backdatedHistoryLoading ? (

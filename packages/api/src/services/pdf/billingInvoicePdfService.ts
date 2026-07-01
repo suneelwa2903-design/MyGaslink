@@ -121,7 +121,7 @@ const COL_DEFS = [
 // ─── GasLink Company Details ────────────────────────────────────────────────
 
 const GASLINK = {
-  name: 'Re-New GasLink',
+  name: 'MyGasLink',
   tagline: 'SaaS Platform for LPG Distribution Management',
   legalName: 'GASLINK CONSULTING SOLUTIONS',
   gstin: '36ABCFG7518A1ZQ',
@@ -175,18 +175,13 @@ function drawHeader(
   const rightMargin = A4_WIDTH - LAYOUT.MARGIN.right;
   let cursorY = startY;
 
-  // Company name
+  // Company name (legal name / GSTIN / PAN / SAC live in the Bill From
+  // block below — no need to duplicate them in the header).
   doc.fontSize(Math.round(F.H2 * 1.5)).fillColor(T.PRIMARY).font('Helvetica-Bold');
   doc.text(GASLINK.name, leftX, cursorY, { width: 300 });
   cursorY += 18;
   doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
   doc.text(GASLINK.tagline, leftX, cursorY, { width: 300 });
-  cursorY += 12;
-  doc.text(`Legal Name: ${GASLINK.legalName}`, leftX, cursorY, { width: 300 });
-  cursorY += 12;
-  doc.text(`GSTIN: ${GASLINK.gstin}    PAN: ${GASLINK.pan}`, leftX, cursorY, { width: 300 });
-  cursorY += 12;
-  doc.text(GASLINK.sac, leftX, cursorY, { width: 300 });
   const companyBottomY = cursorY + 12;
 
   // Right side: Tax Invoice title (label required by CGST Rule 46).

@@ -179,7 +179,7 @@ export default function OrdersPage() {
             {role === UserRole.DISTRIBUTOR_ADMIN && (
               <Button variant="secondary" onClick={() => setBackdatedOpen(true)}>
                 <HiOutlinePlus className="h-4 w-4" />
-                Backdated Order
+                On-Demand Order
               </Button>
             )}
             <Button onClick={() => setCreateOpen(true)}>
@@ -322,7 +322,7 @@ export default function OrdersPage() {
                         </Badge>
                         {order.isBackdated && (
                           <span title="On-demand entry for a delivery that already happened">
-                            <Badge variant="warning">Backdated</Badge>
+                            <Badge variant="warning">On-Demand</Badge>
                           </span>
                         )}
                       </div>
@@ -736,7 +736,7 @@ function BackdatedOrderModal({
   const mutation = useMutation({
     mutationFn: (data: BackdatedOrderInput) => apiPost('/orders/backdated', data),
     onSuccess: () => {
-      toast.success('Backdated order created');
+      toast.success('On-demand order created');
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       onClose();
@@ -776,7 +776,7 @@ function BackdatedOrderModal({
   });
 
   return (
-    <Modal open={open} onClose={onClose} title="New Backdated Order" size="lg">
+    <Modal open={open} onClose={onClose} title="New On-Demand Order" size="lg">
       <div className="space-y-4">
         <p className="text-xs text-surface-500 dark:text-surface-400">
           For deliveries already made but not yet billed. Status: <strong>Delivered</strong>.
@@ -891,7 +891,7 @@ function BackdatedOrderModal({
 
             <div>
               <Input
-                label="Delivery Date (backdated)"
+                label="Delivery Date (on-demand)"
                 type="date"
                 required
                 min={monthStart}
@@ -901,7 +901,7 @@ function BackdatedOrderModal({
               />
               <p className="mt-1 text-xs text-surface-500">
                 {noValidDates
-                  ? "Today is the 1st of the month — no valid backdated slot. Wait until tomorrow."
+                  ? "Today is the 1st of the month — no valid on-demand slot. Wait until tomorrow."
                   : `Must be between ${monthStart} and ${maxDateISO} (within the current month, before today).`}
               </p>
             </div>
@@ -1059,7 +1059,7 @@ function BackdatedOrderModal({
             <div className="flex justify-end gap-3 pt-4">
               <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
               <Button type="submit" loading={mutation.isPending} disabled={noValidDates}>
-                Create Backdated Order
+                Create On-Demand Order
               </Button>
             </div>
           </form>
@@ -1090,7 +1090,7 @@ function OrderDetailModal({
         {/* Brief 3 — backdated banner with the audit-trail entry timestamp. */}
         {order.isBackdated && (
           <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-300">
-            <p className="font-semibold">Backdated — delivery recorded for {new Date(order.deliveryDate).toLocaleDateString('en-IN')}.</p>
+            <p className="font-semibold">On-Demand — delivery recorded for {new Date(order.deliveryDate).toLocaleDateString('en-IN')}.</p>
             <p className="mt-1">Inventory not auto-updated. Entered on: {new Date(order.createdAt).toLocaleString('en-IN')}.</p>
           </div>
         )}

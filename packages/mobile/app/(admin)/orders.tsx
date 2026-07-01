@@ -526,7 +526,7 @@ export default function AdminOrdersScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               {order.isBackdated && (
                 <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fbbf24' }}>
-                  <Text style={{ color: '#92400e', fontSize: 10, fontWeight: '700' }}>BACKDATED</Text>
+                  <Text style={{ color: '#92400e', fontSize: 10, fontWeight: '700' }}>ON-DEMAND</Text>
                 </View>
               )}
               {renderStatusBadge(order.status)}
@@ -2531,7 +2531,7 @@ function OrderDetailModal({
           {order.isBackdated && (
             <View style={{ marginBottom: 12, padding: 10, borderRadius: 6, backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fbbf24' }}>
               <Text style={{ color: '#92400e', fontSize: 12, fontWeight: '700' }}>
-                Backdated order
+                On-demand order
               </Text>
               <Text style={{ color: '#92400e', fontSize: 11, marginTop: 2 }}>
                 Delivery recorded for {formatDate(order.deliveryDate)}. Inventory not auto-updated.
