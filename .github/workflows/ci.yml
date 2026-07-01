@@ -12,8 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT }}
       # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
       # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
       - run: corepack enable
@@ -102,8 +100,6 @@ jobs:
       WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL: ${{ secrets.WHITEBOOKS_EWAYBILL_SANDBOX_EMAIL }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT }}
       # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
       # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
       - run: corepack enable
@@ -130,8 +126,6 @@ jobs:
       VITE_API_URL: https://api.mygaslink.com/api
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT }}
       # pnpm via corepack (reads pnpm@9.15.0 from package.json packageManager).
       # Avoids pnpm/action-setup, whose archives codeload.github.com fails to serve.
       - run: corepack enable
@@ -165,8 +159,6 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -217,8 +209,6 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -290,7 +280,12 @@ jobs:
             cd /opt/gaslink
             # Auth inline (server's remote is tokenless; PAT lives only in
             # this CI step's memory, never persisted on disk).
-            git pull https://x-access-token:${{ secrets.GH_PAT }}@github.com/suneelwa2903-design/MyGaslink.git main
+            # `secrets.GITHUB_TOKEN` is the per-run token GitHub Actions
+            # auto-provisions; scoped read/write on this repo only, expires
+            # at job end. No manual rotation needed. Replaces the old GH_PAT
+            # workaround (2026-07-01 after PAT expiry surfaced in CI run
+            # 28491377944).
+            git pull https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/suneelwa2903-design/MyGaslink.git main
             # appleboy/ssh-action runs commands without a pty. Under pnpm 9,
             # if node_modules has drifted (e.g. a transitive that landed in
             # the lockfile but wasn't installed last time), `pnpm install`
@@ -352,8 +347,6 @@ jobs:
     needs: deploy-production
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT }}
 
       - name: Run database backup
         uses: appleboy/ssh-action@v1
