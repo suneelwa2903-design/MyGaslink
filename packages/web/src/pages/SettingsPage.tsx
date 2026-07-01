@@ -1454,7 +1454,7 @@ type CreatedCreds = {
 // from a generated DTO. mapDrivers/mapCustomers in the API rename `id`
 // to `driverId`/`customerId`; the dropdowns key off those.
 type UnlinkedDriver = { driverId: string; driverName: string; phone: string; licenseNumber?: string | null };
-type CustomerForPicker = { customerId: string; customerName: string };
+type CustomerForPicker = { customerId: string; customerName: string; businessName?: string | null };
 type ContactForPicker = { contactId: string; name: string; phone: string | null; email: string | null; isPrimary: boolean };
 
 function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => void; user: User | null }) {
@@ -1471,6 +1471,18 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
   const [pickedDriverId, setPickedDriverId] = useState<string>('');
   const [pickedCustomerId, setPickedCustomerId] = useState<string>('');
   const [pickedContactId, setPickedContactId] = useState<string>('');
+  // Free-text customer search — the picker was previously a flat 100-row
+  // dropdown (`pageSize:100` on /customers) which hid every tenant's 101st+
+  // customer AND made 5 branches sharing "Kinara Group" indistinguishable.
+  // Now: type ≥3 chars → server-side search across customerName/businessName/
+  // phone/gstin; dropdown shows `customerName (businessName)` so duplicates
+  // are legible.
+  const [customerSearch, setCustomerSearch] = useState<string>('');
+  const [debouncedCustomerSearch, setDebouncedCustomerSearch] = useState<string>('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedCustomerSearch(customerSearch.trim()), 250);
+    return () => clearTimeout(t);
+  }, [customerSearch]);
 
   const { register, handleSubmit, getValues, setValue, control, formState: { errors } } = useForm<CreateUserInput>({
     resolver: zodResolver(isEdit ? createUserSchema.partial().omit({ password: true }) : createUserSchema) as unknown as Resolver<CreateUserInput>,
@@ -1498,16 +1510,20 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
   });
 
   // Group B Part 7 Bug 1+6 — customer flow is two-stage.
-  // Stage 1: list ALL customers (NOT ?unlinked=true). A customer is allowed
-  // to have multiple portal users — one per contact — so "unlinked" no
-  // longer maps cleanly here. The picker shows customer name only; the
-  // phone/email shown previously was the customer's primary phone, not
-  // the contact's, and conflated the two concepts.
+  // Stage 1: search for a customer (≥3 chars). Server-side search across
+  // customerName/businessName/phone/gstin so tenants with 100+ customers
+  // (Vanasthali: 149) don't hit the old flat 100-row cap. Query is gated
+  // on ≥3 chars to avoid firing on every keystroke and to keep the empty
+  // state honest ("type to search"). pageSize:50 is more than enough given
+  // 3 chars typically narrow to <20 rows.
   const { data: customersForPicker, isLoading: customersLoading } = useQuery({
-    queryKey: ['users-add-modal', 'all-customers'],
-    queryFn: () => apiGet<{ customers: CustomerForPicker[] }>('/customers', { pageSize: 100 }),
+    queryKey: ['users-add-modal', 'customer-search', debouncedCustomerSearch],
+    queryFn: () => apiGet<{ customers: CustomerForPicker[] }>('/customers', {
+      pageSize: 50,
+      search: debouncedCustomerSearch,
+    }),
     select: (data) => data.customers ?? [],
-    enabled: showCustomerPicker,
+    enabled: showCustomerPicker && debouncedCustomerSearch.length >= 3,
   });
 
   // Stage 2: fetch the picked customer's contacts. Only fires when both
@@ -1669,18 +1685,41 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
 
         {showCustomerPicker && (
           <>
-            {/* Stage 1 — pick the customer. Name only; phone/email shown
-                in stage 2 against the specific CONTACT being given access. */}
+            {/* Stage 1 — search-then-pick the customer. Type ≥3 chars to
+                search across customerName/businessName/phone/gstin. The
+                option label shows `customerName (businessName)` so branches
+                sharing the same legal entity (e.g. 5× "KINARA GROUP OF
+                HOTELS PRIVATE LIMITED") are distinguishable by their
+                customerName. Contact-level phone/email shown in stage 2. */}
+            <Input
+              label="Search Customer"
+              placeholder="Type at least 3 letters (name, phone, GSTIN)…"
+              value={customerSearch}
+              onChange={(e) => setCustomerSearch(e.target.value)}
+              autoFocus
+            />
             <EntityPicker
               label="Select Customer"
-              placeholder={customersLoading ? 'Loading customers…' : 'Pick a customer…'}
+              placeholder={
+                debouncedCustomerSearch.length < 3
+                  ? 'Type ≥3 letters above to search…'
+                  : customersLoading
+                    ? 'Searching…'
+                    : 'Pick a customer…'
+              }
               value={pickedCustomerId}
               onChange={onPickCustomer}
               options={(customersForPicker ?? []).map((c) => ({
                 value: c.customerId,
-                label: c.customerName,
+                label: c.businessName && c.businessName.trim().length > 0
+                  ? `${c.customerName} (${c.businessName})`
+                  : c.customerName,
               }))}
-              emptyText="No customers found — add one from the Customers section first."
+              emptyText={
+                debouncedCustomerSearch.length < 3
+                  ? 'Type at least 3 letters in the box above to see matches.'
+                  : 'No customers match this search. Try a different term or add one from the Customers section first.'
+              }
             />
             {/* Stage 2 — pick which contact at this customer gets the
                 login. Each contact = a separate user row; multiple
