@@ -71,19 +71,21 @@ export function numberToWords(num: number): string {
   const paise = Math.round((num - rupees) * 100);
   let result = '';
 
+  // Indian-English financial convention: Thousand/Lakh/Crore are
+  // invariant — no plural 's'. Only Rupee/Paise pluralize with count.
   if (rupees >= 10000000) {
     const crores = Math.floor(rupees / 10000000);
-    result += convertThreeDigits(crores) + ' Crore' + (crores > 1 ? 's' : '') + ' ';
+    result += convertThreeDigits(crores) + ' Crore ';
   }
   const afterCrores = rupees % 10000000;
   if (afterCrores >= 100000) {
     const lakhs = Math.floor(afterCrores / 100000);
-    result += convertTwoDigits(lakhs) + ' Lakh' + (lakhs > 1 ? 's' : '') + ' ';
+    result += convertTwoDigits(lakhs) + ' Lakh ';
   }
   const afterLakhs = afterCrores % 100000;
   if (afterLakhs >= 1000) {
     const thousands = Math.floor(afterLakhs / 1000);
-    result += convertTwoDigits(thousands) + ' Thousand' + (thousands > 1 ? 's' : '') + ' ';
+    result += convertTwoDigits(thousands) + ' Thousand ';
   }
   const afterThousands = afterLakhs % 1000;
   if (afterThousands > 0) {

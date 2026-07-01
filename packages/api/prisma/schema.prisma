@@ -1137,6 +1137,20 @@ model InvoiceCounter {
   @@map("invoice_counters")
 }
 
+// Platform-level counter for SaaS-side subscription invoices
+// (GASLINK CONSULTING SOLUTIONS → distributor customer). Doesn't fit
+// InvoiceCounter above because there is no `distributorId` on the
+// seller side. One row per financial year; upsert-inc pattern gives
+// atomic gapless allocation the same way InvoiceCounter does.
+model SaasInvoiceCounter {
+  id            String   @id @default(cuid()) @map("counter_id")
+  financialYear String   @unique @map("financial_year")
+  lastSequence  Int      @default(0) @map("last_sequence")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("saas_invoice_counters")
+}
+
 model Invoice {
   id                    String        @id @default(uuid()) @map("invoice_id")
   invoiceNumber         String        @unique @map("invoice_number")

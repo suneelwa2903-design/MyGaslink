@@ -75,6 +75,38 @@ const LAYOUT = {
 
 const GASLINK_SAC = '998314';
 
+/**
+ * Get the Indian financial year code for a given date, in the same
+ * 4-digit form as InvoiceCounter uses. FY runs Apr 1 → Mar 31.
+ * e.g. 2026-07-01 → '2627' (Apr 2026 – Mar 2027).
+ */
+function saasFinancialYear(d: Date): string {
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const fyStart = m >= 4 ? y : y - 1;
+  const startTwo = String(fyStart).slice(-2);
+  const endTwo = String(fyStart + 1).slice(-2);
+  return `${startTwo}${endTwo}`;
+}
+
+/**
+ * Allocate the next SaaS invoice number: `I` + `MGL` + FY(4) + seq(6),
+ * e.g. IMGL2627002922. Atomic upsert-increment against
+ * SaasInvoiceCounter — no race between concurrent PDF generations.
+ * FY 2627 is seeded at lastSequence=2921 by the migration; first
+ * allocation returns 2922.
+ */
+async function allocateSaasInvoiceNumber(invoiceDate: Date): Promise<string> {
+  const fy = saasFinancialYear(invoiceDate);
+  const counter = await prisma.saasInvoiceCounter.upsert({
+    where: { financialYear: fy },
+    create: { financialYear: fy, lastSequence: 1 },
+    update: { lastSequence: { increment: 1 } },
+    select: { lastSequence: true },
+  });
+  return `IMGL${fy}${String(counter.lastSequence).padStart(6, '0')}`;
+}
+
 const COL_DEFS = [
   { label: '#', width: 25, align: 'center' },
   { label: 'Description', width: 175, align: 'left' },
@@ -91,26 +123,43 @@ const COL_DEFS = [
 const GASLINK = {
   name: 'Re-New GasLink',
   tagline: 'SaaS Platform for LPG Distribution Management',
-  gstin: 'PENDING REGISTRATION',
+  legalName: 'GASLINK CONSULTING SOLUTIONS',
+  gstin: '36ABCFG7518A1ZQ',
+  pan: 'ABCFG7518A', // positions 3–12 of the GSTIN
+  addressLine1: 'Prashanth Nagar, Nizampet Sub Post Office',
+  addressLine2: 'Nizampet',
+  city: 'Hyderabad',
+  pincode: '500090',
+  state: 'Telangana',
+  stateCode: '36',
   sac: `SAC: ${GASLINK_SAC} - Online Software Services`,
-  state: 'telangana',
-  email: 'support@mygaslink.com',
+  email: 'info@mygaslink.com',
   website: 'www.mygaslink.com',
+  bank: {
+    name: 'HDFC Bank',
+    branch: 'KPHB, Hyderabad',
+    accountName: 'Gaslink Consulting Solutions',
+    accountNo: '50200111238459',
+    ifsc: 'HDFC0004173',
+  },
 };
 
 // ─── State Comparison ───────────────────────────────────────────────────────
 
 function determineIntraState(
-  sellerState: string | null | undefined,
+  sellerStateCode: string,
   buyerGstin: string | null | undefined,
   buyerState: string | null | undefined,
 ): boolean {
-  // Compare GSTIN state codes if buyer has GSTIN
-  // GasLink GSTIN is pending, so fall back to state name comparison
-  const ss = (sellerState ?? '').trim().toLowerCase();
+  // First 2 chars of a GSTIN are the state code (numeric string).
+  if (buyerGstin && buyerGstin.length >= 2) {
+    const buyerStateCode = buyerGstin.slice(0, 2);
+    return buyerStateCode === sellerStateCode;
+  }
+  // No GSTIN → fall back to state-name comparison.
+  const ss = 'telangana'; // seller state, hardcoded per GSTIN 36
   const bs = (buyerState ?? '').trim().toLowerCase();
-  if (ss.length > 0 && bs.length > 0) return ss === bs;
-  return false;
+  return bs.length > 0 && ss === bs;
 }
 
 // ─── Drawing Sections ───────────────────────────────────────────────────────
@@ -133,14 +182,16 @@ function drawHeader(
   doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
   doc.text(GASLINK.tagline, leftX, cursorY, { width: 300 });
   cursorY += 12;
-  doc.text(`GSTIN: ${GASLINK.gstin}`, leftX, cursorY, { width: 300 });
+  doc.text(`Legal Name: ${GASLINK.legalName}`, leftX, cursorY, { width: 300 });
+  cursorY += 12;
+  doc.text(`GSTIN: ${GASLINK.gstin}    PAN: ${GASLINK.pan}`, leftX, cursorY, { width: 300 });
   cursorY += 12;
   doc.text(GASLINK.sac, leftX, cursorY, { width: 300 });
   const companyBottomY = cursorY + 12;
 
-  // Right side: Subscription Invoice title
+  // Right side: Tax Invoice title (label required by CGST Rule 46).
   doc.fontSize(F.H1).fillColor(T.PRIMARY).font('Helvetica-Bold');
-  const titleText = 'Subscription Invoice';
+  const titleText = 'Tax Invoice';
   const titleW = doc.widthOfString(titleText);
   doc.text(titleText, rightMargin - titleW, startY, { width: titleW });
 
@@ -170,9 +221,40 @@ function drawHeader(
   return metaY + 14 - startY;
 }
 
+function drawBillFrom(
+  doc: PDFKit.PDFDocument,
+  startY: number,
+): number {
+  const T = LAYOUT.THEME;
+  const F = LAYOUT.TYPO;
+  const pad = LAYOUT.CARD_PADDING + 4;
+  const leftX = LAYOUT.MARGIN.left;
+  const rightMargin = A4_WIDTH - LAYOUT.MARGIN.right;
+  const fullWidth = rightMargin - leftX;
+  const gap = 6;
+
+  let cursorY = startY + 8;
+  doc.fontSize(F.H2).fillColor(T.PRIMARY).font('Helvetica-Bold');
+  doc.text('Bill From', leftX + pad, cursorY);
+  cursorY += 20;
+
+  cursorY += drawTextBlock(doc, leftX + pad, cursorY, fullWidth - pad * 2, GASLINK.legalName, F.BODY, { bold: true }) + gap;
+  doc.fontSize(F.BODY).fillColor(T.MUTED).font('Helvetica');
+  const supplierAddr = [GASLINK.addressLine1, GASLINK.addressLine2, GASLINK.city, `${GASLINK.state} - ${GASLINK.pincode}`].join(', ');
+  cursorY += drawTextBlock(doc, leftX + pad, cursorY, fullWidth - pad * 2, supplierAddr, F.BODY, { color: T.MUTED }) + 8;
+  doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');
+  doc.text(`GSTIN: ${GASLINK.gstin}    State Code: ${GASLINK.stateCode}    PAN: ${GASLINK.pan}`, leftX + pad, cursorY, { width: fullWidth - pad * 2 });
+  cursorY += 12;
+  cursorY += pad;
+
+  const boxH = cursorY - startY;
+  drawBox(doc, leftX, startY, fullWidth, boxH, T.PRIMARY);
+  return boxH;
+}
+
 function drawBillTo(
   doc: PDFKit.PDFDocument,
-  buyer: { name: string; gstin: string | null; phone: string | null; address: string },
+  buyer: { name: string; gstin: string | null; phone: string | null; address: string; state: string | null; stateCode: string },
   startY: number,
 ): number {
   const T = LAYOUT.THEME;
@@ -192,12 +274,16 @@ function drawBillTo(
   doc.fontSize(F.BODY).fillColor(T.MUTED).font('Helvetica');
   cursorY += drawTextBlock(doc, leftX + pad, cursorY, fullWidth - pad * 2, buyer.address, F.BODY, { color: T.MUTED }) + 8;
   doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');
-  doc.text(`GSTIN: ${buyer.gstin || '\u2014'}`, leftX + pad, cursorY, { width: fullWidth - pad * 2 });
+  doc.text(`GSTIN: ${buyer.gstin || '\u2014'}    State Code: ${buyer.stateCode || '\u2014'}`, leftX + pad, cursorY, { width: fullWidth - pad * 2 });
   cursorY += 12;
   if (buyer.phone) {
     doc.text(`Phone: ${buyer.phone}`, leftX + pad, cursorY, { width: fullWidth - pad * 2 });
     cursorY += 12;
   }
+  // CGST Rule 46(k) \u2014 Place of Supply is mandatory on tax invoices.
+  const pos = buyer.state ? `${buyer.state} (${buyer.stateCode})` : '\u2014';
+  doc.text(`Place of Supply: ${pos}`, leftX + pad, cursorY, { width: fullWidth - pad * 2 });
+  cursorY += 12;
   cursorY += pad;
 
   const boxH = cursorY - startY;
@@ -319,6 +405,11 @@ function drawTotals(
   }
   cursorY += LAYOUT.LINE_GAP + 8;
 
+  // Reverse Charge Applicable — CGST Rule 46(p) mandatory field.
+  doc.text('Reverse Charge Applicable:', labelX, cursorY, { width: 140 });
+  doc.text('No', valueX, cursorY, { width: valueW, align: 'right' });
+  cursorY += LAYOUT.LINE_GAP + 4;
+
   // Separator
   doc.moveTo(labelX, cursorY).lineTo(tableX + tableWidth, cursorY)
     .strokeColor(T.PRIMARY).lineWidth(LAYOUT.BORDER_WIDTH).stroke();
@@ -352,14 +443,31 @@ function drawPaymentSection(
   let cursorY = startY;
 
   doc.fontSize(F.H2).fillColor(T.PRIMARY).font('Helvetica-Bold');
-  doc.text('Payment Terms', leftX + pad, cursorY + 8);
+  doc.text('Payment Terms & Bank Details', leftX + pad, cursorY + 8);
   cursorY += 26;
 
   doc.fontSize(F.BODY).fillColor(T.TEXT).font('Helvetica');
   doc.text('Payment due within 7 days of invoice date.', leftX + pad, cursorY, { width: fullWidth - pad * 2 });
-  cursorY += 14;
-  doc.text('Bank details will be shared separately.', leftX + pad, cursorY, { width: fullWidth - pad * 2 });
-  cursorY += 14 + pad;
+  cursorY += 16;
+
+  // Bank details block. Two-column layout: label | value.
+  const labelCol = leftX + pad;
+  const valueCol = leftX + pad + 130;
+  const rows: [string, string][] = [
+    ['Account Name:', GASLINK.bank.accountName],
+    ['Bank / Branch:', `${GASLINK.bank.name}, ${GASLINK.bank.branch}`],
+    ['Account No:', GASLINK.bank.accountNo],
+    ['IFSC Code:', GASLINK.bank.ifsc],
+  ];
+  doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');
+  for (const [label, value] of rows) {
+    doc.font('Helvetica').fillColor(T.MUTED);
+    doc.text(label, labelCol, cursorY, { width: 130 });
+    doc.font('Helvetica-Bold').fillColor(T.TEXT);
+    doc.text(value, valueCol, cursorY, { width: fullWidth - pad * 2 - 130 });
+    cursorY += 12;
+  }
+  cursorY += pad;
 
   const boxH = cursorY - startY;
   drawBox(doc, leftX, startY, fullWidth, boxH, T.PRIMARY);
@@ -399,28 +507,36 @@ export async function generateBillingInvoicePdf(billingCycleId: string, distribu
 
   const dist = cycle.distributor;
 
-  // Build invoice number: GLB-{YYYYMM}-{sequence}
-  const yyyy = cycle.periodStartDate.getFullYear();
-  const mm = String(cycle.periodStartDate.getMonth() + 1).padStart(2, '0');
-  const seq = cycle.id.slice(-6).toUpperCase();
-  const invoiceNum = `GLB-${yyyy}${mm}-${seq}`;
+  // Structured invoice number: I + MGL + FY(4) + seq(6) \u2192 IMGL2627002922.
+  // Allocated from SaasInvoiceCounter (atomic upsert-increment, seeded
+  // at 2921 for FY 2627 so the first allocation returns 2922).
+  const invoiceDateObj = cycle.periodStartDate; // stable across regenerations
+  const invoiceNum = await allocateSaasInvoiceNumber(invoiceDateObj);
 
-  // Build buyer data
+  // Build buyer data. State code derived from buyer GSTIN (first 2
+  // chars) when present; falls back to '\u2014' for URP.
   const buyerAddr = [dist.address, dist.city, dist.state, dist.pincode].filter(Boolean).join(', ') || '\u2014';
+  const buyerStateCode = dist.gstin && dist.gstin.length >= 2 ? dist.gstin.slice(0, 2) : '';
   const buyer = {
     name: dist.businessName || dist.legalName,
     gstin: dist.gstin,
     phone: dist.phone,
     address: buyerAddr,
+    state: dist.state,
+    stateCode: buyerStateCode,
   };
 
-  // Determine intra-state (GasLink is in Telangana)
-  const isIntraState = determineIntraState(GASLINK.state, dist.gstin, dist.state);
+  // Intra-state check via numeric state code from the GSTIN prefix.
+  const isIntraState = determineIntraState(GASLINK.stateCode, dist.gstin, dist.state);
 
-  // Dates
-  const invoiceDate = formatDate(new Date());
+  // Dates. Use periodStartDate as the invoice date (stable \u2014 no `new
+  // Date()` drift across regenerations). Due date = invoice date + 7
+  // days to match the "Payment due within 7 days" terms.
+  const dueDateObj = new Date(invoiceDateObj);
+  dueDateObj.setDate(dueDateObj.getDate() + 7);
+  const invoiceDate = formatDate(invoiceDateObj);
   const period = `${formatDate(cycle.periodStartDate)} to ${formatDate(cycle.periodEndDate)}`;
-  const dueDate = formatDate(cycle.dueDate);
+  const dueDate = formatDate(dueDateObj);
   const meta = { invoiceNum, invoiceDate, period, dueDate };
 
   // Create PDF document
@@ -434,7 +550,11 @@ export async function generateBillingInvoicePdf(billingCycleId: string, distribu
   const headerH = drawHeader(doc, meta, cursorY);
   cursorY += headerH + LAYOUT.SECTION_GAP;
 
-  // Bill To
+  // Bill From (supplier — CGST Rule 46(b) mandatory)
+  const billFromH = drawBillFrom(doc, cursorY);
+  cursorY += billFromH + LAYOUT.SECTION_GAP;
+
+  // Bill To (buyer)
   const billToH = drawBillTo(doc, buyer, cursorY);
   cursorY += billToH + LAYOUT.SECTION_GAP;
 
