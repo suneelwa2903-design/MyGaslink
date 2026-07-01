@@ -69,14 +69,19 @@ function extractText(pdf: Buffer): string {
   // buffer assertions only.
   const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bill-inv-')), 'invoice.pdf');
   fs.writeFileSync(tmp, pdf);
-  try {
-    return execSync(
-      `python -c "from pypdf import PdfReader; r=PdfReader(r'${tmp.replace(/\\/g, '\\\\')}'); print('\\n'.join(p.extract_text() for p in r.pages))"`,
-      { encoding: 'utf-8' },
-    );
-  } catch {
-    return '';
+  // Prefer `python3` (Ubuntu CI runners); fall back to `python` (dev
+  // machines where python IS python3, e.g. Windows / macOS with
+  // homebrew). If neither has pypdf installed the catch returns '' and
+  // the assertions surface as informative failures rather than crashes.
+  const pyScript = `from pypdf import PdfReader; r=PdfReader(r'${tmp.replace(/\\/g, '\\\\')}'); print('\\n'.join(p.extract_text() for p in r.pages))`;
+  for (const bin of ['python3', 'python']) {
+    try {
+      return execSync(`${bin} -c "${pyScript}"`, { encoding: 'utf-8' });
+    } catch {
+      // try next binary
+    }
   }
+  return '';
 }
 
 describe('numberToWords — Indian-English grammar fixes', () => {

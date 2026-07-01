@@ -108,6 +108,14 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      # billing-invoice-pdf.test.ts extracts text from PDFKit-generated
+      # PDFs via `python -c "from pypdf import PdfReader"` (PDFKit
+      # FlateDecode-compresses text streams, so a raw-buffer grep can't
+      # verify the strings we care about). Ubuntu runners ship python
+      # but not pypdf — install it explicitly here. Without this, all
+      # 10 assertions in that suite silently see empty content.
+      - name: Install pypdf for PDF-content assertions
+        run: python3 -m pip install --user pypdf
       # Build shared types before api tests resolve @gaslink/shared imports.
       - run: pnpm --filter @gaslink/shared build
       - run: pnpm --filter @gaslink/api run db:generate
