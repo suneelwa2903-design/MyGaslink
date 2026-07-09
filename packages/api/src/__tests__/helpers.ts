@@ -154,20 +154,36 @@ export async function loginAsSuperAdmin() {
  */
 export async function getSeedData() {
   const distributor = await prisma.distributor.findUniqueOrThrow({ where: { id: 'dist-001' } });
+  // INVESTIGATION-JUL09: filter soft-deleted rows out of the seed view.
+  // Prior to this filter, tests that soft-deleted their fixtures in afterAll
+  // (backdated-order.test.ts, list-search-pagination.test.ts,
+  // backdated-inventory-adjustment.test.ts) left "deletedAt IS NOT NULL"
+  // customers in the DB. Because their names (e.g. "Backdated B2B basic-…")
+  // sort alphabetically BEFORE the seed's "Green Valley Caterers", a later
+  // file calling `seedData.customers[0]` or `.find(c => c.customerType === 'B2B')`
+  // would pick up one of those soft-deleted rows. Every downstream API call
+  // filters by `deletedAt: null`, so it returned 404 ("Customer not found") /
+  // dropped `orderId` from the POST response — and the payment / over-delivery /
+  // inventory tests failed on CI without ever failing locally (local dev DBs
+  // typically have accumulated "A" customers or empty state that hid the
+  // ordering issue). Filter at the helper so every seedData reader sees
+  // only what the API can see.
   const customers = await prisma.customer.findMany({
-    where: { distributorId: 'dist-001' },
+    where: { distributorId: 'dist-001', deletedAt: null },
     orderBy: { customerName: 'asc' },
   });
+  // CylinderType has no deletedAt column — it uses isActive as the soft
+  // toggle. Filter isActive:true so inactive cyl types don't leak in either.
   const cylinderTypes = await prisma.cylinderType.findMany({
-    where: { distributorId: 'dist-001' },
+    where: { distributorId: 'dist-001', isActive: true },
     orderBy: { capacity: 'asc' },
   });
   const drivers = await prisma.driver.findMany({
-    where: { distributorId: 'dist-001' },
+    where: { distributorId: 'dist-001', deletedAt: null },
     orderBy: { driverName: 'asc' },
   });
   const vehicles = await prisma.vehicle.findMany({
-    where: { distributorId: 'dist-001' },
+    where: { distributorId: 'dist-001', deletedAt: null },
     orderBy: { vehicleNumber: 'asc' },
   });
 
