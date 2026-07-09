@@ -37,6 +37,13 @@ interface DriverSubmission {
   rejectionReason: string | null;
   resultingPaymentId: string | null;
   createdAt: string;
+  // Item 10 (2026-07-09) — per-invoice allocation detail from the office's
+  // verify step. Empty array on unverified rows.
+  settledInvoices?: {
+    invoiceId: string;
+    invoiceNumber: string;
+    allocatedAmount: number;
+  }[];
 }
 
 interface ListResp {
@@ -127,6 +134,20 @@ export default function DriverMySubmissionsScreen() {
                   Reason: {s.rejectionReason}
                 </Text>
               )}
+              {/* Item 10 (2026-07-09) — settled invoices summary on the row.
+                  Shown only when verified + allocations exist. Truncate to
+                  first 2 for the row; the detail modal shows all. */}
+              {s.status === 'verified' && (s.settledInvoices?.length ?? 0) > 0 && (
+                <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}>
+                  Settled: {(s.settledInvoices ?? [])
+                    .slice(0, 2)
+                    .map((si) => `${si.invoiceNumber} ${formatINR(si.allocatedAmount)}`)
+                    .join(' · ')}
+                  {(s.settledInvoices?.length ?? 0) > 2
+                    ? ` +${(s.settledInvoices?.length ?? 0) - 2} more`
+                    : ''}
+                </Text>
+              )}
             </TouchableOpacity>
           ))
         )}
@@ -190,6 +211,49 @@ export default function DriverMySubmissionsScreen() {
                   {new Date(selected.createdAt).toLocaleString('en-IN')}
                 </Text>
               </DetailRow>
+
+              {/* Item 10 (2026-07-09) — full settlement list. Only rendered
+                  when the submission is verified AND there are allocations.
+                  The office may verify without allocating (payment left as
+                  on-account credit) — settledInvoices is [] in that case. */}
+              {selected.status === 'verified' && (selected.settledInvoices?.length ?? 0) > 0 && (
+                <View style={{
+                  marginTop: 12,
+                  padding: 12,
+                  backgroundColor: dark ? 'rgba(34,197,94,0.08)' : '#f0fdf4',
+                  borderRadius: 8,
+                  gap: 8,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.text, letterSpacing: 0.5 }}>
+                    SETTLED AGAINST
+                  </Text>
+                  {(selected.settledInvoices ?? []).map((si) => (
+                    <View
+                      key={si.invoiceId}
+                      style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                    >
+                      <Text style={{ color: colors.text, fontSize: 14 }}>{si.invoiceNumber}</Text>
+                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>
+                        {formatINR(si.allocatedAmount)}
+                      </Text>
+                    </View>
+                  ))}
+                  <View style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    borderTopWidth: 1,
+                    borderTopColor: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+                    paddingTop: 8,
+                  }}>
+                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>Total</Text>
+                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>
+                      {formatINR(
+                        (selected.settledInvoices ?? []).reduce((s, si) => s + si.allocatedAmount, 0),
+                      )}
+                    </Text>
+                  </View>
+                </View>
+              )}
             </View>
           </SafeAreaView>
         )}

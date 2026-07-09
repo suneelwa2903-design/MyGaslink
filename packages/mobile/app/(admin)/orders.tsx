@@ -697,13 +697,12 @@ export default function AdminOrdersScreen() {
         <View style={{ flex: 1 }}>
           <DateInput value={dateTo || null} onChange={setDateTo} placeholder="To" />
         </View>
-        <TouchableOpacity
-          style={[styles.returnsBtn, { borderColor: ACCENT }]}
-          onPress={() => setReturnsModalVisible(true)}
-        >
-          <Ionicons name="arrow-undo-outline" size={14} color={ACCENT} />
-          <Text style={[styles.returnsBtnText, { color: ACCENT }]}>Returns</Text>
-        </TouchableOpacity>
+        {/* Item 7 (2026-07-09): the "Returns" trigger was removed —
+            replace by the lightweight Empties Return flow on the web
+            Inventory page (Daily Summary → Empties Return). The
+            ReturnsOrderModal component + state stay so historical
+            returns_only orders keep rendering; no new returns are
+            created from mobile. */}
         {/* Bulk Assign discoverability: surface a visible button when any
             orders are in pending_driver_assignment. Long-press still works
             as the row-level multi-select trigger. Tapping this button

@@ -85,9 +85,19 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
+      // Item 4 (2026-07-09) — include a device label so the newly-created
+      // refresh_token_sessions row is identifiable. `Platform.constants`
+      // exposes the model on Android; iOS Platform.constants is thinner
+      // so we fall back to a static "iOS device" label. Doesn't need to
+      // be unique — this is a human-readable tag for future "logged in
+      // devices" UI, not an identity primitive.
+      const deviceLabel = Platform.OS === 'ios'
+        ? 'iOS device'
+        : `Android - ${(Platform.constants as { Model?: string })?.Model ?? 'device'}`;
       const result = await apiPost<LoginResponse>('/auth/login', {
         email: email.trim().toLowerCase(),
         password,
+        deviceLabel,
       });
 
       await tokenStorage.setTokens(result.tokens.accessToken, result.tokens.refreshToken);

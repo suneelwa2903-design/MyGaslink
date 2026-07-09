@@ -198,6 +198,13 @@ export default function DriverAnalyticsScreen() {
           </View>
         </View>
 
+        {/* Item 9 (2026-07-09) — per-cyl-type breakdown for the same
+            date window as the metric grid above. */}
+        <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
+          Cylinders Summary
+        </Text>
+        <CylinderSummaryCards dateFrom={dateFrom} dateTo={dateTo} />
+
         {/* WI-PENDING-PAYMENTS post-smoke FIX-C: Recent Payments Submitted
             block. Lives at the bottom of "My Performance" because tracking
             how many of your self-reported payments cleared is a
@@ -315,5 +322,66 @@ export default function DriverAnalyticsScreen() {
         )}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// Item 9 (2026-07-09) — cylinder-summary block. One row per cylinder type
+// showing fulls delivered + empties collected across the same date window
+// as the metric grid above. Data comes from GET /analytics/driver-cylinder-summary
+// which auto-scopes to the caller's driver id.
+interface CylinderSummaryRow {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  fullsDelivered: number;
+  emptiesCollected: number;
+}
+
+function CylinderSummaryCards({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const { colors } = useTheme();
+  const { data, isLoading } = useApiQuery<CylinderSummaryRow[]>(
+    ['driver-cylinder-summary', dateFrom, dateTo],
+    '/analytics/driver-cylinder-summary',
+    { dateFrom, dateTo },
+  );
+
+  if (isLoading && !data) {
+    return (
+      <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+        <ActivityIndicator size="small" color={ACCENT.red} />
+      </View>
+    );
+  }
+
+  const rows = data ?? [];
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', paddingVertical: 8 }}>
+          No deliveries in this period yet.
+        </Text>
+      </Card>
+    );
+  }
+
+  return (
+    <View style={{ gap: 8 }}>
+      {rows.map((r) => (
+        <Card key={r.cylinderTypeId}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{r.cylinderTypeName}</Text>
+            <View style={{ flexDirection: 'row', gap: 16 }}>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={{ fontSize: 11, color: colors.textSecondary }}>Delivered</Text>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{r.fullsDelivered}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={{ fontSize: 11, color: colors.textSecondary }}>Empties</Text>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{r.emptiesCollected}</Text>
+              </View>
+            </View>
+          </View>
+        </Card>
+      ))}
+    </View>
   );
 }
