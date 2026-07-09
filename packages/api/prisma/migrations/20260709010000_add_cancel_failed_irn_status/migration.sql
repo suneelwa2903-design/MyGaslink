@@ -1,0 +1,24 @@
+-- 20260709010000_add_cancel_failed_irn_status
+--
+-- Backfills the missing migration for a schema change made on 2026-05-20
+-- (commit 1344406 — WI-083 FIX 3). That commit added `cancel_failed` to
+-- the `IrnStatus` enum in schema.prisma and applied it to prod via
+-- `prisma db push`, but never wrote a migration file. Consequences:
+--
+--   - Production DB has the value (via db push).
+--   - CI's `prisma migrate dev` auto-syncs the drift on the fly on every
+--     run, silently masking the missing migration.
+--   - Any fresh env built via `prisma migrate deploy` (the correct CI
+--     command, and the shape used by our isolated repro DBs) does NOT
+--     have the value. `cancel-order.test.ts` "IRN cancel failure creates
+--     pending action" then throws
+--       invalid input value for enum "IrnStatus": "cancel_failed"
+--     from `orderService.ts` line 1454 when the IRN cancel path runs.
+--
+-- `ADD VALUE IF NOT EXISTS` is idempotent — safe on both prod (already
+-- has it, no-op) and any fresh DB (adds it). Not wrapped in a transaction
+-- because Postgres forbids using a newly-added enum value inside the same
+-- transaction that created it; `prisma migrate deploy` runs each
+-- migration statement autonomously so this is fine.
+
+ALTER TYPE "IrnStatus" ADD VALUE IF NOT EXISTS 'cancel_failed';
