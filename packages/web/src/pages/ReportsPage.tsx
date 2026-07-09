@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { HiOutlineArrowDownTray, HiOutlineDocumentArrowDown } from 'react-icons/hi2';
+import { HiOutlineArrowDownTray, HiOutlineChevronDown, HiOutlineChevronRight, HiOutlineDocumentArrowDown, HiOutlineUserGroup } from 'react-icons/hi2';
 import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { api, apiGet, getErrorMessage } from '@/lib/api';
-import { Button, Select, Loader, EmptyState } from '@/components/ui';
+import { Button, Select, Loader, EmptyState, Modal } from '@/components/ui';
 import TallyExportPanel from '@/components/reports/TallyExportPanel';
 
 type ReportCellValue = string | number | null;
@@ -33,6 +33,9 @@ const isOverdueRow = (r: Record<string, ReportCellValue>) => Number(r.b31_60 || 
 
 function todayStr() { return localTodayISO(); }
 function monthAgoStr() { const d = new Date(); d.setMonth(d.getMonth() - 1); return localDateISO(d); }
+// INVESTIGATION-JUL09: delivery-performance defaults to yesterday..today so
+// the operator lands on "yesterday's numbers" — the most-asked view.
+function yesterdayStr() { const d = new Date(); d.setDate(d.getDate() - 1); return localDateISO(d); }
 
 export default function ReportsPage() {
   const [reportKey, setReportKey] = useState('sales-summary');
@@ -49,8 +52,27 @@ export default function ReportsPage() {
   // (corporation loads) so other reports remain unaffected.
   const [vehicleLedgerView, setVehicleLedgerView] = useState<'all' | 'corporation' | 'trips'>('all');
   const [downloading, setDownloading] = useState(false);
+  // INVESTIGATION-JUL09 — Delivery Performance drill-down state.
+  // Which driver's customer breakdown is open in the modal, if any.
+  const [drillDownDriverId, setDrillDownDriverId] = useState<string | null>(null);
+  const [drillDownDriverName, setDrillDownDriverName] = useState<string>('');
+  // Which top-level driver_summary rows are expanded to show cylinder_row children.
+  const [expandedDrivers, setExpandedDrivers] = useState<Set<string>>(new Set());
 
   const def = REPORTS.find((r) => r.key === reportKey)!;
+
+  // INVESTIGATION-JUL09 — when the user switches TO delivery-performance for
+  // the first time in this session, reset dates to yesterday..today. This
+  // matches the "landing on yesterday's numbers" default the ops team asks
+  // for. Wrapped in a helper so REPORTS button clicks are intent-preserving.
+  function pickReport(key: string) {
+    if (key === 'delivery-performance' && reportKey !== 'delivery-performance') {
+      setDateFrom(yesterdayStr());
+      setDateTo(todayStr());
+    }
+    setReportKey(key);
+    setExpandedDrivers(new Set());
+  }
 
   // Filter option data (lazy/shared)
   const { data: customers } = useQuery({
@@ -121,7 +143,7 @@ export default function ReportsPage() {
         {REPORTS.map((r) => (
           <button
             key={r.key}
-            onClick={() => setReportKey(r.key)}
+            onClick={() => pickReport(r.key)}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${reportKey === r.key ? 'bg-brand-600 text-white' : 'bg-surface-100 dark:bg-surface-800 text-surface-700 dark:text-surface-300 hover:bg-surface-200'}`}
           >
             {r.label}
@@ -216,6 +238,23 @@ export default function ReportsPage() {
           {report.chart && <ReportChartView chart={report.chart} />}
           {reportKey === 'vehicle-ledger' ? (
             <UnifiedVehicleLedger report={report} view={vehicleLedgerView} />
+          ) : reportKey === 'delivery-performance' ? (
+            <DeliveryPerformanceTable
+              report={report}
+              expandedDrivers={expandedDrivers}
+              onToggleDriver={(did) => {
+                setExpandedDrivers((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(did)) next.delete(did);
+                  else next.add(did);
+                  return next;
+                });
+              }}
+              onDrillDown={(did, dname) => {
+                setDrillDownDriverId(did);
+                setDrillDownDriverName(dname);
+              }}
+            />
           ) : (
             <>
               {report.secondary && report.secondary.rows.length > 0 && (
@@ -226,6 +265,16 @@ export default function ReportsPage() {
           )}
         </>
       )}
+
+      {/* INVESTIGATION-JUL09 — Delivery Performance per-customer drill-down modal */}
+      <DeliveryPerformanceDrillDownModal
+        open={!!drillDownDriverId}
+        driverId={drillDownDriverId}
+        driverName={drillDownDriverName}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onClose={() => setDrillDownDriverId(null)}
+      />
     </div>
   );
 }
@@ -478,5 +527,194 @@ function StackedBarChart({ data }: { data: BarChartData }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// ─── INVESTIGATION-JUL09 — Delivery Performance custom table ─────────────────
+//
+// Backend sends a flat rows array containing two row-shapes distinguished by
+// `type`:
+//   • driver_summary — money + fulls + empties aggregated across all
+//     cylinder types for one driver. Rendered with an expand chevron.
+//   • cylinder_row   — per-cylinder-type fulls/empties for one driver.
+//     Rendered indented; visible only when the parent driver is expanded.
+// Money columns are intentionally blank on cylinder_row so per-cylinder rows
+// never appear to have their own money — avoids the double-count trap when
+// an order spans multiple cylinder types.
+function DeliveryPerformanceTable({
+  report,
+  expandedDrivers,
+  onToggleDriver,
+  onDrillDown,
+}: {
+  report: ReportResult;
+  expandedDrivers: Set<string>;
+  onToggleDriver: (driverId: string) => void;
+  onDrillDown: (driverId: string, driverName: string) => void;
+}) {
+  return (
+    <div className="card overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-surface-200 dark:border-surface-700 text-left">
+            <th className="px-4 py-3 w-8"></th>
+            {report.columns.map((c) => (
+              <th key={c.key} className={`px-4 py-3 font-semibold text-surface-600 dark:text-surface-300 ${c.money ? 'text-right' : ''}`}>{c.label}</th>
+            ))}
+            <th className="px-4 py-3 w-8"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.rows.map((row, i) => {
+            const rowType = String(row.type ?? '');
+            const isSummary = rowType === 'driver_summary';
+            const driverId = String(row.driverId ?? '');
+            const expanded = expandedDrivers.has(driverId);
+            // Cylinder rows: only visible when their parent driver is expanded.
+            if (!isSummary && !expanded) return null;
+
+            return (
+              <tr
+                key={i}
+                className={`border-b border-surface-100 dark:border-surface-800 ${isSummary ? 'font-medium bg-surface-50 dark:bg-surface-800/40' : 'text-surface-600 dark:text-surface-400'}`}
+              >
+                <td className="px-2 py-2.5">
+                  {isSummary && (
+                    <button
+                      onClick={() => onToggleDriver(driverId)}
+                      className="text-surface-500 hover:text-surface-800 dark:hover:text-white"
+                      aria-label={expanded ? 'Collapse cylinder breakdown' : 'Expand cylinder breakdown'}
+                    >
+                      {expanded ? <HiOutlineChevronDown className="h-4 w-4" /> : <HiOutlineChevronRight className="h-4 w-4" />}
+                    </button>
+                  )}
+                </td>
+                {report.columns.map((c) => {
+                  const raw = row[c.key];
+                  const isCylTypeCol = c.key === 'cylinderTypeName';
+                  return (
+                    <td
+                      key={c.key}
+                      className={`px-4 py-2.5 ${c.money ? 'text-right tabular-nums' : ''} ${!isSummary && isCylTypeCol ? 'pl-10' : ''}`}
+                    >
+                      {c.money ? (raw === '' || raw == null ? '' : fmtMoney(raw)) : String(raw ?? '')}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-2.5">
+                  {isSummary && (
+                    <button
+                      onClick={() => onDrillDown(driverId, String(row.driverName ?? ''))}
+                      className="inline-flex items-center gap-1 text-xs text-brand-600 hover:text-brand-800 dark:text-brand-400"
+                      title="View customer-level breakdown"
+                    >
+                      <HiOutlineUserGroup className="h-4 w-4" />
+                      Customers
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+          {report.totals && (
+            <tr className="border-t-2 border-surface-300 dark:border-surface-600 font-bold bg-surface-100 dark:bg-surface-800/60">
+              <td></td>
+              {report.columns.map((c) => (
+                <td key={c.key} className={`px-4 py-3 ${c.money ? 'text-right tabular-nums' : ''} text-surface-900 dark:text-white`}>
+                  {report.totals![c.key] === '' || report.totals![c.key] == null
+                    ? ''
+                    : c.money
+                      ? fmtMoney(report.totals![c.key])
+                      : String(report.totals![c.key])}
+                </td>
+              ))}
+              <td></td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DeliveryPerformanceDrillDownModal({
+  open,
+  driverId,
+  driverName,
+  dateFrom,
+  dateTo,
+  onClose,
+}: {
+  open: boolean;
+  driverId: string | null;
+  driverName: string;
+  dateFrom: string;
+  dateTo: string;
+  onClose: () => void;
+}) {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['report', 'delivery-performance', 'drilldown', driverId, dateFrom, dateTo],
+    queryFn: () =>
+      apiGet<ReportResult>('/reports/delivery-performance', {
+        dateFrom,
+        dateTo,
+        driverId: driverId!,
+        groupBy: 'customer',
+      }),
+    enabled: !!driverId && open,
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Customer Breakdown — ${driverName}`} size="full">
+      {isLoading ? (
+        <div className="flex justify-center py-10"><Loader size="lg" /></div>
+      ) : isError ? (
+        <EmptyState title="Could not load drill-down" description={getErrorMessage(error)} />
+      ) : !data || data.rows.length === 0 ? (
+        <EmptyState title="No customer deliveries" description={`No deliveries by ${driverName} in ${dateFrom} — ${dateTo}.`} />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-surface-200 dark:border-surface-700 text-left">
+                {data.columns.map((c) => (
+                  <th key={c.key} className={`px-3 py-2 font-semibold text-surface-600 dark:text-surface-300 ${c.money ? 'text-right' : ''}`}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row, i) => (
+                <tr key={i} className="border-b border-surface-100 dark:border-surface-800">
+                  {data.columns.map((c) => {
+                    const raw = row[c.key];
+                    return (
+                      <td key={c.key} className={`px-3 py-2 ${c.money ? 'text-right tabular-nums' : ''}`}>
+                        {c.money ? (raw === '' || raw == null ? '' : fmtMoney(raw)) : String(raw ?? '')}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              {data.totals && (
+                <tr className="border-t-2 border-surface-300 dark:border-surface-600 font-bold bg-surface-100 dark:bg-surface-800/60">
+                  {data.columns.map((c) => (
+                    <td key={c.key} className={`px-3 py-2 ${c.money ? 'text-right tabular-nums' : ''} text-surface-900 dark:text-white`}>
+                      {data.totals![c.key] === '' || data.totals![c.key] == null
+                        ? ''
+                        : c.money
+                          ? fmtMoney(data.totals![c.key])
+                          : String(data.totals![c.key])}
+                    </td>
+                  ))}
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <p className="mt-3 text-xs text-surface-500 dark:text-surface-400">
+            * Pending Empties is a customer-level cumulative balance across every driver that ever served that customer.
+          </p>
+        </div>
+      )}
+    </Modal>
   );
 }

@@ -48,7 +48,7 @@ export interface ReportFilters {
   cylinderTypeId?: string;
   driverId?: string;
   vehicleId?: string;
-  groupBy?: 'trip' | 'day';
+  groupBy?: 'trip' | 'day' | 'customer';
 }
 
 const num = (d: unknown): number => (d == null ? 0 : Number(d));
@@ -214,49 +214,470 @@ export async function gstSummary(distributorId: string, f: ReportFilters): Promi
 }
 
 // ─── Report 4 — Delivery Performance ─────────────────────────────────────────
+//
+// INVESTIGATION-JUL09: enhanced from a status-count table into a per-driver
+// operational + financial snapshot with a customer drill-down.
+//
+// Row shapes (all in the same `rows` array — differentiated by `type`):
+//   • driver_summary — one per driver in range. Aggregates fulls+empties
+//     across all cylinder types plus the driver's money numbers (sale,
+//     collected, pending, overdue).
+//   • cylinder_row   — one per (driver, cylinderType). Fulls delivered +
+//     empties collected only. NO money columns to avoid double-counting an
+//     order that spans multiple cylinder types. Rendered indented under
+//     the driver summary in the web UI.
+//   • customer_row   — only in the drill-down (?groupBy=customer&driverId=X).
+//     Per (customer, cylinderType) breakdown of this driver's deliveries,
+//     PLUS a `pendingEmpties` column showing the customer's CUMULATIVE
+//     pending empties for that cylinder type (per-customer, ACROSS ALL
+//     drivers — the app doesn't ledger empties per driver).
+//
+// Money attribution:
+//   • saleAmount    = sum(orders.totalAmount) for driver's in-range orders
+//   • amountCollected = sum(paymentAllocations.allocatedAmount) for
+//     invoices linked to those in-range orders (attribution follows the
+//     delivery, not the payment date — matches Sale semantics).
+//   • amountPending = sum(invoices.outstandingAmount) for those invoices
+//   • amountOverdue = same but where dueDate < today
+//
+// Excluded from the driver report:
+//   • orders.isGodownPickup=true (no driver — customer picks up at depot)
+//   • status='cancelled' orders (not delivered)
 export async function deliveryPerformance(distributorId: string, f: ReportFilters): Promise<ReportResult> {
   const { from, to } = range(f);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Drill-down branch: caller wants per-customer rows for a specific driver.
+  if (f.groupBy === 'customer' && f.driverId) {
+    return deliveryPerformanceDrilldown(distributorId, f.driverId, from, to);
+  }
+
+  // Step 1 — load all delivered/modified_delivered orders in range with
+  // enough context (items, invoice) to compute both operational and financial
+  // aggregates without a second round-trip.
   const orders = await prisma.order.findMany({
     where: {
-      distributorId, driverId: { not: null }, deletedAt: null,
+      distributorId,
+      driverId: { not: null },
+      isGodownPickup: false,
+      status: { in: ['delivered', 'modified_delivered'] },
       deliveryDate: { gte: from, lte: to },
+      deletedAt: null,
       ...(f.driverId ? { driverId: f.driverId } : {}),
     },
-    select: { driverId: true, status: true, driver: { select: { driverName: true } } },
+    select: {
+      id: true,
+      driverId: true,
+      totalAmount: true,
+      driver: { select: { driverName: true } },
+      items: {
+        select: {
+          cylinderTypeId: true,
+          quantity: true,
+          deliveredQuantity: true,
+          emptiesCollected: true,
+          cylinderType: { select: { typeName: true } },
+        },
+      },
+      invoice: {
+        select: {
+          id: true,
+          outstandingAmount: true,
+          dueDate: true,
+          status: true,
+        },
+      },
+    },
   });
-  const byDriver = new Map<string, { driver: string; assigned: number; exact: number; modMore: number; modLess: number; cancelled: number }>();
-  for (const o of orders) {
-    const id = o.driverId!;
-    const cur = byDriver.get(id) ?? { driver: o.driver?.driverName ?? 'Unknown', assigned: 0, exact: 0, modMore: 0, modLess: 0, cancelled: 0 };
-    cur.assigned += 1;
-    if (o.status === 'delivered') cur.exact += 1;
-    else if (o.status === 'modified_delivered') cur.modMore += 1; // modified split refined below if needed
-    else if (o.status === 'cancelled') cur.cancelled += 1;
-    byDriver.set(id, cur);
+
+  const invoiceIds = orders
+    .map((o) => o.invoice?.id)
+    .filter((v): v is string => Boolean(v));
+
+  // Step 2 — payment allocations against those invoices. PaymentTransaction
+  // has no driverId; attribution runs through invoice.order.driverId.
+  const allocations = invoiceIds.length
+    ? await prisma.paymentAllocation.findMany({
+        where: { invoiceId: { in: invoiceIds } },
+        select: {
+          allocatedAmount: true,
+          invoice: { select: { order: { select: { driverId: true } } } },
+        },
+      })
+    : [];
+  const collectedByDriver = new Map<string, number>();
+  for (const a of allocations) {
+    const did = a.invoice.order?.driverId;
+    if (!did) continue;
+    collectedByDriver.set(did, (collectedByDriver.get(did) ?? 0) + num(a.allocatedAmount));
   }
-  const rows = [...byDriver.values()].map((r) => {
-    const delivered = r.exact + r.modMore + r.modLess;
-    const rate = r.assigned ? +((delivered / r.assigned) * 100).toFixed(1) : 0;
-    return { ...r, deliveryRate: rate };
-  }).sort((a, b) => b.assigned - a.assigned);
+
+  // Step 3 — build per-driver + per-(driver,cyl) aggregates in one pass.
+  type CylAgg = { cylinderTypeId: string; cylinderTypeName: string; fullsDelivered: number; emptiesCollected: number };
+  type DriverAgg = {
+    driverId: string;
+    driverName: string;
+    orderIds: Set<string>;
+    fullsDelivered: number;
+    emptiesCollected: number;
+    saleAmount: number;
+    amountPending: number;
+    amountOverdue: number;
+    byCyl: Map<string, CylAgg>;
+  };
+  const byDriver = new Map<string, DriverAgg>();
+  for (const o of orders) {
+    const did = o.driverId!;
+    const agg =
+      byDriver.get(did) ??
+      ({
+        driverId: did,
+        driverName: o.driver?.driverName ?? 'Unknown',
+        orderIds: new Set<string>(),
+        fullsDelivered: 0,
+        emptiesCollected: 0,
+        saleAmount: 0,
+        amountPending: 0,
+        amountOverdue: 0,
+        byCyl: new Map<string, CylAgg>(),
+      } as DriverAgg);
+
+    // Order-level money aggregation runs ONCE per order (Set guard).
+    if (!agg.orderIds.has(o.id)) {
+      agg.orderIds.add(o.id);
+      agg.saleAmount += num(o.totalAmount);
+      if (o.invoice) {
+        const outstanding = num(o.invoice.outstandingAmount);
+        agg.amountPending += outstanding;
+        if (o.invoice.dueDate && new Date(o.invoice.dueDate) < today && outstanding > 0) {
+          agg.amountOverdue += outstanding;
+        }
+      }
+    }
+
+    // Item-level operational aggregation (per cylinder type).
+    for (const it of o.items) {
+      const cyl = it.cylinderTypeId ?? '__unknown__';
+      const cylName = it.cylinderType?.typeName ?? '—';
+      const fulls = it.deliveredQuantity ?? it.quantity ?? 0;
+      const empties = it.emptiesCollected ?? 0;
+      agg.fullsDelivered += fulls;
+      agg.emptiesCollected += empties;
+
+      const cylAgg =
+        agg.byCyl.get(cyl) ??
+        ({ cylinderTypeId: cyl, cylinderTypeName: cylName, fullsDelivered: 0, emptiesCollected: 0 } as CylAgg);
+      cylAgg.fullsDelivered += fulls;
+      cylAgg.emptiesCollected += empties;
+      agg.byCyl.set(cyl, cylAgg);
+    }
+
+    byDriver.set(did, agg);
+  }
+
+  // Step 4 — flatten into row array: driver_summary followed by its
+  // cylinder_row children, ordered by descending sale amount.
+  const rows: Record<string, unknown>[] = [];
+  const drivers = [...byDriver.values()].sort((a, b) => b.saleAmount - a.saleAmount);
+  for (const d of drivers) {
+    const collected = collectedByDriver.get(d.driverId) ?? 0;
+    rows.push({
+      type: 'driver_summary',
+      driverId: d.driverId,
+      driverName: d.driverName,
+      cylinderTypeName: 'ALL',
+      totalOrders: d.orderIds.size,
+      fullsDelivered: d.fullsDelivered,
+      emptiesCollected: d.emptiesCollected,
+      saleAmount: +d.saleAmount.toFixed(2),
+      amountCollected: +collected.toFixed(2),
+      amountPending: +d.amountPending.toFixed(2),
+      amountOverdue: +d.amountOverdue.toFixed(2),
+    });
+    for (const c of [...d.byCyl.values()].sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName))) {
+      rows.push({
+        type: 'cylinder_row',
+        driverId: d.driverId,
+        driverName: d.driverName,
+        cylinderTypeId: c.cylinderTypeId,
+        cylinderTypeName: c.cylinderTypeName,
+        fullsDelivered: c.fullsDelivered,
+        emptiesCollected: c.emptiesCollected,
+        // money left blank on cylinder breakdown to avoid double-count confusion
+        saleAmount: '',
+        amountCollected: '',
+        amountPending: '',
+        amountOverdue: '',
+      });
+    }
+  }
+
   const chart: ReportChart = {
-    type: 'bar', title: 'Deliveries by Driver',
+    type: 'bar',
+    title: 'Sale Amount by Driver',
     data: {
-      labels: rows.map((r) => r.driver),
+      labels: drivers.map((d) => d.driverName),
       series: [
-        { name: 'Delivered', values: rows.map((r) => r.exact) },
-        { name: 'Modified', values: rows.map((r) => r.modMore + r.modLess) },
-        { name: 'Cancelled', values: rows.map((r) => r.cancelled) },
+        { name: 'Sale', values: drivers.map((d) => +d.saleAmount.toFixed(2)) },
+        { name: 'Collected', values: drivers.map((d) => +(collectedByDriver.get(d.driverId) ?? 0).toFixed(2)) },
+        { name: 'Pending', values: drivers.map((d) => +d.amountPending.toFixed(2)) },
       ],
     },
   };
+
+  const totals = drivers.reduce(
+    (acc, d) => {
+      acc.totalOrders += d.orderIds.size;
+      acc.fullsDelivered += d.fullsDelivered;
+      acc.emptiesCollected += d.emptiesCollected;
+      acc.saleAmount += d.saleAmount;
+      acc.amountCollected += collectedByDriver.get(d.driverId) ?? 0;
+      acc.amountPending += d.amountPending;
+      acc.amountOverdue += d.amountOverdue;
+      return acc;
+    },
+    { totalOrders: 0, fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0, amountCollected: 0, amountPending: 0, amountOverdue: 0 },
+  );
+
   return {
     columns: [
-      { key: 'driver', label: 'Driver' }, { key: 'assigned', label: 'Assigned' },
-      { key: 'exact', label: 'Delivered Exact' }, { key: 'modMore', label: 'Modified' },
-      { key: 'cancelled', label: 'Cancelled' }, { key: 'deliveryRate', label: 'Delivery Rate %' },
+      { key: 'driverName', label: 'Driver' },
+      { key: 'cylinderTypeName', label: 'Cylinder Type' },
+      { key: 'fullsDelivered', label: 'Fulls Delivered' },
+      { key: 'emptiesCollected', label: 'Empties Collected' },
+      { key: 'saleAmount', label: 'Sale Amount', money: true },
+      { key: 'amountCollected', label: 'Collected', money: true },
+      { key: 'amountPending', label: 'Pending', money: true },
+      { key: 'amountOverdue', label: 'Overdue', money: true },
     ],
-    rows, chart,
+    rows,
+    totals: {
+      driverName: 'TOTAL',
+      cylinderTypeName: '—',
+      fullsDelivered: totals.fullsDelivered,
+      emptiesCollected: totals.emptiesCollected,
+      saleAmount: +totals.saleAmount.toFixed(2),
+      amountCollected: +totals.amountCollected.toFixed(2),
+      amountPending: +totals.amountPending.toFixed(2),
+      amountOverdue: +totals.amountOverdue.toFixed(2),
+    },
+    chart,
+  };
+}
+
+// Drill-down — per-customer rows for a single driver in the range.
+// pendingEmpties comes from CustomerInventoryBalance and is CUSTOMER-LEVEL
+// cumulative (across every driver that ever served that customer). Frontend
+// labels this clearly to avoid misattribution.
+async function deliveryPerformanceDrilldown(
+  distributorId: string,
+  driverId: string,
+  from: Date,
+  to: Date,
+): Promise<ReportResult> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const orders = await prisma.order.findMany({
+    where: {
+      distributorId,
+      driverId,
+      isGodownPickup: false,
+      status: { in: ['delivered', 'modified_delivered'] },
+      deliveryDate: { gte: from, lte: to },
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      customerId: true,
+      totalAmount: true,
+      customer: { select: { customerName: true } },
+      items: {
+        select: {
+          cylinderTypeId: true,
+          quantity: true,
+          deliveredQuantity: true,
+          emptiesCollected: true,
+          cylinderType: { select: { typeName: true } },
+        },
+      },
+      invoice: {
+        select: {
+          id: true,
+          outstandingAmount: true,
+          dueDate: true,
+          status: true,
+        },
+      },
+    },
+  });
+
+  const invoiceIds = orders.map((o) => o.invoice?.id).filter((v): v is string => Boolean(v));
+  const allocations = invoiceIds.length
+    ? await prisma.paymentAllocation.findMany({
+        where: { invoiceId: { in: invoiceIds } },
+        select: {
+          allocatedAmount: true,
+          invoice: { select: { id: true, order: { select: { customerId: true } } } },
+        },
+      })
+    : [];
+  // Money aggregates run per-customer (an order belongs to one customer).
+  const collectedByCustomer = new Map<string, number>();
+  for (const a of allocations) {
+    const cid = a.invoice.order?.customerId;
+    if (!cid) continue;
+    collectedByCustomer.set(cid, (collectedByCustomer.get(cid) ?? 0) + num(a.allocatedAmount));
+  }
+
+  // Pending empties: fetch one row per (customerId, cylinderTypeId) for the
+  // customers that appear in this driver's range. Attribute cumulative
+  // customer-level balance to the (customer,cyl) grid.
+  const customerIds = [...new Set(orders.map((o) => o.customerId))];
+  const balances = customerIds.length
+    ? await prisma.customerInventoryBalance.findMany({
+        where: { customerId: { in: customerIds } },
+        select: { customerId: true, cylinderTypeId: true, withCustomerQty: true },
+      })
+    : [];
+  const pendingKey = (cid: string, cylId: string) => `${cid}|${cylId}`;
+  const pendingByCustomerCyl = new Map<string, number>();
+  for (const b of balances) {
+    pendingByCustomerCyl.set(pendingKey(b.customerId, b.cylinderTypeId), b.withCustomerQty);
+  }
+
+  // Group per (customer, cylinder). Money aggregated per customer, then
+  // reported on the FIRST cylinder row for that customer (blank on the rest)
+  // to avoid double-counting on CSV export.
+  type CustCylAgg = {
+    customerId: string;
+    customerName: string;
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    fullsDelivered: number;
+    emptiesCollected: number;
+  };
+  type CustAgg = {
+    customerId: string;
+    customerName: string;
+    orderIds: Set<string>;
+    saleAmount: number;
+    amountPending: number;
+    amountOverdue: number;
+    byCyl: Map<string, CustCylAgg>;
+  };
+  const byCustomer = new Map<string, CustAgg>();
+  for (const o of orders) {
+    const cid = o.customerId;
+    const agg =
+      byCustomer.get(cid) ??
+      ({
+        customerId: cid,
+        customerName: o.customer?.customerName ?? 'Unknown',
+        orderIds: new Set<string>(),
+        saleAmount: 0,
+        amountPending: 0,
+        amountOverdue: 0,
+        byCyl: new Map<string, CustCylAgg>(),
+      } as CustAgg);
+    if (!agg.orderIds.has(o.id)) {
+      agg.orderIds.add(o.id);
+      agg.saleAmount += num(o.totalAmount);
+      if (o.invoice) {
+        const outstanding = num(o.invoice.outstandingAmount);
+        agg.amountPending += outstanding;
+        if (o.invoice.dueDate && new Date(o.invoice.dueDate) < today && outstanding > 0) {
+          agg.amountOverdue += outstanding;
+        }
+      }
+    }
+    for (const it of o.items) {
+      const cyl = it.cylinderTypeId ?? '__unknown__';
+      const cylName = it.cylinderType?.typeName ?? '—';
+      const fulls = it.deliveredQuantity ?? it.quantity ?? 0;
+      const empties = it.emptiesCollected ?? 0;
+      const cylAgg =
+        agg.byCyl.get(cyl) ??
+        ({
+          customerId: cid,
+          customerName: agg.customerName,
+          cylinderTypeId: cyl,
+          cylinderTypeName: cylName,
+          fullsDelivered: 0,
+          emptiesCollected: 0,
+        } as CustCylAgg);
+      cylAgg.fullsDelivered += fulls;
+      cylAgg.emptiesCollected += empties;
+      agg.byCyl.set(cyl, cylAgg);
+    }
+    byCustomer.set(cid, agg);
+  }
+
+  const rows: Record<string, unknown>[] = [];
+  const custs = [...byCustomer.values()].sort((a, b) => b.saleAmount - a.saleAmount);
+  for (const c of custs) {
+    const cylList = [...c.byCyl.values()].sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName));
+    const collected = collectedByCustomer.get(c.customerId) ?? 0;
+    cylList.forEach((cyl, idx) => {
+      rows.push({
+        type: 'customer_row',
+        customerId: c.customerId,
+        customerName: c.customerName,
+        cylinderTypeId: cyl.cylinderTypeId,
+        cylinderTypeName: cyl.cylinderTypeName,
+        fullsDelivered: cyl.fullsDelivered,
+        emptiesCollected: cyl.emptiesCollected,
+        pendingEmpties: pendingByCustomerCyl.get(pendingKey(c.customerId, cyl.cylinderTypeId)) ?? 0,
+        // Money on the first cylinder row per customer only — visual grouping
+        // in the UI + honest sums on CSV export.
+        saleAmount: idx === 0 ? +c.saleAmount.toFixed(2) : '',
+        amountCollected: idx === 0 ? +collected.toFixed(2) : '',
+        amountPending: idx === 0 ? +c.amountPending.toFixed(2) : '',
+        amountOverdue: idx === 0 ? +c.amountOverdue.toFixed(2) : '',
+      });
+    });
+  }
+
+  const totals = custs.reduce(
+    (acc, c) => {
+      acc.saleAmount += c.saleAmount;
+      acc.amountCollected += collectedByCustomer.get(c.customerId) ?? 0;
+      acc.amountPending += c.amountPending;
+      acc.amountOverdue += c.amountOverdue;
+      for (const cyl of c.byCyl.values()) {
+        acc.fullsDelivered += cyl.fullsDelivered;
+        acc.emptiesCollected += cyl.emptiesCollected;
+      }
+      return acc;
+    },
+    { fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0, amountCollected: 0, amountPending: 0, amountOverdue: 0 },
+  );
+
+  return {
+    columns: [
+      { key: 'customerName', label: 'Customer' },
+      { key: 'cylinderTypeName', label: 'Cylinder Type' },
+      { key: 'fullsDelivered', label: 'Fulls Delivered' },
+      { key: 'emptiesCollected', label: 'Empties Collected' },
+      { key: 'pendingEmpties', label: 'Pending Empties *' },
+      { key: 'saleAmount', label: 'Sale Amount', money: true },
+      { key: 'amountCollected', label: 'Collected', money: true },
+      { key: 'amountPending', label: 'Pending', money: true },
+      { key: 'amountOverdue', label: 'Overdue', money: true },
+    ],
+    rows,
+    totals: {
+      customerName: 'TOTAL',
+      cylinderTypeName: '—',
+      fullsDelivered: totals.fullsDelivered,
+      emptiesCollected: totals.emptiesCollected,
+      pendingEmpties: '—',
+      saleAmount: +totals.saleAmount.toFixed(2),
+      amountCollected: +totals.amountCollected.toFixed(2),
+      amountPending: +totals.amountPending.toFixed(2),
+      amountOverdue: +totals.amountOverdue.toFixed(2),
+    },
   };
 }
 
