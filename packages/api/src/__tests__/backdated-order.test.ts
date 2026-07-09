@@ -67,13 +67,23 @@ async function makeCustomer(name: string, type: 'B2B' | 'B2C') {
 }
 
 async function ensurePrice(cylinderTypeId: string, price = 1000) {
-  // Seed an effective cylinder price so getEffectivePrice resolves. The
-  // model has no unique key on (distributor, cyl, date) — just find or
-  // create.
+  // Seed an effective cylinder price so getEffectivePrice resolves.
+  // MUST overwrite any existing row, not just no-op if present: the seed
+  // (packages/api/prisma/seed.ts) already creates rows at 2024-01-01 for
+  // dist-001 with per-cylinder prices (5 KG=₹450, 19 KG=₹1800, 47.5 KG=
+  // ₹4200, 425 KG=₹38000). A pure find-or-create left the test running
+  // against whatever price the seed picked for whichever cylinder type
+  // `findFirst` returned — non-deterministic between machines and CI
+  // (5 KG on CI → ₹450 → test's ₹1000 payment allocation exceeds it →
+  // PaymentError). updateMany-if-exists / create-if-not is idempotent
+  // and pins the invoice math to exactly `price` no matter what the seed
+  // did or which cyl type won findFirst.
   const existing = await prisma.cylinderPrice.findFirst({
     where: { distributorId: D1, cylinderTypeId, effectiveDate: new Date('2024-01-01') },
   });
-  if (!existing) {
+  if (existing) {
+    await prisma.cylinderPrice.update({ where: { id: existing.id }, data: { price } });
+  } else {
     await prisma.cylinderPrice.create({
       data: { distributorId: D1, cylinderTypeId, effectiveDate: new Date('2024-01-01'), price },
     });
