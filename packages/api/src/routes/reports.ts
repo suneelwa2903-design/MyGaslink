@@ -20,10 +20,19 @@ function parseFilters(q: Request['query']): ReportFilters {
       q.groupBy === 'trip' ? 'trip'
       : q.groupBy === 'day' ? 'day'
       : q.groupBy === 'customer' ? 'customer'
+      : q.groupBy === 'invoice' ? 'invoice'
       : undefined,
     // INVESTIGATION-JUL09 followup — delivery-performance CSV export toggle
     // for appending per-customer breakdown rows under each driver.
     includeCustomers: q.includeCustomers === 'true' || q.includeCustomers === '1',
+    // Driver Statement — invoice-status chip filter (client → server pass-through).
+    statusFilter:
+      q.statusFilter === 'paid' ? 'paid'
+      : q.statusFilter === 'partial' ? 'partial'
+      : q.statusFilter === 'pending' ? 'pending'
+      : q.statusFilter === 'overdue' ? 'overdue'
+      : q.statusFilter === 'all' ? 'all'
+      : undefined,
   };
 }
 
@@ -49,6 +58,41 @@ router.get('/tally-export',
       return res.status(200).send(xml);
     } catch (err) {
       return sendError(res, (err as Error).message);
+    }
+  });
+
+// GET /api/reports/delivery-performance/driver/:driverId/pdf
+//   Driver Statement PDF for the given driver + date range + status filter.
+//   Registered BEFORE the generic /:reportType handler so the path segments
+//   aren't misinterpreted.
+router.get('/delivery-performance/driver/:driverId/pdf',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const driverId = String(req.params.driverId);
+      const from = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+      const to = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
+      const statusFilter =
+        req.query.statusFilter === 'paid' ? 'paid'
+        : req.query.statusFilter === 'partial' ? 'partial'
+        : req.query.statusFilter === 'pending' ? 'pending'
+        : req.query.statusFilter === 'overdue' ? 'overdue'
+        : 'all';
+      const { generateDriverStatementPdf } = await import('../services/pdf/driverStatementPdfService.js');
+      const pdfBuffer = await generateDriverStatementPdf(
+        req.user!.distributorId!, driverId,
+        { from, to, statusFilter },
+      );
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="driver-statement-${driverId}.pdf"`,
+        'Content-Length': String(pdfBuffer.length),
+      });
+      return res.send(pdfBuffer);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      if (e.message === 'Driver not found') return sendNotFound(res, 'Driver');
+      return sendError(res, e.message, 500);
     }
   });
 

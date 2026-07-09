@@ -621,10 +621,10 @@ function DeliveryPerformanceTable({
                     <button
                       onClick={() => onDrillDown(driverId, String(row.driverName ?? ''))}
                       className="inline-flex items-center gap-1 text-xs text-brand-600 hover:text-brand-800 dark:text-brand-400"
-                      title="View customer-level breakdown"
+                      title="View driver statement — every invoice this driver touched in the period"
                     >
                       <HiOutlineUserGroup className="h-4 w-4" />
-                      Customers
+                      Statement
                     </button>
                   )}
                 </td>
@@ -652,6 +652,13 @@ function DeliveryPerformanceTable({
   );
 }
 
+// Driver Statement modal — per-invoice detail listing with status filter,
+// KPI summary strip, and CSV + PDF export. Replaces the previous per-
+// customer drill-down modal (customer name is a column in the table so
+// customer-level breakdown is still readable, but per-invoice is where
+// the ops team actually operates).
+type StatusFilter = 'all' | 'paid' | 'partial' | 'pending' | 'overdue';
+
 function DeliveryPerformanceDrillDownModal({
   open,
   driverId,
@@ -667,26 +674,103 @@ function DeliveryPerformanceDrillDownModal({
   dateTo: string;
   onClose: () => void;
 }) {
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['report', 'delivery-performance', 'drilldown', driverId, dateFrom, dateTo],
+    queryKey: ['report', 'delivery-performance', 'statement', driverId, dateFrom, dateTo, statusFilter],
     queryFn: () =>
       apiGet<ReportResult>('/reports/delivery-performance', {
         dateFrom,
         dateTo,
         driverId: driverId!,
-        groupBy: 'customer',
+        groupBy: 'invoice',
+        statusFilter,
       }),
     enabled: !!driverId && open,
   });
 
+  // KPI counts + sums are attached to totals as _kpiCounts / _kpiSums by the
+  // backend so the chip badges reflect the FULL breakdown even while the
+  // table is showing a subset.
+  const totals = (data?.totals ?? {}) as Record<string, unknown>;
+  const kpiCounts = (totals._kpiCounts as { paid: number; partial: number; pending: number; overdue: number } | undefined) ?? {
+    paid: 0, partial: 0, pending: 0, overdue: 0,
+  };
+  const kpiSums = (totals._kpiSums as { billed: number; collected: number; pending: number; overdue: number } | undefined) ?? {
+    billed: 0, collected: 0, pending: 0, overdue: 0,
+  };
+  const allCount = kpiCounts.paid + kpiCounts.partial + kpiCounts.pending + kpiCounts.overdue;
+
+  async function downloadStatement(format: 'csv' | 'pdf') {
+    if (!driverId) return;
+    try {
+      const url = format === 'pdf'
+        ? `/reports/delivery-performance/driver/${driverId}/pdf`
+        : `/reports/delivery-performance`;
+      const params: Record<string, unknown> = { dateFrom, dateTo, statusFilter };
+      if (format === 'csv') { params.driverId = driverId; params.groupBy = 'invoice'; params.format = 'csv'; }
+      const res = await api.get(url, { params, responseType: 'blob' });
+      const filename = `driver-statement-${driverName.replace(/\s+/g, '_')}-${dateFrom}_${dateTo}.${format}`;
+      const href = window.URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = href; a.download = filename; a.click();
+      window.URL.revokeObjectURL(href);
+      toast.success(`${format.toUpperCase()} downloaded`);
+    } catch (e) {
+      toast.error(getErrorMessage(e));
+    }
+  }
+
+  const chipButton = (key: StatusFilter, label: string, count: number, tone: string) => (
+    <button
+      key={key}
+      onClick={() => setStatusFilter(key)}
+      className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${
+        statusFilter === key
+          ? `${tone} ring-2 ring-offset-1 ring-brand-500`
+          : `${tone} opacity-70 hover:opacity-100`
+      }`}
+    >
+      {label} <span className="ml-1 font-bold">{count}</span>
+    </button>
+  );
+
   return (
-    <Modal open={open} onClose={onClose} title={`Customer Breakdown — ${driverName}`} size="full">
+    <Modal open={open} onClose={onClose} title={`Driver Statement — ${driverName}`} size="full">
+      {/* KPI strip + filter chips + export buttons */}
+      <div className="mb-4 space-y-3">
+        <div className="flex flex-wrap gap-4 text-sm">
+          <span className="font-semibold text-surface-700 dark:text-surface-300">
+            {allCount} invoice{allCount === 1 ? '' : 's'}
+          </span>
+          <span className="text-surface-500 dark:text-surface-400">·</span>
+          <span>Billed: <span className="font-semibold">{fmtMoney(kpiSums.billed)}</span></span>
+          <span>Collected: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{fmtMoney(kpiSums.collected)}</span></span>
+          <span>Pending: <span className="font-semibold text-amber-600 dark:text-amber-400">{fmtMoney(kpiSums.pending)}</span></span>
+          <span>Overdue: <span className="font-semibold text-rose-600 dark:text-rose-400">{fmtMoney(kpiSums.overdue)}</span></span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {chipButton('all', 'All', allCount, 'bg-surface-100 dark:bg-surface-800 text-surface-800 dark:text-surface-200')}
+          {chipButton('paid', 'Paid', kpiCounts.paid, 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300')}
+          {chipButton('partial', 'Partial', kpiCounts.partial, 'bg-sky-100 dark:bg-sky-900/40 text-sky-800 dark:text-sky-300')}
+          {chipButton('pending', 'Pending', kpiCounts.pending, 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300')}
+          {chipButton('overdue', 'Overdue', kpiCounts.overdue, 'bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300')}
+          <div className="ml-auto flex gap-2">
+            <Button variant="secondary" onClick={() => downloadStatement('csv')} disabled={!data || data.rows.length === 0}>
+              <HiOutlineArrowDownTray className="h-4 w-4" /> CSV
+            </Button>
+            <Button variant="secondary" onClick={() => downloadStatement('pdf')} disabled={!data || data.rows.length === 0}>
+              <HiOutlineDocumentArrowDown className="h-4 w-4" /> PDF
+            </Button>
+          </div>
+        </div>
+      </div>
+
       {isLoading ? (
         <div className="flex justify-center py-10"><Loader size="lg" /></div>
       ) : isError ? (
-        <EmptyState title="Could not load drill-down" description={getErrorMessage(error)} />
+        <EmptyState title="Could not load statement" description={getErrorMessage(error)} />
       ) : !data || data.rows.length === 0 ? (
-        <EmptyState title="No customer deliveries" description={`No deliveries by ${driverName} in ${dateFrom} — ${dateTo}.`} />
+        <EmptyState title="No invoices" description={`No ${statusFilter === 'all' ? '' : statusFilter + ' '}invoices for ${driverName} in ${dateFrom} — ${dateTo}.`} />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -698,18 +782,38 @@ function DeliveryPerformanceDrillDownModal({
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((row, i) => (
-                <tr key={i} className="border-b border-surface-100 dark:border-surface-800">
-                  {data.columns.map((c) => {
-                    const raw = row[c.key];
-                    return (
-                      <td key={c.key} className={`px-3 py-2 ${c.money ? 'text-right tabular-nums' : ''}`}>
-                        {c.money ? (raw === '' || raw == null ? '' : fmtMoney(raw)) : String(raw ?? '')}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+              {data.rows.map((row, i) => {
+                const status = String(row.status ?? '');
+                const rowBg =
+                  status === 'Overdue' ? 'bg-rose-50/50 dark:bg-rose-900/10'
+                  : status === 'Paid' ? 'bg-emerald-50/50 dark:bg-emerald-900/10'
+                  : '';
+                return (
+                  <tr key={i} className={`border-b border-surface-100 dark:border-surface-800 ${rowBg}`}>
+                    {data.columns.map((c) => {
+                      const raw = row[c.key];
+                      const isStatusCol = c.key === 'status';
+                      const statusChip =
+                        raw === 'Paid' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300'
+                        : raw === 'Partial' ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-800 dark:text-sky-300'
+                        : raw === 'Pending' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300'
+                        : raw === 'Overdue' ? 'bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300'
+                        : '';
+                      return (
+                        <td key={c.key} className={`px-3 py-2 ${c.money ? 'text-right tabular-nums' : ''}`}>
+                          {isStatusCol && raw ? (
+                            <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${statusChip}`}>{String(raw)}</span>
+                          ) : c.money ? (
+                            raw === '' || raw == null ? '' : fmtMoney(raw)
+                          ) : (
+                            String(raw ?? '')
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
               {data.totals && (
                 <tr className="border-t-2 border-surface-300 dark:border-surface-600 font-bold bg-surface-100 dark:bg-surface-800/60">
                   {data.columns.map((c) => (
@@ -726,7 +830,7 @@ function DeliveryPerformanceDrillDownModal({
             </tbody>
           </table>
           <p className="mt-3 text-xs text-surface-500 dark:text-surface-400">
-            * Pending Empties is a customer-level cumulative balance across every driver that ever served that customer.
+            E Pend is a customer-level cumulative pending-empty balance (across all drivers that ever served that customer) — the same number every driver visiting that customer will see.
           </p>
         </div>
       )}

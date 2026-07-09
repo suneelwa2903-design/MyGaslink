@@ -48,12 +48,51 @@ export interface ReportFilters {
   cylinderTypeId?: string;
   driverId?: string;
   vehicleId?: string;
-  groupBy?: 'trip' | 'day' | 'customer';
+  groupBy?: 'trip' | 'day' | 'customer' | 'invoice';
   // INVESTIGATION-JUL09 followup — delivery-performance CSV export request:
   // when true, append per-customer breakdown rows under each driver's
   // cylinder rows in the same rows array. Default false to keep the JSON
   // top-level view compact.
   includeCustomers?: boolean;
+  // Driver Statement filter — client-side status chip. Passed through so
+  // the CSV / PDF export honours the same filter the user is looking at.
+  statusFilter?: 'all' | 'paid' | 'partial' | 'pending' | 'overdue';
+}
+
+// ─── Invoice status helper ────────────────────────────────────────────────
+//
+// Single source of truth for the four operational status buckets shown in
+// the Driver Statement modal + PDF and any future collections view. The
+// priority order matters:
+//   1. Paid    — outstanding cleared (regardless of due date)
+//   2. Overdue — past due AND anything still outstanding (takes priority
+//                over Partial so overdue-partial invoices are actionable)
+//   3. Partial — some money received, not overdue
+//   4. Pending — nothing received, not overdue
+// Cancelled / opening-balance / non-issued statuses degrade to Pending so
+// the caller can filter them out separately if needed.
+export type InvoiceStatus = 'Paid' | 'Partial' | 'Pending' | 'Overdue';
+
+export function invoiceStatus(
+  invoice: {
+    totalAmount: number | { toString: () => string };
+    amountPaid: number | { toString: () => string };
+    outstandingAmount: number | { toString: () => string };
+    dueDate: Date | string | null;
+  },
+  today: Date = (() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+  })(),
+): InvoiceStatus {
+  const outstanding = num(invoice.outstandingAmount);
+  const paid = num(invoice.amountPaid);
+  if (outstanding <= 0) return 'Paid';
+  const due = invoice.dueDate ? new Date(invoice.dueDate) : null;
+  if (due && due < today) return 'Overdue';
+  if (paid > 0) return 'Partial';
+  return 'Pending';
 }
 
 const num = (d: unknown): number => (d == null ? 0 : Number(d));
@@ -256,6 +295,9 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
   // Drill-down branch: caller wants per-customer rows for a specific driver.
   if (f.groupBy === 'customer' && f.driverId) {
     return deliveryPerformanceDrilldown(distributorId, f.driverId, from, to);
+  }
+  if (f.groupBy === 'invoice' && f.driverId) {
+    return deliveryPerformanceStatement(distributorId, f.driverId, from, to, f.statusFilter ?? 'all');
   }
 
   // Step 1 — load all delivered/modified_delivered orders in range with
@@ -797,6 +839,235 @@ async function deliveryPerformanceDrilldown(
       amountCollected: +totals.amountCollected.toFixed(2),
       amountPending: +totals.amountPending.toFixed(2),
       amountOverdue: +totals.amountOverdue.toFixed(2),
+    },
+  };
+}
+
+// ─── Driver Statement — one row per invoice for one driver ─────────────────
+//
+// Triggered by ?groupBy=invoice&driverId=X. Returns per-invoice detail rows
+// with 11 columns (see COLUMNS below) so the ops team can scan every touch
+// a driver had in the period: date, invoice, customer, cylinders (compact
+// per-order string), fulls/empties, credit period, status, overdue amount.
+//
+// Money-received per invoice comes from paymentAllocations (invoice-scoped
+// so the reader can identify which invoices are paid vs unpaid).
+export async function deliveryPerformanceStatement(
+  distributorId: string,
+  driverId: string,
+  from: Date,
+  to: Date,
+  statusFilter: 'all' | 'paid' | 'partial' | 'pending' | 'overdue',
+): Promise<ReportResult> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const orders = await prisma.order.findMany({
+    where: {
+      distributorId,
+      driverId,
+      isGodownPickup: false,
+      status: { in: ['delivered', 'modified_delivered'] },
+      deliveryDate: { gte: from, lte: to },
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      customerId: true,
+      totalAmount: true,
+      customer: { select: { customerName: true, creditPeriodDays: true } },
+      driver: { select: { driverName: true } },
+      items: {
+        select: {
+          cylinderTypeId: true,
+          quantity: true,
+          deliveredQuantity: true,
+          emptiesCollected: true,
+          cylinderType: { select: { typeName: true } },
+        },
+      },
+      invoice: {
+        select: {
+          id: true,
+          invoiceNumber: true,
+          issueDate: true,
+          dueDate: true,
+          totalAmount: true,
+          amountPaid: true,
+          outstandingAmount: true,
+          status: true,
+        },
+      },
+    },
+    orderBy: { deliveryDate: 'asc' },
+  });
+
+  // Drop orders whose invoice is missing or cancelled — per Q4 (excluded).
+  const usable = orders.filter((o) => o.invoice && o.invoice.status !== 'cancelled');
+  const invoiceIds = usable.map((o) => o.invoice!.id);
+
+  // Load customer pending empties for every (customer, cyl) pair this
+  // driver served in the range, so each row can show the customer's
+  // cumulative pending count for that cylinder type.
+  const customerIds = [...new Set(usable.map((o) => o.customerId))];
+  const balances = customerIds.length
+    ? await prisma.customerInventoryBalance.findMany({
+        where: { customerId: { in: customerIds } },
+        select: { customerId: true, cylinderTypeId: true, withCustomerQty: true },
+      })
+    : [];
+  const pendingByCustCyl = new Map<string, number>();
+  for (const b of balances) {
+    pendingByCustCyl.set(`${b.customerId}|${b.cylinderTypeId}`, b.withCustomerQty);
+  }
+
+  // Money-received per invoice.
+  const allocations = invoiceIds.length
+    ? await prisma.paymentAllocation.findMany({
+        where: { invoiceId: { in: invoiceIds } },
+        select: { invoiceId: true, allocatedAmount: true },
+      })
+    : [];
+  const collectedByInvoice = new Map<string, number>();
+  for (const a of allocations) {
+    collectedByInvoice.set(a.invoiceId, (collectedByInvoice.get(a.invoiceId) ?? 0) + num(a.allocatedAmount));
+  }
+
+  // Emit one row per invoice. Compose the compact cylinder-mix string
+  // ("5×19KG, 2×47.5LOT") and total fulls / empties across the order's items.
+  type Row = {
+    type: 'statement_row';
+    invoiceId: string;
+    date: string;
+    invoiceNumber: string;
+    customerId: string;
+    customerName: string;
+    cylinders: string;
+    fullsDelivered: number;
+    emptiesCollected: number;
+    pendingEmpties: number;
+    amount: number;
+    creditDays: number;
+    status: InvoiceStatus;
+    amountCollected: number;
+    overdueAmount: number | '';
+  };
+  const rows: Row[] = [];
+  const kpiCounts = { paid: 0, partial: 0, pending: 0, overdue: 0 } as Record<Lowercase<InvoiceStatus>, number>;
+  const kpiSums = { billed: 0, collected: 0, pending: 0, overdue: 0 };
+
+  for (const o of usable) {
+    const inv = o.invoice!;
+    // Aggregate cylinder-type mix across this invoice's line items.
+    // Multiple items of the same cyl type collapse into one entry.
+    const cylMix = new Map<string, { name: string; qty: number }>();
+    let totalFulls = 0;
+    let totalEmpties = 0;
+    let maxPending = 0;
+    for (const it of o.items) {
+      const key = it.cylinderTypeId ?? '__unknown__';
+      const name = it.cylinderType?.typeName ?? '—';
+      const qty = it.deliveredQuantity ?? it.quantity ?? 0;
+      const empties = it.emptiesCollected ?? 0;
+      totalFulls += qty;
+      totalEmpties += empties;
+      const cur = cylMix.get(key) ?? { name, qty: 0 };
+      cur.qty += qty;
+      cylMix.set(key, cur);
+      const pending = pendingByCustCyl.get(`${o.customerId}|${key}`) ?? 0;
+      if (pending > maxPending) maxPending = pending;
+    }
+    const cylinders = [...cylMix.values()]
+      .filter((c) => c.qty > 0)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((c) => `${c.qty}×${c.name}`)
+      .join(', ');
+
+    const status = invoiceStatus(inv, today);
+    const dueDate = inv.dueDate ? new Date(inv.dueDate) : null;
+    const issueDate = inv.issueDate ? new Date(inv.issueDate) : null;
+    const creditDays = dueDate && issueDate
+      ? Math.max(0, Math.round((dueDate.getTime() - issueDate.getTime()) / (1000 * 60 * 60 * 24)))
+      : (o.customer?.creditPeriodDays ?? 0);
+    const outstanding = num(inv.outstandingAmount);
+    const collected = collectedByInvoice.get(inv.id) ?? 0;
+
+    // KPI accumulators run BEFORE status-filter so the modal chip counts
+    // reflect the true breakdown even when the user is looking at a subset.
+    kpiCounts[status.toLowerCase() as Lowercase<InvoiceStatus>] += 1;
+    kpiSums.billed += num(inv.totalAmount);
+    kpiSums.collected += collected;
+    kpiSums.pending += outstanding;
+    if (status === 'Overdue') kpiSums.overdue += outstanding;
+
+    // Apply status filter.
+    if (statusFilter !== 'all' && status.toLowerCase() !== statusFilter) continue;
+
+    rows.push({
+      type: 'statement_row',
+      invoiceId: inv.id,
+      date: (inv.issueDate ? new Date(inv.issueDate) : new Date()).toISOString().slice(0, 10),
+      invoiceNumber: inv.invoiceNumber,
+      customerId: o.customerId,
+      customerName: o.customer?.customerName ?? 'Unknown',
+      cylinders,
+      fullsDelivered: totalFulls,
+      emptiesCollected: totalEmpties,
+      pendingEmpties: maxPending,
+      amount: num(inv.totalAmount),
+      creditDays,
+      status,
+      amountCollected: +collected.toFixed(2),
+      overdueAmount: status === 'Overdue' ? +outstanding.toFixed(2) : '',
+    });
+  }
+
+  // Totals row — matches Amount / Collected / Overdue Amt columns.
+  const totalsAmount = rows.reduce((s, r) => s + r.amount, 0);
+  const totalsCollected = rows.reduce((s, r) => s + (r.amountCollected as number), 0);
+  const totalsOverdue = rows.reduce((s, r) => s + (r.overdueAmount === '' ? 0 : (r.overdueAmount as number)), 0);
+  const totalsFulls = rows.reduce((s, r) => s + r.fullsDelivered, 0);
+  const totalsEmpties = rows.reduce((s, r) => s + r.emptiesCollected, 0);
+
+  const driverName = usable[0]?.driver?.driverName ?? 'Unknown';
+
+  return {
+    columns: [
+      { key: 'date', label: 'Date' },
+      { key: 'invoiceNumber', label: 'Invoice #' },
+      { key: 'customerName', label: 'Customer' },
+      { key: 'cylinders', label: 'Cylinders' },
+      { key: 'fullsDelivered', label: 'F Del' },
+      { key: 'emptiesCollected', label: 'E Coll' },
+      { key: 'pendingEmpties', label: 'E Pend' },
+      { key: 'amount', label: 'Amount', money: true },
+      { key: 'creditDays', label: 'Cr Days' },
+      { key: 'status', label: 'Status' },
+      { key: 'overdueAmount', label: 'Overdue Amt', money: true },
+    ],
+    rows,
+    totals: {
+      date: 'TOTAL',
+      invoiceNumber: `${rows.length} invoice${rows.length === 1 ? '' : 's'}`,
+      customerName: '',
+      cylinders: '',
+      fullsDelivered: totalsFulls,
+      emptiesCollected: totalsEmpties,
+      pendingEmpties: '',
+      amount: +totalsAmount.toFixed(2),
+      creditDays: '',
+      status: '',
+      overdueAmount: +totalsOverdue.toFixed(2),
+      // Extra fields consumed by the modal KPI strip — not table columns.
+      _driverName: driverName,
+      _kpiCounts: kpiCounts,
+      _kpiSums: {
+        billed: +kpiSums.billed.toFixed(2),
+        collected: +kpiSums.collected.toFixed(2),
+        pending: +kpiSums.pending.toFixed(2),
+        overdue: +kpiSums.overdue.toFixed(2),
+      },
+      _totalsCollected: +totalsCollected.toFixed(2),
     },
   };
 }
