@@ -10,6 +10,7 @@ import { useAuthStore } from '../../src/stores/authStore';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Button, Card } from '../../src/components/ui';
 import { DeleteAccountButton } from '../../src/components/DeleteAccountButton';
+import { ChangePasswordModal } from '../../src/components/ChangePasswordModal';
 import { useTheme, formatINR } from '../../src/theme';
 
 type ThemeColors = ReturnType<typeof useTheme>['colors'];
@@ -87,6 +88,8 @@ export default function CustomerAccountScreen() {
   const [showEdit, setShowEdit] = useState(false);
   const [editPhone, setEditPhone] = useState('');
   const [editShippingAddress, setEditShippingAddress] = useState('');
+  // Item 3 (2026-07-09) — voluntary change password.
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   const updateProfile = useApiMutation<AccountData, { phone: string; shippingAddressLine1: string }>(
     'put',
@@ -231,13 +234,59 @@ export default function CustomerAccountScreen() {
           </Card>
         )}
 
+        {/* Item 3 (2026-07-09) — voluntary change password */}
+        <TouchableOpacity
+          onPress={() => setShowChangePassword(true)}
+          activeOpacity={0.7}
+          style={{
+            backgroundColor: colors.cardBg,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: colors.cardBorder,
+            padding: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 14,
+          }}
+        >
+          <View style={{
+            width: 36, height: 36, borderRadius: 18,
+            backgroundColor: dark ? `${accent.orange}22` : `${accent.orange}15`,
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Ionicons name="key-outline" size={20} color={accent.orange} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>
+              Change Password
+            </Text>
+            <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }}>
+              Update your password
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </TouchableOpacity>
+
         {/* Logout */}
         <Button title="Sign Out" variant="danger" onPress={handleLogout} style={{ marginTop: 8 }} />
         <DeleteAccountButton />
       </ScrollView>
 
+      {/* Item 3 (2026-07-09) — shared change-password modal */}
+      <ChangePasswordModal
+        visible={showChangePassword}
+        onClose={() => setShowChangePassword(false)}
+      />
+
       {/* Edit Profile Modal */}
-      <Modal visible={showEdit} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
+      <Modal
+        visible={showEdit}
+        animationType="slide"
+        transparent
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={() => setShowEdit(false)}
+      >
         <SafeAreaProvider>
         <KeyboardAvoidingView
           style={{ flex: 1 }}

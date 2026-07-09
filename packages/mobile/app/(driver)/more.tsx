@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -5,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useThemeStore } from '../../src/stores/themeStore';
 import { useTheme, ACCENT } from '../../src/theme';
+import { ChangePasswordModal } from '../../src/components/ChangePasswordModal';
 
 interface MenuItem {
   label: string;
@@ -19,6 +21,8 @@ export default function DriverMoreScreen() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const toggleMode = useThemeStore((s) => s.toggleMode);
+  // Item 3 (2026-07-09) — voluntary change-password entry for drivers.
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -49,6 +53,13 @@ export default function DriverMoreScreen() {
       icon: 'cash-outline',
       color: ACCENT.green,
       onPress: () => router.push('/(driver)/my-submissions'),
+    },
+    {
+      // Item 3 (2026-07-09) — voluntary change password.
+      label: 'Change Password',
+      icon: 'key-outline',
+      color: ACCENT.orange,
+      onPress: () => setShowChangePassword(true),
     },
     {
       label: 'Sign Out',
@@ -184,6 +195,12 @@ export default function DriverMoreScreen() {
           ))}
         </View>
       </ScrollView>
+
+      {/* Item 3 (2026-07-09) — shared change-password modal. */}
+      <ChangePasswordModal
+        visible={showChangePassword}
+        onClose={() => setShowChangePassword(false)}
+      />
     </SafeAreaView>
   );
 }

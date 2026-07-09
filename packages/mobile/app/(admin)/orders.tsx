@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -275,10 +275,16 @@ export default function AdminOrdersScreen() {
     queryParams,
   );
 
+  // Item 1 (2026-07-09): the parent list holds only the RECENT 20 for the
+  // picker's "recent" default view. Once the user starts typing, each picker
+  // modal fires its own server-side `?search=` query (min 3 chars, 300 ms
+  // debounce). A previously-picked customer that isn't in the recent 20
+  // survives because the modal remembers the full Customer object it saw
+  // at pick time — no round-trip needed for the selected-customer display.
   const { data: customersData } = useApiQuery<{ customers: Customer[] }>(
-    ['customers-list'],
+    ['customers-recent-mobile'],
     '/customers',
-    { limit: 200 },
+    { status: 'active', limit: 20 },
     { staleTime: 5 * 60 * 1000 },
   );
 
@@ -940,7 +946,7 @@ export default function AdminOrdersScreen() {
         <CreateOrderModal
           visible={createModalVisible}
           onClose={() => setCreateModalVisible(false)}
-          customers={customers}
+          recentCustomers={customers}
           cylinderTypes={cylinderTypes}
           dark={dark}
         />
@@ -996,7 +1002,7 @@ export default function AdminOrdersScreen() {
         <ReturnsOrderModal
           visible={returnsModalVisible}
           onClose={() => setReturnsModalVisible(false)}
-          customers={customers}
+          recentCustomers={customers}
           cylinderTypes={cylinderTypes}
           dark={dark}
         />
@@ -1064,26 +1070,49 @@ export default function AdminOrdersScreen() {
 function CreateOrderModal({
   visible,
   onClose,
-  customers,
+  recentCustomers,
   cylinderTypes,
   dark,
 }: {
   visible: boolean;
   onClose: () => void;
-  customers: Customer[];
+  recentCustomers: Customer[];
   cylinderTypes: CylinderType[];
   dark: boolean;
 }) {
   const C = getColors(dark);
 
-  const [customerId, setCustomerId] = useState('');
+  // Item 1 (2026-07-09): the picker holds the FULL Customer object it
+  // saw at pick time in local state so a subsequent search (or the
+  // parent's recent-20 cache turning over) doesn't lose the display
+  // name / customerType we need for B2B gating.
+  const [pickedCustomer, setPickedCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState(getTodayISO());
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [isGodownPickup, setIsGodownPickup] = useState(false);
   const [items, setItems] = useState([{ cylinderTypeId: '', quantity: '1' }]);
+
+  // 300 ms debounce, min 3 chars — same shape as the web CustomerSearchInput.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(customerSearch.length >= 3 ? customerSearch : '');
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [customerSearch]);
+
+  const {
+    data: searchCustomersData,
+    isFetching: isSearching,
+  } = useApiQuery<{ customers: Customer[] }>(
+    ['customer-search-mobile', debouncedSearch],
+    '/customers',
+    { search: debouncedSearch, status: 'active', pageSize: 10 },
+    { enabled: debouncedSearch.length >= 3, staleTime: 30_000 },
+  );
 
   const createMutation = useApiMutation<unknown, unknown>(
     'post',
@@ -1095,17 +1124,18 @@ function CreateOrderModal({
     },
   );
 
-  const selectedCustomer = customers.find((c) => c.customerId === customerId);
+  const selectedCustomer = pickedCustomer;
+  const customerId = pickedCustomer?.customerId ?? '';
   // PO number is B2B-only; the input hides for B2C customers. Matches the
   // IRN payload emit gate in payloadBuilders so the wire shape and the UI
   // affordance stay in lock-step.
   const isB2bCustomer = selectedCustomer?.customerType === 'B2B';
 
-  const filteredCustomers = useMemo(() => {
-    if (!customerSearch.trim()) return customers;
-    const q = customerSearch.toLowerCase();
-    return customers.filter((c) => c.customerName.toLowerCase().includes(q));
-  }, [customers, customerSearch]);
+  // What the picker list shows: search results when the user has typed
+  // ≥3 chars, otherwise the recent-20 from the parent.
+  const displayedCustomers: Customer[] = debouncedSearch.length >= 3
+    ? (searchCustomersData?.customers ?? [])
+    : recentCustomers;
 
   const addItem = () => setItems([...items, { cylinderTypeId: '', quantity: '1' }]);
 
@@ -1148,7 +1178,12 @@ function CreateOrderModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={onClose}
+    >
       <SafeAreaProvider>
       <SafeAreaView edges={['top','bottom','left','right']} style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
         <KeyboardAvoidingView
@@ -1195,8 +1230,16 @@ function CreateOrderModal({
                 nested <Modal> in its own iOS presentation context, so the outer
                 KAV on the Create Order form does NOT propagate inside. iOS only
                 — behavior={undefined} on Android is a no-op and Android's
-                adjustResize (Expo default) keeps working. See docs/IOS-KOF-AUDIT.md. */}
-            <Modal visible={showCustomerPicker} animationType="slide" transparent>
+                adjustResize (Expo default) keeps working. See docs/IOS-KOF-AUDIT.md.
+                Item 1 (2026-07-09): onRequestClose is required for Android
+                hardware back to dismiss the picker (was missing, causing back-
+                trap where the outer CreateOrderModal handled back instead). */}
+            <Modal
+              visible={showCustomerPicker}
+              animationType="slide"
+              transparent
+              onRequestClose={() => setShowCustomerPicker(false)}
+            >
               <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
                 <KeyboardAvoidingView
                   behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -1219,17 +1262,26 @@ function CreateOrderModal({
                         <Ionicons name="search-outline" size={16} color={C.textMuted} />
                         <TextInput
                           style={[styles.searchInput, { color: C.text }]}
-                          placeholder="Search customers..."
+                          placeholder="Type to search customers..."
                           placeholderTextColor={C.textMuted}
                           value={customerSearch}
                           onChangeText={setCustomerSearch}
                           autoFocus
                         />
+                        {isSearching && (
+                          <ActivityIndicator size="small" color={C.textMuted} style={{ marginLeft: 8 }} />
+                        )}
                       </View>
                     </View>
+                    <View style={{ paddingHorizontal: 16, paddingBottom: 6 }}>
+                      <Text style={[styles.pickerItemSub, { color: C.textMuted, fontSize: 11 }]}>
+                        {debouncedSearch.length >= 3 ? 'Search results' : 'Recent customers'}
+                      </Text>
+                    </View>
                     <FlatList
-                      data={filteredCustomers}
+                      data={displayedCustomers}
                       keyExtractor={(c) => c.customerId}
+                      keyboardShouldPersistTaps="handled"
                       renderItem={({ item: c }) => (
                         <TouchableOpacity
                           style={[
@@ -1240,9 +1292,10 @@ function CreateOrderModal({
                             },
                           ]}
                           onPress={() => {
-                            setCustomerId(c.customerId);
+                            setPickedCustomer(c);
                             setShowCustomerPicker(false);
                             setCustomerSearch('');
+                            setDebouncedSearch('');
                           }}
                         >
                           <Text style={[styles.pickerItemText, { color: C.text }]}>
@@ -1257,7 +1310,9 @@ function CreateOrderModal({
                       )}
                       ListEmptyComponent={
                         <Text style={[styles.pickerEmpty, { color: C.textMuted }]}>
-                          No customers found
+                          {debouncedSearch.length >= 3
+                            ? (isSearching ? 'Searching…' : 'No customers found')
+                            : 'No recent customers yet — type to search'}
                         </Text>
                       }
                     />
@@ -1529,7 +1584,12 @@ function AssignDriverModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
       <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
         <View style={[styles.bottomSheet, { backgroundColor: C.modalBg }]}>
           <View style={styles.bottomSheetHandle} />
@@ -1699,7 +1759,12 @@ function BulkAssignModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
       <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
         <View style={[styles.bottomSheet, { backgroundColor: C.modalBg }]}>
           <View style={styles.bottomSheetHandle} />
@@ -1876,11 +1941,22 @@ function DeliveryConfirmationModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={() => onClose()}
+    >
       <SafeAreaProvider>
       <SafeAreaView edges={['top','bottom','left','right']} style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
+        {/* Item 2 (2026-07-09) — Android KAV behavior needs to be 'height'
+            (was undefined = no-op). keyboardVerticalOffset compensates
+            for the modal header. Without this, the notes + delivered-qty
+            + empties inputs sit under the keyboard on smaller Android
+            phones. See docs/INVESTIGATION-JUL09-B.md item 2. */}
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
           style={{ flex: 1 }}
         >
           {/* Header */}
@@ -2033,7 +2109,12 @@ function DispatchResultModal({
   // Close button half-hidden behind the navigation bar.
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
       <SafeAreaProvider>
       <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
         <View style={[styles.bottomSheet, { backgroundColor: C.modalBg, maxHeight: '85%' }]}>
@@ -2120,24 +2201,47 @@ function DispatchResultModal({
 function ReturnsOrderModal({
   visible,
   onClose,
-  customers,
+  recentCustomers,
   cylinderTypes,
   dark,
 }: {
   visible: boolean;
   onClose: () => void;
-  customers: Customer[];
+  recentCustomers: Customer[];
   cylinderTypes: CylinderType[];
   dark: boolean;
 }) {
   const C = getColors(dark);
 
-  const [customerId, setCustomerId] = useState('');
+  // Item 1 (2026-07-09) — same server-side-search treatment as
+  // CreateOrderModal above. This modal is currently unreachable from the
+  // mobile admin UI (Item 7 removed the trigger button) but kept alive
+  // for historical returns_only orders. Keeping the picker consistent
+  // means if it's ever re-enabled it doesn't regress on the same bugs.
+  const [pickedCustomer, setPickedCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState(getTodayISO());
   const [items, setItems] = useState([{ cylinderTypeId: '', quantity: '1' }]);
   const [specialInstructions, setSpecialInstructions] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(customerSearch.length >= 3 ? customerSearch : '');
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [customerSearch]);
+
+  const {
+    data: searchCustomersData,
+    isFetching: isSearching,
+  } = useApiQuery<{ customers: Customer[] }>(
+    ['customer-search-mobile-returns', debouncedSearch],
+    '/customers',
+    { search: debouncedSearch, status: 'active', pageSize: 10 },
+    { enabled: debouncedSearch.length >= 3, staleTime: 30_000 },
+  );
 
   const mutation = useApiMutation<unknown, unknown>(
     'post',
@@ -2149,12 +2253,11 @@ function ReturnsOrderModal({
     },
   );
 
-  const selectedCustomer = customers.find((c) => c.customerId === customerId);
-  const filteredCustomers = useMemo(() => {
-    if (!customerSearch.trim()) return customers;
-    const q = customerSearch.toLowerCase();
-    return customers.filter((c) => c.customerName.toLowerCase().includes(q));
-  }, [customers, customerSearch]);
+  const selectedCustomer = pickedCustomer;
+  const customerId = pickedCustomer?.customerId ?? '';
+  const displayedCustomers: Customer[] = debouncedSearch.length >= 3
+    ? (searchCustomersData?.customers ?? [])
+    : recentCustomers;
 
   const addItem = () => setItems([...items, { cylinderTypeId: '', quantity: '1' }]);
   const removeItem = (i: number) => items.length > 1 && setItems(items.filter((_, idx) => idx !== i));
@@ -2182,7 +2285,12 @@ function ReturnsOrderModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={onClose}
+    >
       <SafeAreaProvider>
       <SafeAreaView edges={['top','bottom','left','right']} style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
@@ -2209,8 +2317,15 @@ function ReturnsOrderModal({
             </TouchableOpacity>
 
             {/* Returns Order customer picker — same KAV-wrap rationale as the
-                Create Order picker above (see comment there). */}
-            <Modal visible={showCustomerPicker} animationType="slide" transparent>
+                Create Order picker above (see comment there). Item 1
+                (2026-07-09) — onRequestClose + server-side search treatment
+                mirrors CreateOrderModal above. */}
+            <Modal
+              visible={showCustomerPicker}
+              animationType="slide"
+              transparent
+              onRequestClose={() => setShowCustomerPicker(false)}
+            >
               <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
                 <KeyboardAvoidingView
                   behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -2228,29 +2343,46 @@ function ReturnsOrderModal({
                         <Ionicons name="search-outline" size={16} color={C.textMuted} />
                         <TextInput
                           style={[styles.searchInput, { color: C.text }]}
-                          placeholder="Search customers..."
+                          placeholder="Type to search customers..."
                           placeholderTextColor={C.textMuted}
                           value={customerSearch}
                           onChangeText={setCustomerSearch}
                           autoFocus
                         />
+                        {isSearching && (
+                          <ActivityIndicator size="small" color={C.textMuted} style={{ marginLeft: 8 }} />
+                        )}
                       </View>
                     </View>
+                    <View style={{ paddingHorizontal: 16, paddingBottom: 6 }}>
+                      <Text style={[styles.pickerItemSub, { color: C.textMuted, fontSize: 11 }]}>
+                        {debouncedSearch.length >= 3 ? 'Search results' : 'Recent customers'}
+                      </Text>
+                    </View>
                     <FlatList
-                      data={filteredCustomers}
+                      data={displayedCustomers}
                       keyExtractor={(c) => c.customerId}
+                      keyboardShouldPersistTaps="handled"
                       renderItem={({ item }) => (
                         <TouchableOpacity
                           style={[styles.pickerRow, { borderBottomColor: C.divider }]}
                           onPress={() => {
-                            setCustomerId(item.customerId);
+                            setPickedCustomer(item);
                             setShowCustomerPicker(false);
                             setCustomerSearch('');
+                            setDebouncedSearch('');
                           }}
                         >
                           <Text style={[styles.pickerRowText, { color: C.text }]}>{item.customerName}</Text>
                         </TouchableOpacity>
                       )}
+                      ListEmptyComponent={
+                        <Text style={[styles.pickerEmpty, { color: C.textMuted }]}>
+                          {debouncedSearch.length >= 3
+                            ? (isSearching ? 'Searching…' : 'No customers found')
+                            : 'No recent customers yet — type to search'}
+                        </Text>
+                      }
                     />
                   </View>
                 </KeyboardAvoidingView>
@@ -2512,7 +2644,12 @@ function OrderDetailModal({
 }) {
   const C = getColors(dark);
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
       <SafeAreaView style={[styles.modalContainer, { backgroundColor: C.modalBg }]}>
         <View style={[styles.modalHeader, { borderBottomColor: C.divider }]}>
           <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={C.text} /></TouchableOpacity>
@@ -2617,7 +2754,12 @@ function CancelOrderModal({
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent>
+    <Modal
+      visible={visible}
+      animationType="fade"
+      transparent
+      onRequestClose={onClose}
+    >
       <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
         <View style={[styles.cancelSheet, { backgroundColor: C.modalBg }]}>
           <Text style={[styles.modalTitle, { color: C.text, textAlign: 'left', marginBottom: 6 }]}>

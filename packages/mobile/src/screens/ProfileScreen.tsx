@@ -12,6 +12,7 @@
  */
 import { useState } from 'react';
 import { DeleteAccountButton } from '../components/DeleteAccountButton';
+import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import {
   View,
   Text,
@@ -20,7 +21,6 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  Modal,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -218,9 +218,10 @@ export function ProfileScreen({ accent }: ProfileScreenProps) {
             ) : null}
           </View>
 
-          {/* Change password — opens a "coming soon" modal. The actual
-              password-change flow is a separate piece of work; keeping the
-              row here so the UI surface is complete. */}
+          {/* Item 3 (2026-07-09) — voluntary Change Password. Opens the
+              shared ChangePasswordModal which posts to /auth/change-password
+              (rate-limited on the backend). Same endpoint the forced-reset
+              screen uses. */}
           <TouchableOpacity
             onPress={() => setShowChangePassword(true)}
             activeOpacity={0.7}
@@ -289,55 +290,13 @@ export function ProfileScreen({ accent }: ProfileScreenProps) {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Change Password — placeholder modal */}
-      <Modal
+      {/* Item 3 (2026-07-09) — real change-password modal replaces the
+          former "Coming soon" placeholder. Shared component; same UI on
+          driver + customer roles. */}
+      <ChangePasswordModal
         visible={showChangePassword}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowChangePassword(false)}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.4)',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 24,
-          }}
-        >
-          <View
-            style={{
-              width: '100%',
-              maxWidth: 360,
-              backgroundColor: colors.cardBg,
-              borderRadius: 14,
-              padding: 20,
-              gap: 12,
-            }}
-          >
-            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
-              Coming soon
-            </Text>
-            <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-              The in-app password change flow is coming in a future update. For
-              now, please use Forgot Password from the login screen.
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowChangePassword(false)}
-              activeOpacity={0.7}
-              style={{
-                marginTop: 4,
-                paddingVertical: 12,
-                borderRadius: 10,
-                backgroundColor: accent,
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>OK</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setShowChangePassword(false)}
+      />
     </SafeAreaView>
   );
 }

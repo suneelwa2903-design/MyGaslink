@@ -324,10 +324,17 @@ export default function DriverOrdersScreen() {
         transparent
         presentationStyle="overFullScreen"
         statusBarTranslucent
+        onRequestClose={() => { setSelectedOrder(null); setDeliveryNotes(''); }}
       >
         <SafeAreaProvider>
+        {/* Item 2 (2026-07-09) — Android KAV behavior must be 'height'
+            (was undefined = no-op). keyboardVerticalOffset compensates
+            for the modal chrome. Without this the Delivered Qty / Empties
+            / Notes inputs sit under the keyboard on smaller Android
+            phones. See docs/INVESTIGATION-JUL09-B.md item 2. */}
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
           style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
         >
           <View style={{

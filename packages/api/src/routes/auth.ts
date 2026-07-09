@@ -39,6 +39,20 @@ const refreshLimiter = rateLimit({
   message: { success: false, data: null, error: 'Too many refresh attempts. Please try again later.', code: 'RATE_LIMITED' },
 });
 
+// Item 3 (2026-07-09) — change-password is authenticated but still needs
+// its own limiter. Rationale: a stolen access token that survives the
+// 15-min TTL could otherwise be used to bruteforce `currentPassword` in
+// a tight loop and lock the account (5 failed attempts → 15-min lockout
+// at login, but the change-password endpoint doesn't feed loginAttempts).
+// Slightly more lenient than login (10 attempts / 15 min prod).
+const changePasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 10 : 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, data: null, error: 'Too many password-change attempts. Please try again later.', code: 'RATE_LIMITED' },
+});
+
 /**
  * POST /api/auth/login
  * Public — authenticate user with email + password
@@ -99,7 +113,7 @@ router.post('/refresh', refreshLimiter, validate(refreshSchema), async (req, res
  * POST /api/auth/change-password
  * Authenticated — change current user's password
  */
-router.post('/change-password', authenticate, validate(changePasswordSchema), async (req, res) => {
+router.post('/change-password', changePasswordLimiter, authenticate, validate(changePasswordSchema), async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     await authService.changePassword(req.user!.userId, currentPassword, newPassword);

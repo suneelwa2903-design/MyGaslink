@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, Alert, Image, Linking } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, Alert, Image, Linking, Switch } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,6 +27,13 @@ import logo from '../../assets/logo.png';
  * routes them straight to their role's home, so we don't block them.
  */
 const DPDP_CONSENT_KEY = 'dpdp_consent_v1';
+// Item 4C (2026-07-09) — SecureStore uses iOS Keychain (Secure Enclave-
+// backed on modern devices) / Android Keystore. Acceptable for a B2B ops
+// app on company-issued or personal-trusted devices. User can clear at
+// any time via the "Clear" button, or by toggling Remember Me off before
+// the next login.
+const REMEMBER_ME_EMAIL_KEY = 'saved_email';
+const REMEMBER_ME_PASSWORD_KEY = 'saved_password';
 const PRIVACY_POLICY_URL = Platform.OS === 'ios'
   ? 'https://mygaslink.com/legal/privacy'
   : 'https://mygaslink.com/privacy';
@@ -47,6 +54,11 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [dpdpConsent, setDpdpConsent] = useState(false);
+  // Item 4C (2026-07-09) — Remember Me. Default ON so the common case
+  // (single-user company device) doesn't require a per-login toggle.
+  // Cleared on explicit user action (toggle off + login, or Clear button).
+  const [rememberMe, setRememberMe] = useState(true);
+  const [savedLoginIndicator, setSavedLoginIndicator] = useState(false);
   const toggleMode = useThemeStore((s) => s.toggleMode);
   const { dark, colors } = useTheme();
 
@@ -63,6 +75,38 @@ export default function LoginScreen() {
         // SecureStore read failure is non-fatal — user just has to consent again.
       });
   }, []);
+
+  // Item 4C — load saved email + password on mount. On success, both fields
+  // are pre-filled and an indicator surfaces so the user knows a saved
+  // login was found (and can clear if switching accounts).
+  useEffect(() => {
+    (async () => {
+      try {
+        const savedEmail = await SecureStore.getItemAsync(REMEMBER_ME_EMAIL_KEY);
+        const savedPassword = await SecureStore.getItemAsync(REMEMBER_ME_PASSWORD_KEY);
+        if (savedEmail && savedPassword) {
+          setEmail(savedEmail);
+          setPassword(savedPassword);
+          setRememberMe(true);
+          setSavedLoginIndicator(true);
+        }
+      } catch {
+        // SecureStore read failure is non-fatal — user just types again.
+      }
+    })();
+  }, []);
+
+  const handleClearSavedLogin = async () => {
+    try {
+      await SecureStore.deleteItemAsync(REMEMBER_ME_EMAIL_KEY);
+      await SecureStore.deleteItemAsync(REMEMBER_ME_PASSWORD_KEY);
+    } catch {
+      // Non-fatal.
+    }
+    setEmail('');
+    setPassword('');
+    setSavedLoginIndicator(false);
+  };
 
   const handleOpenPrivacyPolicy = () => {
     Linking.openURL(PRIVACY_POLICY_URL).catch(() =>
@@ -107,6 +151,21 @@ export default function LoginScreen() {
         await SecureStore.setItemAsync(DPDP_CONSENT_KEY, 'true');
       } catch {
         // Non-fatal — they'll just have to consent again next login.
+      }
+      // Item 4C (2026-07-09) — save-or-clear credentials based on the
+      // Remember Me toggle. Only persist after login succeeds so a typo
+      // never gets locked in.
+      try {
+        if (rememberMe) {
+          await SecureStore.setItemAsync(REMEMBER_ME_EMAIL_KEY, email.trim().toLowerCase());
+          await SecureStore.setItemAsync(REMEMBER_ME_PASSWORD_KEY, password);
+        } else {
+          await SecureStore.deleteItemAsync(REMEMBER_ME_EMAIL_KEY);
+          await SecureStore.deleteItemAsync(REMEMBER_ME_PASSWORD_KEY);
+        }
+      } catch {
+        // SecureStore write failure is non-fatal — the login itself
+        // succeeded, worst case the user re-types next time.
       }
       setUser(result.user);
 
@@ -241,6 +300,50 @@ export default function LoginScreen() {
                 Forgot Password?
               </Text>
             </TouchableOpacity>
+
+            {/* Item 4C (2026-07-09) — Remember Me toggle. Credentials persist
+                to SecureStore (Keychain / Keystore) on successful login.
+                Default ON; a returning user with saved credentials sees the
+                indicator + a Clear affordance. */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingVertical: 4,
+              }}
+            >
+              <Switch
+                value={rememberMe}
+                onValueChange={setRememberMe}
+                trackColor={{ false: '#cbd5e1', true: flame }}
+                thumbColor="#ffffff"
+              />
+              <Text style={{ marginLeft: 10, color: colors.textSecondary, fontSize: 13 }}>
+                Remember me
+              </Text>
+            </View>
+            {savedLoginIndicator && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginTop: -2,
+                }}
+              >
+                <Text style={{ color: colors.textMuted, fontSize: 11, flex: 1 }}>
+                  Saved login loaded — tap Sign In or clear to switch accounts.
+                </Text>
+                <TouchableOpacity
+                  onPress={handleClearSavedLogin}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={{ color: flame, fontSize: 12, fontWeight: '600' }}>
+                    Clear
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* M13 — DPDP consent (India DPDP Act 2023). Required before
                 login; persisted in SecureStore as `dpdp_consent_v1` so a
