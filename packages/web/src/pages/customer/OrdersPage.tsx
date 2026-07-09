@@ -27,6 +27,18 @@ function formatCurrency(n: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 }
 
+function formatOrderItemsOrdered(items: Order['items']): string {
+  if (!items || items.length === 0) return '—';
+  return items.map((it) => `${it.quantity}× ${it.cylinderTypeName ?? 'Unknown'}`).join(', ');
+}
+
+function formatOrderItemsDelivered(items: Order['items']): string {
+  if (!items || items.length === 0) return '—';
+  return items
+    .map((it) => `${it.deliveredQuantity != null ? it.deliveredQuantity : it.quantity}× ${it.cylinderTypeName ?? 'Unknown'}`)
+    .join(', ');
+}
+
 export default function CustomerOrdersPage() {
   const { user } = useAuthStore();
   const { t } = useTranslation();
@@ -91,7 +103,18 @@ export default function CustomerOrdersPage() {
                     <td className="font-medium text-surface-900 dark:text-white">{order.orderNumber}</td>
                     <td>{new Date(order.orderDate).toLocaleDateString('en-IN')}</td>
                     <td>{new Date(order.deliveryDate).toLocaleDateString('en-IN')}</td>
-                    <td>{t('customerPortal.orders.itemsCount', { count: order.items.length })}</td>
+                    <td>
+                      {order.status === 'modified_delivered' ? (
+                        <div className="flex flex-col">
+                          <span>{formatOrderItemsDelivered(order.items)}</span>
+                          <span className="text-xs text-surface-500 dark:text-surface-400">
+                            Ordered: {formatOrderItemsOrdered(order.items)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span>{formatOrderItemsOrdered(order.items)}</span>
+                      )}
+                    </td>
                     <td className="font-medium">{formatCurrency(order.totalAmount)}</td>
                     <td><Badge variant={orderStatusVariant(order.status)}>{orderStatusLabel(order.status)}</Badge></td>
                     <td>

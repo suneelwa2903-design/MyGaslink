@@ -7,6 +7,7 @@ import { sendSuccess, sendError, sendCreated } from '../utils/apiResponse.js';
 import {
   incomingFullsSchema, outgoingEmptiesSchema, manualAdjustmentSchema,
   cancelledStockReturnSchema,
+  emptiesReturnSchema,
   localTodayISO,
 } from '@gaslink/shared';
 import * as inventoryService from '../services/inventoryService.js';
@@ -14,6 +15,7 @@ import {
   getPendingBackdatedAdjustments,
   getBackdatedAdjustmentHistory,
 } from '../services/backdatedAdjustmentService.js';
+import { recordEmptiesReturn, EmptiesReturnError } from '../services/emptiesReturnService.js';
 import { mapInventorySummaries, mapInventoryEvent, mapInventoryEvents } from '../utils/mappers.js';
 import { z } from 'zod';
 
@@ -78,6 +80,28 @@ router.post('/outgoing-empties',
       );
       return sendCreated(res, mapInventoryEvent(event));
     } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// POST /api/inventory/empties-return — item 7 (2026-07-09)
+// Lightweight "customer X returned N empties" event. NO order, NO invoice,
+// NO money movement — pure stock movement. See emptiesReturnService.ts.
+router.post('/empties-return',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  validate(emptiesReturnSchema),
+  auditLog('empties_return', 'inventory'),
+  async (req, res) => {
+    try {
+      const result = await recordEmptiesReturn(
+        req.user!.distributorId!, req.user!.userId, req.body
+      );
+      return sendCreated(res, result);
+    } catch (err) {
+      if (err instanceof EmptiesReturnError) {
+        return sendError(res, err.message, err.statusCode);
+      }
       return sendError(res, (err as Error).message);
     }
   }

@@ -219,6 +219,19 @@ export async function listByDriver(
       where: { distributorId, submittedByDriverId: driverId },
       include: {
         customer: { select: { id: true, customerName: true } },
+        // Item 10 (2026-07-09) — pull the resulting PaymentTransaction
+        // and its allocations so the driver sees which invoices got
+        // settled by their submission. Empty array on unverified rows
+        // (resultingPayment is NULL until the office verifies).
+        resultingPayment: {
+          include: {
+            allocations: {
+              include: {
+                invoice: { select: { id: true, invoiceNumber: true, totalAmount: true } },
+              },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * pageSize,
@@ -230,7 +243,17 @@ export async function listByDriver(
   ]);
 
   return {
-    submissions: submissions.map((s) => ({ ...s, amount: toNum(s.amount) })),
+    submissions: submissions.map((s) => ({
+      ...s,
+      amount: toNum(s.amount),
+      // Item 10: project settledInvoices onto the wire payload. Undefined
+      // when the submission isn't verified (or has no resulting payment).
+      settledInvoices: s.resultingPayment?.allocations?.map((a) => ({
+        invoiceId: a.invoice.id,
+        invoiceNumber: a.invoice.invoiceNumber,
+        allocatedAmount: toNum(a.allocatedAmount),
+      })) ?? [],
+    })),
     meta: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
   };
 }

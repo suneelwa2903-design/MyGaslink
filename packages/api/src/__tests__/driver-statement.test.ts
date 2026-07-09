@@ -70,6 +70,12 @@ async function mkOrderInvoice(opts: {
   outstanding?: number;
   amountPaid?: number;
   dueDate?: Date;
+  // Item 8 (2026-07-09): the overdue derivation in
+  // deliveryPerformanceStatement now uses `issueDate + creditPeriodDays`,
+  // not the stored `dueDate`. Tests that want an invoice to land in the
+  // Overdue bucket must supply an `issueDate` old enough that
+  // (issueDate + creditPeriodDays) is < real today.
+  issueDate?: Date;
   status?: $Enums.InvoiceStatus;
   isGodownPickup?: boolean;
 }) {
@@ -77,7 +83,8 @@ async function mkOrderInvoice(opts: {
   const total = opts.fulls * unit;
   const outstanding = opts.outstanding ?? total;
   const amountPaid = opts.amountPaid ?? total - outstanding;
-  const dueDate = opts.dueDate ?? new Date(testDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const issueDate = opts.issueDate ?? testDate;
+  const dueDate = opts.dueDate ?? new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000);
   const order = await prisma.order.create({
     data: {
       distributorId: D1,
@@ -111,7 +118,7 @@ async function mkOrderInvoice(opts: {
       customerId: opts.customerId,
       orderId: order.id,
       invoiceNumber: `TEST-INV-DSTMT-${idempotentSuffix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
-      issueDate: testDate,
+      issueDate,
       dueDate,
       totalAmount: total,
       outstandingAmount: outstanding,
@@ -222,9 +229,12 @@ describe('deliveryPerformanceStatement — service', () => {
     const cust = await mkCustomer('DStmt KPI');
     // Paid
     const paid = await mkOrderInvoice({ driverId: d.driverId, customerId: cust, cylinderTypeId: cyl19, fulls: 3, empties: 3, outstanding: 0, amountPaid: 9000 });
-    // Overdue — dueDate must be BEFORE real today (2026-XX), not before
-    // testDate (2099) — the status helper compares to real today.
-    await mkOrderInvoice({ driverId: d.driverId, customerId: cust, cylinderTypeId: cyl19, fulls: 3, empties: 3, dueDate: new Date('2020-01-01T00:00:00.000Z') });
+    // Overdue — Item 8 fix: overdue derivation now uses `issueDate +
+    // creditPeriodDays`, not the stored dueDate. Set issueDate far
+    // enough in the past that even a 60-day credit period puts the
+    // derived cutoff before today. The dueDate is still stored (legal
+    // document) but no longer drives the Overdue flag.
+    await mkOrderInvoice({ driverId: d.driverId, customerId: cust, cylinderTypeId: cyl19, fulls: 3, empties: 3, issueDate: new Date('2020-01-01T00:00:00.000Z'), dueDate: new Date('2020-01-31T00:00:00.000Z') });
     // Pending (future due, not paid)
     await mkOrderInvoice({ driverId: d.driverId, customerId: cust, cylinderTypeId: cyl19, fulls: 3, empties: 3, dueDate: new Date('2199-01-01T00:00:00.000Z') });
     const r = await deliveryPerformanceStatement(D1, d.driverId, RANGE_FROM, RANGE_TO, 'all');
@@ -240,8 +250,8 @@ describe('deliveryPerformanceStatement — service', () => {
     const d = await mkDriver('svc5', '9922000005');
     const cust = await mkCustomer('DStmt Filter');
     await mkOrderInvoice({ driverId: d.driverId, customerId: cust, cylinderTypeId: cyl19, fulls: 3, empties: 3, outstanding: 0, amountPaid: 9000 });
-    // Overdue — real-today comparison (see test 9 note).
-    await mkOrderInvoice({ driverId: d.driverId, customerId: cust, cylinderTypeId: cyl19, fulls: 3, empties: 3, dueDate: new Date('2020-01-01T00:00:00.000Z') });
+    // Overdue — Item 8: issueDate + creditPeriod drives Overdue now.
+    await mkOrderInvoice({ driverId: d.driverId, customerId: cust, cylinderTypeId: cyl19, fulls: 3, empties: 3, issueDate: new Date('2020-01-01T00:00:00.000Z'), dueDate: new Date('2020-01-31T00:00:00.000Z') });
     const filtered = await deliveryPerformanceStatement(D1, d.driverId, RANGE_FROM, RANGE_TO, 'overdue');
     const all = await deliveryPerformanceStatement(D1, d.driverId, RANGE_FROM, RANGE_TO, 'all');
     expect(filtered.rows.every((r) => r.status === 'Overdue')).toBe(true);

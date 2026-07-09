@@ -33,8 +33,13 @@ describe('WI-132 — overdue invoices daily sweep', () => {
   }
 
   it('flips a past-due issued invoice with outstanding balance to overdue', async () => {
+    // Item 8 (2026-07-09): markOverdueInvoices now derives the overdue
+    // cutoff from `issueDate + customer.creditPeriodDays` (defaulting to
+    // 30 when the invoice has no linked customer). Set issueDate far
+    // past so the derived cutoff is unambiguously overdue.
     const inv = await seedInvoice({
-      dueDate: new Date('2020-01-01'), // far past
+      issueDate: new Date('2020-01-01'),
+      dueDate: new Date('2020-01-31'), // still stored — legal doc date
       status: 'issued',
       outstandingAmount: 1000,
     });

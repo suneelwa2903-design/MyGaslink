@@ -328,6 +328,26 @@ Documented here so the next sweep doesn't waste cycles re-discovering them.
 
 ---
 
+## Network tuning (server socket keep-alive)
+
+Node's HTTP server sits behind AWS ALB (prod) or Nginx (dev-ec2). Both hold
+keep-alive connections idle for ~60s; Node's default `server.keepAliveTimeout`
+is 5s. That mismatch produces intermittent "socket hang up" / "network error"
+symptoms on the client — the load balancer reuses a socket Node already
+closed. Two lines at [packages/api/src/server.ts](packages/api/src/server.ts)
+fix it:
+
+```ts
+server.keepAliveTimeout = 65_000;   // > ALB's 60s idle
+server.headersTimeout   = 66_000;   // must be > keepAliveTimeout
+```
+
+If you tune these in future, keep `headersTimeout > keepAliveTimeout` — Node
+races itself and disconnects mid-headers on the next request over a reused
+connection otherwise. See docs/INVESTIGATION-JUL09-B.md item 5.
+
+---
+
 ## ESLint
 
 ESLint runs clean and **blocking** in CI (`pnpm run lint`, 0 errors). The flat

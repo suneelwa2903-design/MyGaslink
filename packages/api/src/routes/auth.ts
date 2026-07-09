@@ -45,13 +45,22 @@ const refreshLimiter = rateLimit({
  */
 router.post('/login', loginLimiter, validate(loginSchema), async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, deviceLabel } = req.body;
     // Group DPDP (2026-06-11): pass IP + user-agent through to the
     // service so every login_history row is forensically useful.
-    const result = await authService.login(email, password, {
-      ipAddress: req.ip,
-      userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
-    });
+    // Item 4 (2026-07-09): optional `deviceLabel` from the client (mobile
+    // sends "iOS - iPhone 14", web can pass a browser label) — surfaces
+    // on the refresh_token_sessions row so a user can identify sessions
+    // if we ever surface "logged in devices" UI.
+    const result = await authService.login(
+      email,
+      password,
+      {
+        ipAddress: req.ip,
+        userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+      },
+      typeof deviceLabel === 'string' && deviceLabel.trim().length > 0 ? deviceLabel : null,
+    );
 
     logBusinessEvent({
       action: 'user.login',
@@ -206,7 +215,14 @@ router.post('/reset-password', resetPasswordLimiter, validate(resetPasswordSchem
  */
 router.post('/logout', authenticate, async (req, res) => {
   try {
-    await authService.logout(req.user!.userId);
+    // Item 4 (2026-07-09) — if the client presents its refresh token in
+    // the body, we revoke only THAT session. If it doesn't (legacy
+    // clients), we fall back to the pre-Item-4 behaviour of clearing the
+    // single-slot User.refreshToken column only — sibling sessions on
+    // other devices STAY logged in. Prevents "logout on Device A kicks
+    // Device B" regression.
+    const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : undefined;
+    await authService.logout(req.user!.userId, refreshToken);
     return sendSuccess(res, { message: 'Logged out successfully' });
   } catch {
     return sendError(res, 'Logout failed');

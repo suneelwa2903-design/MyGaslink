@@ -11,7 +11,6 @@ import {
   HiOutlineCheckCircle,
   HiOutlineMagnifyingGlass,
   HiOutlineTrash,
-  HiOutlineArrowUturnLeft,
   HiOutlineEye,
   HiOutlineXCircle,
 } from 'react-icons/hi2';
@@ -27,6 +26,8 @@ import {
   createOrderSchema,
   backdatedOrderSchema,
   type BackdatedOrderInput,
+  backdatedTripSchema,
+  type BackdatedTripInput,
   type CreateOrderInput,
   assignDriverSchema,
   type AssignDriverInput,
@@ -48,6 +49,27 @@ import { cn } from '@/lib/cn';
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
+}
+
+// Compact cylinder summary for the Items column — "2× 19 KG, 1× 47.5 KG".
+// If the order was modified during delivery, we still want to show what was
+// ORDERED (planning intent), while `formatOrderItemsDelivered` renders what
+// actually got delivered — the row uses both for a two-line display.
+function formatOrderItemsOrdered(items: Order['items']): string {
+  if (!items || items.length === 0) return '—';
+  return items
+    .map((it) => `${it.quantity}× ${it.cylinderTypeName ?? 'Unknown'}`)
+    .join(', ');
+}
+
+function formatOrderItemsDelivered(items: Order['items']): string {
+  if (!items || items.length === 0) return '—';
+  return items
+    .map((it) => {
+      const qty = it.deliveredQuantity != null ? it.deliveredQuantity : it.quantity;
+      return `${qty}× ${it.cylinderTypeName ?? 'Unknown'}`;
+    })
+    .join(', ');
 }
 
 export default function OrdersPage() {
@@ -81,6 +103,9 @@ export default function OrdersPage() {
   const [returnsOpen, setReturnsOpen] = useState(false);
   // Brief 3: distributor_admin-only on-demand backdated order modal.
   const [backdatedOpen, setBackdatedOpen] = useState(false);
+  // Item 6 (2026-07-09): distributor_admin-only backdated TRIP modal
+  // (bulk — one driver, one vehicle, one past date, N customer orders).
+  const [backdatedTripOpen, setBackdatedTripOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
   const [viewOrder, setViewOrder] = useState<Order | null>(null);
   const [assignOrder, setAssignOrder] = useState<Order | null>(null);
@@ -172,14 +197,22 @@ export default function OrdersPage() {
                 </Button>
               );
             })()}
-            <Button variant="secondary" onClick={() => setReturnsOpen(true)}>
-              <HiOutlineArrowUturnLeft className="h-4 w-4" />
-              Returns Order
-            </Button>
+            {/* Item 7 (2026-07-09): the "Returns Order" trigger was removed
+                in favour of the lightweight "Empties Return" flow on the
+                Inventory page (Daily Summary → Empties Return). The
+                ReturnsOrderModal component + state stay in-file so
+                historical returns_only orders keep rendering; new returns
+                should be entered via Inventory. */}
             {role === UserRole.DISTRIBUTOR_ADMIN && (
               <Button variant="secondary" onClick={() => setBackdatedOpen(true)}>
                 <HiOutlinePlus className="h-4 w-4" />
                 On-Demand Order
+              </Button>
+            )}
+            {role === UserRole.DISTRIBUTOR_ADMIN && (
+              <Button variant="secondary" onClick={() => setBackdatedTripOpen(true)}>
+                <HiOutlinePlus className="h-4 w-4" />
+                Backdated Trip
               </Button>
             )}
             <Button onClick={() => setCreateOpen(true)}>
@@ -302,7 +335,18 @@ export default function OrdersPage() {
                     <td className="font-medium text-surface-900 dark:text-white">{order.orderNumber}</td>
                     <td>{order.customerName}</td>
                     <td>{new Date(order.deliveryDate).toLocaleDateString('en-IN')}</td>
-                    <td>{order.items.length} items</td>
+                    <td>
+                      {order.status === 'modified_delivered' ? (
+                        <div className="flex flex-col">
+                          <span>{formatOrderItemsDelivered(order.items)}</span>
+                          <span className="text-xs text-surface-500 dark:text-surface-400">
+                            Ordered: {formatOrderItemsOrdered(order.items)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span>{formatOrderItemsOrdered(order.items)}</span>
+                      )}
+                    </td>
                     <td className="font-medium">{formatCurrency(order.totalAmount)}</td>
                     <td>
                       {order.driverName ? (
@@ -429,6 +473,17 @@ export default function OrdersPage() {
         <BackdatedOrderModal
           open={backdatedOpen}
           onClose={() => setBackdatedOpen(false)}
+          cylinderTypes={cylinderTypes ?? []}
+          drivers={drivers?.drivers ?? []}
+          vehicles={vehicles?.vehicles ?? []}
+        />
+      )}
+
+      {/* Item 6 (2026-07-09) — Backdated Trip Modal (distributor_admin) */}
+      {backdatedTripOpen && (
+        <BackdatedTripModal
+          open={backdatedTripOpen}
+          onClose={() => setBackdatedTripOpen(false)}
           cylinderTypes={cylinderTypes ?? []}
           drivers={drivers?.drivers ?? []}
           vehicles={vehicles?.vehicles ?? []}
@@ -2606,6 +2661,350 @@ function DispatchProgressModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+
+// ─── Backdated Trip Modal (Item 6 — 2026-07-09) ─────────────────────────────
+//
+// Distributor-admin-only. Records N historical customer deliveries by a
+// single driver+vehicle on a past date within the current calendar month.
+// Existing Create Order / On-Demand Order modals are 100% untouched — this
+// is a separate flow because forcing a "backdated toggle" into the single-
+// order form would ripple through useFieldArray, useWatch, and every field
+// visibility condition and was judged too risky. See
+// docs/INVESTIGATION-JUL09-B.md item 6.
+//
+// One shared driver+vehicle+date at the top; N customer "cards" below,
+// each with its own line items and optional payment. Backend service
+// creates each order in its own transaction — a mid-batch failure surfaces
+// as a 4xx with the offending customerId, and already-created orders stay
+// in place (partial success is intentional; the operator re-runs with the
+// remaining customers).
+
+function BackdatedTripModal({
+  open, onClose, cylinderTypes, drivers, vehicles,
+}: {
+  open: boolean;
+  onClose: () => void;
+  cylinderTypes: CylinderType[];
+  drivers: Driver[];
+  vehicles: Vehicle[];
+}) {
+  const queryClient = useQueryClient();
+
+  // Local-TZ min/max — anti-pattern #21. Same construction as
+  // BackdatedOrderModal.
+  const todayISO = localTodayISO();
+  const monthStart = todayISO.slice(0, 8) + '01';
+  const maxDateObj = new Date(todayISO + 'T12:00:00');
+  maxDateObj.setDate(maxDateObj.getDate() - 1);
+  const maxDateISO = localDateISO(maxDateObj);
+  const noValidDates = maxDateISO < monthStart;
+
+  const {
+    register, handleSubmit, control, watch, setValue, formState: { errors },
+  } = useForm<BackdatedTripInput>({
+    resolver: zodResolver(backdatedTripSchema),
+    defaultValues: {
+      issueDate: maxDateISO,
+      driverId: '',
+      vehicleId: '',
+      orders: [{
+        customerId: '',
+        items: [{ cylinderTypeId: '', quantity: 1, emptiesCollected: 0 }],
+        poNumber: '',
+        payment: undefined,
+      }],
+      specialInstructions: '',
+    },
+  });
+  const { fields: orderFields, append: appendOrder, remove: removeOrder } = useFieldArray({
+    control, name: 'orders',
+  });
+
+  const cylinderOptions = cylinderTypes.map((ct) => ({
+    value: ct.cylinderTypeId, label: `${ct.typeName} (${ct.capacity}${ct.unit})`,
+  }));
+  const driverOptions = drivers.map((d) => ({ value: d.driverId, label: d.driverName }));
+  const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
+
+  const mutation = useMutation({
+    mutationFn: (data: BackdatedTripInput) => apiPost('/orders/backdated-trip', data),
+    onSuccess: (res: unknown) => {
+      const result = res as { data?: { ordersCreated?: number } };
+      const n = result.data?.ordersCreated ?? orderFields.length;
+      toast.success(`Backdated trip recorded — ${n} order${n === 1 ? '' : 's'} created`);
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      queryClient.invalidateQueries({ queryKey: ['assignments'] });
+      onClose();
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const onSubmit = handleSubmit((data) => {
+    // Strip empty poNumbers and normalise empty payment blocks.
+    const cleaned: BackdatedTripInput = {
+      ...data,
+      orders: data.orders.map((o) => ({
+        customerId: o.customerId,
+        items: o.items,
+        poNumber: o.poNumber && o.poNumber.trim().length > 0 ? o.poNumber : undefined,
+        payment: o.payment && o.payment.amount > 0 ? o.payment : undefined,
+      })),
+      specialInstructions: data.specialInstructions?.trim() || undefined,
+    };
+    mutation.mutate(cleaned);
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title="Backdated Trip — Bulk Historical Delivery" size="xl">
+      {noValidDates && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200">
+          It&apos;s the 1st of the month — no valid backdated slot within the current
+          calendar month. Backdated entries must be dated within the current
+          calendar month and before today.
+        </div>
+      )}
+      <form onSubmit={onSubmit} className="space-y-4">
+        {/* Trip-level fields */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <Input
+            label="Trip Date"
+            type="date"
+            min={monthStart}
+            max={maxDateISO}
+            required
+            error={errors.issueDate?.message}
+            disabled={noValidDates}
+            {...register('issueDate')}
+          />
+          <Select
+            label="Driver"
+            options={driverOptions}
+            placeholder="Select driver"
+            required
+            error={errors.driverId?.message}
+            {...register('driverId')}
+          />
+          <Select
+            label="Vehicle"
+            options={vehicleOptions}
+            placeholder="Select vehicle"
+            required
+            error={errors.vehicleId?.message}
+            {...register('vehicleId')}
+          />
+        </div>
+
+        {/* Customer order cards */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-surface-800 dark:text-surface-200">
+              Customer Deliveries ({orderFields.length})
+            </h4>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => appendOrder({
+                customerId: '',
+                items: [{ cylinderTypeId: '', quantity: 1, emptiesCollected: 0 }],
+                poNumber: '',
+                payment: undefined,
+              })}
+              disabled={orderFields.length >= 50}
+            >
+              <HiOutlinePlus className="h-4 w-4" />
+              Add Customer
+            </Button>
+          </div>
+
+          {orderFields.map((field, orderIdx) => (
+            <BackdatedTripOrderCard
+              key={field.id}
+              orderIdx={orderIdx}
+              control={control}
+              register={register}
+              watch={watch}
+              setValue={setValue}
+              errors={errors}
+              cylinderOptions={cylinderOptions}
+              onRemove={orderFields.length > 1 ? () => removeOrder(orderIdx) : undefined}
+            />
+          ))}
+        </div>
+
+        <Input
+          label="Trip Notes (optional)"
+          placeholder="Applies to all orders in the trip"
+          error={errors.specialInstructions?.message}
+          {...register('specialInstructions')}
+        />
+
+        <div className="flex justify-end gap-3 pt-4 border-t border-surface-200 dark:border-surface-700">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            type="submit"
+            loading={mutation.isPending}
+            disabled={noValidDates}
+          >
+            Create {orderFields.length} Order{orderFields.length === 1 ? '' : 's'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Per-customer card inside BackdatedTripModal. Own useFieldArray for items,
+// customer picker via CustomerSearchInput, optional payment.
+function BackdatedTripOrderCard({
+  orderIdx, control, register, watch, setValue, errors, cylinderOptions, onRemove,
+}: {
+  orderIdx: number;
+  control: import('react-hook-form').Control<BackdatedTripInput>;
+  register: import('react-hook-form').UseFormRegister<BackdatedTripInput>;
+  watch: import('react-hook-form').UseFormWatch<BackdatedTripInput>;
+  setValue: import('react-hook-form').UseFormSetValue<BackdatedTripInput>;
+  errors: import('react-hook-form').FieldErrors<BackdatedTripInput>;
+  cylinderOptions: { value: string; label: string }[];
+  onRemove?: () => void;
+}) {
+  const { fields: itemFields, append: appendItem, remove: removeItem } = useFieldArray({
+    control, name: `orders.${orderIdx}.items` as const,
+  });
+  const customerId = watch(`orders.${orderIdx}.customerId`);
+  const paymentAmount = watch(`orders.${orderIdx}.payment.amount` as const);
+  const orderErrors = errors.orders?.[orderIdx];
+
+  return (
+    <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wide">
+          Order #{orderIdx + 1}
+        </span>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-xs text-red-600 hover:text-red-700"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+
+      <CustomerSearchInput
+        value={customerId}
+        onChange={(id) => setValue(`orders.${orderIdx}.customerId`, id, { shouldValidate: true })}
+        label="Customer"
+        required
+        error={orderErrors?.customerId?.message}
+      />
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-surface-600 dark:text-surface-400">Items</span>
+          <button
+            type="button"
+            className="text-xs text-brand-600 hover:text-brand-700"
+            onClick={() => appendItem({ cylinderTypeId: '', quantity: 1, emptiesCollected: 0 })}
+          >
+            + Add item
+          </button>
+        </div>
+        {itemFields.map((f, itemIdx) => (
+          <div key={f.id} className="grid grid-cols-12 gap-2 items-start">
+            <div className="col-span-6">
+              <Select
+                options={cylinderOptions}
+                placeholder="Cyl type"
+                error={orderErrors?.items?.[itemIdx]?.cylinderTypeId?.message}
+                {...register(`orders.${orderIdx}.items.${itemIdx}.cylinderTypeId` as const)}
+              />
+            </div>
+            <div className="col-span-3">
+              <Input
+                type="number"
+                min={1}
+                placeholder="Qty"
+                error={orderErrors?.items?.[itemIdx]?.quantity?.message}
+                {...register(`orders.${orderIdx}.items.${itemIdx}.quantity` as const, { valueAsNumber: true })}
+              />
+            </div>
+            <div className="col-span-2">
+              <Input
+                type="number"
+                min={0}
+                placeholder="Empties"
+                error={orderErrors?.items?.[itemIdx]?.emptiesCollected?.message}
+                {...register(`orders.${orderIdx}.items.${itemIdx}.emptiesCollected` as const, { valueAsNumber: true })}
+              />
+            </div>
+            <div className="col-span-1 flex items-center justify-center pt-2">
+              {itemFields.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeItem(itemIdx)}
+                  className="text-red-500 hover:text-red-600 text-xs"
+                  aria-label="Remove item"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Input
+        label="PO Number (optional)"
+        placeholder="Up to 16 characters"
+        error={orderErrors?.poNumber?.message}
+        {...register(`orders.${orderIdx}.poNumber`)}
+      />
+
+      {/* Optional payment for this customer's order. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-start">
+        <Input
+          label="Payment (₹, optional)"
+          type="number"
+          min={0}
+          step="0.01"
+          placeholder="Leave 0 for no payment"
+          error={orderErrors?.payment?.amount?.message}
+          {...register(`orders.${orderIdx}.payment.amount` as const, {
+            setValueAs: (v: string | number | null | undefined) =>
+              v === '' || v === null || v === undefined || v === 0 || v === '0'
+                ? undefined
+                : Number(v),
+          })}
+        />
+        <Select
+          label="Method"
+          options={[
+            { value: 'cash', label: 'Cash' },
+            { value: 'upi', label: 'UPI' },
+            { value: 'cheque', label: 'Cheque' },
+            { value: 'neft', label: 'NEFT' },
+            { value: 'rtgs', label: 'RTGS' },
+            { value: 'other', label: 'Other' },
+          ]}
+          placeholder="Select"
+          disabled={!paymentAmount || paymentAmount <= 0}
+          error={orderErrors?.payment?.paymentMethod?.message}
+          {...register(`orders.${orderIdx}.payment.paymentMethod` as const)}
+        />
+        <Input
+          label="Reference (optional)"
+          placeholder="Ref #"
+          disabled={!paymentAmount || paymentAmount <= 0}
+          {...register(`orders.${orderIdx}.payment.referenceNumber` as const)}
+        />
+      </div>
+    </div>
   );
 }
 

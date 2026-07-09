@@ -843,16 +843,41 @@ export async function updateInvoiceStatus(id: string, distributorId: string, sta
  * TODO: wire a daily cron to call this so the status badge stays fresh.
  */
 export async function markOverdueInvoices(distributorId?: string) {
+  // Item-8 fix (2026-07-09): overdue derives from
+  // `issueDate + customer.creditPeriodDays`, NOT the frozen
+  // `invoice.dueDate` snapshot. The stored dueDate is a legal-document
+  // field and stays put; the status flag has to track the customer's
+  // CURRENT credit period. Since Prisma updateMany can't join to compute
+  // the derived cutoff, we fetch candidates + filter in JS + updateMany
+  // by id. Cost dominated by the payload size (candidate invoice IDs);
+  // still a single UPDATE at the DB. See docs/INVESTIGATION-JUL09-B.md
+  // item 8.
   const where: Prisma.InvoiceWhereInput = {
     status: { in: ['issued', 'partially_paid'] },
-    dueDate: { lt: new Date() },
     outstandingAmount: { gt: 0 },
     deletedAt: null,
   };
   if (distributorId) where.distributorId = distributorId;
 
-  const result = await prisma.invoice.updateMany({
+  const candidates = await prisma.invoice.findMany({
     where,
+    select: {
+      id: true,
+      issueDate: true,
+      customer: { select: { creditPeriodDays: true } },
+    },
+  });
+  const nowMs = Date.now();
+  const overdueIds = candidates
+    .filter((inv) => {
+      const derivedDueMs = new Date(inv.issueDate).getTime()
+        + (inv.customer?.creditPeriodDays ?? 30) * 86_400_000;
+      return derivedDueMs < nowMs;
+    })
+    .map((inv) => inv.id);
+  if (overdueIds.length === 0) return { markedOverdue: 0 };
+  const result = await prisma.invoice.updateMany({
+    where: { id: { in: overdueIds } },
     data: { status: 'overdue' },
   });
   return { markedOverdue: result.count };

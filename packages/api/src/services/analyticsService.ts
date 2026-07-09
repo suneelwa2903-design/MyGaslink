@@ -5,6 +5,33 @@ import { computeCustomerOverdue } from './paymentService.js';
 import { checkThresholds } from './inventoryService.js';
 
 /**
+ * Item-8 helper (2026-07-09): count invoices whose derived due date
+ * (`issueDate + customer.creditPeriodDays`) is before `today` and that
+ * still have outstanding balance. Replaces the previous
+ * `where: { status: 'overdue' }` count, which read the stale status flag
+ * written by markOverdueInvoices. Now that overdue is a live derivation,
+ * the status flag is no longer authoritative — see
+ * docs/INVESTIGATION-JUL09-B.md item 8.
+ */
+async function countOverdueInvoicesLive(distributorId: string, today: Date): Promise<number> {
+  const todayMs = today.getTime();
+  const invoices = await prisma.invoice.findMany({
+    where: { distributorId, outstandingAmount: { gt: 0 }, deletedAt: null },
+    select: {
+      issueDate: true,
+      customer: { select: { creditPeriodDays: true } },
+    },
+  });
+  let count = 0;
+  for (const inv of invoices) {
+    const derivedDueMs = new Date(inv.issueDate).getTime()
+      + (inv.customer?.creditPeriodDays ?? 30) * 86_400_000;
+    if (derivedDueMs < todayMs) count++;
+  }
+  return count;
+}
+
+/**
  * Dashboard statistics for the distributor.
  */
 export async function getDashboardStats(distributorId: string) {
@@ -54,9 +81,11 @@ export async function getDashboardStats(distributorId: string) {
         isGodownPickup: false,
       },
     }),
-    prisma.invoice.count({
-      where: { distributorId, status: 'overdue', deletedAt: null },
-    }),
+    // Item-8 fix: overdue count derives from `issueDate + customer.creditPeriodDays`
+    // at read time — not the stale `invoice.status='overdue'` flag written by
+    // markOverdueInvoices (which itself keys off the stored dueDate snapshot).
+    // See docs/INVESTIGATION-JUL09-B.md item 8.
+    countOverdueInvoicesLive(distributorId, today),
     prisma.invoice.aggregate({
       where: { distributorId, outstandingAmount: { gt: 0 }, deletedAt: null },
       _sum: { outstandingAmount: true },
@@ -183,7 +212,12 @@ export async function getDueAmountsReport(distributorId: string) {
       creditPeriodDays: true,
       invoices: {
         where: { outstandingAmount: { gt: 0 }, deletedAt: null },
-        select: { outstandingAmount: true, dueDate: true, status: true },
+        // Item-8 fix (2026-07-09): read `issueDate` so we can derive the
+        // due date live from `customer.creditPeriodDays`. `invoice.dueDate`
+        // is a snapshot at creation and does not reflect subsequent credit-
+        // period changes on the customer record — see
+        // docs/INVESTIGATION-JUL09-B.md item 8.
+        select: { outstandingAmount: true, issueDate: true, status: true },
       },
     },
   });
@@ -195,10 +229,14 @@ export async function getDueAmountsReport(distributorId: string) {
         const totalDue = c.invoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
         // WI-122: overdue amount via the ledger formula (single source of truth).
         const overdueDue = await computeCustomerOverdue(distributorId, c.id);
-        // Days overdue = age of the oldest invoice already past its due date.
+        // Days overdue = age of the oldest invoice already past its DERIVED
+        // due date. `issueDate + customer.creditPeriodDays` — recomputes
+        // live so bumping a customer's credit period immediately reshapes
+        // the aging surface.
         const now = Date.now();
         const overdueDays = c.invoices.reduce((oldest, inv) => {
-          const days = Math.floor((now - new Date(inv.dueDate).getTime()) / 86400000);
+          const derivedDueMs = new Date(inv.issueDate).getTime() + c.creditPeriodDays * 86_400_000;
+          const days = Math.floor((now - derivedDueMs) / 86_400_000);
           return days > 0 ? Math.max(oldest, days) : oldest;
         }, 0);
 
@@ -312,6 +350,84 @@ export async function getDriverDeliveryPerformance(distributorId: string, dateFr
   return results.sort((a, b) => b.deliveredOrders - a.deliveredOrders);
 }
 
+// Item 9 (2026-07-09) — driver cylinder-summary aggregation. Groups the
+// driver's OrderItems by cylinderType across the date window and sums
+// deliveredQuantity (falling back to ordered quantity when the driver
+// hasn't yet confirmed) + emptiesCollected. Used by the driver's
+// "My Performance" screen for a per-cyl breakdown card grid.
+//
+// Only 'delivered' + 'modified_delivered' orders count — the same status
+// filter reportsService.deliveryPerformance uses. `deletedAt: null` on
+// orders (soft-delete respect).
+export interface DriverCylinderSummaryRow {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  fullsDelivered: number;
+  emptiesCollected: number;
+}
+
+export async function getDriverCylinderSummary(
+  distributorId: string,
+  driverId: string,
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<DriverCylinderSummaryRow[]> {
+  const where: Prisma.OrderWhereInput = {
+    distributorId,
+    driverId,
+    deletedAt: null,
+    status: { in: ['delivered', 'modified_delivered'] },
+  };
+  if (dateFrom || dateTo) {
+    const deliveryDate: Prisma.DateTimeFilter = {};
+    if (dateFrom) deliveryDate.gte = new Date(dateFrom);
+    if (dateTo) deliveryDate.lte = new Date(dateTo);
+    where.deliveryDate = deliveryDate;
+  }
+
+  // Confirm the driver belongs to this distributor before the (much
+  // larger) items query — cheap tenant guard, mirrors the pattern in
+  // getDriverDeliveryPerformance's driver-loop.
+  const driver = await prisma.driver.findFirst({
+    where: { id: driverId, distributorId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!driver) return [];
+
+  const orders = await prisma.order.findMany({
+    where,
+    select: {
+      items: {
+        select: {
+          cylinderTypeId: true,
+          quantity: true,
+          deliveredQuantity: true,
+          emptiesCollected: true,
+          cylinderType: { select: { typeName: true } },
+        },
+      },
+    },
+  });
+
+  const byCyl = new Map<string, DriverCylinderSummaryRow>();
+  for (const order of orders) {
+    for (const item of order.items) {
+      const key = item.cylinderTypeId;
+      const row = byCyl.get(key) ?? {
+        cylinderTypeId: key,
+        cylinderTypeName: item.cylinderType?.typeName ?? 'Unknown',
+        fullsDelivered: 0,
+        emptiesCollected: 0,
+      };
+      row.fullsDelivered += item.deliveredQuantity ?? item.quantity ?? 0;
+      row.emptiesCollected += item.emptiesCollected ?? 0;
+      byCyl.set(key, row);
+    }
+  }
+
+  return Array.from(byCyl.values()).sort((a, b) => b.fullsDelivered - a.fullsDelivered);
+}
+
 /**
  * Revenue trends (monthly).
  */
@@ -393,7 +509,9 @@ export async function getCollectionsDashboard(distributorId: string) {
       creditPeriodDays: true,
       invoices: {
         where: { outstandingAmount: { gt: 0 }, deletedAt: null },
-        select: { outstandingAmount: true, dueDate: true, status: true },
+        // Item-8 fix: read `issueDate` for live overdue derivation. See
+        // docs/INVESTIGATION-JUL09-B.md item 8.
+        select: { outstandingAmount: true, issueDate: true, status: true },
       },
       payments: {
         where: { deletedAt: null },
@@ -416,10 +534,13 @@ export async function getCollectionsDashboard(distributorId: string) {
     const totalDue = c.invoices.reduce((sum, inv) => sum + toNum(inv.outstandingAmount), 0);
     // WI-122: overdue via the ledger formula (single source of truth).
     const overdueDue = await computeCustomerOverdue(distributorId, c.id);
-    // Days overdue = age of the oldest invoice past its due date.
+    // Days overdue = age of oldest invoice past its DERIVED due date
+    // (issueDate + current creditPeriodDays). Recomputes live so
+    // credit-period changes reflect immediately.
     const now = Date.now();
     const overdueDays = c.invoices.reduce((max, inv) => {
-      const days = Math.floor((now - new Date(inv.dueDate).getTime()) / 86400000);
+      const derivedDueMs = new Date(inv.issueDate).getTime() + c.creditPeriodDays * 86_400_000;
+      const days = Math.floor((now - derivedDueMs) / 86_400_000);
       return days > 0 ? Math.max(max, days) : max;
     }, 0);
 
@@ -473,7 +594,15 @@ export async function getCollectionsDashboard(distributorId: string) {
 export async function getOverdueCallList(distributorId: string) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
 
+  // Item-8 fix: we can't push the "overdue" predicate down to the DB
+  // anymore — overdue is now derived from `issueDate + customer.creditPeriodDays`
+  // at read time (see docs/INVESTIGATION-JUL09-B.md item 8). Fetch every
+  // customer that has ANY open invoice, then filter to those whose derived
+  // due date is < today. Realistic customer counts (dozens to low thousands
+  // per tenant) make this a fine tradeoff for correctness on credit-period
+  // changes.
   const customers = await prisma.customer.findMany({
     where: {
       distributorId,
@@ -482,7 +611,6 @@ export async function getOverdueCallList(distributorId: string) {
         some: {
           deletedAt: null,
           outstandingAmount: { gt: 0 },
-          dueDate: { lt: today },
         },
       },
     },
@@ -490,36 +618,43 @@ export async function getOverdueCallList(distributorId: string) {
       id: true,
       customerName: true,
       phone: true,
+      creditPeriodDays: true,
       contacts: { where: { isPrimary: true }, select: { phone: true }, take: 1 },
       invoices: {
         where: {
           deletedAt: null,
           outstandingAmount: { gt: 0 },
-          dueDate: { lt: today },
         },
-        select: { outstandingAmount: true, dueDate: true },
+        select: { outstandingAmount: true, issueDate: true },
       },
     },
   });
 
-  return customers
+  const rows = customers
     .map((c) => {
-      const totalOutstanding = c.invoices.reduce((s, i) => s + toNum(i.outstandingAmount), 0);
-      const oldestDue = c.invoices.reduce((oldest, i) => {
-        const d = new Date(i.dueDate).getTime();
+      const creditMs = c.creditPeriodDays * 86_400_000;
+      const overdueInvoices = c.invoices.filter((i) => {
+        const derivedDueMs = new Date(i.issueDate).getTime() + creditMs;
+        return derivedDueMs < todayMs;
+      });
+      if (overdueInvoices.length === 0) return null;
+      const totalOutstanding = overdueInvoices.reduce((s, i) => s + toNum(i.outstandingAmount), 0);
+      const oldestDerivedDueMs = overdueInvoices.reduce((oldest, i) => {
+        const d = new Date(i.issueDate).getTime() + creditMs;
         return d < oldest ? d : oldest;
       }, Number.POSITIVE_INFINITY);
-      const daysOverdue = Math.floor((today.getTime() - oldestDue) / 86400000);
+      const daysOverdue = Math.floor((todayMs - oldestDerivedDueMs) / 86_400_000);
       return {
         customerId: c.id,
         customerName: c.customerName,
         phone: c.contacts[0]?.phone || c.phone,
         totalOutstanding: Math.round(totalOutstanding * 100) / 100,
-        overdueInvoiceCount: c.invoices.length,
+        overdueInvoiceCount: overdueInvoices.length,
         daysOverdue,
       };
     })
-    .sort((a, b) => b.daysOverdue - a.daysOverdue);
+    .filter((r): r is NonNullable<typeof r> => r !== null);
+  return rows.sort((a, b) => b.daysOverdue - a.daysOverdue);
 }
 
 /**

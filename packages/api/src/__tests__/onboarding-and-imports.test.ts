@@ -247,7 +247,14 @@ describe('POST /api/customers/import-opening-balances', () => {
 // ─── /api/analytics/overdue-call-list ────────────────────────────────────────
 
 describe('GET /api/analytics/overdue-call-list', () => {
+  // Item 8 (2026-07-09): overdue derives from `issueDate + customer.creditPeriodDays`
+  // at read time (default creditPeriodDays = 30). To keep the test's
+  // "overdue" fixtures actually overdue under the new logic, the overdue
+  // c1 issueDate must be >30 days in the past. `issued` is the "not yet
+  // overdue" issueDate — set to today so its derived cutoff (today + 30)
+  // stays in the future.
   const issued = new Date();
+  const oldIssued = new Date(Date.now() - 60 * 86400_000);
   const past = new Date(Date.now() - 15 * 86400_000);
   const future = new Date(Date.now() + 5 * 86400_000);
   // 2026-06-18: track ids at create time so afterAll deletes ONLY what we
@@ -314,7 +321,7 @@ describe('GET /api/analytics/overdue-call-list', () => {
         invoiceNumber: `OBT-${Date.now()}-1`,
         distributorId: dist1Id,
         customerId: c1.id,
-        issueDate: issued,
+        issueDate: oldIssued,
         dueDate: past,
         totalAmount: 1000,
         outstandingAmount: 1000,
@@ -349,7 +356,7 @@ describe('GET /api/analytics/overdue-call-list', () => {
         invoiceNumber: `OBT-${Date.now()}-3`,
         distributorId: dist2Id!,
         customerId: c3.id,
-        issueDate: issued,
+        issueDate: oldIssued,
         dueDate: past,
         totalAmount: 999,
         outstandingAmount: 999,

@@ -84,10 +84,87 @@ export function verifyRefreshToken(token: string): JwtPayload {
   return jwt.verify(token, config.jwt.refreshSecret) as JwtPayload;
 }
 
+// Item 4 (2026-07-09) — multi-device refresh token storage helpers. Every
+// login creates one row in `refresh_token_sessions`; every refresh finds
+// the matching row for the presenting token, updates its hash, and stamps
+// `last_used_at`. See docs/INVESTIGATION-JUL09-B.md item 4. The
+// `User.refreshToken` column stays wired for the compatibility window —
+// we WRITE it on login/refresh/logout/changePassword so any consumer that
+// still reads it (there shouldn't be any post-cutover) sees a coherent
+// last-known-good value. Reads happen from `refresh_token_sessions` only.
+
+const REFRESH_TOKEN_SESSION_TTL_DAYS = 180;
+const SESSION_CLEANUP_KEEP_DAYS = 30;
+
+// Item 4 hash choice — SHA-256, NOT bcrypt. bcrypt truncates input to
+// 72 bytes; two JWTs for the same user share their first ~150 chars
+// (identical header + payload prefix), differing only in jti/iat/sig
+// past byte ~180. That collides the bcrypt fingerprint and lets Device
+// B's session incorrectly match Device A's token (verified in test
+// 2026-07-09). SHA-256 has no truncation, is deterministic (so we can
+// index-lookup directly instead of scanning candidates), and gives the
+// same "DB-dump can't reveal raw token" guarantee — refresh tokens are
+// already high-entropy JWTs so we don't need bcrypt's slow-hash defence
+// against dictionary attacks.
+function hashRefreshToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function createRefreshTokenSession(opts: {
+  userId: string;
+  refreshToken: string;
+  deviceLabel?: string | null;
+}): Promise<void> {
+  const tokenHash = hashRefreshToken(opts.refreshToken);
+  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
+  await prisma.refreshTokenSession.create({
+    data: {
+      userId: opts.userId,
+      tokenHash,
+      deviceLabel: opts.deviceLabel ?? null,
+      expiresAt,
+      lastUsedAt: new Date(),
+    },
+  });
+}
+
+// SHA-256 is deterministic, so we can find directly by hash — cheaper
+// than iterating every session for the user.
+async function findMatchingRefreshSession(userId: string, presentedToken: string) {
+  const tokenHash = hashRefreshToken(presentedToken);
+  return prisma.refreshTokenSession.findFirst({
+    where: {
+      userId,
+      tokenHash,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+  });
+}
+
+async function cleanupOldRefreshSessions(userId: string): Promise<void> {
+  const cutoff = new Date(Date.now() - SESSION_CLEANUP_KEEP_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    await prisma.refreshTokenSession.deleteMany({
+      where: {
+        userId,
+        OR: [
+          { expiresAt: { lt: new Date() } },
+          { revokedAt: { lt: cutoff } },
+        ],
+      },
+    });
+  } catch (err) {
+    // Non-blocking — cleanup is best-effort.
+    logger.warn('refresh_token_sessions cleanup failed', { err: (err as Error).message, userId });
+  }
+}
+
 export async function login(
   email: string,
   password: string,
   ctx?: LoginHistoryContext,
+  deviceLabel?: string | null,
 ): Promise<{ tokens: AuthTokens; user: UserProfile }> {
   const user = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
@@ -171,9 +248,20 @@ export async function login(
       loginAttempts: 0,
       lockedUntil: null,
       lastLoginAt: new Date(),
+      // Item 4 — kept for the compatibility window; readers moved to
+      // refresh_token_sessions. Safe to drop after all clients cut over.
       refreshToken: tokens.refreshToken,
     },
   });
+
+  // Item 4 — record this device as a live refresh session.
+  await createRefreshTokenSession({
+    userId: user.id,
+    refreshToken: tokens.refreshToken,
+    deviceLabel,
+  });
+  // Fire-and-forget cleanup of dead sessions for this user.
+  void cleanupOldRefreshSessions(user.id);
 
   void recordLoginAttempt({
     userId: user.id, distributorId: user.distributorId, success: true, ctx,
@@ -199,13 +287,22 @@ export async function login(
 export async function refreshTokens(refreshToken: string): Promise<AuthTokens> {
   const payload = verifyRefreshToken(refreshToken);
 
-  // Verify the refresh token matches what's stored (prevents reuse of revoked tokens)
   const user = await prisma.user.findUnique({
     where: { id: payload.userId },
-    select: { id: true, refreshToken: true, status: true, email: true, role: true, distributorId: true, customerId: true },
+    select: { id: true, status: true, email: true, role: true, distributorId: true, customerId: true },
   });
 
-  if (!user || user.status !== 'active' || user.refreshToken !== refreshToken) {
+  if (!user || user.status !== 'active') {
+    throw new AuthError('Invalid refresh token', 401);
+  }
+
+  // Item 4 — read from refresh_token_sessions instead of the single-slot
+  // User.refreshToken column. bcrypt.compare each candidate row for this
+  // user (tokenHash is salted so a direct index lookup is not possible).
+  // Realistic session counts per user are ≤ 3 devices, so the scan is
+  // cheap.
+  const session = await findMatchingRefreshSession(user.id, refreshToken);
+  if (!session) {
     throw new AuthError('Invalid refresh token', 401);
   }
 
@@ -218,8 +315,19 @@ export async function refreshTokens(refreshToken: string): Promise<AuthTokens> {
   };
 
   const tokens = generateTokens(newPayload);
+  const newHash = hashRefreshToken(tokens.refreshToken);
 
-  // Rotate refresh token
+  // Rotate this session's tokenHash (invalidates the presented token).
+  await prisma.refreshTokenSession.update({
+    where: { id: session.id },
+    data: {
+      tokenHash: newHash,
+      lastUsedAt: new Date(),
+    },
+  });
+
+  // Backward compat — mirror the newest token onto User.refreshToken so
+  // any legacy reader sees the current value. Safe to drop post-cutover.
   await prisma.user.update({
     where: { id: user.id },
     data: { refreshToken: tokens.refreshToken },
@@ -245,8 +353,17 @@ export async function changePassword(userId: string, currentPassword: string, ne
     data: {
       passwordHash: newHash,
       requiresPasswordReset: false,
-      refreshToken: null, // Force re-login with new password
+      refreshToken: null,
     },
+  });
+  // Item 4 — force re-login on ALL devices. Same security intent as the
+  // pre-Item-4 `refreshToken: null` above (which now only clears the
+  // legacy single-slot slot), extended to every live session in the new
+  // table. Cascade delete on User handles this via schema but we're
+  // explicit here for clarity.
+  await prisma.refreshTokenSession.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
   });
 
   // Group B Part 6 — fire-and-forget security notification. The sender
@@ -260,7 +377,21 @@ export async function changePassword(userId: string, currentPassword: string, ne
   });
 }
 
-export async function logout(userId: string): Promise<void> {
+export async function logout(userId: string, refreshToken?: string): Promise<void> {
+  // Item 4 — when the caller presents its refresh token, revoke ONLY
+  // that session so other devices stay logged in. When no token is
+  // presented (legacy callers), fall back to the pre-Item-4 behaviour
+  // of clearing the single-slot User.refreshToken but DO NOT revoke
+  // sibling sessions — that would regress the multi-device fix.
+  if (refreshToken) {
+    const session = await findMatchingRefreshSession(userId, refreshToken);
+    if (session) {
+      await prisma.refreshTokenSession.update({
+        where: { id: session.id },
+        data: { revokedAt: new Date() },
+      });
+    }
+  }
   await prisma.user.update({
     where: { id: userId },
     data: { refreshToken: null },
@@ -386,10 +517,16 @@ export async function resetPassword(resetToken: string, newPassword: string): Pr
       resetOtp: null,
       resetOtpExpiresAt: null,
       requiresPasswordReset: false,
-      refreshToken: null, // Force re-login
+      refreshToken: null,
       loginAttempts: 0,
       lockedUntil: null,
     },
+  });
+  // Item 4 (2026-07-09) — force logout on ALL devices after password reset,
+  // matching changePassword's semantics.
+  await prisma.refreshTokenSession.updateMany({
+    where: { userId: user.id, revokedAt: null },
+    data: { revokedAt: new Date() },
   });
 
   // Group B Part 6 — fire-and-forget reset-complete notification. Same

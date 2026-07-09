@@ -61,6 +61,22 @@ const server = app.listen(port, host, () => {
   startBillingCron();
 });
 
+// ─── Socket keep-alive tuning (2026-07-09) ───────────────────────────────────
+//
+// AWS ALB (and Nginx, when it fronts us) holds keep-alive connections idle
+// for 60s. Node's default `server.keepAliveTimeout` is 5s — so ALB happily
+// reuses a TCP socket Node already half-closed, and the client sees
+// "socket hang up" / "network error" on what looks like a healthy request.
+// Fix: hold sockets slightly LONGER than the load balancer, and make
+// `headersTimeout` greater than `keepAliveTimeout` (otherwise Node races
+// itself and disconnects mid-headers on the next request over a reused
+// connection — behaviour documented in the Node HTTP module).
+//
+// See docs/INVESTIGATION-JUL09-B.md item 5 for the diagnosis path. Two-line
+// runtime config, no unit-testable surface (this is TCP socket behaviour).
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 
 // SIGTERM (pm2/Docker) and SIGINT (Ctrl-C in dev). Stop accepting new

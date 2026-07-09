@@ -147,9 +147,16 @@ describe('POST /api/auth/refresh — negative cases', () => {
     expect(res.status).toBe(400);
   });
 
-  it('R9 — refresh after server-side revoke (User.refreshToken = null) → 401', async () => {
+  it('R9 — refresh after server-side revoke → 401', async () => {
     const { refreshToken } = await login();
-    // Simulate logout / admin revoke
+    // Item 4 (2026-07-09): refresh tokens now live in refresh_token_sessions.
+    // Simulate a server-side revoke by marking every live session for this
+    // user as revoked. Also null the legacy column for backward-compat
+    // parity with the original test intent.
+    await prisma.refreshTokenSession.updateMany({
+      where: { userId: testUserId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
     await prisma.user.update({
       where: { id: testUserId },
       data: { refreshToken: null },

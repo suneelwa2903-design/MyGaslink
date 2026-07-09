@@ -525,11 +525,39 @@ model User {
   // M14 v1.0 (IOS-ACCOUNT-DELETION-SPEC §3): at most ONE pending/cancelled/completed
   // deletion request per user. Auth middleware joins this on every authenticate() call.
   accountDeletionRequest AccountDeletionRequest?
+  // Item 4 (2026-07-09) — multi-device refresh sessions. Each row is one
+  // logged-in device. See docs/INVESTIGATION-JUL09-B.md item 4 for the RCA
+  // (single-slot User.refreshToken was causing "logged out on Device B
+  // whenever Device A refreshed").
+  refreshTokenSessions RefreshTokenSession[]
 
   @@index([email])
   @@index([distributorId])
   @@index([role, status])
   @@map("users")
+}
+
+// Item 4 (2026-07-09) — per-device refresh token session. Bumps refresh
+// storage from single-slot on User.refreshToken to N-slot here. Anti-pattern
+// #12 discipline: the `tokenHash` is bcrypted so a DB dump can't replay a
+// session. `User.refreshToken` stays wired in the schema for the transition
+// window — auth service writes both places during the compatibility phase
+// and only reads from this table.
+model RefreshTokenSession {
+  id           String   @id @default(uuid()) @map("session_id")
+  userId       String   @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String   @map("token_hash")
+  deviceLabel  String?  @map("device_label")
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastUsedAt   DateTime @default(now()) @map("last_used_at")
+  expiresAt    DateTime @map("expires_at")
+  revokedAt    DateTime? @map("revoked_at")
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+  @@map("refresh_token_sessions")
 }
 
 // ─── Customers ───────────────────────────────────────────────────────────────

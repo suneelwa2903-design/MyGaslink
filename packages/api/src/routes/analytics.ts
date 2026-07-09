@@ -113,6 +113,39 @@ router.get('/revenue-trends',
   }
 });
 
+// GET /api/analytics/driver-cylinder-summary — item 9 (2026-07-09)
+// Per-cyl-type deliveries+empties for a driver in a date range. Drivers
+// see their OWN summary only; admins/finance can pass ?driverId=X.
+router.get('/driver-cylinder-summary',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver'),
+  async (req, res) => {
+    try {
+      let driverId: string | undefined;
+      if (req.user!.role === 'driver') {
+        const resolved = await analyticsService.resolveDriverIdForUser(
+          req.user!.distributorId!, req.user!.userId,
+        );
+        if (!resolved) return sendSuccess(res, []);
+        driverId = resolved;
+      } else {
+        driverId = req.query.driverId as string | undefined;
+      }
+      if (!driverId) {
+        return sendError(res, 'driverId is required for non-driver callers', 400);
+      }
+      const rows = await analyticsService.getDriverCylinderSummary(
+        req.user!.distributorId!,
+        driverId,
+        req.query.dateFrom as string | undefined,
+        req.query.dateTo as string | undefined,
+      );
+      return sendSuccess(res, rows);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
 // GET /api/analytics/customer-lifetime-value
 router.get('/customer-lifetime-value',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),

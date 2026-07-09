@@ -35,6 +35,10 @@ const pincode = z.string().regex(/^\d{6}$/, 'Pincode must be exactly 6 digits').
 export const loginSchema = z.object({
   email: email,
   password: z.string().min(8, 'Password must be at least 8 characters'),
+  // Item 4 (2026-07-09) — optional per-device label ("iOS - iPhone 14",
+  // "Chrome on Windows", etc). Persisted on the refresh_token_sessions
+  // row so a future "logged in devices" screen can identify sessions.
+  deviceLabel: z.string().max(120).optional(),
 });
 
 export const changePasswordSchema = z.object({
@@ -275,6 +279,65 @@ export const backdatedOrderSchema = z.object({
 );
 
 export type BackdatedOrderInput = z.infer<typeof backdatedOrderSchema>;
+
+// Item 7 (2026-07-09) — simple empties return. Customer hands back N
+// empties of a given cylinder type; no schedule, no invoice, no money
+// event. Return date may be today or up to 90 days back (an operator
+// covering an old delivery that was never logged). Same anti-pattern-#21
+// rules apply: use `localTodayISO()`, never `new Date().toISOString().split('T')[0]`.
+export const emptiesReturnSchema = z.object({
+  customerId: uuid,
+  cylinderTypeId: uuid,
+  quantity: z.number().int().min(1, 'Quantity must be at least 1'),
+  returnDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD')
+    .refine((date) => date <= localTodayISO(), 'Return date cannot be in the future')
+    .refine((date) => {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 90);
+      const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
+      return date >= cutoffStr;
+    }, 'Return date cannot be more than 90 days ago'),
+  notes: z.string().max(500).optional(),
+});
+
+export type EmptiesReturnInput = z.infer<typeof emptiesReturnSchema>;
+
+// Item 6 (2026-07-09) — backdated driver TRIP. Same-month + before-today
+// guard as the single backdated order, but the payload carries a driver +
+// vehicle and an array of customer orders — represents a driver run that
+// was completed but never entered into the system in real time. The DVA
+// is created/upserted at `status='reconciled', isReconciled=true` so it
+// bypasses the state machine (trip already happened).
+export const backdatedTripSchema = z.object({
+  issueDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD')
+    .refine((date) => {
+      const now = new Date();
+      const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      return date.startsWith(currentYM);
+    }, 'Trip date must be within the current calendar month')
+    .refine((date) => date < localTodayISO(), 'Trip date must be before today'),
+  driverId: uuid,
+  vehicleId: uuid,
+  orders: z.array(z.object({
+    customerId: uuid,
+    items: z.array(z.object({
+      cylinderTypeId: uuid,
+      quantity: z.number().int().min(1),
+      emptiesCollected: z.number().int().min(0).default(0).optional(),
+    })).min(1),
+    poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
+    payment: z.object({
+      amount: z.number().positive(),
+      paymentMethod: z.enum(['cash', 'upi', 'cheque', 'neft', 'rtgs', 'other']),
+      referenceNumber: z.string().optional(),
+    }).optional(),
+  })).min(1, 'At least one order is required').max(50, 'Cannot create more than 50 orders in one trip'),
+  specialInstructions: z.string().max(500).optional(),
+});
+
+export type BackdatedTripInput = z.infer<typeof backdatedTripSchema>;
 
 export const deliveryConfirmationSchema = z.object({
   // WI-109: individual items may be 0 (legitimate partial delivery — some

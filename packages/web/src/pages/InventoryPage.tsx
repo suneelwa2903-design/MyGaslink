@@ -28,11 +28,13 @@ import {
   outgoingEmptiesSchema,
   type OutgoingEmptiesInput,
   type ManualAdjustmentInput,
+  emptiesReturnSchema,
+  type EmptiesReturnInput,
   localTodayISO,
   localDateISO,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { Button, Input, Select, Modal, Badge, Loader, EmptyState, CustomerSearchInput } from '@/components/ui';
 import { ReportMismatchModal, MismatchLogSection } from '@/components/inventory/ReportMismatchModal';
 import { cn } from '@/lib/cn';
 
@@ -162,6 +164,8 @@ export default function InventoryPage() {
   const [incomingOpen, setIncomingOpen] = useState(false);
   const [outgoingOpen, setOutgoingOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
+  // Item 7 (2026-07-09) — lightweight customer empties return.
+  const [emptiesReturnOpen, setEmptiesReturnOpen] = useState(false);
   // WI-4 — Report Mismatch modal is opened per-vehicle from a Vehicle
   // Return card. Null = closed.
   const [mismatchVehicle, setMismatchVehicle] = useState<ReconciliationVehicle | null>(null);
@@ -357,6 +361,9 @@ export default function InventoryPage() {
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setAdjustOpen(true)}>
                 <HiOutlineAdjustmentsHorizontal className="h-4 w-4" />Adjust Stock
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setEmptiesReturnOpen(true)}>
+                <HiOutlinePlus className="h-4 w-4" />Empties Return
               </Button>
             </>
           )}
@@ -897,6 +904,15 @@ export default function InventoryPage() {
           date={selectedDate}
           submitting={adjustMutation.isPending}
           onSubmit={(data) => adjustMutation.mutate(data)}
+        />
+      )}
+
+      {/* Item 7 (2026-07-09) — Empties Return Modal */}
+      {emptiesReturnOpen && (
+        <EmptiesReturnModal
+          open={emptiesReturnOpen}
+          onClose={() => setEmptiesReturnOpen(false)}
+          cylinderTypes={cylinderTypes ?? []}
         />
       )}
     </div>
@@ -1958,5 +1974,114 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Empties Return Modal (Item 7 — 2026-07-09) ─────────────────────────────
+//
+// Lightweight customer-empties-return flow. No order, no invoice, no money.
+// Pure stock movement backed by two InventoryEvent rows (see
+// packages/api/src/services/emptiesReturnService.ts). Locked inventory days
+// silently skip in the summary cascade — copy warns the operator.
+
+function EmptiesReturnModal({
+  open,
+  onClose,
+  cylinderTypes,
+}: {
+  open: boolean;
+  onClose: () => void;
+  cylinderTypes: CylinderType[];
+}) {
+  const queryClient = useQueryClient();
+  const cylinderOptions = useMemo(() =>
+    cylinderTypes.map((c) => ({ value: c.cylinderTypeId, label: c.typeName })),
+  [cylinderTypes]);
+
+  const {
+    register, handleSubmit, watch, setValue, reset,
+    formState: { errors },
+  } = useForm<EmptiesReturnInput>({
+    resolver: zodResolver(emptiesReturnSchema),
+    defaultValues: {
+      customerId: '',
+      cylinderTypeId: '',
+      quantity: 1,
+      returnDate: localTodayISO(),
+      notes: '',
+    },
+  });
+
+  const customerId = watch('customerId');
+
+  const mutation = useMutation({
+    mutationFn: (data: EmptiesReturnInput) => apiPost('/inventory/empties-return', data),
+    onSuccess: () => {
+      toast.success('Empties return recorded');
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['customer-balances'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-events'] });
+      reset();
+      onClose();
+    },
+    onError: (err: unknown) => {
+      toast.error(getErrorMessage(err));
+    },
+  });
+
+  // 90-day back range for the date picker.
+  const minDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 90);
+    return localDateISO(d);
+  }, []);
+
+  return (
+    <Modal open={open} onClose={onClose} title="Empties Return from Customer">
+      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
+        <CustomerSearchInput
+          value={customerId}
+          onChange={(id) => setValue('customerId', id, { shouldValidate: true })}
+          label="Customer"
+          required
+          error={errors.customerId?.message}
+        />
+        <Select
+          label="Cylinder Type"
+          options={cylinderOptions}
+          placeholder="Select cylinder type"
+          required
+          error={errors.cylinderTypeId?.message}
+          {...register('cylinderTypeId')}
+        />
+        <Input
+          label="Quantity"
+          type="number"
+          min={1}
+          required
+          error={errors.quantity?.message}
+          {...register('quantity', { valueAsNumber: true })}
+        />
+        <Input
+          label="Return Date"
+          type="date"
+          min={minDate}
+          max={localTodayISO()}
+          required
+          error={errors.returnDate?.message}
+          {...register('returnDate')}
+        />
+        <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
+        <p className="text-xs text-surface-500 dark:text-surface-400">
+          The daily summary will be recalculated from the return date forward.
+          Locked days between the return date and today are skipped in the
+          cascade — unlock them first if you need those days recomputed.
+        </p>
+        <div className="flex justify-end gap-3 pt-4">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={mutation.isPending}>Record</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

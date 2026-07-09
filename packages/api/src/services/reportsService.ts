@@ -79,6 +79,14 @@ export function invoiceStatus(
     amountPaid: number | { toString: () => string };
     outstandingAmount: number | { toString: () => string };
     dueDate: Date | string | null;
+    // Item-8 (2026-07-09): pass BOTH issueDate + creditPeriodDays to derive
+    // the "Overdue" cutoff live from the customer's current credit period
+    // (bypassing the frozen invoice.dueDate snapshot). If either is omitted
+    // the function falls back to the stored dueDate — this keeps existing
+    // callers (including driver-statement.test.ts) working unchanged. See
+    // docs/INVESTIGATION-JUL09-B.md item 8.
+    issueDate?: Date | string | null;
+    creditPeriodDays?: number | null;
   },
   today: Date = (() => {
     const t = new Date();
@@ -89,8 +97,10 @@ export function invoiceStatus(
   const outstanding = num(invoice.outstandingAmount);
   const paid = num(invoice.amountPaid);
   if (outstanding <= 0) return 'Paid';
-  const due = invoice.dueDate ? new Date(invoice.dueDate) : null;
-  if (due && due < today) return 'Overdue';
+  const derivedDue = invoice.issueDate && invoice.creditPeriodDays != null
+    ? new Date(new Date(invoice.issueDate).getTime() + invoice.creditPeriodDays * 86_400_000)
+    : (invoice.dueDate ? new Date(invoice.dueDate) : null);
+  if (derivedDue && derivedDue < today) return 'Overdue';
   if (paid > 0) return 'Partial';
   return 'Pending';
 }
@@ -177,7 +187,16 @@ export async function outstandingAging(distributorId: string, f: ReportFilters):
   }
   const invoices = await prisma.invoice.findMany({
     where: invoiceWhere,
-    select: { customerId: true, outstandingAmount: true, dueDate: true, customer: { select: { customerName: true } } },
+    // Item-8 fix: read `issueDate` and pull `customer.creditPeriodDays` so
+    // the aging buckets derive live from the current credit period, not the
+    // frozen `invoice.dueDate` snapshot. See docs/INVESTIGATION-JUL09-B.md
+    // item 8.
+    select: {
+      customerId: true,
+      outstandingAmount: true,
+      issueDate: true,
+      customer: { select: { customerName: true, creditPeriodDays: true } },
+    },
   });
   const lastPayments = await prisma.paymentTransaction.groupBy({
     by: ['customerId'],
@@ -187,11 +206,14 @@ export async function outstandingAging(distributorId: string, f: ReportFilters):
   const lastPayMap = new Map(lastPayments.map((p) => [p.customerId, p._max.transactionDate]));
 
   const now = new Date();
+  const nowMs = now.getTime();
   const byCust = new Map<string, { customer: string; total: number; b0_30: number; b31_60: number; b60plus: number; lastPayment: string; _overdue: boolean }>();
   for (const inv of invoices) {
     if (!inv.customerId) continue;
     const amt = num(inv.outstandingAmount);
-    const daysOverdue = Math.floor((now.getTime() - new Date(inv.dueDate).getTime()) / 86400000);
+    const creditPeriodDays = inv.customer?.creditPeriodDays ?? 30;
+    const derivedDueMs = new Date(inv.issueDate).getTime() + creditPeriodDays * 86_400_000;
+    const daysOverdue = Math.floor((nowMs - derivedDueMs) / 86_400_000);
     const cur = byCust.get(inv.customerId) ?? { customer: inv.customer?.customerName ?? 'Unknown', total: 0, b0_30: 0, b31_60: 0, b60plus: 0, lastPayment: '', _overdue: false };
     cur.total += amt;
     if (daysOverdue <= 30) cur.b0_30 += amt;
@@ -983,12 +1005,15 @@ export async function deliveryPerformanceStatement(
       .map((c) => `${c.qty}×${c.name}`)
       .join(', ');
 
-    const status = invoiceStatus(inv, today);
-    const dueDate = inv.dueDate ? new Date(inv.dueDate) : null;
-    const issueDate = inv.issueDate ? new Date(inv.issueDate) : null;
-    const creditDays = dueDate && issueDate
-      ? Math.max(0, Math.round((dueDate.getTime() - issueDate.getTime()) / (1000 * 60 * 60 * 24)))
-      : (o.customer?.creditPeriodDays ?? 0);
+    // Item-8 fix: derive Overdue live from `issueDate + creditPeriodDays`
+    // rather than the frozen `invoice.dueDate` snapshot. `creditDays`
+    // shown in the report is now the customer's CURRENT credit period
+    // (not the reversed-difference from the stored dueDate).
+    const creditDays = o.customer?.creditPeriodDays ?? 0;
+    const status = invoiceStatus(
+      { ...inv, issueDate: inv.issueDate, creditPeriodDays: creditDays },
+      today,
+    );
     const outstanding = num(inv.outstandingAmount);
     const collected = collectedByInvoice.get(inv.id) ?? 0;
 

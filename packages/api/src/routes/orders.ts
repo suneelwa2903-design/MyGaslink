@@ -9,10 +9,12 @@ import {
   assignDriverSchema, bulkAssignDriverSchema, orderFilterSchema,
   returnsOnlyOrderSchema, returnsConfirmationSchema,
   backdatedOrderSchema,
+  backdatedTripSchema,
   localTodayISO,
 } from '@gaslink/shared';
 import * as orderService from '../services/orderService.js';
 import { createBackdatedOrder } from '../services/backdatedOrderService.js';
+import { createBackdatedTrip, BackdatedTripError } from '../services/backdatedTripService.js';
 import { applyBackdatedInventoryAdjustment } from '../services/backdatedAdjustmentService.js';
 import { preflightDispatch, preflightAddToTrip, PreflightError } from '../services/gst/gstPreflightService.js';
 import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
@@ -108,6 +110,30 @@ router.post('/backdated',
         invoice: result.invoice ? { id: result.invoice.id, invoiceNumber: result.invoice.invoiceNumber } : null,
       });
     } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// POST /api/orders/backdated-trip - Item 6 (2026-07-09) — bulk backdated
+// trip. One driver + one vehicle + one past date + N customer orders
+// (up to 50). See backdatedTripService.ts for semantics. Route lives
+// BEFORE /:id for the same reason as /backdated above.
+router.post('/backdated-trip',
+  requireRole('distributor_admin'),
+  validate(backdatedTripSchema),
+  auditLog('create_backdated_trip', 'order'),
+  async (req, res) => {
+    try {
+      const result = await createBackdatedTrip(
+        req.user!.distributorId!, req.user!.userId, req.body,
+      );
+      return sendCreated(res, result);
+    } catch (err: unknown) {
+      if (err instanceof BackdatedTripError) {
+        return sendError(res, err.message, err.statusCode);
+      }
       const e = err as ServiceError;
       return sendError(res, e.message, e.statusCode || 500);
     }
