@@ -128,7 +128,18 @@ export default function ReportsPage() {
     } finally { setDownloading(false); }
   }
 
-  const downloadCsv = () => downloadBlob(`/reports/${reportKey}`, { ...params, format: 'csv' }, `${reportKey}-${dateFrom}_${dateTo}.csv`);
+  const downloadCsv = () => downloadBlob(
+    `/reports/${reportKey}`,
+    {
+      ...params,
+      format: 'csv',
+      // Delivery Performance CSV export includes per-customer breakdown
+      // rows under each driver's cylinder rows for a full audit-trail
+      // export. The on-screen table stays clean via the row-type filter.
+      ...(reportKey === 'delivery-performance' ? { includeCustomers: 'true' } : {}),
+    },
+    `${reportKey}-${dateFrom}_${dateTo}.csv`,
+  );
   const downloadPdf = () => customerId && downloadBlob(`/customers/${customerId}/ledger/pdf`, { from: dateFrom, to: dateTo }, `statement-${dateFrom}_${dateTo}.pdf`);
 
   return (
@@ -568,10 +579,14 @@ function DeliveryPerformanceTable({
           {report.rows.map((row, i) => {
             const rowType = String(row.type ?? '');
             const isSummary = rowType === 'driver_summary';
+            const isCylRow = rowType === 'cylinder_row';
             const driverId = String(row.driverId ?? '');
             const expanded = expandedDrivers.has(driverId);
-            // Cylinder rows: only visible when their parent driver is expanded.
-            if (!isSummary && !expanded) return null;
+            // Top-level view: only render driver_summary and (when expanded)
+            // cylinder_row. Any customer_row rows returned in a shared cache
+            // from a CSV-flavoured response never leak into the table.
+            if (!isSummary && !isCylRow) return null;
+            if (isCylRow && !expanded) return null;
 
             return (
               <tr

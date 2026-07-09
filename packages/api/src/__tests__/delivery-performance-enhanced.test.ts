@@ -440,6 +440,80 @@ describe('Delivery Performance — multi-tenant + CSV', () => {
     expect(csv).toMatch(/TOTAL/);
   });
 
+  it('18a. cylinder_row saleAmount = sum(item.totalPrice) for that cylinder type', async () => {
+    if (!d1Cyl2) return;
+    const cust = await mkCustomer(D1, 'DPerf CylMoney');
+    const d = await mkDriver(D1, `9919300${String(createdDriverIds.length).padStart(3, '0')}`, 'cylmoney');
+    // Order with 2 cyl types: 4 × 2500 (cyl1) = 10000, 3 × 4000 (cyl2) = 12000
+    // Order total = 22000. Cyl1 sale = 10000, Cyl2 sale = 12000.
+    const order = await prisma.order.create({
+      data: {
+        distributorId: D1,
+        customerId: cust,
+        driverId: d.driverId,
+        orderNumber: `TEST-DPERF-CYLMONEY-${Date.now().toString(36)}`,
+        orderDate: testDate,
+        deliveryDate: testDate,
+        status: 'delivered',
+        orderType: 'delivery',
+        totalAmount: 22000,
+        items: {
+          create: [
+            { cylinderTypeId: d1Cyl, quantity: 4, deliveredQuantity: 4, emptiesCollected: 4, unitPrice: 2500, totalPrice: 10000 },
+            { cylinderTypeId: d1Cyl2, quantity: 3, deliveredQuantity: 3, emptiesCollected: 3, unitPrice: 4000, totalPrice: 12000 },
+          ],
+        },
+      },
+    });
+    createdOrderIds.push(order.id);
+    const inv = await prisma.invoice.create({
+      data: {
+        distributorId: D1, customerId: cust, orderId: order.id,
+        invoiceNumber: `TEST-INV-DPERF-CYLMONEY-${Date.now().toString(36)}`,
+        issueDate: testDate, dueDate: testDate, totalAmount: 22000, outstandingAmount: 22000, status: 'issued',
+        items: { create: [
+          { cylinderTypeId: d1Cyl, description: '19KG', quantity: 4, unitPrice: 2500, totalPrice: 10000 },
+          { cylinderTypeId: d1Cyl2, description: 'X', quantity: 3, unitPrice: 4000, totalPrice: 12000 },
+        ]},
+      },
+    });
+    createdInvoiceIds.push(inv.id);
+
+    const r = await deliveryPerformance(D1, filters({ driverId: d.driverId }));
+    const cyl1Row = r.rows.find((row) => row.type === 'cylinder_row' && row.cylinderTypeId === d1Cyl)!;
+    const cyl2Row = r.rows.find((row) => row.type === 'cylinder_row' && row.cylinderTypeId === d1Cyl2)!;
+    expect(cyl1Row.saleAmount).toBe(10000);
+    expect(cyl2Row.saleAmount).toBe(12000);
+    // Driver summary sale = order.totalAmount = 22000 (unchanged behaviour)
+    const summary = r.rows.find((row) => row.type === 'driver_summary')!;
+    expect(summary.saleAmount).toBe(22000);
+  });
+
+  it('18b. includeCustomers=true emits customer_row entries after cylinder rows', async () => {
+    const c1 = await mkCustomer(D1, 'DPerf IC A');
+    const c2 = await mkCustomer(D1, 'DPerf IC B');
+    const d = await mkDriver(D1, `9919400${String(createdDriverIds.length).padStart(3, '0')}`, 'inccust');
+    await mkOrderInvoice(D1, d.driverId, c1, d1Cyl, { fulls: 3, empties: 3, unitPrice: 3000 });
+    await mkOrderInvoice(D1, d.driverId, c2, d1Cyl, { fulls: 2, empties: 2, unitPrice: 3000 });
+
+    // Without includeCustomers: no customer_row entries.
+    const noInc = await deliveryPerformance(D1, filters({ driverId: d.driverId }));
+    expect(noInc.rows.some((row) => row.type === 'customer_row')).toBe(false);
+    // No Customer column.
+    expect(noInc.columns.some((c) => c.key === 'customerName')).toBe(false);
+
+    // With includeCustomers=true: customer_row entries appear.
+    const withInc = await deliveryPerformance(D1, filters({ driverId: d.driverId, includeCustomers: true }));
+    const custRows = withInc.rows.filter((row) => row.type === 'customer_row');
+    expect(custRows.length).toBe(2);
+    // Customer column added.
+    expect(withInc.columns.some((c) => c.key === 'customerName')).toBe(true);
+    // Customer names populated on customer_row.
+    const custNames = new Set(custRows.map((r) => r.customerName));
+    expect(custNames.has('DPerf IC A')).toBe(true);
+    expect(custNames.has('DPerf IC B')).toBe(true);
+  });
+
   it('18. groupBy=customer without driverId falls back to top-level report (not drilldown)', async () => {
     const cust = await mkCustomer(D1, 'DPerf NoDriver');
     const d = await mkDriver(D1, `9919200${String(createdDriverIds.length).padStart(3, '0')}`, 'nodrv');

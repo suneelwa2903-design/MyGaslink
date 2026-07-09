@@ -21,6 +21,9 @@ function parseFilters(q: Request['query']): ReportFilters {
       : q.groupBy === 'day' ? 'day'
       : q.groupBy === 'customer' ? 'customer'
       : undefined,
+    // INVESTIGATION-JUL09 followup — delivery-performance CSV export toggle
+    // for appending per-customer breakdown rows under each driver.
+    includeCustomers: q.includeCustomers === 'true' || q.includeCustomers === '1',
   };
 }
 

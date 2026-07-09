@@ -49,6 +49,11 @@ export interface ReportFilters {
   driverId?: string;
   vehicleId?: string;
   groupBy?: 'trip' | 'day' | 'customer';
+  // INVESTIGATION-JUL09 followup — delivery-performance CSV export request:
+  // when true, append per-customer breakdown rows under each driver's
+  // cylinder rows in the same rows array. Default false to keep the JSON
+  // top-level view compact.
+  includeCustomers?: boolean;
 }
 
 const num = (d: unknown): number => (d == null ? 0 : Number(d));
@@ -270,6 +275,8 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
       id: true,
       driverId: true,
       totalAmount: true,
+      customerId: true,
+      customer: { select: { customerName: true } },
       driver: { select: { driverName: true } },
       items: {
         select: {
@@ -277,6 +284,7 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
           quantity: true,
           deliveredQuantity: true,
           emptiesCollected: true,
+          totalPrice: true,
           cylinderType: { select: { typeName: true } },
         },
       },
@@ -313,8 +321,23 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
     collectedByDriver.set(did, (collectedByDriver.get(did) ?? 0) + num(a.allocatedAmount));
   }
 
-  // Step 3 — build per-driver + per-(driver,cyl) aggregates in one pass.
-  type CylAgg = { cylinderTypeId: string; cylinderTypeName: string; fullsDelivered: number; emptiesCollected: number };
+  // Step 3 — build per-driver + per-(driver,cyl) + optional per-customer
+  // aggregates in one pass. Per-cylinder saleAmount comes from item.totalPrice
+  // (sum of line prices for that cyl type) — never double-counts because each
+  // item belongs to exactly one cylinder type. Money-received breakdowns
+  // (collected/pending/overdue) stay at the driver level because they come
+  // from invoice.outstandingAmount which is order-level, not per-item.
+  type CylAgg = { cylinderTypeId: string; cylinderTypeName: string; fullsDelivered: number; emptiesCollected: number; saleAmount: number };
+  type CustCylAgg = { cylinderTypeId: string; cylinderTypeName: string; fullsDelivered: number; emptiesCollected: number; saleAmount: number };
+  type CustAgg = {
+    customerId: string;
+    customerName: string;
+    orderIds: Set<string>;
+    saleAmount: number;
+    amountPending: number;
+    amountOverdue: number;
+    byCyl: Map<string, CustCylAgg>;
+  };
   type DriverAgg = {
     driverId: string;
     driverName: string;
@@ -325,6 +348,7 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
     amountPending: number;
     amountOverdue: number;
     byCyl: Map<string, CylAgg>;
+    byCustomer: Map<string, CustAgg>;
   };
   const byDriver = new Map<string, DriverAgg>();
   for (const o of orders) {
@@ -341,6 +365,7 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
         amountPending: 0,
         amountOverdue: 0,
         byCyl: new Map<string, CylAgg>(),
+        byCustomer: new Map<string, CustAgg>(),
       } as DriverAgg);
 
     // Order-level money aggregation runs ONCE per order (Set guard).
@@ -356,28 +381,86 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
       }
     }
 
+    // Per-customer aggregation (only used when includeCustomers=true, but
+    // computed always — cheap in one pass).
+    const cust =
+      agg.byCustomer.get(o.customerId) ??
+      ({
+        customerId: o.customerId,
+        customerName: o.customer?.customerName ?? 'Unknown',
+        orderIds: new Set<string>(),
+        saleAmount: 0,
+        amountPending: 0,
+        amountOverdue: 0,
+        byCyl: new Map<string, CustCylAgg>(),
+      } as CustAgg);
+    if (!cust.orderIds.has(o.id)) {
+      cust.orderIds.add(o.id);
+      cust.saleAmount += num(o.totalAmount);
+      if (o.invoice) {
+        const outstanding = num(o.invoice.outstandingAmount);
+        cust.amountPending += outstanding;
+        if (o.invoice.dueDate && new Date(o.invoice.dueDate) < today && outstanding > 0) {
+          cust.amountOverdue += outstanding;
+        }
+      }
+    }
+
     // Item-level operational aggregation (per cylinder type).
     for (const it of o.items) {
       const cyl = it.cylinderTypeId ?? '__unknown__';
       const cylName = it.cylinderType?.typeName ?? '—';
       const fulls = it.deliveredQuantity ?? it.quantity ?? 0;
       const empties = it.emptiesCollected ?? 0;
+      const lineSale = num(it.totalPrice);
       agg.fullsDelivered += fulls;
       agg.emptiesCollected += empties;
 
       const cylAgg =
         agg.byCyl.get(cyl) ??
-        ({ cylinderTypeId: cyl, cylinderTypeName: cylName, fullsDelivered: 0, emptiesCollected: 0 } as CylAgg);
+        ({ cylinderTypeId: cyl, cylinderTypeName: cylName, fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0 } as CylAgg);
       cylAgg.fullsDelivered += fulls;
       cylAgg.emptiesCollected += empties;
+      cylAgg.saleAmount += lineSale;
       agg.byCyl.set(cyl, cylAgg);
+
+      const custCylAgg =
+        cust.byCyl.get(cyl) ??
+        ({ cylinderTypeId: cyl, cylinderTypeName: cylName, fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0 } as CustCylAgg);
+      custCylAgg.fullsDelivered += fulls;
+      custCylAgg.emptiesCollected += empties;
+      custCylAgg.saleAmount += lineSale;
+      cust.byCyl.set(cyl, custCylAgg);
     }
+    agg.byCustomer.set(o.customerId, cust);
 
     byDriver.set(did, agg);
   }
 
   // Step 4 — flatten into row array: driver_summary followed by its
-  // cylinder_row children, ordered by descending sale amount.
+  // cylinder_row children, followed (only when includeCustomers=true) by
+  // customer_row entries per customer this driver served.
+  //
+  // Per-customer money collected: allocated from paymentAllocations joined
+  // through invoice → order.customerId. Loaded once, keyed by customerId.
+  const collectedByCustomer = new Map<string, number>();
+  if (f.includeCustomers) {
+    const custAllocs = invoiceIds.length
+      ? await prisma.paymentAllocation.findMany({
+          where: { invoiceId: { in: invoiceIds } },
+          select: {
+            allocatedAmount: true,
+            invoice: { select: { order: { select: { customerId: true } } } },
+          },
+        })
+      : [];
+    for (const a of custAllocs) {
+      const cid = a.invoice.order?.customerId;
+      if (!cid) continue;
+      collectedByCustomer.set(cid, (collectedByCustomer.get(cid) ?? 0) + num(a.allocatedAmount));
+    }
+  }
+
   const rows: Record<string, unknown>[] = [];
   const drivers = [...byDriver.values()].sort((a, b) => b.saleAmount - a.saleAmount);
   for (const d of drivers) {
@@ -386,6 +469,7 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
       type: 'driver_summary',
       driverId: d.driverId,
       driverName: d.driverName,
+      customerName: '',
       cylinderTypeName: 'ALL',
       totalOrders: d.orderIds.size,
       fullsDelivered: d.fullsDelivered,
@@ -400,16 +484,48 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
         type: 'cylinder_row',
         driverId: d.driverId,
         driverName: d.driverName,
+        customerName: '',
         cylinderTypeId: c.cylinderTypeId,
         cylinderTypeName: c.cylinderTypeName,
         fullsDelivered: c.fullsDelivered,
         emptiesCollected: c.emptiesCollected,
-        // money left blank on cylinder breakdown to avoid double-count confusion
-        saleAmount: '',
+        // Per-cylinder Sale Amount comes from sum(item.totalPrice) — clean
+        // per-item attribution (each item belongs to exactly one cyl type).
+        saleAmount: +c.saleAmount.toFixed(2),
+        // Money-received breakdown stays at driver level. Cylinder-level
+        // collected/pending/overdue would require proportional split of
+        // invoice.outstandingAmount and can't be honestly attributed per item.
         amountCollected: '',
         amountPending: '',
         amountOverdue: '',
       });
+    }
+
+    if (f.includeCustomers) {
+      const custs = [...d.byCustomer.values()].sort((a, b) => b.saleAmount - a.saleAmount);
+      for (const cust of custs) {
+        const custCollected = collectedByCustomer.get(cust.customerId) ?? 0;
+        const cylList = [...cust.byCyl.values()].sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName));
+        cylList.forEach((cyl, idx) => {
+          rows.push({
+            type: 'customer_row',
+            driverId: d.driverId,
+            driverName: d.driverName,
+            customerId: cust.customerId,
+            customerName: cust.customerName,
+            cylinderTypeId: cyl.cylinderTypeId,
+            cylinderTypeName: cyl.cylinderTypeName,
+            fullsDelivered: cyl.fullsDelivered,
+            emptiesCollected: cyl.emptiesCollected,
+            saleAmount: +cyl.saleAmount.toFixed(2),
+            // Money-received breakdown lives only on the first cylinder row
+            // per customer to keep CSV sums honest.
+            amountCollected: idx === 0 ? +custCollected.toFixed(2) : '',
+            amountPending: idx === 0 ? +cust.amountPending.toFixed(2) : '',
+            amountOverdue: idx === 0 ? +cust.amountOverdue.toFixed(2) : '',
+          });
+        });
+      }
     }
   }
 
@@ -440,20 +556,24 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
     { totalOrders: 0, fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0, amountCollected: 0, amountPending: 0, amountOverdue: 0 },
   );
 
+  const columns: ReportColumn[] = [
+    { key: 'driverName', label: 'Driver' },
+    ...(f.includeCustomers ? [{ key: 'customerName', label: 'Customer' }] : []),
+    { key: 'cylinderTypeName', label: 'Cylinder Type' },
+    { key: 'fullsDelivered', label: 'Fulls Delivered' },
+    { key: 'emptiesCollected', label: 'Empties Collected' },
+    { key: 'saleAmount', label: 'Sale Amount', money: true },
+    { key: 'amountCollected', label: 'Collected', money: true },
+    { key: 'amountPending', label: 'Pending', money: true },
+    { key: 'amountOverdue', label: 'Overdue', money: true },
+  ];
+
   return {
-    columns: [
-      { key: 'driverName', label: 'Driver' },
-      { key: 'cylinderTypeName', label: 'Cylinder Type' },
-      { key: 'fullsDelivered', label: 'Fulls Delivered' },
-      { key: 'emptiesCollected', label: 'Empties Collected' },
-      { key: 'saleAmount', label: 'Sale Amount', money: true },
-      { key: 'amountCollected', label: 'Collected', money: true },
-      { key: 'amountPending', label: 'Pending', money: true },
-      { key: 'amountOverdue', label: 'Overdue', money: true },
-    ],
+    columns,
     rows,
     totals: {
       driverName: 'TOTAL',
+      ...(f.includeCustomers ? { customerName: '—' } : {}),
       cylinderTypeName: '—',
       fullsDelivered: totals.fullsDelivered,
       emptiesCollected: totals.emptiesCollected,
