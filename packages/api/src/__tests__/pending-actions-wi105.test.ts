@@ -92,13 +92,20 @@ describe('WI-105 PART 2 — createPendingAction deduplicates open actions', () =
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('WI-105 PART 3 — resolve runs NIC pre-flight for NIC-bound actions', () => {
+  // INVESTIGATION-JUL09: use a fresh entityId per seed so the partial unique
+  // index on (distributor_id, entity_id, action_type) WHERE status='open'
+  // doesn't reject the second/third seed. The prior tests in PART 2 leave
+  // open rows for ENTITY_ID; PART 3 doesn't care about their state so use
+  // isolated entities.
+  let seedCounter = 0;
   async function seedAction(actionType: string) {
+    seedCounter += 1;
     return prisma.pendingAction.create({
       data: {
         distributorId,
         module: 'gst_compliance',
         entityType: 'invoice',
-        entityId: ENTITY_ID,
+        entityId: `${ENTITY_ID}-P3-${seedCounter}`,
         actionType,
         description: 'seed',
         severity: 'high',

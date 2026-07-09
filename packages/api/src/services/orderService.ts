@@ -1189,7 +1189,34 @@ export async function confirmDelivery(
       // instead of generating fresh compliance docs from scratch.
       // Otherwise fall back to the original post-delivery GST trigger.
       const hasLiveGstDoc = invoice.irnStatus === 'success' || invoice.ewbStatus === 'active';
-      if (isModified && hasLiveGstDoc) {
+      // Fast-path: if preflight already produced full B2B compliance
+      // (IRN success + EWB active) AND the delivery is unmodified, skip the
+      // duplicate NIC round-trip that would otherwise fire a 2150 error
+      // and raise a spurious IRN_GENERATION pending action. Auto-resolve
+      // any stale open PAs (usually preflight-era EWB partial-failure rows
+      // that were never cleared) since the invoice is now compliant.
+      // B2C stays on the processInvoiceGst path (irnStatus='not_attempted'
+      // by design — no IRN needed) — processInvoiceGst handles B2C gracefully.
+      const fullyCompliant =
+        invoice.irnStatus === 'success' && invoice.ewbStatus === 'active';
+      if (fullyCompliant && !isModified) {
+        prisma.pendingAction.updateMany({
+          where: {
+            distributorId,
+            entityId: invoice.id,
+            actionType: { in: ['IRN_GENERATION', 'EWB_GENERATION'] },
+            status: 'open',
+          },
+          data: {
+            status: 'resolved',
+            resolvedAt: new Date(),
+            resolvedBy: 'system',
+            resolutionNotes: 'Auto-resolved: IRN+EWB already active at delivery confirmation',
+          },
+        }).catch((err) => {
+          logger.warn('Auto-resolve stale PAs failed (non-blocking)', { orderId, error: err.message });
+        });
+      } else if (isModified && hasLiveGstDoc) {
         const { reissueForDeliveryMismatch } = await import('./gst/gstReissueService.js');
         reissueForDeliveryMismatch({
           invoiceId: invoice.id,

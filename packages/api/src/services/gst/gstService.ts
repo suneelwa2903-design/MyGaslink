@@ -1645,9 +1645,11 @@ export async function createPendingAction(
       customerName: invoice?.customer?.customerName,
     });
 
-    // WI-105 PART 2 — dedup. No DB unique constraint exists on
-    // (distributorId, entityId, actionType, status), so findFirst the OPEN row
-    // and refresh it instead of piling up a new row on every retry.
+    // WI-105 PART 2 — dedup. Partial unique index enforces one open row
+    // per (distributorId, entityId, actionType) at the DB level (migration
+    // 20260709000000_add_pending_actions_open_unique_index). findFirst-then-update
+    // handles the common case; the P2002 catch below handles the race where
+    // two concurrent callers both miss the findFirst and both create.
     const existing = await prisma.pendingAction.findFirst({
       where: { distributorId, entityId: invoiceId, actionType, status: 'open' },
       select: { id: true },
@@ -1669,25 +1671,51 @@ export async function createPendingAction(
     // and per-order EWBs already succeeded. Record it for audit but create it
     // pre-resolved so it never surfaces as an open action item to the distributor.
     const nonBlocking = actionType === 'CONSOLIDATED_EWB_FAILED';
-    const row = await prisma.pendingAction.create({
-      data: {
-        distributorId,
-        module: 'gst_compliance',
-        entityId: invoiceId,
-        entityType: 'invoice',
-        actionType,
-        description: description.substring(0, 500),
-        errorCode,
-        errorMessage: errorMessage.substring(0, 500),
-        severity,
-        status: nonBlocking ? 'resolved' : 'open',
-        ...(nonBlocking
-          ? { resolutionNotes: 'Non-blocking — consolidated EWB is optional.', resolvedAt: new Date(), resolvedBy: 'system' }
-          : {}),
-      },
-      select: { id: true },
-    });
-    return row;
+    try {
+      const row = await prisma.pendingAction.create({
+        data: {
+          distributorId,
+          module: 'gst_compliance',
+          entityId: invoiceId,
+          entityType: 'invoice',
+          actionType,
+          description: description.substring(0, 500),
+          errorCode,
+          errorMessage: errorMessage.substring(0, 500),
+          severity,
+          status: nonBlocking ? 'resolved' : 'open',
+          ...(nonBlocking
+            ? { resolutionNotes: 'Non-blocking — consolidated EWB is optional.', resolvedAt: new Date(), resolvedBy: 'system' }
+            : {}),
+        },
+        select: { id: true },
+      });
+      return row;
+    } catch (createErr: unknown) {
+      // P2002 = unique constraint violation. Race with a concurrent caller:
+      // both findFirst-missed, both raced to create, the other side won.
+      // Re-lookup the winner's row and update it in place (same effect as
+      // the findFirst-then-update branch above).
+      const code = (createErr as { code?: string })?.code;
+      if (code === 'P2002' && !nonBlocking) {
+        const winner = await prisma.pendingAction.findFirst({
+          where: { distributorId, entityId: invoiceId, actionType, status: 'open' },
+          select: { id: true },
+        });
+        if (winner) {
+          await prisma.pendingAction.update({
+            where: { id: winner.id },
+            data: {
+              description: description.substring(0, 500),
+              errorCode,
+              errorMessage: errorMessage.substring(0, 500),
+            },
+          });
+          return winner;
+        }
+      }
+      throw createErr;
+    }
   } catch (err) {
     logger.error('Failed to create pending action', { distributorId, invoiceId, actionType, err });
     return null;
