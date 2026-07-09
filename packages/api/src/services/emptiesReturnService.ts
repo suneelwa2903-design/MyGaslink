@@ -34,7 +34,7 @@ export async function recordEmptiesReturn(
   distributorId: string,
   userId: string,
   data: EmptiesReturnInput,
-): Promise<{ eventsWritten: number; customerBalanceUpdated: boolean; returnDate: string }> {
+): Promise<{ eventsWritten: number; customerBalanceUpdated: boolean; ledgerEntryWritten: boolean; returnDate: string }> {
   const customer = await prisma.customer.findFirst({
     where: { id: data.customerId, distributorId, deletedAt: null },
     select: { id: true, customerName: true },
@@ -105,6 +105,34 @@ export async function recordEmptiesReturn(
         withCustomerQty: { decrement: data.quantity },
       },
     });
+
+    // Q3 (2026-07-09) — write a stock-only ledger row so the customer
+    // statement / ledger view surfaces the return. amountDelta MUST be
+    // 0 (no money moved) and invoiceId MUST be null (setting it would
+    // make getCustomerLedger's pendingEmptiesPerType counter
+    // double-count against that invoice's items — see the impact
+    // analysis in docs/INVESTIGATION-JUL09-B.md Q3 result). The
+    // narration format is fixed so the statement PDF renders a stable
+    // sentence like "Returned 50× 19 KG empties" — do not translate
+    // it here, the PDF service reads it verbatim.
+    // Narration format is fixed at "Empties: {qty}× {cylTypeName}" (18
+    // chars for typical inputs like "Empties: 50× 19 KG"). Fits the PDF
+    // Narration column cap (20 chars). See customerLedgerPdfService.ts
+    // Q3 column-width comment for the design constraint.
+    const narration = `Empties: ${data.quantity}× ${cylinderType.typeName}`;
+    await tx.customerLedgerEntry.create({
+      data: {
+        distributorId,
+        customerId: customer.id,
+        entryType: 'empties_return',
+        referenceId: customer.id,
+        invoiceId: null,
+        amountDelta: 0,
+        narration,
+        entryDate: returnDate,
+        createdBy: userId,
+      },
+    });
   });
 
   // Cascade — outside the tx so events are committed before recomputing.
@@ -113,6 +141,7 @@ export async function recordEmptiesReturn(
   return {
     eventsWritten: 2,
     customerBalanceUpdated: true,
+    ledgerEntryWritten: true,
     returnDate: data.returnDate,
   };
 }

@@ -312,6 +312,12 @@ enum LedgerEntryType {
   debit_note
   payment_entry @map("payment")
   adjustment
+  // Q3 (2026-07-09) — stock-only ledger row for a customer empties
+  // return. amountDelta always 0, invoiceId always null. Present so
+  // the customer statement / ledger view can surface stock movement
+  // that would otherwise be invisible outside the daily inventory
+  // summary. See docs/INVESTIGATION-JUL09-B.md item 7 follow-up.
+  empties_return
 }
 
 enum ModificationType {

@@ -56,6 +56,12 @@ afterAll(async () => {
   await prisma.inventoryEvent.deleteMany({
     where: { referenceType: 'empties_return', notes: { contains: TEST_NOTES_MARKER } },
   });
+  // Q3 (2026-07-09) — clean up the new empties_return ledger entries.
+  // referenceId is the customerId so we can filter by entryType alone
+  // and let the notes marker come from the event side.
+  await prisma.customerLedgerEntry.deleteMany({
+    where: { entryType: 'empties_return', narration: { startsWith: 'Empties: ' } },
+  });
 });
 
 async function makeCustomer(name: string) {
@@ -155,8 +161,15 @@ describe('Item 7 — empties return', () => {
     expect(balance.withCustomerQty).toBe(6);
   });
 
-  it('T4 — no CustomerLedgerEntry is written (stock only, no money)', async () => {
-    const customer = await makeCustomer('T4-noledger');
+  it('T4 — a stock-only CustomerLedgerEntry IS written (Q3 update, was zero pre-fix)', async () => {
+    // Q3 (2026-07-09) — the empties-return flow now writes a
+    // pure-stock ledger row so the customer's ledger surfaces the
+    // event. All money fields stay 0/null so the ledger's balance
+    // math and money-only readers (Tally, computeCustomerOverdue,
+    // payment allocation) remain unaffected. Anti-pattern-style
+    // invariants pinned here — regressions on any of these would
+    // silently break the accounting story we promised users.
+    const customer = await makeCustomer('T4-ledger');
     const cyl = seedData.cylinderTypes[0];
     await request(app)
       .post('/api/inventory/empties-return')
@@ -164,15 +177,79 @@ describe('Item 7 — empties return', () => {
       .send({
         customerId: customer.id,
         cylinderTypeId: cyl.id,
-        quantity: 1,
+        quantity: 7,
         returnDate: today(),
         notes: TEST_NOTES_MARKER,
       })
       .expect(201);
-    const ledger = await prisma.customerLedgerEntry.count({
+    const entries = await prisma.customerLedgerEntry.findMany({
       where: { customerId: customer.id },
     });
-    expect(ledger).toBe(0);
+    expect(entries).toHaveLength(1);
+    const e = entries[0];
+    expect(e.entryType).toBe('empties_return');
+    expect(Number(e.amountDelta)).toBe(0);
+    expect(e.invoiceId).toBeNull();
+    // Narration must match the shape the PDF widened column caps for.
+    expect(e.narration).toBe(`Empties: 7× ${cyl.typeName}`);
+  });
+
+  it('T4a — writer NEVER sets invoiceId on empties_return rows', async () => {
+    // Companion to T4: even under stress the writer must not attach an
+    // invoiceId — otherwise getCustomerLedger's pendingEmptiesPerType
+    // counter would double-count against that invoice. Impact analysis
+    // in docs/INVESTIGATION-JUL09-B.md Q3 result.
+    const customer = await makeCustomer('T4a-noinvoice');
+    const cyl = seedData.cylinderTypes[0];
+    for (let i = 0; i < 3; i++) {
+      await request(app)
+        .post('/api/inventory/empties-return')
+        .set(auth(adminToken))
+        .send({
+          customerId: customer.id,
+          cylinderTypeId: cyl.id,
+          quantity: i + 1,
+          returnDate: today(),
+          notes: TEST_NOTES_MARKER,
+        })
+        .expect(201);
+    }
+    const withInvoiceId = await prisma.customerLedgerEntry.count({
+      where: { customerId: customer.id, entryType: 'empties_return', invoiceId: { not: null } },
+    });
+    expect(withInvoiceId).toBe(0);
+  });
+
+  it('T4b — getCustomerLedger emits the empties_return row + running balance stays put', async () => {
+    // Q3 wire-shape guard: the row must reach the ledger response with
+    // kind='empties_return' AND the balance must not move. If a future
+    // refactor accidentally routes empties_return through the
+    // adjustment case, the balance would change and this test would
+    // catch it.
+    const customer = await makeCustomer('T4b-render');
+    const cyl = seedData.cylinderTypes[0];
+    await request(app)
+      .post('/api/inventory/empties-return')
+      .set(auth(adminToken))
+      .send({
+        customerId: customer.id,
+        cylinderTypeId: cyl.id,
+        quantity: 4,
+        returnDate: today(),
+        notes: TEST_NOTES_MARKER,
+      })
+      .expect(201);
+    const { getCustomerLedger } = await import('../services/paymentService.js');
+    const ledger = await getCustomerLedger('dist-001', customer.id);
+    const row = ledger.rows.find((r) => r.narration?.startsWith('Empties: '));
+    expect(row).toBeDefined();
+    expect(row!.kind).toBe('empties_return');
+    // Running totals shouldn't move for a stock-only row — no invoices,
+    // no payments, no due, no overdue on this customer.
+    expect(Number(ledger.summary.totalAmount)).toBe(0);
+    expect(Number(ledger.summary.receivedAmount)).toBe(0);
+    expect(Number(ledger.summary.dueAmount)).toBe(0);
+    expect(Number(ledger.summary.overdueAmount)).toBe(0);
   });
 
   it('T5 — past return date (30 days ago) is accepted', async () => {

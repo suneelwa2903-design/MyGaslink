@@ -333,6 +333,11 @@ export enum LedgerEntryType {
   DEBIT_NOTE = 'debit_note',
   PAYMENT = 'payment',
   ADJUSTMENT = 'adjustment',
+  // Q3 (2026-07-09) — stock-only ledger row for a customer empties
+  // return. amountDelta always 0, invoiceId always null. See
+  // docs/INVESTIGATION-JUL09-B.md item 7 follow-up + the Prisma enum
+  // comment for the design constraints.
+  EMPTIES_RETURN = 'empties_return',
 }
 
 // ─── Approval Workflow ───────────────────────────────────────────────────────

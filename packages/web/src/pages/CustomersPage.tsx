@@ -1122,6 +1122,10 @@ const LEDGER_TYPE_BADGE: Record<string, { variant: 'info' | 'success' | 'warning
   credit_note: { variant: 'warning', label: 'Credit Note' },
   debit_note: { variant: 'danger', label: 'Debit Note' },
   adjustment: { variant: 'neutral', label: 'Adjustment' },
+  // Q3 (2026-07-09) — pure stock movement row. Neutral variant + concise
+  // label ("Empties Return") so it doesn't read as money movement in the
+  // ledger table.
+  empties_return: { variant: 'neutral', label: 'Empties Return' },
 };
 
 // Fix B (2026-06-11): per-customer cylinder balances view.

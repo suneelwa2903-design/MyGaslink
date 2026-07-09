@@ -318,8 +318,13 @@ export const backdatedTripSchema = z.object({
       return date.startsWith(currentYM);
     }, 'Trip date must be within the current calendar month')
     .refine((date) => date < localTodayISO(), 'Trip date must be before today'),
-  driverId: uuid,
-  vehicleId: uuid,
+  // Q1 merge (2026-07-09) — driver + vehicle are optional so the single-
+  // customer "On-Demand" flow can go through this same endpoint without
+  // a driver/vehicle. Multi-customer trips still typically supply them
+  // (the modal enforces required in the "Multiple customers" mode) but
+  // the schema no longer rejects a driver-less single-customer entry.
+  driverId: uuid.optional(),
+  vehicleId: uuid.optional(),
   orders: z.array(z.object({
     customerId: uuid,
     items: z.array(z.object({
@@ -335,7 +340,18 @@ export const backdatedTripSchema = z.object({
     }).optional(),
   })).min(1, 'At least one order is required').max(50, 'Cannot create more than 50 orders in one trip'),
   specialInstructions: z.string().max(500).optional(),
-});
+  // Q2 (2026-07-09) — inventory auto-apply. When true, the service will
+  // run the same stock-adjustment step the operator would otherwise do
+  // manually on the On-Demand Adjustments tab (writes InventoryEvents,
+  // updates CustomerInventoryBalance, cascades summary recalc from the
+  // trip date forward). Default false in the API so old clients don't
+  // suddenly start writing stock without opting in — the web modal
+  // defaults it ON via the checkbox.
+  applyInventoryAdjustment: z.boolean().optional(),
+}).refine(
+  (data) => !(data.vehicleId && !data.driverId),
+  { message: 'Driver is required when a vehicle is provided', path: ['driverId'] },
+);
 
 export type BackdatedTripInput = z.infer<typeof backdatedTripSchema>;
 

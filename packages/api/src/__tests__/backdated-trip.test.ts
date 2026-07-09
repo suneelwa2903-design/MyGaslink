@@ -167,7 +167,7 @@ describe('Item 6 — backdated driver trip service', () => {
     });
     for (const o of result.orders) trackedOrderIds.push(o.orderId);
     for (const o of result.orders) if (o.invoiceId) trackedInvoiceIds.push(o.invoiceId);
-    trackedDvaIds.push(result.dvaId);
+    if (result.dvaId) trackedDvaIds.push(result.dvaId);
     expect(result.ordersCreated).toBe(3);
     expect(result.invoicesCreated).toBe(3);
     expect(result.orders.map((o) => o.customerId).sort())
@@ -186,7 +186,7 @@ describe('Item 6 — backdated driver trip service', () => {
     });
     trackedOrderIds.push(result.orders[0].orderId);
     if (result.orders[0].invoiceId) trackedInvoiceIds.push(result.orders[0].invoiceId);
-    trackedDvaIds.push(result.dvaId);
+    if (result.dvaId) trackedDvaIds.push(result.dvaId);
     const order = await prisma.order.findUniqueOrThrow({ where: { id: result.orders[0].orderId } });
     expect(order.status).toBe('delivered');
     expect(order.isBackdated).toBe(true);
@@ -207,7 +207,7 @@ describe('Item 6 — backdated driver trip service', () => {
     });
     trackedOrderIds.push(result.orders[0].orderId);
     if (result.orders[0].invoiceId) trackedInvoiceIds.push(result.orders[0].invoiceId);
-    trackedDvaIds.push(result.dvaId);
+    if (result.dvaId) trackedDvaIds.push(result.dvaId);
     const o = await prisma.order.findUniqueOrThrow({ where: { id: result.orders[0].orderId } });
     expect(o.deliveredAt?.toISOString().slice(0, 10)).toBe(issueDate);
     expect(o.orderDate.toISOString().slice(0, 10)).toBe(issueDate);
@@ -239,8 +239,9 @@ describe('Item 6 — backdated driver trip service', () => {
     });
     trackedOrderIds.push(result.orders[0].orderId);
     if (result.orders[0].invoiceId) trackedInvoiceIds.push(result.orders[0].invoiceId);
-    trackedDvaIds.push(result.dvaId);
-    const dva = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: result.dvaId } });
+    expect(result.dvaId).not.toBeNull();
+    trackedDvaIds.push(result.dvaId!);
+    const dva = await prisma.driverVehicleAssignment.findUniqueOrThrow({ where: { id: result.dvaId! } });
     expect(dva.status).toBe('reconciled');
     expect(dva.isReconciled).toBe(true);
   });
@@ -260,7 +261,7 @@ describe('Item 6 — backdated driver trip service', () => {
     const invoiceId = result.orders[0].invoiceId;
     expect(invoiceId).toBeTruthy();
     trackedInvoiceIds.push(invoiceId!);
-    trackedDvaIds.push(result.dvaId);
+    if (result.dvaId) trackedDvaIds.push(result.dvaId);
     const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId! } });
     expect(inv.issueDate.toISOString().slice(0, 10)).toBe(issueDate);
   });
@@ -282,7 +283,7 @@ describe('Item 6 — backdated driver trip service', () => {
     });
     for (const o of result.orders) trackedOrderIds.push(o.orderId);
     for (const o of result.orders) if (o.invoiceId) trackedInvoiceIds.push(o.invoiceId);
-    trackedDvaIds.push(result.dvaId);
+    if (result.dvaId) trackedDvaIds.push(result.dvaId);
     // Give the fire-and-forget microtask a beat to run.
     await new Promise((r) => setTimeout(r, 50));
     expect(processGstSpy).toHaveBeenCalledTimes(2);
@@ -304,7 +305,7 @@ describe('Item 6 — backdated driver trip service', () => {
     });
     trackedOrderIds.push(result.orders[0].orderId);
     if (result.orders[0].invoiceId) trackedInvoiceIds.push(result.orders[0].invoiceId);
-    trackedDvaIds.push(result.dvaId);
+    if (result.dvaId) trackedDvaIds.push(result.dvaId);
 
     const payments = await prisma.paymentTransaction.findMany({
       where: { customerId: c1.id, referenceNumber: 'TRIP-PAY-1' },
@@ -472,7 +473,7 @@ describe('Item 6 — backdated driver trip service', () => {
     });
     trackedOrderIds.push(result.orders[0].orderId);
     if (result.orders[0].invoiceId) trackedInvoiceIds.push(result.orders[0].invoiceId);
-    trackedDvaIds.push(result.dvaId);
+    if (result.dvaId) trackedDvaIds.push(result.dvaId);
     const after = await prisma.inventoryEvent.count({ where: { distributorId: D1 } });
     expect(after).toBe(before);
   });

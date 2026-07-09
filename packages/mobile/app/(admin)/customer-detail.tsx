@@ -592,6 +592,11 @@ export default function AdminCustomerDetailScreen() {
 
   const renderLedgerRow = ({ item }: { item: LedgerEntry }) => {
     const positive = item.amountDelta >= 0;
+    // Q3 (2026-07-09) — stock-only empties return. amountDelta = 0; render
+    // amount as "—" in a neutral colour and a "Empties" label so the row
+    // doesn't misread as "+₹0.00" in red (the `positive = >= 0` branch
+    // would otherwise flag it as a debit).
+    const isEmptiesReturn = (item.entryType as string) === 'empties_return';
     // Phase 8 (2026-06-12): opening-balance rows get muted/italic
     // styling + the "Opening Balance b/f" label (matches the PDF
     // statement convention) so they're visually distinct from
@@ -643,22 +648,34 @@ export default function AdminCustomerDetailScreen() {
         <View style={styles.rowBetween}>
           <View style={{ flex: 1, paddingRight: 8 }}>
             <Text style={[styles.cardTitle, { color: C.text }]}>
-              {item.entryType.replace(/_/g, ' ')}
+              {isEmptiesReturn ? 'Empties Return' : item.entryType.replace(/_/g, ' ')}
             </Text>
             <Text style={[styles.metaLine, { color: C.textMuted }]}>
               {new Date(item.entryDate).toLocaleDateString('en-IN')}
             </Text>
           </View>
-          <Text
-            style={{
-              fontSize: 15,
-              fontWeight: '700',
-              color: positive ? '#dc2626' : '#10b981',
-            }}
-          >
-            {positive ? '+' : ''}
-            {formatINR(item.amountDelta)}
-          </Text>
+          {isEmptiesReturn ? (
+            <Text
+              style={{
+                fontSize: 15,
+                fontWeight: '700',
+                color: C.textMuted,
+              }}
+            >
+              —
+            </Text>
+          ) : (
+            <Text
+              style={{
+                fontSize: 15,
+                fontWeight: '700',
+                color: positive ? '#dc2626' : '#10b981',
+              }}
+            >
+              {positive ? '+' : ''}
+              {formatINR(item.amountDelta)}
+            </Text>
+          )}
         </View>
         {item.narration ? (
           <Text

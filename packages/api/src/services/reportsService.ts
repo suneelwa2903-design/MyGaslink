@@ -1189,13 +1189,18 @@ export async function customerStatement(distributorId: string, f: ReportFilters)
     if (!inRange) continue;
     const isOB = !!(e.invoiceId && obIds.has(e.invoiceId));
     if (isOB) continue; // already folded into b/f above
+    // Q3 (2026-07-09) — stock-only empties-return row. amountDelta is 0
+    // so `running` is unchanged. We render debit/credit as empty strings
+    // (not 0) and label the type "Empties Return" so an accountant reading
+    // this doesn't parse it as a real money movement.
+    const isEmptiesReturn = e.entryType === 'empties_return';
     running += num(e.amountDelta);
     rows.push({
       date: dayKey(new Date(e.entryDate)),
-      type: e.entryType.replace(/_entry$/, ''),
+      type: isEmptiesReturn ? 'Empties Return' : e.entryType.replace(/_entry$/, ''),
       narration: e.narration ?? '',
-      debit: num(e.amountDelta) > 0 ? num(e.amountDelta) : 0,
-      credit: num(e.amountDelta) < 0 ? -num(e.amountDelta) : 0,
+      debit: isEmptiesReturn ? '' : (num(e.amountDelta) > 0 ? num(e.amountDelta) : 0),
+      credit: isEmptiesReturn ? '' : (num(e.amountDelta) < 0 ? -num(e.amountDelta) : 0),
       balance: +running.toFixed(2),
     });
   }

@@ -203,16 +203,16 @@ export default function OrdersPage() {
                 ReturnsOrderModal component + state stay in-file so
                 historical returns_only orders keep rendering; new returns
                 should be entered via Inventory. */}
-            {role === UserRole.DISTRIBUTOR_ADMIN && (
-              <Button variant="secondary" onClick={() => setBackdatedOpen(true)}>
-                <HiOutlinePlus className="h-4 w-4" />
-                On-Demand Order
-              </Button>
-            )}
+            {/* Q1 merge (2026-07-09) — single entry-point for both the
+                single-customer "On-Demand" and the multi-customer
+                "Backdated Trip" flows. The modal has a toggle inside for
+                single vs multiple customers; the old BackdatedOrderModal
+                trigger is retired. The BackdatedOrderModal component itself
+                stays in the file (dead code) in case we need to revert. */}
             {role === UserRole.DISTRIBUTOR_ADMIN && (
               <Button variant="secondary" onClick={() => setBackdatedTripOpen(true)}>
                 <HiOutlinePlus className="h-4 w-4" />
-                Backdated Trip
+                Backdated / On-Demand
               </Button>
             )}
             <Button onClick={() => setCreateOpen(true)}>
@@ -2702,14 +2702,29 @@ function BackdatedTripModal({
   const maxDateISO = localDateISO(maxDateObj);
   const noValidDates = maxDateISO < monthStart;
 
+  // Q1 merge (2026-07-09) — Multiple customers toggle.
+  //   OFF (default) → single-customer On-Demand mode. driver/vehicle
+  //     stay optional (schema is optional; UI drops the required attr).
+  //     Add Customer button hidden.
+  //   ON → multi-customer Backdated Trip mode. driver + vehicle
+  //     required by the modal (client-side); backend still accepts
+  //     driver-less trips but the UI enforces the "trip = someone
+  //     drove somewhere" convention.
+  const [multiCustomer, setMultiCustomer] = useState(false);
+  // Q2 (2026-07-09) — inventory auto-apply toggle. Default ON so a
+  // one-submit records the delivery AND updates depot stock. Turn off
+  // if you want to review the orders on the On-Demand Adjustments tab
+  // before letting them touch inventory.
+  const [applyInventory, setApplyInventory] = useState(true);
+
   const {
     register, handleSubmit, control, watch, setValue, formState: { errors },
   } = useForm<BackdatedTripInput>({
     resolver: zodResolver(backdatedTripSchema),
     defaultValues: {
       issueDate: maxDateISO,
-      driverId: '',
-      vehicleId: '',
+      driverId: undefined,
+      vehicleId: undefined,
       orders: [{
         customerId: '',
         items: [{ cylinderTypeId: '', quantity: 1, emptiesCollected: 0 }],
@@ -2745,8 +2760,12 @@ function BackdatedTripModal({
 
   const onSubmit = handleSubmit((data) => {
     // Strip empty poNumbers and normalise empty payment blocks.
+    // Empty driver/vehicle strings become undefined (single-customer
+    // On-Demand mode may leave them blank).
     const cleaned: BackdatedTripInput = {
       ...data,
+      driverId: data.driverId && data.driverId.length > 0 ? data.driverId : undefined,
+      vehicleId: data.vehicleId && data.vehicleId.length > 0 ? data.vehicleId : undefined,
       orders: data.orders.map((o) => ({
         customerId: o.customerId,
         items: o.items,
@@ -2754,12 +2773,13 @@ function BackdatedTripModal({
         payment: o.payment && o.payment.amount > 0 ? o.payment : undefined,
       })),
       specialInstructions: data.specialInstructions?.trim() || undefined,
+      applyInventoryAdjustment: applyInventory,
     };
     mutation.mutate(cleaned);
   });
 
   return (
-    <Modal open={open} onClose={onClose} title="Backdated Trip — Bulk Historical Delivery" size="xl">
+    <Modal open={open} onClose={onClose} title="Backdated / On-Demand Delivery" size="xl">
       {noValidDates && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200">
           It&apos;s the 1st of the month — no valid backdated slot within the current
@@ -2768,10 +2788,40 @@ function BackdatedTripModal({
         </div>
       )}
       <form onSubmit={onSubmit} className="space-y-4">
+        {/* Q1 (2026-07-09) — mode toggle. Trims down from 3 top-level
+            buttons on the Orders page. Single-customer keeps driver/
+            vehicle optional (typical for a paper-catch-up); multi-
+            customer requires them (a trip needs someone driving). */}
+        <label className="flex items-center gap-2 cursor-pointer select-none rounded-lg border border-surface-200 dark:border-surface-700 p-3 bg-surface-50 dark:bg-surface-900">
+          <input
+            type="checkbox"
+            checked={multiCustomer}
+            onChange={(e) => {
+              setMultiCustomer(e.target.checked);
+              // Turning OFF trims to a single card so the operator
+              // doesn't submit stale rows they can't see.
+              if (!e.target.checked && orderFields.length > 1) {
+                for (let i = orderFields.length - 1; i > 0; i--) removeOrder(i);
+              }
+            }}
+            className="rounded border-surface-300 dark:border-surface-600"
+          />
+          <div className="flex-1">
+            <div className="text-sm font-medium text-surface-800 dark:text-surface-200">
+              Multiple customers (record a whole trip)
+            </div>
+            <div className="text-xs text-surface-500 dark:text-surface-400">
+              {multiCustomer
+                ? 'Trip mode — driver and vehicle required. Add up to 50 customer deliveries below.'
+                : 'On-demand mode — one customer, driver and vehicle optional. Tick to enter multiple customers for a full backdated trip.'}
+            </div>
+          </div>
+        </label>
+
         {/* Trip-level fields */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Input
-            label="Trip Date"
+            label="Delivery Date"
             type="date"
             min={monthStart}
             max={maxDateISO}
@@ -2781,18 +2831,18 @@ function BackdatedTripModal({
             {...register('issueDate')}
           />
           <Select
-            label="Driver"
+            label={multiCustomer ? 'Driver' : 'Driver (optional)'}
             options={driverOptions}
             placeholder="Select driver"
-            required
+            required={multiCustomer}
             error={errors.driverId?.message}
             {...register('driverId')}
           />
           <Select
-            label="Vehicle"
+            label={multiCustomer ? 'Vehicle' : 'Vehicle (optional)'}
             options={vehicleOptions}
             placeholder="Select vehicle"
-            required
+            required={multiCustomer}
             error={errors.vehicleId?.message}
             {...register('vehicleId')}
           />
@@ -2802,23 +2852,27 @@ function BackdatedTripModal({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-semibold text-surface-800 dark:text-surface-200">
-              Customer Deliveries ({orderFields.length})
+              {multiCustomer
+                ? `Customer Deliveries (${orderFields.length})`
+                : 'Customer Delivery'}
             </h4>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => appendOrder({
-                customerId: '',
-                items: [{ cylinderTypeId: '', quantity: 1, emptiesCollected: 0 }],
-                poNumber: '',
-                payment: undefined,
-              })}
-              disabled={orderFields.length >= 50}
-            >
-              <HiOutlinePlus className="h-4 w-4" />
-              Add Customer
-            </Button>
+            {multiCustomer && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => appendOrder({
+                  customerId: '',
+                  items: [{ cylinderTypeId: '', quantity: 1, emptiesCollected: 0 }],
+                  poNumber: '',
+                  payment: undefined,
+                })}
+                disabled={orderFields.length >= 50}
+              >
+                <HiOutlinePlus className="h-4 w-4" />
+                Add Customer
+              </Button>
+            )}
           </div>
 
           {orderFields.map((field, orderIdx) => (
@@ -2837,11 +2891,35 @@ function BackdatedTripModal({
         </div>
 
         <Input
-          label="Trip Notes (optional)"
-          placeholder="Applies to all orders in the trip"
+          label={multiCustomer ? 'Trip Notes (optional)' : 'Notes (optional)'}
+          placeholder={multiCustomer ? 'Applies to all orders in the trip' : 'Any note about this delivery'}
           error={errors.specialInstructions?.message}
           {...register('specialInstructions')}
         />
+
+        {/* Q2 (2026-07-09) — inventory auto-apply. Backdated deliveries
+            need to move stock too; this checkbox rolls the manual
+            "On-Demand Adjustments" tab step into the same submit. Turn
+            off if you want to review the orders first. */}
+        <label className="flex items-start gap-2 cursor-pointer select-none rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+          <input
+            type="checkbox"
+            checked={applyInventory}
+            onChange={(e) => setApplyInventory(e.target.checked)}
+            className="mt-0.5 rounded border-surface-300 dark:border-surface-600"
+          />
+          <div className="flex-1">
+            <div className="text-sm font-medium text-surface-800 dark:text-surface-200">
+              Also update inventory stock now
+            </div>
+            <div className="text-xs text-surface-500 dark:text-surface-400">
+              Writes the manual-adjustment / empties-return events for
+              each order dated today, decrements depot fulls, credits
+              returned empties. If off, do it later from
+              Inventory → On-Demand Adjustments.
+            </div>
+          </div>
+        </label>
 
         <div className="flex justify-end gap-3 pt-4 border-t border-surface-200 dark:border-surface-700">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
@@ -2850,7 +2928,9 @@ function BackdatedTripModal({
             loading={mutation.isPending}
             disabled={noValidDates}
           >
-            Create {orderFields.length} Order{orderFields.length === 1 ? '' : 's'}
+            {multiCustomer
+              ? `Create ${orderFields.length} Order${orderFields.length === 1 ? '' : 's'}`
+              : 'Create Order'}
           </Button>
         </div>
       </form>
@@ -2876,8 +2956,21 @@ function BackdatedTripOrderCard({
     control, name: `orders.${orderIdx}.items` as const,
   });
   const customerId = watch(`orders.${orderIdx}.customerId`);
-  const paymentAmount = watch(`orders.${orderIdx}.payment.amount` as const);
   const orderErrors = errors.orders?.[orderIdx];
+
+  // Per-order "Record payment received" toggle. When OFF, none of the
+  // payment fields are rendered so react-hook-form never registers them —
+  // the `payment` sub-object stays undefined and Zod's `payment.optional()`
+  // is satisfied. Turning the toggle ON exposes the three fields and Zod
+  // will require amount > 0 + a method.
+  const [recordPayment, setRecordPayment] = useState(false);
+  useEffect(() => {
+    if (!recordPayment) {
+      // Clear any previously-set payment values so re-toggling doesn't
+      // resurrect stale data.
+      setValue(`orders.${orderIdx}.payment` as const, undefined, { shouldValidate: true });
+    }
+  }, [recordPayment, orderIdx, setValue]);
 
   return (
     <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3 space-y-3">
@@ -2966,44 +3059,58 @@ function BackdatedTripOrderCard({
         {...register(`orders.${orderIdx}.poNumber`)}
       />
 
-      {/* Optional payment for this customer's order. */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-start">
-        <Input
-          label="Payment (₹, optional)"
-          type="number"
-          min={0}
-          step="0.01"
-          placeholder="Leave 0 for no payment"
-          error={orderErrors?.payment?.amount?.message}
-          {...register(`orders.${orderIdx}.payment.amount` as const, {
-            setValueAs: (v: string | number | null | undefined) =>
-              v === '' || v === null || v === undefined || v === 0 || v === '0'
-                ? undefined
-                : Number(v),
-          })}
+      {/* Optional payment — toggle-gated so the payment sub-fields are
+          NOT registered with react-hook-form when the operator doesn't
+          need them. Prevents the "Required" / "Invalid enum value" flash
+          on Method with an empty amount. */}
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={recordPayment}
+          onChange={(e) => setRecordPayment(e.target.checked)}
+          className="rounded border-surface-300 dark:border-surface-600"
         />
-        <Select
-          label="Method"
-          options={[
-            { value: 'cash', label: 'Cash' },
-            { value: 'upi', label: 'UPI' },
-            { value: 'cheque', label: 'Cheque' },
-            { value: 'neft', label: 'NEFT' },
-            { value: 'rtgs', label: 'RTGS' },
-            { value: 'other', label: 'Other' },
-          ]}
-          placeholder="Select"
-          disabled={!paymentAmount || paymentAmount <= 0}
-          error={orderErrors?.payment?.paymentMethod?.message}
-          {...register(`orders.${orderIdx}.payment.paymentMethod` as const)}
-        />
-        <Input
-          label="Reference (optional)"
-          placeholder="Ref #"
-          disabled={!paymentAmount || paymentAmount <= 0}
-          {...register(`orders.${orderIdx}.payment.referenceNumber` as const)}
-        />
-      </div>
+        <span className="text-xs font-medium text-surface-700 dark:text-surface-300">
+          Record payment received
+        </span>
+      </label>
+      {recordPayment && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-start">
+          <Input
+            label="Payment (₹)"
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="Amount received"
+            required
+            error={orderErrors?.payment?.amount?.message}
+            {...register(`orders.${orderIdx}.payment.amount` as const, {
+              setValueAs: (v: string | number | null | undefined) =>
+                v === '' || v === null || v === undefined ? undefined : Number(v),
+            })}
+          />
+          <Select
+            label="Method"
+            options={[
+              { value: 'cash', label: 'Cash' },
+              { value: 'upi', label: 'UPI' },
+              { value: 'cheque', label: 'Cheque' },
+              { value: 'neft', label: 'NEFT' },
+              { value: 'rtgs', label: 'RTGS' },
+              { value: 'other', label: 'Other' },
+            ]}
+            placeholder="Select"
+            required
+            error={orderErrors?.payment?.paymentMethod?.message}
+            {...register(`orders.${orderIdx}.payment.paymentMethod` as const)}
+          />
+          <Input
+            label="Reference (optional)"
+            placeholder="Ref #"
+            {...register(`orders.${orderIdx}.payment.referenceNumber` as const)}
+          />
+        </div>
+      )}
     </div>
   );
 }

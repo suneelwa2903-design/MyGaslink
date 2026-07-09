@@ -606,7 +606,11 @@ export type CustomerLedgerRowKind =
   | 'payment'
   | 'credit_note'
   | 'debit_note'
-  | 'adjustment';
+  | 'adjustment'
+  // Q3 (2026-07-09) — pure stock row for a customer empties return.
+  // amountDelta = 0, running balance unchanged. Rendered with the
+  // count in the empties column and no debit/credit numbers.
+  | 'empties_return';
 
 export interface CustomerLedgerRow {
   orderDate: string;

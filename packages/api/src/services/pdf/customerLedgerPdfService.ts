@@ -38,17 +38,23 @@ interface Col {
 // 26pt overflow squeezed every cell into ellipsis. Rebalanced widths sum
 // to exactly 762pt AND money columns are wide enough for lakh-level values
 // ("Rs. 1,01,600.00" = 15 chars) which was the second wave of truncation.
+// Q3 (2026-07-09) — Narration widened from 92→108pt so empties-return rows
+// like "Empties: 50× 19 KG" (18 chars) render in full instead of ellipsing
+// mid-word. 16pt reclaimed by trimming Type (54→50), Amount (72→68),
+// Emp Cost (74→70) and Received (72→68). Money cols cap slightly (lakh
+// figures 15→14 chars) — the practical range on real invoices is much
+// smaller than the cap and this trade unlocks 25% more narration space.
 const COLS: Col[] = [
   { label: 'Date', width: 64, align: 'left' },
-  { label: 'Type', width: 54, align: 'left' },
-  { label: 'Narration', width: 92, align: 'left' },
+  { label: 'Type', width: 50, align: 'left' },
+  { label: 'Narration', width: 108, align: 'left' },
   { label: 'Del F', width: 30, align: 'right' },
-  { label: 'Amount', width: 72, align: 'right' },
+  { label: 'Amount', width: 68, align: 'right' },
   { label: 'Emp C', width: 34, align: 'right' },
   { label: 'Pend E', width: 34, align: 'right' },
-  { label: 'Emp Cost', width: 74, align: 'right' },
+  { label: 'Emp Cost', width: 70, align: 'right' },
   { label: 'Total Amt', width: 84, align: 'right' },
-  { label: 'Received', width: 72, align: 'right' },
+  { label: 'Received', width: 68, align: 'right' },
   { label: 'Due Amt', width: 76, align: 'right' },
   { label: 'Overdue', width: 76, align: 'right' },
 ];
@@ -78,15 +84,18 @@ function fitCell(s: string, maxChars: number): string {
 // change above so text no longer ellipsises at typical Indian scale.
 const COL_CHAR_CAP: number[] = [
   11, // Date       — "07-Jul-2026" (11)
-  12, // Type       — "Opening Bal…" cyl names, "Page 1 subt…" acceptable
-  16, // Narration  — "IVGS2627028008" (14) + "Page N subtotal" (15) breathing room
+  11, // Type       — "Adjustment" (10) fits; Q3 "Empties" (7) fits.
+  20, // Narration  — Q3 (2026-07-09): "Empties: 50× 19 KG" (18) with 2-char
+      //              buffer. Invoice numbers (14) + "Page N subtotal" (15)
+      //              also fit comfortably.
   4,  // Del F      — 0-999
-  15, // Amount     — "Rs. 9,99,999.00" (15) lakh figures fit
+  14, // Amount     — "Rs. 9,99,999.00" (15) truncates 1 char; smaller
+      //              figures (up to Rs 9,99,999) still fit fully.
   4,  // Emp C      — 0-999
   4,  // Pend E     — 0-999
-  15, // Emp Cost   — "Rs. 1,32,000.00" (15) lakh figures fit
+  14, // Emp Cost   — same as Amount
   16, // Total Amt  — "Rs. 99,99,999.00" (16) crore-scale cumulative running total
-  15, // Received   — "Rs. 9,99,999.00" (15) large single payments
+  14, // Received   — same as Amount
   16, // Due Amt    — matches Total Amt
   15, // Overdue    — "Rs. 9,99,999.00"
 ];
@@ -347,6 +356,9 @@ export async function generateCustomerLedgerPdf(
       case 'credit_note': return 'Credit Note';
       case 'debit_note': return 'Debit Note';
       case 'adjustment': return 'Adjustment';
+      // Q3 (2026-07-09) — 7-char label so it fits inside the Type column
+      // cap of 11. The count + cyl type lives in Narration.
+      case 'empties_return': return 'Empties';
       case 'invoice': return row.cylinderType || 'Invoice';
       default: return row.cylinderType === '' ? 'Payment' : (row.cylinderType || 'Invoice');
     }
@@ -432,6 +444,23 @@ export async function generateCustomerLedgerPdf(
         formatMoney(row.receivedAmount),
         formatMoney(row.dueAmount),
         '',
+      ];
+    } else if (row.kind === 'empties_return') {
+      // Q3 (2026-07-09) — stock-only row. Narration ("Empties: 50× 19 KG")
+      // is the whole payload; all money cells render as "-" so it reads
+      // as a non-money event. Total / Due carry forward unchanged (the
+      // running balance is untouched by this row — see the emit in
+      // paymentService.getCustomerLedger which does not touch the
+      // cumulative accumulators).
+      cells = [
+        formatDate(row.orderDate),
+        typeLabel(row),
+        narration,
+        '-', '-', '-', '-', '-',
+        formatMoney(row.totalAmount),
+        '-',
+        formatMoney(row.dueAmount),
+        '-',
       ];
     } else {
       // invoice / debit_note / adjustment — render full detail

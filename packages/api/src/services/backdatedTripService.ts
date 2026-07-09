@@ -66,9 +66,10 @@ export async function createBackdatedTrip(
   userId: string,
   data: BackdatedTripInput,
 ): Promise<{
-  dvaId: string;
+  dvaId: string | null;
   ordersCreated: number;
   invoicesCreated: number;
+  inventoryAdjustmentsApplied: number;
   orders: CreatedOrderRow[];
 }> {
   // Defence in depth — same-month + before-today guard at the service
@@ -84,18 +85,23 @@ export async function createBackdatedTrip(
     throw new BackdatedTripError('Trip date must be before today', 400);
   }
 
-  // Tenant-scope driver + vehicle.
-  const driver = await prisma.driver.findFirst({
-    where: { id: data.driverId, distributorId, deletedAt: null },
-    select: { id: true, driverName: true },
-  });
-  if (!driver) throw new BackdatedTripError('Driver not found', 404);
-
-  const vehicle = await prisma.vehicle.findFirst({
-    where: { id: data.vehicleId, distributorId, deletedAt: null },
-    select: { id: true, vehicleNumber: true },
-  });
-  if (!vehicle) throw new BackdatedTripError('Vehicle not found', 404);
+  // Q1 merge (2026-07-09) — driverId/vehicleId are now optional. Tenant-
+  // scope only when supplied; single-customer On-Demand entries with no
+  // driver skip DVA creation entirely.
+  if (data.driverId) {
+    const driver = await prisma.driver.findFirst({
+      where: { id: data.driverId, distributorId, deletedAt: null },
+      select: { id: true, driverName: true },
+    });
+    if (!driver) throw new BackdatedTripError('Driver not found', 404);
+  }
+  if (data.vehicleId) {
+    const vehicle = await prisma.vehicle.findFirst({
+      where: { id: data.vehicleId, distributorId, deletedAt: null },
+      select: { id: true, vehicleNumber: true },
+    });
+    if (!vehicle) throw new BackdatedTripError('Vehicle not found', 404);
+  }
 
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
@@ -104,24 +110,27 @@ export async function createBackdatedTrip(
 
   const issueDate = new Date(data.issueDate);
 
-  // 1) DVA upsert. Natural key on (driverId, assignmentDate, tripNumber) —
-  //    we always target tripNumber=1 for backdated trips. If one exists,
-  //    use it as-is; don't clobber real state.
-  let dva = await prisma.driverVehicleAssignment.findFirst({
-    where: {
-      distributorId,
-      driverId: data.driverId,
-      assignmentDate: issueDate,
-      tripNumber: 1,
-    },
-    select: { id: true },
-  });
-  if (!dva) {
+  // 1) DVA upsert — only when we have a driver. Natural key on
+  //    (driverId, assignmentDate, tripNumber). If one exists, reuse it;
+  //    don't clobber real state.
+  let dva: { id: string } | null = null;
+  if (data.driverId) {
+    dva = await prisma.driverVehicleAssignment.findFirst({
+      where: {
+        distributorId,
+        driverId: data.driverId,
+        assignmentDate: issueDate,
+        tripNumber: 1,
+      },
+      select: { id: true },
+    });
+  }
+  if (data.driverId && !dva) {
     dva = await prisma.driverVehicleAssignment.create({
       data: {
         distributorId,
         driverId: data.driverId,
-        vehicleId: data.vehicleId,
+        vehicleId: data.vehicleId!,
         assignmentDate: issueDate,
         tripNumber: 1,
         status: 'reconciled',
@@ -195,8 +204,8 @@ export async function createBackdatedTrip(
           isBackdated: true,
           isGodownPickup: false,
           poNumber: orderInput.poNumber ?? null,
-          driverId: data.driverId,
-          vehicleId: data.vehicleId,
+          driverId: data.driverId ?? null,
+          vehicleId: data.vehicleId ?? null,
           orderDate: issueDate,
           deliveryDate: issueDate,
           deliveredAt: issueDate,
@@ -271,10 +280,36 @@ export async function createBackdatedTrip(
     }
   }
 
+  // Q2 (2026-07-09) — inventory auto-apply. When the request flag is set,
+  // fold what was previously a manual "On-Demand Adjustments" tab step
+  // into the same submit. Per-order best-effort: an adjust failure on
+  // order N does NOT undo the orders already created — the operator can
+  // retry that single adjustment from the tab. Uses the same
+  // applyBackdatedInventoryAdjustment used by the manual tab so all
+  // downstream behaviour (event types, event-date = today, summary
+  // cascade from today, order.inventoryAdjustedAt marker) stays
+  // identical.
+  let inventoryAdjustmentsApplied = 0;
+  if (data.applyInventoryAdjustment) {
+    const { applyBackdatedInventoryAdjustment } = await import('./backdatedAdjustmentService.js');
+    for (const row of createdOrders) {
+      try {
+        await applyBackdatedInventoryAdjustment(distributorId, userId, row.orderId);
+        inventoryAdjustmentsApplied += 1;
+      } catch (err) {
+        logger.warn('Backdated trip inventory adjustment failed for order (non-blocking)', {
+          orderId: row.orderId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
   return {
-    dvaId: dva.id,
+    dvaId: dva?.id ?? null,
     ordersCreated: createdOrders.length,
     invoicesCreated: createdOrders.filter((o) => o.invoiceId != null).length,
+    inventoryAdjustmentsApplied,
     orders: createdOrders,
   };
 }

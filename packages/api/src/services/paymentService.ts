@@ -668,6 +668,23 @@ export async function getCustomerLedger(
         });
         return;
       }
+      case 'empties_return': {
+        // Q3 (2026-07-09) — pure stock movement. amountDelta is 0 (writer
+        // enforces this); it does NOT touch cumulativeInvoiceAmount or
+        // cumulativeReceivedAmount so the running balance stays as-is.
+        // The row emits with the narration ("Returned 50× 19 KG empties")
+        // and no money fields — PDF + web/mobile ledger surfaces render
+        // amount as "—" in a neutral colour.
+        if (!emit) return;
+        emitRow({
+          orderDate: dateStr,
+          amount: 0,
+          receivedAmount: 0,
+          narration: entry.narration ?? 'Empties return',
+          kind: 'empties_return',
+        });
+        return;
+      }
     }
   }
 
