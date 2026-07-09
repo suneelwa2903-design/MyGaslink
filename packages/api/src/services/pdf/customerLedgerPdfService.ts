@@ -33,19 +33,24 @@ interface Col {
   align: 'left' | 'right' | 'center';
 }
 
+// INVESTIGATION-JUL09 followup — the previous widths summed to 788pt but
+// the usable table area on landscape A4 with 40pt margins is 762pt. The
+// 26pt overflow squeezed every cell into ellipsis. Rebalanced widths sum
+// to exactly 762pt AND money columns are wide enough for lakh-level values
+// ("Rs. 1,01,600.00" = 15 chars) which was the second wave of truncation.
 const COLS: Col[] = [
-  { label: 'Date', width: 58, align: 'left' },
-  { label: 'Type', width: 64, align: 'left' },
-  { label: 'Narration', width: 110, align: 'left' },
-  { label: 'Delivered', width: 46, align: 'right' },
-  { label: 'Amount', width: 70, align: 'right' },
-  { label: 'Empties Coll.', width: 52, align: 'right' },
-  { label: 'Pending Emp.', width: 52, align: 'right' },
-  { label: 'Empties Cost', width: 64, align: 'right' },
-  { label: 'Total Amount', width: 74, align: 'right' },
-  { label: 'Received', width: 68, align: 'right' },
-  { label: 'Due Amount', width: 70, align: 'right' },
-  { label: 'Overdue', width: 60, align: 'right' },
+  { label: 'Date', width: 64, align: 'left' },
+  { label: 'Type', width: 54, align: 'left' },
+  { label: 'Narration', width: 92, align: 'left' },
+  { label: 'Del F', width: 30, align: 'right' },
+  { label: 'Amount', width: 72, align: 'right' },
+  { label: 'Emp C', width: 34, align: 'right' },
+  { label: 'Pend E', width: 34, align: 'right' },
+  { label: 'Emp Cost', width: 74, align: 'right' },
+  { label: 'Total Amt', width: 84, align: 'right' },
+  { label: 'Received', width: 72, align: 'right' },
+  { label: 'Due Amt', width: 76, align: 'right' },
+  { label: 'Overdue', width: 76, align: 'right' },
 ];
 
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
@@ -67,22 +72,23 @@ function fitCell(s: string, maxChars: number): string {
 }
 
 // Per-column character caps. Numeric columns rarely overflow (formatted
-// money + en-IN locale grouping fits in 12 chars even for crore figures),
-// but the Type and Narration columns receive free text and need clamping.
-// Indexed to match the COLS array order.
+// money + en-IN locale grouping fits in 13 chars for lakh figures), but
+// the Type and Narration columns receive free text and need clamping.
+// Indexed to match the COLS array order — rebalanced alongside the width
+// change above so text no longer ellipsises at typical Indian scale.
 const COL_CHAR_CAP: number[] = [
-  10, // Date
-  12, // Type — handles "Opening Balance", "Credit Note", real cylinder names
-  18, // Narration — fits "Invoice RSHD2627025053" exactly
-  6,  // Delivered
-  12, // Amount
-  6,  // Empties Coll.
-  6,  // Pending Emp.
-  12, // Empties Cost
-  14, // Total Amount
-  12, // Received
-  12, // Due Amount
-  12, // Overdue
+  11, // Date       — "07-Jul-2026" (11)
+  12, // Type       — "Opening Bal…" cyl names, "Page 1 subt…" acceptable
+  16, // Narration  — "IVGS2627028008" (14) + "Page N subtotal" (15) breathing room
+  4,  // Del F      — 0-999
+  15, // Amount     — "Rs. 9,99,999.00" (15) lakh figures fit
+  4,  // Emp C      — 0-999
+  4,  // Pend E     — 0-999
+  15, // Emp Cost   — "Rs. 1,32,000.00" (15) lakh figures fit
+  16, // Total Amt  — "Rs. 99,99,999.00" (16) crore-scale cumulative running total
+  15, // Received   — "Rs. 9,99,999.00" (15) large single payments
+  16, // Due Amt    — matches Total Amt
+  15, // Overdue    — "Rs. 9,99,999.00"
 ];
 
 function drawTableHeader(doc: PDFKit.PDFDocument, y: number): number {
@@ -90,7 +96,16 @@ function drawTableHeader(doc: PDFKit.PDFDocument, y: number): number {
   doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT + 2).fill(THEME.PRIMARY);
   doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(TYPO.CAPTION);
   for (const col of COLS) {
-    doc.text(col.label, x + 3, y + 4, { width: col.width - 6, align: col.align });
+    // lineBreak:false + ellipsis:true forces the header onto ONE line even
+    // if a bold label like "Emp C" or "Pend E" would overflow the column
+    // width (which pdfkit otherwise wraps onto row 2 and pushes data rows
+    // down). Column widths are already picked wide enough for the labels.
+    doc.text(col.label, x + 3, y + 4, {
+      width: col.width - 6,
+      align: col.align,
+      lineBreak: false,
+      ellipsis: true,
+    });
     x += col.width;
   }
   doc.fillColor(THEME.TEXT);
@@ -290,10 +305,12 @@ export async function generateCustomerLedgerPdf(
 
   function emitPageSubtotal(): void {
     if (!pageHasData) return; // nothing to summarise — skip empty page
+    // Label goes in Narration (92pt, 16-char cap) — Type (56pt, 12-char) would
+    // truncate "Page N subtotal" to "Page 1 subt…".
     const cells = [
       '',
-      `Page ${pageNum} subtotal`,
       '',
+      `Page ${pageNum} subtotal`,
       pageDelivered ? num(pageDelivered) : '',
       pageAmount ? formatMoney(pageAmount) : '',
       pageCollected ? num(pageCollected) : '',
@@ -335,14 +352,27 @@ export async function generateCustomerLedgerPdf(
     }
   }
 
-  // Customer-facing PDF: strip the " for order ORD-..." suffix from
-  // invoiceService.ts:266 narrations so the column fits in a single line.
-  // The admin in-app ledger keeps the full verbose narration; only the
-  // customer-facing statement gets the short form.
-  function shortNarration(raw: string): string {
+  // Customer-facing PDF: compact narration so it fits the column cleanly.
+  //   • Invoice IVGS2627028008 for order OSHD…  →  IVGS2627028008
+  //   • Payment received #ref-abcd               →  Payment
+  //   • Credit Note CNGS… / Debit Note DNGS…     →  CNGS… / DNGS…
+  // The word "Invoice"/"Payment received" is redundant with the Type
+  // column so the Narration cell only needs the identifying reference.
+  function shortNarration(raw: string, kind: string): string {
     if (!raw) return '';
-    const idx = raw.indexOf(' for order');
-    return idx >= 0 ? raw.slice(0, idx) : raw;
+    // Strip " for order …" tail from invoiceService.ts:266 narrations.
+    let s = raw;
+    const orderIdx = s.indexOf(' for order');
+    if (orderIdx >= 0) s = s.slice(0, orderIdx);
+    // Invoice rows: drop the "Invoice " prefix so the invoice number is
+    // the entire cell content. Similar for credit / debit notes.
+    if (kind === 'invoice') return s.replace(/^Invoice\s+/i, '');
+    if (kind === 'credit_note') return s.replace(/^Credit Note\s+/i, '');
+    if (kind === 'debit_note') return s.replace(/^Debit Note\s+/i, '');
+    // Payment rows: the Type column already says "Payment"; drop the
+    // "#ref-…" tail so the Narration cell is empty (cleaner alignment).
+    if (kind === 'payment') return '';
+    return s;
   }
 
   for (const row of ledger.rows) {
@@ -360,7 +390,7 @@ export async function generateCustomerLedgerPdf(
       zebra = false;
     }
 
-    const narration = shortNarration(row.narration ?? '');
+    const narration = shortNarration(row.narration ?? '', row.kind ?? '');
     let cells: string[];
 
     if (row.kind === 'opening') {
