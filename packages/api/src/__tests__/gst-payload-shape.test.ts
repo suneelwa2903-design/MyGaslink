@@ -122,6 +122,32 @@ describe('IRN payload shape validation (NIC /einvoice GENERATE)', () => {
     expect(b2c.TranDtls.SupTyp).toBe('B2C');
   });
 
+  describe('RCM guard (RegRev must be "N" for LPG retail)', () => {
+    // 2026-07-10 restore: original guard added by commit 132184e was deleted
+    // by revert 1de2e46 (revert was based on a misdiagnosed 5002 that was
+    // actually caused by inline EwbDtls — see CLAUDE.md anti-pattern #10).
+    // Every B2B IRN sent to NIC between then and 2026-07-10 filed under
+    // GSTR-1 Table 4B (Reverse Charge) instead of 4A. Live evidence:
+    // docs/RCM-INVESTIGATION.md + docs/RCM-PHASE0-DEEP.md.
+    //
+    // LPG retail sales carry CGST+SGST charged BY the seller — the buyer
+    // does NOT self-deposit tax under RCM. The correct payload flag is
+    // RegRev='N'.
+    it('B2B — TranDtls.RegRev === "N"', () => {
+      const payload = buildIrnPayload(b2bFixture());
+      expect(payload.TranDtls.SupTyp).toBe('B2B');
+      expect(payload.TranDtls.RegRev).toBe('N');
+    });
+
+    it('B2C — TranDtls.RegRev === "N"', () => {
+      const payload = buildIrnPayload(b2bFixture({
+        buyer: { ...b2bFixture().buyer, gstin: null },
+      }));
+      expect(payload.TranDtls.SupTyp).toBe('B2C');
+      expect(payload.TranDtls.RegRev).toBe('N');
+    });
+  });
+
   it('ItemList is a non-empty array with HsnCd as string', () => {
     const payload = buildIrnPayload(b2bFixture());
     expect(Array.isArray(payload.ItemList)).toBe(true);

@@ -286,7 +286,13 @@ export function buildIrnPayload(data: InvoiceData): IrnPayload {
     TranDtls: {
       TaxSch: 'GST',
       SupTyp: isB2C ? 'B2C' : 'B2B',
-      RegRev: 'Y',
+      // RCM does NOT apply to LPG retail — seller collects CGST/SGST normally.
+      // Historical 'Y' hardcode caused every B2B IRN to land in GSTR-1 Table 4B
+      // (Reverse Charge) instead of 4A. Fixed 2026-07-10; commit history:
+      // 132184e (first fix) → 1de2e46 (reverted on misdiagnosed NIC 5002 —
+      // real cause was inline EwbDtls, per CLAUDE.md anti-pattern #10) → today.
+      // Pinned by gst-payload-shape.test.ts (B2B and B2C both assert 'N').
+      RegRev: 'N',
       IgstOnIntra: 'N', // Only 'Y' for special intra-state IGST cases (SEZ etc.)
     },
     DocDtls: {
