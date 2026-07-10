@@ -1,12 +1,15 @@
 /**
  * Backdated Inventory Adjustment.
  *
- * Covers the locked design from docs/BACKDATED-INVESTIGATION-GAPS.md §5:
+ * Covers the current design (Suneel Option A, 2026-07-10 — flipped from
+ * the original "today-only" design in docs/BACKDATED-INVESTIGATION-GAPS.md §5):
  *   - One manual_adjustment event per item with delivered > 0 (fulls,
- *     dated TODAY — NOT the backdated delivery date)
+ *     dated on the ORDER'S DELIVERY DATE — retro-dated so the stock
+ *     movement lands on the summary the operator expects)
  *   - One reconciliation_empties_return event per item with empties > 0
  *   - NO empties event when emptiesCollected = 0
- *   - Order.inventoryAdjustedAt stamped to block double-apply
+ *   - Order.inventoryAdjustedAt stamped with NOW (audit — WHEN the
+ *     operator ran the adjustment; NOT the delivery date)
  *   - Gates: non-backdated 400, cancelled 400, double-apply 409,
  *     cross-tenant 404
  *   - Pending list excludes already-adjusted; history filters by
@@ -18,7 +21,6 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { localTodayISO } from '@gaslink/shared';
 import {
   applyBackdatedInventoryAdjustment,
   getPendingBackdatedAdjustments,
@@ -64,11 +66,15 @@ async function makeBackdatedOrder(opts: {
   deletedAt?: Date | null;
   inventoryAdjustedAt?: Date | null;
   distributorId?: string;
+  deliveryDate?: Date;
 }) {
   const distId = opts.distributorId ?? D1;
   // Use far-future deliveryDate to avoid colliding with the gst-preflight
-  // dev-DB-anchored test set.
-  const deliveryDate = new Date('2099-12-15');
+  // dev-DB-anchored test set. Individual tests can override via
+  // opts.deliveryDate when they need summary-level isolation (Option A
+  // cascade test writes to a unique date so the daily summary aggregate
+  // isn't polluted by sibling tests).
+  const deliveryDate = opts.deliveryDate ?? new Date('2099-12-15');
   const o = await prisma.order.create({
     data: {
       distributorId: distId,
@@ -110,7 +116,7 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     ctId = ct.id;
   });
 
-  it('writes a manual_adjustment event dated today (NOT the backdated delivery date)', async () => {
+  it('writes a manual_adjustment event dated ON THE DELIVERY DATE (Option A, 2026-07-10)', async () => {
     const cust = await makeCustomer('bia-fulls');
     const o = await makeBackdatedOrder({ customerId: cust.id, cylinderTypeId: ctId, deliveredQty: 3, emptiesCollected: 0 });
     const result = await applyBackdatedInventoryAdjustment(D1, 'test-user', o.id);
@@ -123,11 +129,14 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     expect(ev.eventType).toBe('manual_adjustment');
     expect(ev.fullsChange).toBe(-3);
     expect(ev.emptiesChange).toBe(0);
-    // Today, NOT the 2099-12-15 deliveryDate.
-    expect(ev.eventDate.toISOString().slice(0, 10)).toBe(localTodayISO());
+    // Option A — event lands on the ORDER'S delivery date (2099-12-15),
+    // not on today. If this ever flips back to today, the stock
+    // movement disappears from the day the operator expects it on and
+    // silently drifts to the entry day.
+    expect(ev.eventDate.toISOString().slice(0, 10)).toBe('2099-12-15');
   });
 
-  it('writes a reconciliation_empties_return event when emptiesCollected > 0', async () => {
+  it('writes a reconciliation_empties_return event dated on the delivery date when emptiesCollected > 0', async () => {
     const cust = await makeCustomer('bia-empties');
     const o = await makeBackdatedOrder({ customerId: cust.id, cylinderTypeId: ctId, deliveredQty: 2, emptiesCollected: 2 });
     const result = await applyBackdatedInventoryAdjustment(D1, 'test-user', o.id);
@@ -139,8 +148,9 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     const fulls = events.find((e) => e.eventType === 'manual_adjustment');
     const empties = events.find((e) => e.eventType === 'reconciliation_empties_return');
     expect(fulls?.fullsChange).toBe(-2);
+    expect(fulls?.eventDate.toISOString().slice(0, 10)).toBe('2099-12-15');
     expect(empties?.emptiesChange).toBe(2);
-    expect(empties?.eventDate.toISOString().slice(0, 10)).toBe(localTodayISO());
+    expect(empties?.eventDate.toISOString().slice(0, 10)).toBe('2099-12-15');
   });
 
   it('does NOT write an empties event when emptiesCollected = 0', async () => {
@@ -214,6 +224,35 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     const ev = await prisma.inventoryEvent.findFirstOrThrow({ where: { referenceId: o.id } });
     expect(ev.notes).toContain(o.orderNumber);
     expect(ev.notes).toContain('2099-12-15');
+  });
+
+  it('cascades summaries — the DELIVERY-DAY inventory_summary carries the movement (Option A pin)', async () => {
+    // Option A guard: applying the adjustment must touch the summary
+    // for the delivery date, not a today-dated one. If the service
+    // ever silently reverts to today-dated events, this test catches
+    // it because the delivery-day row would show `manual_adjustment=0`.
+    // Uses a UNIQUE deliveryDate so the summary aggregate isn't polluted
+    // by the other tests in this describe() block that all target
+    // 2099-12-15.
+    const cust = await makeCustomer('bia-cascade');
+    const cascadeDate = new Date('2099-11-11');
+    const o = await makeBackdatedOrder({
+      customerId: cust.id,
+      cylinderTypeId: ctId,
+      deliveredQty: 5,
+      emptiesCollected: 3,
+      deliveryDate: cascadeDate,
+    });
+    await applyBackdatedInventoryAdjustment(D1, 'test-user', o.id);
+    const summary = await prisma.inventorySummary.findFirstOrThrow({
+      where: {
+        distributorId: D1,
+        cylinderTypeId: ctId,
+        summaryDate: cascadeDate,
+      },
+    });
+    expect(summary.manualAdjustment).toBe(-5);
+    expect(summary.emptiesReturnedVerified).toBe(3);
   });
 });
 

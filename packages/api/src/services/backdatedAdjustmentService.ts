@@ -1,20 +1,24 @@
 /**
- * Backdated Inventory Adjustment — settle today's stock for a backdated
- * order. The events are dated TODAY (no historical cascade); the daily
- * summary updates from today forward only.
+ * Backdated Inventory Adjustment — settle inventory for a backdated
+ * order, dated on the DELIVERY DATE (not today), with a full cascade
+ * forward through every daily summary that carries the stock chain.
  *
  * Why: when a distributor enters a backdated order (Brief 3), the order
  * lands status='delivered' but no inventory events are written by design
- * — the admin handles stock manually. This service is the structured
- * "apply" path: it writes the same events a godown pickup would
- * (`manual_adjustment` for fulls, `reconciliation_empties_return` for
- * empties), but anchored to TODAY, and stamps the order so it can't be
- * double-applied.
+ * — this service is the structured "apply" path. It writes the same
+ * events a godown pickup would (`manual_adjustment` for fulls,
+ * `reconciliation_empties_return` for empties), anchored to the order's
+ * `deliveryDate`, and stamps the order so it can't be double-applied.
+ * The `is_locked` guard inside `recalculateSummariesFromDate` protects
+ * any past day the operator has already closed — locked days silently
+ * skip and the cascade continues past them.
  *
- * Reference: docs/BACKDATED-INVESTIGATION-GAPS.md §5 (locked design).
+ * Reference: docs/BACKDATED-INVESTIGATION-GAPS.md §5 (original locked
+ * design was "today-only" — flipped 2026-07-10 per Suneel's Option-A
+ * decision so backdated deliveries move stock on the delivery day, not
+ * on the entry day).
  */
 import { prisma } from '../lib/prisma.js';
-import { localTodayISO } from '@gaslink/shared';
 import { createInventoryEvent, recalculateSummariesFromDate } from './inventoryService.js';
 
 export class BackdatedAdjustmentError extends Error {
@@ -25,18 +29,28 @@ export class BackdatedAdjustmentError extends Error {
 }
 
 /**
- * Apply today's inventory adjustment for a backdated order.
+ * Apply the inventory adjustment for a backdated order — dated on the
+ * delivery day, with a full cascade forward.
  *
  * - One `manual_adjustment` event per cylinder type with
  *   `fullsChange = -deliveredQuantity`.
  * - One `reconciliation_empties_return` event per cylinder type where
  *   `emptiesCollected > 0` with `emptiesChange = +emptiesCollected`.
- * - All events dated TODAY (`localTodayISO()` in local TZ — never
- *   `new Date().toISOString().split('T')[0]`, anti-pattern #21).
+ * - All events dated on the ORDER's DELIVERY DATE (retro-dated per
+ *   Suneel's Option-A decision on 2026-07-10). `Order.deliveryDate`
+ *   is stored as a `Date` — used verbatim without any UTC-split
+ *   round-trip so anti-pattern #21 is not in scope.
  * - Sets `Order.inventoryAdjustedAt = now()` to block double-apply.
+ *   `inventoryAdjustedAt` is a real timestamp (WHEN the operator ran
+ *   the adjustment), NOT the delivery date. The two answer different
+ *   questions and both are needed for the audit trail.
  * - Writes an `OrderStatusLog` audit row (delivered → delivered with
- *   a "Inventory adjusted as of today" note carrying the userId).
- * - Recalculates summaries FROM today only — past days untouched.
+ *   a note carrying the userId + the fact that inventory was adjusted).
+ * - Recalculates summaries FROM the delivery date forward. The
+ *   `is_locked` guard in `recalculateSummariesFromDate` still applies —
+ *   any past day the operator has already closed silently skips and
+ *   the cascade continues past it (correct behaviour: closed days stay
+ *   closed, everything after re-derives from the events chain).
  */
 export async function applyBackdatedInventoryAdjustment(
   distributorId: string,
@@ -63,8 +77,11 @@ export async function applyBackdatedInventoryAdjustment(
     throw new BackdatedAdjustmentError('Inventory already adjusted for this order', 409);
   }
 
-  // Today, local TZ. The brief explicitly bans the UTC split form.
-  const adjustmentDate = new Date(localTodayISO());
+  // Option A (2026-07-10) — events are dated on the delivery day, not
+  // today. `order.deliveryDate` is a real `Date` at local midnight (see
+  // invoice/order write paths that persist it) so we use it verbatim as
+  // the event_date; no UTC-split anywhere.
+  const adjustmentDate = order.deliveryDate;
   const orderNumber = order.orderNumber;
   const deliveryDateStr = order.deliveryDate.toISOString().slice(0, 10);
   const notes = `Backdated adjustment for order ${orderNumber} (delivered ${deliveryDateStr})`;
@@ -121,14 +138,16 @@ export async function applyBackdatedInventoryAdjustment(
         oldStatus: 'delivered',
         newStatus: 'delivered',
         changedBy: userId,
-        notes: `Inventory adjusted as of today by ${userId} (backdated order ${orderNumber})`,
+        notes: `Inventory adjusted (dated ${deliveryDateStr}) by ${userId} for backdated order ${orderNumber}`,
       },
     });
   });
 
-  // Recalc summaries from TODAY forward only. The carry-forward chain
-  // for past days is intentionally untouched — that was the locked
-  // design decision (no historical cascade).
+  // Cascade summaries from the DELIVERY DATE forward through every
+  // touched cylinder type. recalculateSummariesFromDate walks day-by-day
+  // and re-derives closing_fulls/closing_empties from the events chain
+  // — locked days silently skip (correct) and everything past them
+  // recomputes so today's closing reflects the new event.
   const uniqueCtIds = Array.from(new Set(order.items.map((i) => i.cylinderTypeId)));
   for (const ctId of uniqueCtIds) {
     await recalculateSummariesFromDate(distributorId, ctId, adjustmentDate);

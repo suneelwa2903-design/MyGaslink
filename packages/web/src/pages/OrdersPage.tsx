@@ -1142,12 +1142,29 @@ function OrderDetailModal({
   return (
     <Modal open={open} onClose={onClose} title={`Order ${order.orderNumber}`} size="lg">
       <div className="space-y-4 text-sm">
-        {/* Brief 3 — backdated banner with the audit-trail entry timestamp. */}
+        {/* Brief 3 — backdated banner with the audit-trail entry timestamp.
+            Q2 (2026-07-09) — colour + copy now reflect the ACTUAL
+            inventory-adjustment state via `order.inventoryAdjustedAt`.
+            Prior to this the banner hard-coded "Inventory not
+            auto-updated" for every backdated order — which was misleading
+            once Q2 made auto-apply the default. Green = adjusted, amber =
+            pending (operator needs to run the On-Demand Adjustments tab). */}
         {order.isBackdated && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-300">
-            <p className="font-semibold">On-Demand — delivery recorded for {new Date(order.deliveryDate).toLocaleDateString('en-IN')}.</p>
-            <p className="mt-1">Inventory not auto-updated. Entered on: {new Date(order.createdAt).toLocaleString('en-IN')}.</p>
-          </div>
+          order.inventoryAdjustedAt ? (
+            <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-xs text-green-800 dark:border-green-500/50 dark:bg-green-500/10 dark:text-green-300">
+              <p className="font-semibold">On-Demand — delivery recorded for {new Date(order.deliveryDate).toLocaleDateString('en-IN')}.</p>
+              <p className="mt-1">
+                Inventory adjusted on {new Date(order.inventoryAdjustedAt).toLocaleString('en-IN')}. Entered on: {new Date(order.createdAt).toLocaleString('en-IN')}.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-300">
+              <p className="font-semibold">On-Demand — delivery recorded for {new Date(order.deliveryDate).toLocaleDateString('en-IN')}.</p>
+              <p className="mt-1">
+                Inventory not yet adjusted — run it from Inventory → On-Demand Adjustments. Entered on: {new Date(order.createdAt).toLocaleString('en-IN')}.
+              </p>
+            </div>
+          )
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
