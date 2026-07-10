@@ -81,12 +81,24 @@ async function makeBackdatedOrder(opts: {
   // the -2 fulls this file's tests had written (Option A retro-dates
   // manual_adjustment events to the delivery day). Locally the ordering
   // hid the collision; CI's parallel/interleaved execution surfaced it
-  // (openingFulls got 98, expected 100). Moved here to 2099-08-15,
-  // which no other test touches. Verified with:
-  //   grep -rE "2099-08-15" packages/api/src/__tests__/ → 1 file (this one)
-  // If a future test wants 08-15, THIS file must move again — never
-  // share a shared-DB anchor date between two aggregate-sensitive suites.
-  const deliveryDate = opts.deliveryDate ?? new Date('2099-08-15');
+  // (openingFulls got 98, expected 100).
+  //
+  // First attempt (2099-08-15) also failed CI: Option A's
+  // recalculateSummariesFromDate walks forward through every date with
+  // events or existing summaries. Writing at 2099-08-15 then cascading
+  // still touched 2099-12-14/15 (float-dispatch's dates) because those
+  // dates had event rows waiting. The cascade re-derived their opening
+  // from the polluted prior day → same 98.
+  //
+  // Fix: use 2100-03-15 — AFTER every date any other test writes to,
+  // so the forward cascade walks INTO a future nobody else uses.
+  // Verified: grep -rE "2100-03-15" packages/api/src/__tests__/ → 1
+  // file (this one). If a future test wants 2100-03-15, THIS file
+  // must move again — never share a shared-DB anchor date between
+  // two aggregate-sensitive suites. Rule: pick a date strictly LATER
+  // than every other test's write date, so the cascade never crosses
+  // theirs.
+  const deliveryDate = opts.deliveryDate ?? new Date('2100-03-15');
   const o = await prisma.order.create({
     data: {
       distributorId: distId,
@@ -141,11 +153,11 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     expect(ev.eventType).toBe('manual_adjustment');
     expect(ev.fullsChange).toBe(-3);
     expect(ev.emptiesChange).toBe(0);
-    // Option A — event lands on the ORDER'S delivery date (2099-08-15),
+    // Option A — event lands on the ORDER'S delivery date (2100-03-15),
     // not on today. If this ever flips back to today, the stock
     // movement disappears from the day the operator expects it on and
     // silently drifts to the entry day.
-    expect(ev.eventDate.toISOString().slice(0, 10)).toBe('2099-08-15');
+    expect(ev.eventDate.toISOString().slice(0, 10)).toBe('2100-03-15');
   });
 
   it('writes PAIRED collection + reconciliation_empties_return events when emptiesCollected > 0 (F1)', async () => {
@@ -168,11 +180,11 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     const collection = events.find((e) => e.eventType === 'collection');
     const verified = events.find((e) => e.eventType === 'reconciliation_empties_return');
     expect(fulls?.fullsChange).toBe(-2);
-    expect(fulls?.eventDate.toISOString().slice(0, 10)).toBe('2099-08-15');
+    expect(fulls?.eventDate.toISOString().slice(0, 10)).toBe('2100-03-15');
     expect(collection?.emptiesChange).toBe(2);
-    expect(collection?.eventDate.toISOString().slice(0, 10)).toBe('2099-08-15');
+    expect(collection?.eventDate.toISOString().slice(0, 10)).toBe('2100-03-15');
     expect(verified?.emptiesChange).toBe(2);
-    expect(verified?.eventDate.toISOString().slice(0, 10)).toBe('2099-08-15');
+    expect(verified?.eventDate.toISOString().slice(0, 10)).toBe('2100-03-15');
   });
 
   it('does NOT write an empties event when emptiesCollected = 0', async () => {
@@ -245,7 +257,7 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     await applyBackdatedInventoryAdjustment(D1, 'test-user', o.id);
     const ev = await prisma.inventoryEvent.findFirstOrThrow({ where: { referenceId: o.id } });
     expect(ev.notes).toContain(o.orderNumber);
-    expect(ev.notes).toContain('2099-08-15');
+    expect(ev.notes).toContain('2100-03-15');
   });
 
   it('cascades summaries — the DELIVERY-DAY inventory_summary carries the movement (Option A pin)', async () => {
@@ -255,7 +267,7 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     // it because the delivery-day row would show `manual_adjustment=0`.
     // Uses a UNIQUE deliveryDate so the summary aggregate isn't polluted
     // by the other tests in this describe() block that all target
-    // 2099-08-15.
+    // 2100-03-15.
     const cust = await makeCustomer('bia-cascade');
     const cascadeDate = new Date('2099-11-11');
     const o = await makeBackdatedOrder({
@@ -363,9 +375,9 @@ describe('POST /api/orders/:id/apply-inventory-adjustment — role gate', () => 
       data: {
         distributorId: D1, customerId: cust.id,
         orderNumber: `OBKROLE-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
-        orderDate: new Date('2099-08-15'),
-        deliveryDate: new Date('2099-08-15'),
-        deliveredAt: new Date('2099-08-15'),
+        orderDate: new Date('2100-03-15'),
+        deliveryDate: new Date('2100-03-15'),
+        deliveredAt: new Date('2100-03-15'),
         status: 'delivered', isBackdated: true, totalAmount: 1000,
         items: { create: [{ cylinderTypeId: ctId, quantity: 1, deliveredQuantity: 1, emptiesCollected: 0, unitPrice: 1000, totalPrice: 1000 }] },
       },
