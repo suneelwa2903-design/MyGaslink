@@ -84,7 +84,7 @@ export default function PrivacyPolicyAppPage() {
               <p>GST and invoice records: 8 years (GST Act, 2017 statutory minimum).</p>
               <p className="mt-3">Payment records: 8 years (Income Tax Act, 1961 statutory minimum).</p>
               <p className="mt-3">Driver GPS location: deleted within 30 days of trip completion.</p>
-              <p className="mt-3">Deleted accounts: anonymised after 90 days.</p>
+              <p className="mt-3">Deleted accounts: personal profile data is removed within 30 days. Financial and GST records are retained anonymously for the statutory period required by law.</p>
             </section>
 
             <section>

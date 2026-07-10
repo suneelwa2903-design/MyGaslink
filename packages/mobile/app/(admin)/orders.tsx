@@ -3123,13 +3123,10 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   pickerSheet: {
-    // SAA C2: maxHeight: '80%' removed. Combined with the picker KAV's
-    // `flex: 1, justifyContent: 'flex-end'` (also SAA C2), the sheet now
-    // flex-grows into the available space above the keyboard instead of
-    // being capped at 80% of (screen − keyboard) which left an awkward
-    // gap on iPhone. The pickerOverlay parent's `justifyContent: 'flex-end'`
-    // keeps the sheet docked to the bottom; the KAV's `behavior: 'padding'`
-    // lifts it above the keyboard.
+    // Keep the customer list bounded. Without this, long customer lists can
+    // grow taller than the viewport on Android and push the header/search
+    // off-screen, making the picker look like a raw full-screen list.
+    maxHeight: '82%',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
   },
