@@ -19,7 +19,7 @@ import { Button, Badge, EmptyState } from '../../src/components/ui';
 import { useTheme, ACCENT, formatINR, formatDate } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
-import { apiPost, getErrorMessage } from '../../src/lib/api';
+import { apiPost, apiDelete, getErrorMessage } from '../../src/lib/api';
 import {
   enqueueDelivery,
   isNetworkError,
@@ -128,6 +128,40 @@ export default function DriverOrdersScreen() {
     } finally {
       setConfirming(false);
     }
+  };
+
+  // D3 (2026-07-10) — driver can cancel their own walk-in orders that
+  // haven't yet been delivered. Confirmation dialog + DELETE call. Cache
+  // invalidations mirror submitDelivery so the Trip + Stock + EWB tabs
+  // refresh at the same time.
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const handleCancelWalkIn = (order: Order) => {
+    Alert.alert(
+      'Cancel walk-in order',
+      `Cancel order ${order.orderNumber} for ${order.customerName ?? 'customer'}? This cannot be undone.`,
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel order',
+          style: 'destructive',
+          onPress: async () => {
+            setCancellingId(order.orderId as unknown as string);
+            try {
+              await apiDelete(`/drivers/me/orders/${order.orderId}`);
+              Alert.alert('Cancelled', `${order.orderNumber} cancelled.`);
+              queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+              queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
+              queryClient.invalidateQueries({ queryKey: ['driver-trip-stock'] });
+              queryClient.invalidateQueries({ queryKey: ['driver-trip-ewbs'] });
+            } catch (err) {
+              Alert.alert('Could not cancel', getErrorMessage(err));
+            } finally {
+              setCancellingId(null);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleManualSync = async () => {
@@ -290,6 +324,23 @@ export default function DriverOrdersScreen() {
                 {order.status === 'pending_delivery' && !pendingOrderIds.has(order.orderId) && (
                   <View style={{ flex: 1 }}>
                     <Button title="Deliver" variant="accent" size="sm" onPress={() => handleDelivery(order)} />
+                  </View>
+                )}
+                {/* D3 (2026-07-10) — driver-side cancel for own walk-in orders,
+                    only when still cancellable. Not shown for regular orders
+                    (those go through office cancel), delivered walk-ins (already
+                    completed), or when a delivery sync is pending for this row. */}
+                {order.orderSource === 'walk_in'
+                  && ['pending_dispatch', 'pending_delivery'].includes(order.status ?? '')
+                  && !pendingOrderIds.has(order.orderId) && (
+                  <View style={{ flex: 1 }}>
+                    <Button
+                      title={cancellingId === order.orderId ? 'Cancelling…' : 'Cancel'}
+                      variant="danger"
+                      size="sm"
+                      disabled={cancellingId === order.orderId}
+                      onPress={() => handleCancelWalkIn(order)}
+                    />
                   </View>
                 )}
               </View>
@@ -692,7 +743,18 @@ function WalkInOrderModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen" statusBarTranslucent>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+      {/* D6 (2026-07-10) — walk-in modal keyboard overlap fix. Same pattern
+          as the Item 2 confirm-delivery modal above (see line 386): wrap
+          the sheet in KeyboardAvoidingView with behavior='padding' on iOS
+          and 'height' on Android + a small keyboardVerticalOffset. Without
+          this, the qty TextInput sat under the keyboard on smaller Android
+          phones during walk-in order entry, and the driver couldn't see
+          what they were typing. */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}
+      >
         <View style={{ backgroundColor: colors.bg, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '90%' }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>New Walk-in Order</Text>
@@ -700,7 +762,11 @@ function WalkInOrderModal({
               <Text style={{ fontSize: 22, color: colors.textSecondary }}>×</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 32 }}>
+          <ScrollView
+            style={{ padding: 16 }}
+            contentContainerStyle={{ paddingBottom: 32 }}
+            keyboardShouldPersistTaps="handled"
+          >
             {/* 1. Customer search */}
             <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 6 }}>Customer</Text>
             {selectedCustomer ? (
@@ -795,7 +861,7 @@ function WalkInOrderModal({
             />
           </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

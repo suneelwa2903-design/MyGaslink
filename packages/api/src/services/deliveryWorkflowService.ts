@@ -836,15 +836,89 @@ export async function confirmVehicleReconciliation(
             },
           },
         });
-        const tripOrderIds = tripOrders.map((o) => o.id);
+        // D1 (2026-07-10) — walk-in cancel over-credit fix.
+        //
+        // When a walk-in order is cancelled while status=pending_delivery
+        // (i.e. it was PHYSICALLY on the truck — proven by the presence
+        // of a CancelledStockEvent for it), the cancel path writes a
+        // CSE-anchored `cancellation_return +qty` at reconcile (see the
+        // CSE loop earlier in this function). But the manifest math above
+        // filters `tripOrders` by status IN (pending_delivery / delivered
+        // / ...) → cancelled orders drop out, so `fromFloatQty` does NOT
+        // count the walk-in as "sold from float". `unsoldFloat` then
+        // inflates by that qty → the manifest writes an EXTRA
+        // `cancellation_return +qty` → depot ends up double-credited.
+        //
+        // Live evidence dist-002 2026-07-10 03:22: OSHD2627000869 walk-in
+        // for 5×19KG created at 03:20, cancelled at 03:22, reconcile at
+        // 03:23. CSE cancellation_return posted +5 (correct). Manifest
+        // cancellation_return posted +9 (should have been +4). Net +5
+        // phantom cyls → Inventory Daily Summary showed closingFulls that
+        // was 5 higher than physical.
+        //
+        // Fix: include cancelled orders that HAD a CSE for this cylinder
+        // type in the `fromFloatQty` accumulator. The CSE presence proves
+        // the walk-in physically consumed float; its own cancellation_return
+        // handles the physical return. Adding them to fromFloatQty tells
+        // the manifest math "this qty was accounted for elsewhere — do
+        // NOT over-return it here". Net cancellation_returns per walk-in:
+        // 1 (CSE only) instead of 2 (CSE + manifest excess). Matches
+        // the "regular delivered order" bookkeeping: 1 dispatch → 1 net
+        // return leg per unsold cylinder.
+        //
+        // CRITICAL: dispatchedFromDepotIds must be built from the UNION of
+        // tripOrders AND cancelledOnTruckOrders. If we only scan tripOrders
+        // (the active-status set), a regular pre-booked order that was
+        // CANCELLED (status='cancelled', not in active filter) still has
+        // its per-order dispatch event but slips through as "no dispatch"
+        // when checked against cancelledOnTruckOrders. Result: it gets
+        // wrongly counted in cancelledFromFloatQty even though its cyls
+        // came from the "ordered" portion of the manifest, not float.
+        //
+        // Live evidence dist-002 Kiran Reddy trip 2 (2026-07-10 tests):
+        //   OSHD876 regular pre-booked, cancelled 1 cyl, has per-order
+        //   dispatch event → belongs to the "ordered" portion.
+        //   OSHD877 walk-in, cancelled 2 cyls, no per-order dispatch →
+        //   belongs to the FLOAT portion.
+        //   Preview pre-fix: manifest cancellation_return = 3 (only OSHD878
+        //   walk-in delivered subtracted). Preview WITH cancelledFromFloat
+        //   but WITHOUT the union dispatchedFromDepotIds: OSHD876 counted
+        //   → 6 sold, 3 unsold (still wrong). CORRECT (with union): OSHD876
+        //   excluded via per-order dispatch, OSHD877 included → 5 sold, 4
+        //   unsold. Then CSE returns (1 + 2 = 3) + spare returning (4) = 7
+        //   physical fulls returning ✓.
+        const cancelledOnTruckOrders = await prisma.order.findMany({
+          where: {
+            distributorId,
+            driverId: tripDva.driverId,
+            deliveryDate: tripDva.assignmentDate,
+            tripNumber: manifestRow.tripNumber,
+            status: 'cancelled',
+            cancelledStockEvents: {
+              some: { cylinderTypeId: manifestRow.cylinderTypeId },
+            },
+            items: { some: { cylinderTypeId: manifestRow.cylinderTypeId } },
+          },
+          select: {
+            id: true,
+            items: {
+              where: { cylinderTypeId: manifestRow.cylinderTypeId },
+              select: { quantity: true },
+            },
+          },
+        });
+        const allOrderIds = [
+          ...tripOrders.map((o) => o.id),
+          ...cancelledOnTruckOrders.map((o) => o.id),
+        ];
         const dispatchedFromDepotIds = new Set(
-          tripOrderIds.length === 0 ? [] :
+          allOrderIds.length === 0 ? [] :
           (await prisma.inventoryEvent.findMany({
             where: {
               distributorId,
               eventType: 'dispatch',
               referenceType: 'order',
-              referenceId: { in: tripOrderIds },
+              referenceId: { in: allOrderIds },
               cylinderTypeId: manifestRow.cylinderTypeId,
             },
             select: { referenceId: true },
@@ -853,7 +927,11 @@ export async function confirmVehicleReconciliation(
         const fromFloatQty = tripOrders
           .filter((o) => !dispatchedFromDepotIds.has(o.id))
           .reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
-        const soldFromFloat = Math.min(fromFloatQty, manifestRow.floatQty);
+        const cancelledFromFloatQty = cancelledOnTruckOrders
+          .filter((o) => !dispatchedFromDepotIds.has(o.id))
+          .reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
+
+        const soldFromFloat = Math.min(fromFloatQty + cancelledFromFloatQty, manifestRow.floatQty);
         const unsoldFloat = manifestRow.floatQty - soldFromFloat;
         if (unsoldFloat <= 0) continue;
         await prisma.$transaction(async (tx) => {
@@ -1227,15 +1305,63 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
             },
           },
         });
-        const tripOrderIds = tripOrders.map((o) => o.id);
+        // D1 preview parity (2026-07-10) — mirror the reconcile-time write
+        // fix so the Spare Stock Summary's "Returning to Depot" column
+        // matches what confirmVehicleReconciliation will actually write.
+        // Same story as D1: cancelled orders that HAD a CSE for this
+        // cylinder type physically consumed from the manifest — but ONLY
+        // walk-in cancellations consumed from the FLOAT pool. Regular
+        // pre-booked cancellations (per-order dispatch event exists) came
+        // from the "ordered" portion, NOT float — their CSE fully handles
+        // the return separately. So `dispatchedFromDepotIds` must be built
+        // from BOTH tripOrders AND cancelledOnTruckOrders (else regular
+        // pre-booked cancels slip through as "from float" and inflate the
+        // sold-from-float count).
+        //
+        // Live evidence dist-002 Kiran Reddy trip 2 (2026-07-10):
+        //   manifest float=9; OSHD878 walk-in delivered 3;
+        //   OSHD876 regular pre-booked cancelled 1 (has per-order dispatch);
+        //   OSHD877 walk-in cancelled 2 (no per-order dispatch).
+        //   Correct: fromFloat=3 (OSHD878) + cancelledFromFloat=2 (OSHD877
+        //   only, OSHD876 excluded by per-order-dispatch filter) = 5 sold,
+        //   4 unsold returning. Bug pre-fix: dispatchedFromDepotIds only
+        //   scanned tripOrders (active statuses) → missed OSHD876 → 3
+        //   incorrectly counted → 6 sold, 3 unsold displayed. With this
+        //   union fix: OSHD876's per-order dispatch is seen → excluded →
+        //   correct 5 sold, 4 unsold. Then CSE returns (1 + 2 = 3) + spare
+        //   returning (4) = 7 physical fulls returning ✓.
+        const cancelledOnTruckOrders = await prisma.order.findMany({
+          where: {
+            distributorId,
+            driverId: tripDva.driverId,
+            deliveryDate: tripDva.assignmentDate,
+            tripNumber: tripDva.tripNumber,
+            status: 'cancelled',
+            cancelledStockEvents: {
+              some: { cylinderTypeId: m.cylinderTypeId },
+            },
+            items: { some: { cylinderTypeId: m.cylinderTypeId } },
+          },
+          select: {
+            id: true,
+            items: {
+              where: { cylinderTypeId: m.cylinderTypeId },
+              select: { quantity: true },
+            },
+          },
+        });
+        const allOrderIds = [
+          ...tripOrders.map((o) => o.id),
+          ...cancelledOnTruckOrders.map((o) => o.id),
+        ];
         const dispatchedFromDepotIds = new Set(
-          tripOrderIds.length === 0 ? [] :
+          allOrderIds.length === 0 ? [] :
           (await prisma.inventoryEvent.findMany({
             where: {
               distributorId,
               eventType: 'dispatch',
               referenceType: 'order',
-              referenceId: { in: tripOrderIds },
+              referenceId: { in: allOrderIds },
               cylinderTypeId: m.cylinderTypeId,
             },
             select: { referenceId: true },
@@ -1244,7 +1370,11 @@ export async function getVehiclesPendingReconciliation(distributorId: string) {
         const fromFloatQty = tripOrders
           .filter((o) => !dispatchedFromDepotIds.has(o.id))
           .reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
-        const soldFromFloat = Math.min(fromFloatQty, m.floatQty);
+        const cancelledFromFloatQty = cancelledOnTruckOrders
+          .filter((o) => !dispatchedFromDepotIds.has(o.id))
+          .reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
+
+        const soldFromFloat = Math.min(fromFloatQty + cancelledFromFloatQty, m.floatQty);
         const unsoldFloat = m.floatQty - soldFromFloat;
         floatSummary.push({
           cylinderTypeId: m.cylinderTypeId,

@@ -1286,6 +1286,34 @@ function VehicleReturnCard({
         </div>
       )}
 
+      {/* D1-followup (2026-07-10) — total fulls returning summary.
+          Suneel's testing: operator was mentally summing CSE lines (3) +
+          Spare Returning (4) = 7 to verify against physical truck count.
+          Surface the total explicitly so the check is one glance not
+          three mental steps. Split by category so if any single number
+          looks wrong, the operator knows which section to look at. */}
+      {(lines.length > 0 || (vehicle.floatSummary ?? []).length > 0) && (() => {
+        const cseSum = lines.reduce((s, l) => s + (l.shortfallQty ?? 0), 0);
+        const spareSum = (vehicle.floatSummary ?? []).reduce((s, f) => s + (f.unsoldFloat ?? 0), 0);
+        const total = cseSum + spareSum;
+        if (total <= 0) return null;
+        return (
+          <div className="mb-5 rounded-lg border border-flame-200 dark:border-flame-800 bg-flame-50 dark:bg-flame-950/40 px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-flame-900 dark:text-flame-200">
+                Total fulls returning to depot
+              </div>
+              <div className="text-2xl font-bold text-flame-700 dark:text-flame-300">
+                {total}
+              </div>
+            </div>
+            <div className="text-xs text-flame-800/80 dark:text-flame-300/80 mt-1">
+              {cseSum} from cancelled stock + {spareSum} spare = {total} — verify against physical count on the truck.
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Section B — empties verification */}
       {emptiesTypes.length > 0 && (
         <div className="mb-5">

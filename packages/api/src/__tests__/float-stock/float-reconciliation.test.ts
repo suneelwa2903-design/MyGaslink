@@ -1128,4 +1128,120 @@ describe('FLOAT-001 — float-unsold reconciliation credit', () => {
     expect(afterT2Dispatch.isReconciled).toBe(false); // cleared by shouldRoll block
     expect(afterT2Dispatch.status).toBe('loaded_and_dispatched');
   });
+
+  it('D1 (2026-07-10) — walk-in CANCELLED from pending_delivery does not over-credit at reconcile', async () => {
+    // Live repro dist-002 2026-07-10 03:20-03:23 IST: OSHD2627000869 walk-in
+    // for 5×19KG was created at 03:20 (status=pending_dispatch), advanced to
+    // pending_delivery via preflight-add-to-trip, cancelled by office at
+    // 03:22 (CSE status='on_vehicle', qty=5 created by cancelOrder), then
+    // vehicle reconciled at 03:23. That trip's manifest float was 9 for 19KG.
+    //
+    // Pre-fix, at reconcile the CSE loop wrote cancellation_return +5 for
+    // the cancelled walk-in (correct), AND the manifest math computed
+    // fromFloatQty=0 because the cancelled walk-in was filtered out by the
+    // status={in:['pending_delivery',...]} clause → wrote an EXTRA
+    // cancellation_return +9 → net +14 return vs 5 physical → depot
+    // received +5 phantom cyls that never existed. Inventory showed the
+    // wrong closingFulls thereafter.
+    //
+    // Fix (D1): include cancelled orders that HAVE a CSE for the manifest's
+    // cylinderTypeId in fromFloatQty. The CSE presence proves the walk-in
+    // physically consumed float; adding its qty to fromFloatQty stops the
+    // manifest from over-returning.
+    //
+    // Expected math (this test):
+    //   manifest float = 10 for cylinderTypeId
+    //   walk-in (cancelled, CSE qty=5) — physically consumed 5 from float
+    //   Actual unsold at truck return = 5 (10 float − 5 walk-in that got cancelled)
+    //   CSE cancellation_return = +5 (physical return for the cancelled walk-in)
+    //   Manifest cancellation_return = +5 (the 5 that never sold)
+    //   Total = +10 = matches 10 originally dispatched. Zero phantom.
+
+    await createOrUpdateManifest(
+      DIST, dvaId, [{ cylinderTypeId, totalLoaded: 10 }], adminUserId,
+    );
+    await preflightDispatch({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+
+    // Create a walk-in and drive it to pending_delivery (mimicking the
+    // add-to-trip path — walk-ins consume from float, no per-order
+    // dispatch event).
+    const walkIn = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-WI-D1-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST,
+        customerId,
+        driverId,
+        vehicleId,
+        orderDate: todayMidnight,
+        deliveryDate: todayMidnight,
+        status: 'pending_delivery',
+        orderSource: 'walk_in',
+        totalAmount: 2500,
+        tripNumber: 1,
+        items: {
+          create: [{ cylinderTypeId, quantity: 5, unitPrice: 500, totalPrice: 2500 }],
+        },
+      },
+    });
+
+    // Office cancels the walk-in. cancelOrder would write status='cancelled'
+    // AND create a CSE with status='on_vehicle' (since it was pending_delivery
+    // at cancel time). Mirror that here so the test is scoped to the
+    // reconcile-time accounting, not the cancel-time bookkeeping.
+    await prisma.order.update({
+      where: { id: walkIn.id },
+      data: { status: 'cancelled', cancelledAt: new Date(), cancellationReason: 'D1 test' },
+    });
+    await prisma.cancelledStockEvent.create({
+      data: {
+        orderId: walkIn.id,
+        vehicleId,
+        driverId,
+        cylinderTypeId,
+        distributorId: DIST,
+        quantity: 5,
+        cancellationDate: todayMidnight,
+        status: 'on_vehicle',
+      },
+    });
+
+    // Return + reconcile. markVehicleReturned signature is (vehicleId, driverId, distributorId).
+    await markVehicleReturned(vehicleId, driverId, DIST);
+    await confirmVehicleReconciliation(vehicleId, DIST, adminUserId, {
+      physicalStockConfirmed: true,
+    });
+
+    // CSE cancellation_return: +5 for the cancelled walk-in's 5 physical cyls.
+    const cseReturns = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        cylinderTypeId,
+        eventType: 'cancellation_return',
+        referenceType: 'cancelled_stock',
+      },
+    });
+    const cseTotal = cseReturns.reduce((s, e) => s + e.fullsChange, 0);
+    expect(cseTotal).toBe(5);
+
+    // Manifest cancellation_return: +5 for the 5 remaining unsold. Pre-fix
+    // this would have been +10 (the whole float, because the cancelled
+    // walk-in was excluded from fromFloatQty).
+    const manifestReturns = await prisma.inventoryEvent.findMany({
+      where: {
+        distributorId: DIST,
+        cylinderTypeId,
+        eventType: 'cancellation_return',
+        referenceType: 'dva_load_manifest',
+      },
+    });
+    const manifestTotal = manifestReturns.reduce((s, e) => s + e.fullsChange, 0);
+    expect(manifestTotal).toBe(5);
+
+    // Net physical: 10 originally left the depot; 10 came back (5 via CSE
+    // + 5 via manifest). Zero phantom cyls. This is the invariant the
+    // Inventory Daily Summary reads.
+    expect(cseTotal + manifestTotal).toBe(10);
+  });
 });

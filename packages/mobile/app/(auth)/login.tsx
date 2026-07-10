@@ -291,36 +291,43 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            {/* Forgot Password */}
-            <TouchableOpacity
-              onPress={() => router.push('/(auth)/forgot-password')}
-              style={{ alignSelf: 'flex-end' }}
-            >
-              <Text style={{ color: flame, fontSize: 13, fontWeight: '600' }}>
-                Forgot Password?
-              </Text>
-            </TouchableOpacity>
-
-            {/* Item 4C (2026-07-09) — Remember Me toggle. Credentials persist
-                to SecureStore (Keychain / Keystore) on successful login.
-                Default ON; a returning user with saved credentials sees the
-                indicator + a Clear affordance. */}
+            {/* D5 (2026-07-10) — Remember Me toggle sits on the SAME row as
+                the "Forgot Password?" link. Vertical stack (previously two
+                rows) took an entire visual band for two tiny controls; the
+                inline form matches the login-form density of every other
+                auth screen and shortens the modal so the primary Sign In
+                button reaches the keyboard-safe area even on small phones. */}
             <View
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
+                justifyContent: 'space-between',
                 paddingVertical: 4,
               }}
             >
-              <Switch
-                value={rememberMe}
-                onValueChange={setRememberMe}
-                trackColor={{ false: '#cbd5e1', true: flame }}
-                thumbColor="#ffffff"
-              />
-              <Text style={{ marginLeft: 10, color: colors.textSecondary, fontSize: 13 }}>
-                Remember me
-              </Text>
+              {/* Item 4C: credentials persist to SecureStore (Keychain /
+                  Keystore) on successful login. Default ON; a returning user
+                  with saved credentials sees the indicator + Clear button
+                  below this row. */}
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Switch
+                  value={rememberMe}
+                  onValueChange={setRememberMe}
+                  trackColor={{ false: '#cbd5e1', true: flame }}
+                  thumbColor="#ffffff"
+                />
+                <Text style={{ marginLeft: 10, color: colors.textSecondary, fontSize: 13 }}>
+                  Remember me
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => router.push('/(auth)/forgot-password')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={{ color: flame, fontSize: 13, fontWeight: '600' }}>
+                  Forgot Password?
+                </Text>
+              </TouchableOpacity>
             </View>
             {savedLoginIndicator && (
               <View

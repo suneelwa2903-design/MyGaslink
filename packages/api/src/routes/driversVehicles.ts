@@ -980,6 +980,75 @@ driverRouter.post('/me/orders',
   },
 );
 
+// DELETE /api/drivers/me/orders/:id — D3 (2026-07-10) driver-side cancel of
+// their own walk-in order. Complements the office-side cancel flow. Only
+// eligible when the walk-in is still cancelable (pending_dispatch or
+// pending_delivery) — once delivered, cancellation must go through office
+// reissue tooling. Cross-tenant + cross-driver attempts return 403/404.
+//
+// The service call `cancelOrder` handles EWB→IRN cancel order (per
+// CLAUDE.md anti-pattern #20), CSE creation for on-vehicle stock, and
+// the transactional invoice/inventory bookkeeping. This route is a thin
+// wrapper that only proves the caller has cancel rights.
+//
+// Response codes:
+//   200 → cancelled
+//   400 → wrong status (delivered / already cancelled)
+//   403 → not the driver on the order, or order isn't a walk-in
+//   404 → order not found in caller's tenant
+driverRouter.delete('/me/orders/:id',
+  requireRole('driver'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const userId = req.user!.userId;
+      const orderId = String(req.params.id ?? '');
+      if (!orderId) return sendError(res, 'Missing orderId', 400, 'MISSING_ID');
+
+      const driver = await resolveDriverFromUser(userId, distributorId);
+      if (!driver) return sendError(res, 'Driver record not found for user', 403, 'DRIVER_NOT_FOUND');
+
+      // Read + gate. All three checks (tenant / driver / walk-in / status)
+      // BEFORE calling cancelOrder — the service will happily cancel any
+      // orderId it's given, so the authorization decisions live here.
+      const order = await prisma.order.findFirst({
+        where: { id: orderId, distributorId, deletedAt: null },
+        select: { id: true, orderNumber: true, driverId: true, orderSource: true, status: true },
+      });
+      if (!order) return sendError(res, 'Order not found in your tenant', 404, 'ORDER_NOT_FOUND');
+      if (order.driverId !== driver.id) {
+        return sendError(res, 'You can only cancel orders assigned to you', 403, 'NOT_YOUR_ORDER');
+      }
+      if (order.orderSource !== 'walk_in') {
+        return sendError(res, 'Drivers can only cancel walk-in orders', 403, 'NOT_A_WALKIN');
+      }
+      if (!['pending_dispatch', 'pending_delivery'].includes(order.status)) {
+        return sendError(
+          res,
+          `Cannot cancel — order is ${order.status}. Only pending_dispatch / pending_delivery walk-ins are eligible.`,
+          400,
+          'INELIGIBLE_STATUS',
+        );
+      }
+
+      const reason = typeof req.body?.reason === 'string' && req.body.reason.trim().length > 0
+        ? String(req.body.reason).slice(0, 200)
+        : 'Cancelled by driver';
+
+      const { cancelOrder } = await import('../services/orderService.js');
+      const updated = await cancelOrder(orderId, distributorId, userId, reason);
+      return sendSuccess(res, {
+        orderId: updated.id,
+        orderNumber: updated.orderNumber,
+        status: updated.status,
+        reason,
+      });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // WI-PENDING-PAYMENTS — Driver payment submissions.
 // Drivers can self-report payments they collected at delivery (cash /
