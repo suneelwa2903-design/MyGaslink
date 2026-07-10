@@ -110,7 +110,29 @@ export async function applyBackdatedInventoryAdjustment(
       }
       // Empties credit — skip when no empties came back (mirrors what
       // godown confirmDelivery does — no zero-quantity events).
+      // We write a PAIR of events to match the shape of a normal
+      // delivery+reconcile flow: a `collection` event (feeds the
+      // "Collected Empties" display column) AND a
+      // `reconciliation_empties_return` event (feeds closing_empties
+      // via emptiesReturnedVerified). Without the paired collection
+      // event the daily summary derives `emptiesOnVehicle =
+      // collectedEmpties − emptiesReturnedVerified` as NEGATIVE for the
+      // backdated qty, and "Collected Empties" underreports the day's
+      // returns. Both event rows carry the same referenceType so
+      // getBackdatedAdjustmentHistory still surfaces the audit trail.
       if (emptiesCollected > 0) {
+        await createInventoryEvent(tx, {
+          distributorId,
+          cylinderTypeId: item.cylinderTypeId,
+          eventType: 'collection',
+          fullsChange: 0,
+          emptiesChange: emptiesCollected,
+          eventDate: adjustmentDate,
+          referenceId: order.id,
+          referenceType: 'backdated_inventory_adjustment',
+          notes,
+          createdBy: userId,
+        });
         await createInventoryEvent(tx, {
           distributorId,
           cylinderTypeId: item.cylinderTypeId,
@@ -123,7 +145,7 @@ export async function applyBackdatedInventoryAdjustment(
           notes,
           createdBy: userId,
         });
-        eventsWritten++;
+        eventsWritten += 2;
       }
     }
 

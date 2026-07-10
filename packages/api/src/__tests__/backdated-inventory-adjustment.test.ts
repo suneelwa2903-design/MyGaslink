@@ -136,21 +136,31 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     expect(ev.eventDate.toISOString().slice(0, 10)).toBe('2099-12-15');
   });
 
-  it('writes a reconciliation_empties_return event dated on the delivery date when emptiesCollected > 0', async () => {
+  it('writes PAIRED collection + reconciliation_empties_return events when emptiesCollected > 0 (F1)', async () => {
+    // F1 (2026-07-10): the backdated writer emits a `collection` event
+    // ALONGSIDE the `reconciliation_empties_return` event so the daily
+    // summary derivation `emptiesOnVehicle = collected − verified`
+    // stays at 0 (matching a normal delivery+reconcile round-trip),
+    // and the "Collected Empties" display column reflects the
+    // backdated returns. Total = 3 events per item with empties: 1
+    // manual_adjustment for fulls + 1 collection + 1 verified.
     const cust = await makeCustomer('bia-empties');
     const o = await makeBackdatedOrder({ customerId: cust.id, cylinderTypeId: ctId, deliveredQty: 2, emptiesCollected: 2 });
     const result = await applyBackdatedInventoryAdjustment(D1, 'test-user', o.id);
-    expect(result.eventsWritten).toBe(2);
+    expect(result.eventsWritten).toBe(3);
     const events = await prisma.inventoryEvent.findMany({
       where: { referenceId: o.id, referenceType: 'backdated_inventory_adjustment' },
       orderBy: { eventType: 'asc' },
     });
     const fulls = events.find((e) => e.eventType === 'manual_adjustment');
-    const empties = events.find((e) => e.eventType === 'reconciliation_empties_return');
+    const collection = events.find((e) => e.eventType === 'collection');
+    const verified = events.find((e) => e.eventType === 'reconciliation_empties_return');
     expect(fulls?.fullsChange).toBe(-2);
     expect(fulls?.eventDate.toISOString().slice(0, 10)).toBe('2099-12-15');
-    expect(empties?.emptiesChange).toBe(2);
-    expect(empties?.eventDate.toISOString().slice(0, 10)).toBe('2099-12-15');
+    expect(collection?.emptiesChange).toBe(2);
+    expect(collection?.eventDate.toISOString().slice(0, 10)).toBe('2099-12-15');
+    expect(verified?.emptiesChange).toBe(2);
+    expect(verified?.eventDate.toISOString().slice(0, 10)).toBe('2099-12-15');
   });
 
   it('does NOT write an empties event when emptiesCollected = 0', async () => {
@@ -253,6 +263,11 @@ describe('applyBackdatedInventoryAdjustment — events', () => {
     });
     expect(summary.manualAdjustment).toBe(-5);
     expect(summary.emptiesReturnedVerified).toBe(3);
+    // F1 — the paired collection event feeds `collectedEmpties`, so the
+    // derived `emptiesOnVehicle = collectedEmpties − emptiesReturnedVerified`
+    // stays at 0 (matches a normal delivery+reconcile round-trip; no
+    // phantom "-3 on vehicle" like the pre-F1 backdated writer produced).
+    expect(summary.collectedEmpties).toBe(3);
   });
 });
 
@@ -288,7 +303,9 @@ describe('getPendingBackdatedAdjustments + getBackdatedAdjustmentHistory', () =>
     await applyBackdatedInventoryAdjustment(D1, 'test-user', o.id);
     const history = await getBackdatedAdjustmentHistory(D1);
     expect(history.length).toBeGreaterThan(0);
-    expect(history.every((h) => h.eventType === 'manual_adjustment' || h.eventType === 'reconciliation_empties_return')).toBe(true);
+    // F1 (2026-07-10) — three possible event types now: manual_adjustment
+    // (fulls), collection + reconciliation_empties_return (both for empties).
+    expect(history.every((h) => h.eventType === 'manual_adjustment' || h.eventType === 'reconciliation_empties_return' || h.eventType === 'collection')).toBe(true);
     const myRow = history.find((h) => h.orderId === o.id);
     expect(myRow?.orderNumber).toBe(o.orderNumber);
   });
