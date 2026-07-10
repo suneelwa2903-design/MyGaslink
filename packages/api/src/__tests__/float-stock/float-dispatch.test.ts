@@ -63,6 +63,51 @@ describe('FLOAT-001 — float-only + mixed dispatch', () => {
       select: { id: true },
     });
     adminUserId = admin.id;
+
+    // ─── SEED-CONTAMINATION FIX (2026-07-10 CI RCA) ────────────────────
+    // Root cause of the recurring `openingFulls=98 expected 100` flake on
+    // this suite's tests at lines 244 and 652:
+    //
+    //   seed.ts:635 writes 7 days of inventory_summaries per (dist, ct)
+    //   with `Math.floor(Math.random() * 5) - 2` variation on every
+    //   in/out/deliver/collect field. The last (day 0) row's closing_fulls
+    //   drifts run-to-run.
+    //
+    //   Those 2 tests write an `initial_balance` event at PRIOR_DATE and
+    //   expect openingFulls=100 on TEST_DATE. But `initial_balance` feeds
+    //   `manualAdjustment` in computeSummaryForDate (inventoryService.ts
+    //   line 175-178) — it does NOT reset opening to zero. So opening
+    //   for PRIOR_DATE = closing_fulls of the most recent PRIOR summary
+    //   = seed's randomly-drifted day-0 row for (DIST, cylinderTypeId).
+    //   Then closing = seed_random + 100 (from initial_balance), which
+    //   becomes TEST_DATE's opening. When seed_random = -2, that's 98.
+    //
+    //   Wipe any seed summaries for THIS distributor+cylinder-type at
+    //   dates before PRIOR_DATE so the two initial_balance tests start
+    //   from a genuine zero-state. No production behavior changes; no
+    //   other test in this file cares about seed summaries at
+    //   2026-07-xx for this specific (DIST, cylinderTypeId) pair.
+    //
+    // CI failure history that this fixes: 318710a, 3bee3e1, 08b9a69,
+    // fe9d033, fb43cbe, e708e11 — every one showed openingFulls=98.
+    await prisma.inventorySummary.deleteMany({
+      where: {
+        distributorId: DIST,
+        cylinderTypeId,
+        summaryDate: { lt: new Date(PRIOR_DATE) },
+      },
+    });
+    // Also wipe events that could feed the recalc on PRIOR_DATE onward.
+    // Seed events are all at 2026-07-0x dates; nothing here should reach
+    // 2099-12-14. But if a future seed change ever writes past 2099-12-13,
+    // this is the safety net. Scoped tightly to (DIST, cylinderTypeId).
+    await prisma.inventoryEvent.deleteMany({
+      where: {
+        distributorId: DIST,
+        cylinderTypeId,
+        eventDate: { lt: new Date(PRIOR_DATE) },
+      },
+    });
   });
 
   afterEach(async () => {
