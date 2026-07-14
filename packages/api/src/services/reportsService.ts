@@ -1433,7 +1433,7 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
   };
 }
 
-// ─── Payment Collections — one row per payment-allocation (Suneel 2026-07-14)
+// ─── Payment Collections — one row per invoice (Suneel 2026-07-14)
 //
 // "For payments received between X and Y, against which invoices did the money
 // land and which driver delivered the underlying order?" — the cashflow lens
@@ -1442,37 +1442,47 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
 // Filters:
 //   • date range → payment_transactions.transaction_date
 //   • driverId   → the invoice's underlying order.driver_id
-// Row shape: one row per payment_allocation (bulk payment covering N invoices
-// produces N rows so the reader can see each invoice's share). Amount Paid
-// is the allocation share, not the whole payment total.
+//
+// Row shape: ONE ROW PER UNIQUE INVOICE that had at least one allocation in
+// the range. Each row's math balances:
+//
+//     Sale Amount = Paid Earlier + Paid Today + Pending
+//
+// where:
+//   • Paid Earlier = sum of allocations dated < dateFrom
+//   • Paid Today   = sum of allocations dated ∈ [dateFrom, dateTo]
+//   • Pending      = invoice.outstandingAmount at query time
+//
+// Per-allocation visibility (bulk payment covering N invoices — the ₹4
+// rounding split vs the ₹12,760 main) is preserved in the Payments Register
+// (see GET /api/payments/export). This report is the "cashflow summary" view.
 export async function paymentCollections(distributorId: string, f: ReportFilters): Promise<ReportResult> {
   const { from, to } = range(f);
 
-  // Load every allocation whose parent payment landed in the window, joined
-  // to invoice + underlying order + customer + driver in one round-trip.
-  const allocations = await prisma.paymentAllocation.findMany({
+  // Find every invoice that had at least one allocation in range (+ optional
+  // driver filter). Join to invoice + order + customer + driver + items so
+  // the row assembly stays single-round-trip.
+  const inRangeAllocs = await prisma.paymentAllocation.findMany({
     where: {
       payment: {
         distributorId,
         deletedAt: null,
         transactionDate: { gte: from, lte: to },
       },
-      // Driver filter: allocation is included only if the invoice's
-      // underlying order was delivered by that driver. Uses a nested `is`
-      // filter so we don't over-fetch and post-filter in JS.
       ...(f.driverId
         ? { invoice: { order: { driverId: f.driverId } } }
         : {}),
     },
     select: {
       allocatedAmount: true,
-      payment: { select: { transactionDate: true, id: true } },
+      invoiceId: true,
       invoice: {
         select: {
           id: true,
           invoiceNumber: true,
           issueDate: true,
           totalAmount: true,
+          amountPaid: true,
           outstandingAmount: true,
           customer: { select: { customerName: true, businessName: true } },
           order: {
@@ -1490,89 +1500,99 @@ export async function paymentCollections(distributorId: string, f: ReportFilters
         },
       },
     },
-    orderBy: { payment: { transactionDate: 'desc' } },
   });
 
+  if (inRangeAllocs.length === 0) {
+    return {
+      columns: paymentCollectionsColumns(),
+      rows: [],
+      totals: paymentCollectionsEmptyTotals(),
+    };
+  }
+
+  // Sum per-invoice paid-in-range.
+  const invoiceIds = [...new Set(inRangeAllocs.map((a) => a.invoiceId))];
+  const paidTodayByInvoice = new Map<string, number>();
+  const invoiceById = new Map<string, (typeof inRangeAllocs)[number]['invoice']>();
+  for (const a of inRangeAllocs) {
+    paidTodayByInvoice.set(
+      a.invoiceId,
+      (paidTodayByInvoice.get(a.invoiceId) ?? 0) + num(a.allocatedAmount),
+    );
+    if (a.invoice && !invoiceById.has(a.invoiceId)) {
+      invoiceById.set(a.invoiceId, a.invoice);
+    }
+  }
+
+  // Paid Earlier = invoice.amountPaid − paidToday for that invoice.
+  // (Fresh calculation instead of a second query — amountPaid is the
+  // all-time ledger sum of allocations against this invoice, and we
+  // already have the in-range total to subtract from it.)
   type Row = {
     invoiceDate: string;
     customerName: string;
     invoiceNumber: string;
-    // Fulls delivered + empties collected also live on the INVOICE (per its
-    // underlying order). Same double-count bug shape as saleAmount /
-    // pendingAmount below — blank on subsequent rows so totals stay honest.
-    fullsDelivered: number | '';
-    emptiesCollected: number | '';
-    saleAmount: number | '';
-    amountPaid: number;
-    pendingAmount: number | '';
+    fullsDelivered: number;
+    emptiesCollected: number;
+    saleAmount: number;
+    paidEarlier: number;
+    paidToday: number;
+    pendingAmount: number;
     driverName: string;
   };
-
-  // 2026-07-14 report-bug fix (Suneel): an invoice with N payment
-  // allocations in the range produces N rows. The per-INVOICE fields —
-  // sale amount, pending amount, fulls delivered, empties collected —
-  // must appear on the FIRST allocation row of each invoice only, blank
-  // on subsequent rows. Otherwise the TOTALS row double-counts every
-  // invoice paid via multiple allocations (verified: 6 invoices at
-  // Vanasthali produced a ₹67,011 sale-amount inflation before this fix).
-  // Amount Paid stays as the per-allocation share so bulk-payment
-  // visibility is preserved.
-  const seenInvoiceIds = new Set<string>();
-  const rows: Row[] = allocations.map((a) => {
-    const inv = a.invoice;
-    const invId = inv?.id ?? '';
-    const isFirstRowForInvoice = invId && !seenInvoiceIds.has(invId);
-    if (invId) seenInvoiceIds.add(invId);
-
-    const items = inv?.order?.items ?? [];
+  const rows: Row[] = invoiceIds.map((invId) => {
+    const inv = invoiceById.get(invId)!;
+    const items = inv.order?.items ?? [];
     const fullsDelivered = items.reduce(
       (sum, it) => sum + (it.deliveredQuantity ?? it.quantity ?? 0),
       0,
     );
     const emptiesCollected = items.reduce((sum, it) => sum + (it.emptiesCollected ?? 0), 0);
+    const saleAmount = +num(inv.totalAmount).toFixed(2);
+    const paidToday = +(paidTodayByInvoice.get(invId) ?? 0).toFixed(2);
+    const paidAllTime = +num(inv.amountPaid).toFixed(2);
+    // paidEarlier = everything paid on this invoice EXCEPT what came in
+    // during the current filter window. When paidAllTime < paidToday
+    // (e.g. after allocations outside the range were reversed via
+    // credit notes), clamp at 0.
+    const paidEarlier = Math.max(0, +(paidAllTime - paidToday).toFixed(2));
+    const pendingAmount = +num(inv.outstandingAmount).toFixed(2);
     return {
-      invoiceDate: inv?.issueDate ? dayKey(new Date(inv.issueDate)) : '—',
-      customerName: inv?.customer?.businessName || inv?.customer?.customerName || 'Deleted Customer',
-      invoiceNumber: inv?.invoiceNumber ?? '—',
-      fullsDelivered: isFirstRowForInvoice ? fullsDelivered : '',
-      emptiesCollected: isFirstRowForInvoice ? emptiesCollected : '',
-      saleAmount: isFirstRowForInvoice ? +num(inv?.totalAmount ?? 0).toFixed(2) : '',
-      amountPaid: +num(a.allocatedAmount).toFixed(2),
-      // outstandingAmount is the invoice's CURRENT outstanding at query
-      // time — the "still pending after this allocation" number the
-      // operator cares about, not a point-in-time replay. On subsequent
-      // rows for the same invoice: blank (already shown on first row).
-      pendingAmount: isFirstRowForInvoice ? +num(inv?.outstandingAmount ?? 0).toFixed(2) : '',
-      driverName: inv?.order?.driver?.driverName ?? '—',
+      invoiceDate: inv.issueDate ? dayKey(new Date(inv.issueDate)) : '—',
+      customerName: inv.customer?.businessName || inv.customer?.customerName || 'Deleted Customer',
+      invoiceNumber: inv.invoiceNumber,
+      fullsDelivered,
+      emptiesCollected,
+      saleAmount,
+      paidEarlier,
+      paidToday,
+      pendingAmount,
+      driverName: inv.order?.driver?.driverName ?? '—',
     };
   });
 
-  // Totals only aggregate non-blank cells — so per-invoice fields count
-  // exactly once regardless of how many allocation rows the invoice has.
+  // Sort: latest invoice-date first so the operator sees recent activity
+  // at the top; ties broken by invoice number.
+  rows.sort((a, b) => {
+    if (a.invoiceDate !== b.invoiceDate) return b.invoiceDate.localeCompare(a.invoiceDate);
+    return a.invoiceNumber.localeCompare(b.invoiceNumber);
+  });
+
   const totals = rows.reduce(
     (acc, r) => {
-      if (typeof r.fullsDelivered === 'number') acc.fullsDelivered += r.fullsDelivered;
-      if (typeof r.emptiesCollected === 'number') acc.emptiesCollected += r.emptiesCollected;
-      if (typeof r.saleAmount === 'number') acc.saleAmount += r.saleAmount;
-      acc.amountPaid += r.amountPaid;
-      if (typeof r.pendingAmount === 'number') acc.pendingAmount += r.pendingAmount;
+      acc.fullsDelivered += r.fullsDelivered;
+      acc.emptiesCollected += r.emptiesCollected;
+      acc.saleAmount += r.saleAmount;
+      acc.paidEarlier += r.paidEarlier;
+      acc.paidToday += r.paidToday;
+      acc.pendingAmount += r.pendingAmount;
       return acc;
     },
-    { fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0, amountPaid: 0, pendingAmount: 0 },
+    { fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0, paidEarlier: 0, paidToday: 0, pendingAmount: 0 },
   );
 
   return {
-    columns: [
-      { key: 'invoiceDate', label: 'Invoice Date' },
-      { key: 'customerName', label: 'Customer' },
-      { key: 'invoiceNumber', label: 'Invoice #' },
-      { key: 'fullsDelivered', label: 'Fulls Delivered' },
-      { key: 'emptiesCollected', label: 'Empties Collected' },
-      { key: 'saleAmount', label: 'Sale Amount', money: true },
-      { key: 'amountPaid', label: 'Amount Paid', money: true },
-      { key: 'pendingAmount', label: 'Pending Amount', money: true },
-      { key: 'driverName', label: 'Delivery Boy' },
-    ],
+    columns: paymentCollectionsColumns(),
     rows,
     totals: {
       invoiceDate: 'TOTAL',
@@ -1581,10 +1601,41 @@ export async function paymentCollections(distributorId: string, f: ReportFilters
       fullsDelivered: totals.fullsDelivered,
       emptiesCollected: totals.emptiesCollected,
       saleAmount: +totals.saleAmount.toFixed(2),
-      amountPaid: +totals.amountPaid.toFixed(2),
+      paidEarlier: +totals.paidEarlier.toFixed(2),
+      paidToday: +totals.paidToday.toFixed(2),
       pendingAmount: +totals.pendingAmount.toFixed(2),
       driverName: '',
     },
+  };
+}
+
+function paymentCollectionsColumns(): ReportColumn[] {
+  return [
+    { key: 'invoiceDate', label: 'Invoice Date' },
+    { key: 'customerName', label: 'Customer' },
+    { key: 'invoiceNumber', label: 'Invoice #' },
+    { key: 'fullsDelivered', label: 'Fulls Delivered' },
+    { key: 'emptiesCollected', label: 'Empties Collected' },
+    { key: 'saleAmount', label: 'Sale Amount', money: true },
+    { key: 'paidEarlier', label: 'Paid Earlier', money: true },
+    { key: 'paidToday', label: 'Paid Today', money: true },
+    { key: 'pendingAmount', label: 'Pending Amount', money: true },
+    { key: 'driverName', label: 'Delivery Boy' },
+  ];
+}
+
+function paymentCollectionsEmptyTotals(): Record<string, unknown> {
+  return {
+    invoiceDate: 'TOTAL',
+    customerName: '',
+    invoiceNumber: '',
+    fullsDelivered: 0,
+    emptiesCollected: 0,
+    saleAmount: 0,
+    paidEarlier: 0,
+    paidToday: 0,
+    pendingAmount: 0,
+    driverName: '',
   };
 }
 

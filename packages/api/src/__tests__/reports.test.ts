@@ -235,7 +235,7 @@ describe('GET /api/reports/payment-collections', () => {
     await prisma.customer.deleteMany({ where: { id: { in: customerIds } } });
   });
 
-  it('per-invoice fields NOT double-counted when invoice has multiple allocations', async () => {
+  it('one row per invoice; Sale = Paid Earlier + Paid Today + Pending balances', async () => {
     // dist-002 token
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'sharma@gasdist.com' } });
     const tk = generateToken({ userId: admin.id, email: admin.email, role: admin.role as UserRole, distributorId: admin.distributorId });
@@ -245,41 +245,56 @@ describe('GET /api/reports/payment-collections', () => {
       .set({ Authorization: `Bearer ${tk}`, 'X-Distributor-Id': DIST_ID });
     expect(res.status).toBe(200);
 
+    const columns = res.body.data.columns as ReportColumn[];
+    expect(columns.map((c) => c.key)).toEqual([
+      'invoiceDate', 'customerName', 'invoiceNumber',
+      'fullsDelivered', 'emptiesCollected',
+      'saleAmount', 'paidEarlier', 'paidToday', 'pendingAmount',
+      'driverName',
+    ]);
+
     const rows = res.body.data.rows as Array<{
-      invoiceNumber: string; saleAmount: number | ''; amountPaid: number; pendingAmount: number | '';
-      fullsDelivered: number | ''; emptiesCollected: number | '';
+      invoiceNumber: string;
+      saleAmount: number;
+      paidEarlier: number;
+      paidToday: number;
+      pendingAmount: number;
+      fullsDelivered: number;
+      emptiesCollected: number;
     }>;
     const myRows = rows.filter((r) => r.invoiceNumber === INVOICE_NUMBER);
-    expect(myRows).toHaveLength(2); // 2 allocations → 2 rows
+    // NEW SHAPE: 1 row per unique invoice regardless of allocation count.
+    expect(myRows).toHaveLength(1);
 
-    // First row carries the per-invoice figures; second row has them blank.
-    const [first, second] = myRows;
-    expect(first.saleAmount).toBe(INVOICE_TOTAL);
-    expect(first.pendingAmount).toBe(OUTSTANDING);
-    expect(first.fullsDelivered).toBe(4);
-    expect(first.emptiesCollected).toBe(4);
-    expect(second.saleAmount).toBe('');
-    expect(second.pendingAmount).toBe('');
-    expect(second.fullsDelivered).toBe('');
-    expect(second.emptiesCollected).toBe('');
+    const [row] = myRows;
+    expect(row.saleAmount).toBe(INVOICE_TOTAL);
+    expect(row.pendingAmount).toBe(OUTSTANDING);
+    expect(row.fullsDelivered).toBe(4);
+    expect(row.emptiesCollected).toBe(4);
 
-    // Amount Paid is per-allocation on both rows.
-    const paidTotal = myRows.reduce((s, r) => s + r.amountPaid, 0);
-    expect(paidTotal).toBe(ALLOC_A + ALLOC_B);
+    // Both allocations landed inside the date range → paidToday captures
+    // the whole invoice-paid amount, paidEarlier = 0.
+    expect(row.paidToday).toBe(ALLOC_A + ALLOC_B);
+    expect(row.paidEarlier).toBe(0);
 
-    // Totals row: Sale + Pending count the invoice ONCE (blank cells skipped).
-    const totals = res.body.data.totals as { saleAmount: number; amountPaid: number; pendingAmount: number };
-    // Sum over just this test's rows for isolation from other fixtures.
-    const salesFromMe = myRows.reduce((s, r) => s + (typeof r.saleAmount === 'number' ? r.saleAmount : 0), 0);
-    const pendingFromMe = myRows.reduce((s, r) => s + (typeof r.pendingAmount === 'number' ? r.pendingAmount : 0), 0);
-    expect(salesFromMe).toBe(INVOICE_TOTAL);       // NOT 2× INVOICE_TOTAL
-    expect(pendingFromMe).toBe(OUTSTANDING);
-    // Sanity: Sale − Paid = Pending across THIS test's rows.
-    const paidFromMe = myRows.reduce((s, r) => s + r.amountPaid, 0);
-    expect(salesFromMe - paidFromMe).toBe(pendingFromMe);
-    // Overall totals must be finite numbers (envelope guard).
+    // The math identity every row must satisfy.
+    expect(row.saleAmount).toBe(row.paidEarlier + row.paidToday + row.pendingAmount);
+
+    // Totals row also honours the identity.
+    const totals = res.body.data.totals as {
+      saleAmount: number;
+      paidEarlier: number;
+      paidToday: number;
+      pendingAmount: number;
+    };
     expect(Number.isFinite(totals.saleAmount)).toBe(true);
-    expect(Number.isFinite(totals.amountPaid)).toBe(true);
+    expect(Number.isFinite(totals.paidEarlier)).toBe(true);
+    expect(Number.isFinite(totals.paidToday)).toBe(true);
     expect(Number.isFinite(totals.pendingAmount)).toBe(true);
+    // For all-inside-range fixture, this test's contribution to totals is
+    // exactly the invoice we seeded — so distributor totals must include
+    // it at least once (may aggregate other seed data too).
+    expect(totals.saleAmount).toBeGreaterThanOrEqual(INVOICE_TOTAL);
+    expect(totals.paidToday).toBeGreaterThanOrEqual(ALLOC_A + ALLOC_B);
   });
 });
