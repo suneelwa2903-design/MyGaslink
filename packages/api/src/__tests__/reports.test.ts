@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
@@ -137,5 +137,149 @@ describe('reportToCsv', () => {
     expect(lines[0]).toBe('A,B');
     expect(lines[1]).toBe('"x,y","he""llo"');
     expect(lines[2]).toBe('TOTAL,5');
+  });
+});
+
+// 2026-07-14 regression guard (Suneel): payment-collections was
+// double-counting Sale Amount + Pending Amount when an invoice had
+// multiple allocations in the range. Verified against prod: 6
+// Vanasthali invoices produced ₹67,011 inflated Sale total. This
+// test seeds ONE invoice + TWO allocations and asserts Total Sale =
+// invoice.totalAmount (not 2× it), Total Pending = invoice.outstanding
+// (not 2× it), Total Amount Paid = SUM of allocations (per-row math).
+describe('GET /api/reports/payment-collections', () => {
+  const CUSTOMER_NAME = 'PC_TEST_CUSTOMER_DOUBLECOUNT';
+  const ORDER_NUMBER = 'PC-TEST-DOUBLECOUNT-1';
+  const INVOICE_NUMBER = 'PC-TEST-INV-DOUBLECOUNT-1';
+  const TEST_DATE = new Date('2099-12-24');
+  const DIST_ID = 'dist-002';
+  const INVOICE_TOTAL = 12764;
+  const ALLOC_A = 12760;
+  const ALLOC_B = 4;
+  const OUTSTANDING = INVOICE_TOTAL - ALLOC_A - ALLOC_B; // 0
+  const orderIds: string[] = [];
+  const invoiceIds: string[] = [];
+  const customerIds: string[] = [];
+  const paymentIds: string[] = [];
+
+  beforeAll(async () => {
+    const cyl = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId: DIST_ID } });
+    const customer = await prisma.customer.create({
+      data: {
+        distributorId: DIST_ID,
+        customerName: CUSTOMER_NAME,
+        businessName: CUSTOMER_NAME,
+        phone: '9911511511',
+        customerType: 'B2C',
+      },
+    });
+    customerIds.push(customer.id);
+
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: ORDER_NUMBER,
+        distributorId: DIST_ID,
+        customerId: customer.id,
+        orderDate: TEST_DATE,
+        deliveryDate: TEST_DATE,
+        status: 'delivered',
+        totalAmount: INVOICE_TOTAL,
+        items: {
+          create: [{ cylinderTypeId: cyl.id, quantity: 4, deliveredQuantity: 4, emptiesCollected: 4, unitPrice: 3191, totalPrice: INVOICE_TOTAL }],
+        },
+      },
+    });
+    orderIds.push(order.id);
+
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: INVOICE_NUMBER,
+        distributorId: DIST_ID,
+        customerId: customer.id,
+        orderId: order.id,
+        issueDate: TEST_DATE,
+        dueDate: new Date(TEST_DATE.getTime() + 30 * 24 * 3600_000),
+        totalAmount: INVOICE_TOTAL,
+        outstandingAmount: OUTSTANDING,
+        amountPaid: INVOICE_TOTAL - OUTSTANDING,
+        status: 'paid',
+        items: { create: [{ cylinderTypeId: cyl.id, description: '19 KG (test)', quantity: 4, unitPrice: 3191, totalPrice: INVOICE_TOTAL }] },
+      },
+    });
+    invoiceIds.push(invoice.id);
+
+    // Two payments — mirrors the prod pattern (big payment + rounding)
+    for (const amount of [ALLOC_A, ALLOC_B]) {
+      const pt = await prisma.paymentTransaction.create({
+        data: {
+          distributorId: DIST_ID,
+          customerId: customer.id,
+          amount,
+          paymentMethod: 'cash',
+          transactionDate: TEST_DATE,
+          allocationStatus: 'fully_allocated',
+          allocations: { create: [{ invoiceId: invoice.id, allocatedAmount: amount }] },
+        },
+      });
+      paymentIds.push(pt.id);
+    }
+  });
+
+  afterAll(async () => {
+    await prisma.paymentAllocation.deleteMany({ where: { paymentId: { in: paymentIds } } });
+    await prisma.paymentTransaction.deleteMany({ where: { id: { in: paymentIds } } });
+    await prisma.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+    await prisma.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+    await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+    await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+    await prisma.customer.deleteMany({ where: { id: { in: customerIds } } });
+  });
+
+  it('per-invoice fields NOT double-counted when invoice has multiple allocations', async () => {
+    // dist-002 token
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'sharma@gasdist.com' } });
+    const tk = generateToken({ userId: admin.id, email: admin.email, role: admin.role as UserRole, distributorId: admin.distributorId });
+    const res = await request(app)
+      .get('/api/reports/payment-collections')
+      .query({ dateFrom: '2099-12-01', dateTo: '2099-12-31' })
+      .set({ Authorization: `Bearer ${tk}`, 'X-Distributor-Id': DIST_ID });
+    expect(res.status).toBe(200);
+
+    const rows = res.body.data.rows as Array<{
+      invoiceNumber: string; saleAmount: number | ''; amountPaid: number; pendingAmount: number | '';
+      fullsDelivered: number | ''; emptiesCollected: number | '';
+    }>;
+    const myRows = rows.filter((r) => r.invoiceNumber === INVOICE_NUMBER);
+    expect(myRows).toHaveLength(2); // 2 allocations → 2 rows
+
+    // First row carries the per-invoice figures; second row has them blank.
+    const [first, second] = myRows;
+    expect(first.saleAmount).toBe(INVOICE_TOTAL);
+    expect(first.pendingAmount).toBe(OUTSTANDING);
+    expect(first.fullsDelivered).toBe(4);
+    expect(first.emptiesCollected).toBe(4);
+    expect(second.saleAmount).toBe('');
+    expect(second.pendingAmount).toBe('');
+    expect(second.fullsDelivered).toBe('');
+    expect(second.emptiesCollected).toBe('');
+
+    // Amount Paid is per-allocation on both rows.
+    const paidTotal = myRows.reduce((s, r) => s + r.amountPaid, 0);
+    expect(paidTotal).toBe(ALLOC_A + ALLOC_B);
+
+    // Totals row: Sale + Pending count the invoice ONCE (blank cells skipped).
+    const totals = res.body.data.totals as { saleAmount: number; amountPaid: number; pendingAmount: number };
+    // Sum over just this test's rows for isolation from other fixtures.
+    const salesFromMe = myRows.reduce((s, r) => s + (typeof r.saleAmount === 'number' ? r.saleAmount : 0), 0);
+    const pendingFromMe = myRows.reduce((s, r) => s + (typeof r.pendingAmount === 'number' ? r.pendingAmount : 0), 0);
+    expect(salesFromMe).toBe(INVOICE_TOTAL);       // NOT 2× INVOICE_TOTAL
+    expect(pendingFromMe).toBe(OUTSTANDING);
+    // Sanity: Sale − Paid = Pending across THIS test's rows.
+    const paidFromMe = myRows.reduce((s, r) => s + r.amountPaid, 0);
+    expect(salesFromMe - paidFromMe).toBe(pendingFromMe);
+    // Overall totals must be finite numbers (envelope guard).
+    expect(Number.isFinite(totals.saleAmount)).toBe(true);
+    expect(Number.isFinite(totals.amountPaid)).toBe(true);
+    expect(Number.isFinite(totals.pendingAmount)).toBe(true);
   });
 });

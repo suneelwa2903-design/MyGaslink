@@ -1497,15 +1497,33 @@ export async function paymentCollections(distributorId: string, f: ReportFilters
     invoiceDate: string;
     customerName: string;
     invoiceNumber: string;
-    fullsDelivered: number;
-    emptiesCollected: number;
-    saleAmount: number;
+    // Fulls delivered + empties collected also live on the INVOICE (per its
+    // underlying order). Same double-count bug shape as saleAmount /
+    // pendingAmount below — blank on subsequent rows so totals stay honest.
+    fullsDelivered: number | '';
+    emptiesCollected: number | '';
+    saleAmount: number | '';
     amountPaid: number;
-    pendingAmount: number;
+    pendingAmount: number | '';
     driverName: string;
   };
+
+  // 2026-07-14 report-bug fix (Suneel): an invoice with N payment
+  // allocations in the range produces N rows. The per-INVOICE fields —
+  // sale amount, pending amount, fulls delivered, empties collected —
+  // must appear on the FIRST allocation row of each invoice only, blank
+  // on subsequent rows. Otherwise the TOTALS row double-counts every
+  // invoice paid via multiple allocations (verified: 6 invoices at
+  // Vanasthali produced a ₹67,011 sale-amount inflation before this fix).
+  // Amount Paid stays as the per-allocation share so bulk-payment
+  // visibility is preserved.
+  const seenInvoiceIds = new Set<string>();
   const rows: Row[] = allocations.map((a) => {
     const inv = a.invoice;
+    const invId = inv?.id ?? '';
+    const isFirstRowForInvoice = invId && !seenInvoiceIds.has(invId);
+    if (invId) seenInvoiceIds.add(invId);
+
     const items = inv?.order?.items ?? [];
     const fullsDelivered = items.reduce(
       (sum, it) => sum + (it.deliveredQuantity ?? it.quantity ?? 0),
@@ -1516,25 +1534,28 @@ export async function paymentCollections(distributorId: string, f: ReportFilters
       invoiceDate: inv?.issueDate ? dayKey(new Date(inv.issueDate)) : '—',
       customerName: inv?.customer?.businessName || inv?.customer?.customerName || 'Deleted Customer',
       invoiceNumber: inv?.invoiceNumber ?? '—',
-      fullsDelivered,
-      emptiesCollected,
-      saleAmount: +num(inv?.totalAmount ?? 0).toFixed(2),
+      fullsDelivered: isFirstRowForInvoice ? fullsDelivered : '',
+      emptiesCollected: isFirstRowForInvoice ? emptiesCollected : '',
+      saleAmount: isFirstRowForInvoice ? +num(inv?.totalAmount ?? 0).toFixed(2) : '',
       amountPaid: +num(a.allocatedAmount).toFixed(2),
       // outstandingAmount is the invoice's CURRENT outstanding at query
       // time — the "still pending after this allocation" number the
-      // operator cares about, not a point-in-time replay.
-      pendingAmount: +num(inv?.outstandingAmount ?? 0).toFixed(2),
+      // operator cares about, not a point-in-time replay. On subsequent
+      // rows for the same invoice: blank (already shown on first row).
+      pendingAmount: isFirstRowForInvoice ? +num(inv?.outstandingAmount ?? 0).toFixed(2) : '',
       driverName: inv?.order?.driver?.driverName ?? '—',
     };
   });
 
+  // Totals only aggregate non-blank cells — so per-invoice fields count
+  // exactly once regardless of how many allocation rows the invoice has.
   const totals = rows.reduce(
     (acc, r) => {
-      acc.fullsDelivered += r.fullsDelivered;
-      acc.emptiesCollected += r.emptiesCollected;
-      acc.saleAmount += r.saleAmount;
+      if (typeof r.fullsDelivered === 'number') acc.fullsDelivered += r.fullsDelivered;
+      if (typeof r.emptiesCollected === 'number') acc.emptiesCollected += r.emptiesCollected;
+      if (typeof r.saleAmount === 'number') acc.saleAmount += r.saleAmount;
       acc.amountPaid += r.amountPaid;
-      acc.pendingAmount += r.pendingAmount;
+      if (typeof r.pendingAmount === 'number') acc.pendingAmount += r.pendingAmount;
       return acc;
     },
     { fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0, amountPaid: 0, pendingAmount: 0 },
