@@ -1433,6 +1433,140 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
   };
 }
 
+// ─── Payment Collections — one row per payment-allocation (Suneel 2026-07-14)
+//
+// "For payments received between X and Y, against which invoices did the money
+// land and which driver delivered the underlying order?" — the cashflow lens
+// complement to the Delivery Performance report (which uses delivery date).
+//
+// Filters:
+//   • date range → payment_transactions.transaction_date
+//   • driverId   → the invoice's underlying order.driver_id
+// Row shape: one row per payment_allocation (bulk payment covering N invoices
+// produces N rows so the reader can see each invoice's share). Amount Paid
+// is the allocation share, not the whole payment total.
+export async function paymentCollections(distributorId: string, f: ReportFilters): Promise<ReportResult> {
+  const { from, to } = range(f);
+
+  // Load every allocation whose parent payment landed in the window, joined
+  // to invoice + underlying order + customer + driver in one round-trip.
+  const allocations = await prisma.paymentAllocation.findMany({
+    where: {
+      payment: {
+        distributorId,
+        deletedAt: null,
+        transactionDate: { gte: from, lte: to },
+      },
+      // Driver filter: allocation is included only if the invoice's
+      // underlying order was delivered by that driver. Uses a nested `is`
+      // filter so we don't over-fetch and post-filter in JS.
+      ...(f.driverId
+        ? { invoice: { order: { driverId: f.driverId } } }
+        : {}),
+    },
+    select: {
+      allocatedAmount: true,
+      payment: { select: { transactionDate: true, id: true } },
+      invoice: {
+        select: {
+          id: true,
+          invoiceNumber: true,
+          issueDate: true,
+          totalAmount: true,
+          outstandingAmount: true,
+          customer: { select: { customerName: true, businessName: true } },
+          order: {
+            select: {
+              driver: { select: { driverName: true } },
+              items: {
+                select: {
+                  deliveredQuantity: true,
+                  quantity: true,
+                  emptiesCollected: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    orderBy: { payment: { transactionDate: 'desc' } },
+  });
+
+  type Row = {
+    invoiceDate: string;
+    customerName: string;
+    invoiceNumber: string;
+    fullsDelivered: number;
+    emptiesCollected: number;
+    saleAmount: number;
+    amountPaid: number;
+    pendingAmount: number;
+    driverName: string;
+  };
+  const rows: Row[] = allocations.map((a) => {
+    const inv = a.invoice;
+    const items = inv?.order?.items ?? [];
+    const fullsDelivered = items.reduce(
+      (sum, it) => sum + (it.deliveredQuantity ?? it.quantity ?? 0),
+      0,
+    );
+    const emptiesCollected = items.reduce((sum, it) => sum + (it.emptiesCollected ?? 0), 0);
+    return {
+      invoiceDate: inv?.issueDate ? dayKey(new Date(inv.issueDate)) : '—',
+      customerName: inv?.customer?.businessName || inv?.customer?.customerName || 'Deleted Customer',
+      invoiceNumber: inv?.invoiceNumber ?? '—',
+      fullsDelivered,
+      emptiesCollected,
+      saleAmount: +num(inv?.totalAmount ?? 0).toFixed(2),
+      amountPaid: +num(a.allocatedAmount).toFixed(2),
+      // outstandingAmount is the invoice's CURRENT outstanding at query
+      // time — the "still pending after this allocation" number the
+      // operator cares about, not a point-in-time replay.
+      pendingAmount: +num(inv?.outstandingAmount ?? 0).toFixed(2),
+      driverName: inv?.order?.driver?.driverName ?? '—',
+    };
+  });
+
+  const totals = rows.reduce(
+    (acc, r) => {
+      acc.fullsDelivered += r.fullsDelivered;
+      acc.emptiesCollected += r.emptiesCollected;
+      acc.saleAmount += r.saleAmount;
+      acc.amountPaid += r.amountPaid;
+      acc.pendingAmount += r.pendingAmount;
+      return acc;
+    },
+    { fullsDelivered: 0, emptiesCollected: 0, saleAmount: 0, amountPaid: 0, pendingAmount: 0 },
+  );
+
+  return {
+    columns: [
+      { key: 'invoiceDate', label: 'Invoice Date' },
+      { key: 'customerName', label: 'Customer' },
+      { key: 'invoiceNumber', label: 'Invoice #' },
+      { key: 'fullsDelivered', label: 'Fulls Delivered' },
+      { key: 'emptiesCollected', label: 'Empties Collected' },
+      { key: 'saleAmount', label: 'Sale Amount', money: true },
+      { key: 'amountPaid', label: 'Amount Paid', money: true },
+      { key: 'pendingAmount', label: 'Pending Amount', money: true },
+      { key: 'driverName', label: 'Delivery Boy' },
+    ],
+    rows,
+    totals: {
+      invoiceDate: 'TOTAL',
+      customerName: '',
+      invoiceNumber: '',
+      fullsDelivered: totals.fullsDelivered,
+      emptiesCollected: totals.emptiesCollected,
+      saleAmount: +totals.saleAmount.toFixed(2),
+      amountPaid: +totals.amountPaid.toFixed(2),
+      pendingAmount: +totals.pendingAmount.toFixed(2),
+      driverName: '',
+    },
+  };
+}
+
 export const REPORTS: Record<string, (d: string, f: ReportFilters) => Promise<ReportResult>> = {
   'sales-summary': salesSummary,
   'outstanding-aging': outstandingAging,
@@ -1441,6 +1575,7 @@ export const REPORTS: Record<string, (d: string, f: ReportFilters) => Promise<Re
   'inventory-movement': inventoryMovement,
   'customer-statement': customerStatement,
   'vehicle-ledger': vehicleLedger,
+  'payment-collections': paymentCollections,
 };
 
 /** Convert a ReportResult to CSV text (header + rows + totals row). */

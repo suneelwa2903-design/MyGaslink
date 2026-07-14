@@ -392,6 +392,12 @@ export const createPaymentSchema = z.object({
   paymentMethod: z.nativeEnum(PaymentMethod),
   referenceNumber: z.string().max(100).optional(),
   transactionDate: dateString,
+  // Optional free-text note for the whole payment (2026-07-14).
+  // Persists to payment_transactions.notes — column existed already;
+  // creation path now exposes it. Bulk payments: single note covers
+  // every invoice touched by this payment (per-allocation notes are
+  // not supported).
+  notes: z.string().max(500).optional(),
   allocations: z.array(z.object({
     invoiceId: uuid,
     amount: positiveNumber,

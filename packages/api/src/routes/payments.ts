@@ -7,6 +7,7 @@ import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiR
 import { createPaymentSchema, paymentFilterSchema } from '@gaslink/shared';
 import * as paymentService from '../services/paymentService.js';
 import * as submissionService from '../services/paymentSubmissionService.js';
+import { generatePaymentRegisterPdf } from '../services/pdf/paymentRegisterPdfService.js';
 import { mapPayment, mapPayments, mapPaymentSubmission, mapPaymentSubmissions, mapInvoice } from '../utils/mappers.js';
 import { prisma } from '../lib/prisma.js';
 import { toNum } from '../utils/decimal.js';
@@ -30,6 +31,93 @@ router.get('/',
       const result = await paymentService.listPayments(req.user!.distributorId!, (req.validated?.query || req.query) as Parameters<typeof paymentService.listPayments>[1]);
       // meta also nested inside data — see comment in invoices.ts list.
       return sendSuccess(res, { payments: mapPayments(result.data), meta: result.meta }, 200, result.meta);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// GET /api/payments/export?format=csv|pdf
+//
+// Bulk export of the current payments filter (all pages). CSV returns
+// the same columns as the on-screen table; PDF is a landscape A4
+// register with the distributor letterhead. Filters honoured:
+//   paymentMethod, dateFrom, dateTo, search.
+router.get('/export',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  async (req, res) => {
+    try {
+      const format = String(req.query.format ?? 'csv').toLowerCase();
+      if (format !== 'csv' && format !== 'pdf') {
+        return sendError(res, "format must be 'csv' or 'pdf'", 400);
+      }
+      const filters = {
+        paymentMethod: typeof req.query.paymentMethod === 'string' ? req.query.paymentMethod : undefined,
+        dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+        dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      };
+      const distributorId = req.user!.distributorId!;
+
+      if (format === 'pdf') {
+        const buf = await generatePaymentRegisterPdf(distributorId, filters);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="payment-register-${filters.dateFrom ?? 'all'}_${filters.dateTo ?? 'all'}.pdf"`);
+        return res.status(200).send(buf);
+      }
+
+      // CSV
+      const { data: rows } = await paymentService.listPayments(distributorId, {
+        ...filters,
+        page: 1,
+        pageSize: 10_000,
+        sortBy: 'transactionDate',
+        sortOrder: 'desc',
+      });
+      const mapped = mapPayments(rows) as Array<{
+        transactionDate?: string;
+        customerName?: string;
+        amount?: number;
+        paymentMethod?: string;
+        referenceNumber?: string | null;
+        allocations?: { invoiceNumber?: string; invoiceIssueDate?: string }[];
+        allocatedAmount?: number;
+        unallocatedAmount?: number;
+        allocationStatus?: string;
+        notes?: string | null;
+      }>;
+      const esc = (v: unknown): string => {
+        const s = v == null ? '' : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = ['Payment Date','Customer','Amount','Method','Reference','Invoice #','Issue Date','Allocated','Unallocated','Status','Notes'];
+      const lines = [header.map(esc).join(',')];
+      for (const p of mapped) {
+        const allocs = p.allocations ?? [];
+        const single = allocs.length === 1 ? allocs[0] : null;
+        const bulk = allocs.length > 1 ? allocs.length : 0;
+        const invoiceCell = single ? (single.invoiceNumber ?? '-') : bulk > 0 ? `${bulk} invoices` : '-';
+        const issueCell = single?.invoiceIssueDate
+          ? new Date(single.invoiceIssueDate).toISOString().slice(0, 10)
+          : bulk > 0 ? 'Various' : '-';
+        lines.push([
+          p.transactionDate ? new Date(p.transactionDate).toISOString().slice(0, 10) : '',
+          p.customerName ?? '',
+          p.amount ?? '',
+          (p.paymentMethod ?? '').replace(/_/g, ' '),
+          p.referenceNumber ?? '',
+          invoiceCell,
+          issueCell,
+          p.allocatedAmount ?? '',
+          p.unallocatedAmount ?? '',
+          (p.allocationStatus ?? '').replace(/_/g, ' '),
+          p.notes ?? '',
+        ].map(esc).join(','));
+      }
+      const csv = lines.join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="payments-${filters.dateFrom ?? 'all'}_${filters.dateTo ?? 'all'}.csv"`);
+      return res.status(200).send(csv);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

@@ -552,9 +552,44 @@ function PaymentsTab() {
 
   const methodOptions = Object.values(PaymentMethod).map((m) => ({ value: m, label: m.replace(/_/g, ' ') }));
 
+  // Suneel 2026-07-14: filter-aware CSV + PDF export from the payments list.
+  // Downloads the same result set the current filters produce (all pages),
+  // never the paginated page-only slice.
+  const [downloading, setDownloading] = useState<'csv' | 'pdf' | null>(null);
+  async function handleDownload(format: 'csv' | 'pdf') {
+    setDownloading(format);
+    try {
+      const params = new URLSearchParams({ format });
+      if (methodFilter) params.set('paymentMethod', methodFilter);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      if (search.trim()) params.set('search', search.trim());
+      const res = await api.get(`/payments/export?${params.toString()}`, { responseType: 'blob' });
+      const href = window.URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `payment-register-${dateFrom || 'all'}_${dateTo || 'all'}.${format}`;
+      a.click();
+      window.URL.revokeObjectURL(href);
+      toast.success(`${format.toUpperCase()} download started`);
+    } catch (e) {
+      toast.error(getErrorMessage(e));
+    } finally {
+      setDownloading(null);
+    }
+  }
+
   return (
     <>
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={() => handleDownload('csv')} disabled={downloading !== null}>
+          <HiOutlineDocumentArrowDown className="h-4 w-4" />
+          {downloading === 'csv' ? 'Downloading…' : 'CSV'}
+        </Button>
+        <Button variant="secondary" onClick={() => handleDownload('pdf')} disabled={downloading !== null}>
+          <HiOutlineDocumentArrowDown className="h-4 w-4" />
+          {downloading === 'pdf' ? 'Downloading…' : 'PDF'}
+        </Button>
         <Button onClick={() => setCreateOpen(true)}>
           <HiOutlinePlus className="h-4 w-4" />
           Record Payment
@@ -603,11 +638,13 @@ function PaymentsTab() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Date</th>
+                  <th>Payment Date</th>
                   <th>Customer</th>
                   <th>Amount</th>
                   <th>Method</th>
                   <th>Reference</th>
+                  <th>Invoice #</th>
+                  <th>Issue Date</th>
                   <th>Allocated</th>
                   <th>Unallocated</th>
                   <th>Status</th>
@@ -615,7 +652,18 @@ function PaymentsTab() {
                 </tr>
               </thead>
               <tbody>
-                {payments.map((payment) => (
+                {payments.map((payment) => {
+                  // Invoice # + Issue Date columns (2026-07-14). A payment can
+                  // allocate to 0..N invoices — collapse the display:
+                  //   • 0 allocations   → "-" / "-" (unallocated payment)
+                  //   • 1 allocation    → invoice number (clickable → View
+                  //                       Allocations modal) + that invoice's
+                  //                       issue date
+                  //   • 2+ allocations  → "N invoices" link + "Various"
+                  const allocs = payment.allocations ?? [];
+                  const singleAlloc = allocs.length === 1 ? allocs[0] : null;
+                  const bulkAllocCount = allocs.length > 1 ? allocs.length : 0;
+                  return (
                   <tr key={payment.paymentId}>
                     <td>{new Date(payment.transactionDate).toLocaleDateString('en-IN')}</td>
                     <td className="font-medium text-surface-900 dark:text-white">{payment.customerName}</td>
@@ -635,6 +683,36 @@ function PaymentsTab() {
                       </div>
                     </td>
                     <td className="text-xs">{payment.referenceNumber || '-'}</td>
+                    <td className="text-xs">
+                      {singleAlloc ? (
+                        <button
+                          type="button"
+                          onClick={() => setViewPayment(payment)}
+                          className="text-brand-600 hover:underline"
+                          title="View allocation detail"
+                        >
+                          {singleAlloc.invoiceNumber}
+                        </button>
+                      ) : bulkAllocCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setViewPayment(payment)}
+                          className="text-brand-600 hover:underline"
+                          title="View all invoices covered by this payment"
+                        >
+                          {bulkAllocCount} invoices
+                        </button>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+                    <td className="text-xs">
+                      {singleAlloc?.invoiceIssueDate
+                        ? new Date(singleAlloc.invoiceIssueDate).toLocaleDateString('en-IN')
+                        : bulkAllocCount > 0
+                          ? 'Various'
+                          : '-'}
+                    </td>
                     <td>{formatCurrency(payment.allocatedAmount)}</td>
                     <td className={payment.unallocatedAmount > 0 ? 'text-amber-500 font-medium' : ''}>
                       {formatCurrency(payment.unallocatedAmount)}
@@ -665,7 +743,8 @@ function PaymentsTab() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1909,6 +1988,7 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
       paymentMethod: PaymentMethod.CASH,
       referenceNumber: '',
       transactionDate: localTodayISO(), // Phase D: local TZ
+      notes: '',
       allocations: [],
     },
   });
@@ -1959,6 +2039,16 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
         <div className="grid grid-cols-2 gap-4">
           <Input label="Reference Number" placeholder="Optional" {...register('referenceNumber')} />
           <Input label="Transaction Date" type="date" required error={errors.transactionDate?.message} {...register('transactionDate')} />
+        </div>
+
+        <div>
+          <label className="label">Notes (Optional)</label>
+          <textarea
+            className="input min-h-[64px]"
+            placeholder="Any note about this payment — covers the whole payment including all allocated invoices on a bulk payment"
+            maxLength={500}
+            {...register('notes')}
+          />
         </div>
 
         {/* Invoice Allocations */}

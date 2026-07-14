@@ -27,6 +27,14 @@ const REPORTS: ReportDef[] = [
   { key: 'inventory-movement', label: 'Inventory Movement', filters: ['cylinderType'] },
   { key: 'customer-statement', label: 'Customer Statement', filters: ['customer'], customerRequired: true },
   { key: 'vehicle-ledger', label: 'Vehicle Ledger', filters: ['vehicle', 'driver', 'cylinderType', 'groupBy'] },
+  // Suneel 2026-07-14: cashflow-lens report.
+  //   • Date range filters payment_transactions.transaction_date
+  //     (not delivery date, not invoice issue date).
+  //   • Optional driver filter narrows to invoices whose underlying
+  //     order was delivered by that driver.
+  // One row per payment_allocation (bulk payment covering 3 invoices
+  // = 3 rows).
+  { key: 'payment-collections', label: 'Payment Collections', filters: ['driver'] },
 ];
 
 const fmtMoney = (v: ReportCellValue | undefined) => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;

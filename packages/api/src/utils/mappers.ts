@@ -432,6 +432,12 @@ export function mapPayment(p: PaymentInput | null | undefined): MappedRecord | n
       // explicitly navigates the nested object.
       if (a.invoice) {
         m.invoiceNumber = a.invoice.invoiceNumber;
+        // Payments table (2026-07-14) shows invoice issue date next to the
+        // number — surface it flat so the row-render doesn't have to walk
+        // into the nested invoice object.
+        if ((a.invoice as { issueDate?: unknown }).issueDate) {
+          m.invoiceIssueDate = (a.invoice as { issueDate?: unknown }).issueDate;
+        }
       }
       if (a.invoice) m.invoice = mapInvoice(a.invoice);
       return m;

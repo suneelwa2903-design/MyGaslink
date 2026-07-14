@@ -443,6 +443,10 @@ export interface PaymentAllocation {
   allocationId: string;
   invoiceId: string;
   invoiceNumber: string;
+  // Extended in 2026-07-14 so the Payments table can render the invoice's
+  // issue date alongside its number. Optional for backward-safety on any
+  // consumer holding a cached older payload — treat missing as unknown.
+  invoiceIssueDate?: string;
   allocatedAmount: number;
   createdAt: string;
 }

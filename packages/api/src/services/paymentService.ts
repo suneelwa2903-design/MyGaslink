@@ -56,7 +56,7 @@ export async function listPayments(
       include: {
         customer: { select: { id: true, customerName: true } },
         allocations: {
-          include: { invoice: { select: { id: true, invoiceNumber: true } } },
+          include: { invoice: { select: { id: true, invoiceNumber: true, issueDate: true } } },
         },
       },
       orderBy: { [sortBy]: sortOrder } as Prisma.PaymentTransactionOrderByWithRelationInput,
@@ -90,6 +90,11 @@ export interface CreatePaymentData {
   paymentMethod: string;
   referenceNumber?: string;
   transactionDate: string;
+  // Optional free-text note (2026-07-14). Persists to
+  // payment_transactions.notes — column pre-existed; the create path
+  // now exposes it. One note per payment (applies to all allocated
+  // invoices on bulk payments).
+  notes?: string;
   allocations?: { invoiceId: string; amount: number }[];
   // Phase F (2026-06-12): when the payment came from the customer-
   // portal Razorpay "Pay Now" flow, the route passes the forensic
@@ -139,6 +144,7 @@ export async function createPaymentInTx(
         transactionDate: new Date(data.transactionDate),
         allocationStatus: 'unallocated',
         receivedBy: userId,
+        notes: data.notes || null,
         razorpayOrderId: data.razorpay?.razorpayOrderId ?? null,
         razorpayPaymentId: data.razorpay?.razorpayPaymentId ?? null,
         razorpaySignature: data.razorpay?.razorpaySignature ?? null,
@@ -241,7 +247,7 @@ export async function createPaymentInTx(
       include: {
         customer: { select: { id: true, customerName: true } },
         allocations: {
-          include: { invoice: { select: { id: true, invoiceNumber: true } } },
+          include: { invoice: { select: { id: true, invoiceNumber: true, issueDate: true } } },
         },
       },
     });
@@ -345,7 +351,7 @@ export async function allocatePayment(
       include: {
         customer: { select: { id: true, customerName: true } },
         allocations: {
-          include: { invoice: { select: { id: true, invoiceNumber: true } } },
+          include: { invoice: { select: { id: true, invoiceNumber: true, issueDate: true } } },
         },
       },
     });
