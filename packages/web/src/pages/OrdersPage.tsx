@@ -163,10 +163,19 @@ export default function OrdersPage() {
     );
   };
 
-  const statusOptions = Object.values(OrderStatus).map((s) => ({
-    value: s,
-    label: ORDER_STATUS_LABELS[s] || s,
-  }));
+  // Real OrderStatus values + two pseudo-status filters ("Godown Pickup" /
+  // "On-Demand") surfaced in the same dropdown so operators don't have to hunt
+  // through the list. The backend orderFilterSchema accepts both — the service
+  // translates the pseudo values to isGodownPickup / isBackdated boolean
+  // filters (see orderService.listOrders).
+  const statusOptions = [
+    ...Object.values(OrderStatus).map((s) => ({
+      value: s as string,
+      label: ORDER_STATUS_LABELS[s] || s,
+    })),
+    { value: 'godown_pickup', label: 'Godown Pickup' },
+    { value: 'on_demand', label: 'On-Demand' },
+  ];
 
   return (
     <div className="space-y-6">

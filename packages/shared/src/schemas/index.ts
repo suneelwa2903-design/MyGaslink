@@ -697,8 +697,16 @@ export const dateRangeSchema = z.object({
   dateTo: dateString.optional(),
 });
 
+// `status` accepts either a real OrderStatus enum value OR one of the
+// pseudo-status filters `godown_pickup` / `on_demand`. The service layer
+// translates the pseudo values to `isGodownPickup: true` / `isBackdated: true`
+// filters against `orders`. Same dropdown, two more choices — no new query param.
 export const orderFilterSchema = paginationSchema.merge(dateRangeSchema).extend({
-  status: z.nativeEnum(OrderStatus).optional(),
+  status: z.union([
+    z.nativeEnum(OrderStatus),
+    z.literal('godown_pickup'),
+    z.literal('on_demand'),
+  ]).optional(),
   customerId: uuid.optional(),
   driverId: uuid.optional(),
   search: z.string().optional(),

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -20,7 +20,6 @@ import {
 import {
   type Invoice,
   type Payment,
-  type Customer,
   type PaginationMeta,
   type DistributorSettings,
   InvoiceStatus,
@@ -48,6 +47,7 @@ import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
 import { useAuthStore, selectDistributorId, selectRole } from '@/stores/authStore';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState, Pagination } from '@/components/ui';
+import { CustomerSearchInput } from '@/components/ui/CustomerSearchInput';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { HiOutlineMagnifyingGlass, HiOutlineXMark } from 'react-icons/hi2';
 import { CancelGstModal } from '@/components/CancelGstModal';
@@ -1890,15 +1890,11 @@ function PayInvoiceModal({ open, onClose, invoice }: { open: boolean; onClose: (
 
 function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const distributorId = useAuthStore(selectDistributorId);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
 
-  const { data: customers } = useQuery({
-    queryKey: ['customers-list', distributorId],
-    queryFn: () => apiGet<{ customers: Customer[] }>('/customers', { pageSize: 100 }),
-    staleTime: 5 * 60 * 1000,
-  });
-
+  // Customers use the server-side search autocomplete (CustomerSearchInput)
+  // so we no longer pre-fetch a capped list — the earlier `pageSize: 100`
+  // cap silently hid customers past #100 on distributors with a large book.
   const { data: customerInvoices } = useQuery({
     queryKey: ['customer-unpaid-invoices', selectedCustomerId],
     queryFn: () => apiGet<{ invoices: Invoice[] }>('/invoices', { customerId: selectedCustomerId, status: 'issued', pageSize: 50 }),
@@ -1930,7 +1926,6 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const customerOptions = (customers?.customers ?? []).map((c) => ({ value: c.customerId, label: c.customerName }));
   const methodOptions = Object.values(PaymentMethod).map((m) => ({ value: m, label: m.replace(/_/g, ' ') }));
   const unpaidInvoices = customerInvoices?.invoices ?? [];
   const invoiceOptions = unpaidInvoices.map((inv) => ({ value: inv.invoiceId, label: `${inv.invoiceNumber} (${formatCurrency(inv.outstandingAmount)})` }));
@@ -1938,15 +1933,22 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
   return (
     <Modal open={open} onClose={onClose} title="Record Payment" size="lg">
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
-        <Select
-          label="Customer"
-          options={customerOptions}
-          placeholder="Select customer"
-          required
-          error={errors.customerId?.message}
-          {...register('customerId', {
-            onChange: (e) => setSelectedCustomerId(e.target.value),
-          })}
+        <Controller
+          control={control}
+          name="customerId"
+          render={({ field }) => (
+            <CustomerSearchInput
+              label="Customer"
+              required
+              value={field.value}
+              onChange={(id) => {
+                field.onChange(id);
+                setSelectedCustomerId(id);
+              }}
+              error={errors.customerId?.message}
+              placeholder="Type 3+ letters to search…"
+            />
+          )}
         />
 
         <div className="grid grid-cols-2 gap-4">

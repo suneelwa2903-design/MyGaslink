@@ -306,15 +306,27 @@ export async function gstSummary(distributorId: string, f: ReportFilters): Promi
 //   • amountPending = sum(invoices.outstandingAmount) for those invoices
 //   • amountOverdue = same but where dueDate < today
 //
-// Excluded from the driver report:
-//   • orders.isGodownPickup=true (no driver — customer picks up at depot)
-//   • status='cancelled' orders (not delivered)
+// Sections included in the driver report:
+//   • Real drivers with delivered/modified_delivered orders in range
+//   • Synthetic "Godown Pickup (self-collection)" bucket — collapses every
+//     godown-pickup order (driverId=null, isGodownPickup=true) into ONE row
+//     with driverId='godown_pickup' so the same driver-row renderer + drill-
+//     down modal on the web handle them without a second component. Same
+//     shape as any driver row (cyl breakdown, sale, collected, pending,
+//     overdue). Drill-down groups by customer per the standard driver path.
+//
+// Excluded:
+//   • status='cancelled' orders (not delivered) — invisible in every path.
+export const GODOWN_PICKUP_DRIVER_ID = 'godown_pickup';
+export const GODOWN_PICKUP_DRIVER_NAME = 'Godown Pickup (self-collection)';
+
 export async function deliveryPerformance(distributorId: string, f: ReportFilters): Promise<ReportResult> {
   const { from, to } = range(f);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Drill-down branch: caller wants per-customer rows for a specific driver.
+  // Drill-down branch: caller wants per-customer rows for a specific driver
+  // (including the synthetic godown-pickup bucket).
   if (f.groupBy === 'customer' && f.driverId) {
     return deliveryPerformanceDrilldown(distributorId, f.driverId, from, to);
   }
@@ -324,20 +336,35 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
 
   // Step 1 — load all delivered/modified_delivered orders in range with
   // enough context (items, invoice) to compute both operational and financial
-  // aggregates without a second round-trip.
+  // aggregates without a second round-trip. When driverId filter is unset we
+  // include BOTH real-driver rows (isGodownPickup=false, driverId not null)
+  // AND godown-pickup rows (isGodownPickup=true, driverId null) — they get
+  // bucketed apart during aggregation via `isGodownPickup`. When the driverId
+  // filter names the synthetic godown bucket, load ONLY godown orders. When
+  // it names a real driver, load ONLY that driver's orders (godown excluded).
+  const isGodownFilter = f.driverId === GODOWN_PICKUP_DRIVER_ID;
+  const whereForOrders = {
+    distributorId,
+    status: { in: ['delivered', 'modified_delivered'] as ('delivered' | 'modified_delivered')[] },
+    deliveryDate: { gte: from, lte: to },
+    deletedAt: null,
+    ...(isGodownFilter
+      ? { isGodownPickup: true }
+      : f.driverId
+      ? { driverId: f.driverId, isGodownPickup: false }
+      : {
+          OR: [
+            { driverId: { not: null }, isGodownPickup: false },
+            { isGodownPickup: true },
+          ],
+        }),
+  };
   const orders = await prisma.order.findMany({
-    where: {
-      distributorId,
-      driverId: { not: null },
-      isGodownPickup: false,
-      status: { in: ['delivered', 'modified_delivered'] },
-      deliveryDate: { gte: from, lte: to },
-      deletedAt: null,
-      ...(f.driverId ? { driverId: f.driverId } : {}),
-    },
+    where: whereForOrders as unknown as Prisma.OrderWhereInput,
     select: {
       id: true,
       driverId: true,
+      isGodownPickup: true,
       totalAmount: true,
       customerId: true,
       customer: { select: { customerName: true } },
@@ -374,13 +401,18 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
         where: { invoiceId: { in: invoiceIds } },
         select: {
           allocatedAmount: true,
-          invoice: { select: { order: { select: { driverId: true } } } },
+          invoice: { select: { order: { select: { driverId: true, isGodownPickup: true } } } },
         },
       })
     : [];
   const collectedByDriver = new Map<string, number>();
   for (const a of allocations) {
-    const did = a.invoice.order?.driverId;
+    const order = a.invoice.order;
+    if (!order) continue;
+    // Godown pickups have driverId=null but MUST attribute money into the
+    // synthetic bucket — otherwise the "Collected" cell on the Godown Pickup
+    // row would always be ₹0 even when payments came in.
+    const did = order.isGodownPickup ? GODOWN_PICKUP_DRIVER_ID : order.driverId;
     if (!did) continue;
     collectedByDriver.set(did, (collectedByDriver.get(did) ?? 0) + num(a.allocatedAmount));
   }
@@ -416,12 +448,16 @@ export async function deliveryPerformance(distributorId: string, f: ReportFilter
   };
   const byDriver = new Map<string, DriverAgg>();
   for (const o of orders) {
-    const did = o.driverId!;
+    // Godown-pickup orders (driverId=null) collapse into the synthetic bucket
+    // so the same DriverAgg shape drives them. See constants above the
+    // deliveryPerformance function.
+    const did = o.isGodownPickup ? GODOWN_PICKUP_DRIVER_ID : o.driverId!;
+    const name = o.isGodownPickup ? GODOWN_PICKUP_DRIVER_NAME : (o.driver?.driverName ?? 'Unknown');
     const agg =
       byDriver.get(did) ??
       ({
         driverId: did,
-        driverName: o.driver?.driverName ?? 'Unknown',
+        driverName: name,
         orderIds: new Set<string>(),
         fullsDelivered: 0,
         emptiesCollected: 0,
@@ -663,11 +699,16 @@ async function deliveryPerformanceDrilldown(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // The synthetic godown-pickup bucket drill-down: filter on
+  // isGodownPickup=true (no real driver). All other flow is identical —
+  // godown orders group by customer just like any driver's orders do.
+  const isGodown = driverId === GODOWN_PICKUP_DRIVER_ID;
   const orders = await prisma.order.findMany({
     where: {
       distributorId,
-      driverId,
-      isGodownPickup: false,
+      ...(isGodown
+        ? { isGodownPickup: true }
+        : { driverId, isGodownPickup: false }),
       status: { in: ['delivered', 'modified_delivered'] },
       deliveryDate: { gte: from, lte: to },
       deletedAt: null,
@@ -884,11 +925,16 @@ export async function deliveryPerformanceStatement(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // Same synthetic-bucket handling as the summary + drilldown paths so a
+  // click on the Godown Pickup driver row's "Statement" opens the per-invoice
+  // list of godown-pickup invoices.
+  const isGodown = driverId === GODOWN_PICKUP_DRIVER_ID;
   const orders = await prisma.order.findMany({
     where: {
       distributorId,
-      driverId,
-      isGodownPickup: false,
+      ...(isGodown
+        ? { isGodownPickup: true }
+        : { driverId, isGodownPickup: false }),
       status: { in: ['delivered', 'modified_delivered'] },
       deliveryDate: { gte: from, lte: to },
       deletedAt: null,

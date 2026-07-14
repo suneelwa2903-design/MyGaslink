@@ -46,7 +46,17 @@ export async function listOrders(
   }
 ) {
   const where: Prisma.OrderWhereInput = { distributorId, deletedAt: null };
-  if (filters.status) where.status = filters.status as $Enums.OrderStatus;
+  // Pseudo-status filters: the Orders page dropdown surfaces
+  // "Godown Pickup" and "On-Demand" as extra choices in the same
+  // Statuses select. They translate to boolean-column filters instead
+  // of `status`. Real OrderStatus values pass through unchanged.
+  if (filters.status === 'godown_pickup') {
+    where.isGodownPickup = true;
+  } else if (filters.status === 'on_demand') {
+    where.isBackdated = true;
+  } else if (filters.status) {
+    where.status = filters.status as $Enums.OrderStatus;
+  }
   if (filters.customerId) where.customerId = filters.customerId;
   if (filters.driverId) where.driverId = filters.driverId;
   if (filters.dateFrom || filters.dateTo) {

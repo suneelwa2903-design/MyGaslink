@@ -5,6 +5,7 @@ import { HiOutlineArrowDownTray, HiOutlineChevronDown, HiOutlineChevronRight, Hi
 import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { api, apiGet, getErrorMessage } from '@/lib/api';
 import { Button, Select, Loader, EmptyState, Modal } from '@/components/ui';
+import { CustomerSearchInput } from '@/components/ui/CustomerSearchInput';
 import TallyExportPanel from '@/components/reports/TallyExportPanel';
 
 type ReportCellValue = string | number | null;
@@ -75,11 +76,9 @@ export default function ReportsPage() {
   }
 
   // Filter option data (lazy/shared)
-  const { data: customers } = useQuery({
-    queryKey: ['report-customers'],
-    queryFn: () => apiGet<{ customers: { customerId: string; customerName: string }[] }>('/customers', { pageSize: 100 }),
-    select: (d) => d.customers,
-  });
+  // Customers use the server-side search autocomplete (CustomerSearchInput)
+  // so we no longer pre-fetch a capped list — an artificial `pageSize: 100`
+  // limit silently hid customers past #100 on the Customer Statement picker.
   const { data: cylinderTypes } = useQuery({
     queryKey: ['report-cyl'],
     queryFn: () => apiGet<{ cylinderTypes: { cylinderTypeId: string; typeName: string }[] }>('/cylinder-types'),
@@ -174,10 +173,13 @@ export default function ReportsPage() {
             <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input py-2 text-sm" />
           </div>
           {def.filters.includes('customer') && (
-            <div className="min-w-[200px]">
+            <div className="min-w-[260px]">
               <label className="label text-xs">Customer{def.customerRequired ? ' *' : ''}</label>
-              <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)} placeholder="Select customer"
-                options={(customers ?? []).map((c) => ({ value: c.customerId, label: c.customerName }))} />
+              <CustomerSearchInput
+                value={customerId}
+                onChange={(id) => setCustomerId(id)}
+                placeholder="Type 3+ letters to search…"
+              />
             </div>
           )}
           {def.filters.includes('cylinderType') && (

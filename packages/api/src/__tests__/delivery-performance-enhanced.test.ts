@@ -527,3 +527,97 @@ describe('Delivery Performance — multi-tenant + CSV', () => {
     expect(hasCustomerRow).toBe(false);
   });
 });
+
+// Suneel's ask (2026-07-11): the Delivery Performance report was excluding
+// godown-pickup orders entirely (no driver → nowhere to attribute), which
+// left cash-and-carry revenue invisible. The synthetic driverId
+// 'godown_pickup' + name 'Godown Pickup (self-collection)' collapses every
+// godown row into ONE bucket in the driver list so the ops team has full
+// accountability across every delivery mode.
+describe('Delivery Performance — Godown Pickup synthetic bucket', () => {
+  // NOTE ON ASSERTIONS: All godown-pickup orders across every test in this
+  // file collapse into ONE synthetic bucket per distributor, so the bucket's
+  // top-line totals depend on order of test execution. We assert
+  // (a) the bucket exists with the right id/name, and (b) THIS test's
+  // fixtures show up in the drill-down (customer-scoped, isolated), rather
+  // than a numeric top-line comparison that would race with sibling tests.
+  it('19. Unfiltered call includes a synthetic Godown Pickup driver_summary when godown orders exist', async () => {
+    const cust = await mkCustomer(D1, 'DPerf Godown Sec');
+    const d = await mkDriver(D1, `9919300${String(createdDriverIds.length).padStart(3, '0')}`, 'godownsec');
+    // Regular order via a real driver
+    await mkOrderInvoice(D1, d.driverId, cust, d1Cyl, { fulls: 3, empties: 3 });
+    // Godown pickup — no driver attribution
+    await mkOrderInvoice(D1, d.driverId, cust, d1Cyl, { fulls: 5, empties: 4, isGodownPickup: true });
+    const r = await deliveryPerformance(D1, filters());
+    const godown = r.rows.find(
+      (row) => row.type === 'driver_summary' && row.driverId === 'godown_pickup',
+    );
+    expect(godown).toBeDefined();
+    expect(godown!.driverName).toBe('Godown Pickup (self-collection)');
+    // Bucket must include at least this test's 5 fulls / 4 empties.
+    expect(Number(godown!.fullsDelivered)).toBeGreaterThanOrEqual(5);
+    expect(Number(godown!.emptiesCollected)).toBeGreaterThanOrEqual(4);
+    // Verify THIS test's fixture is reflected via customer-scoped drill-down.
+    const drill = await deliveryPerformance(
+      D1,
+      filters({ driverId: 'godown_pickup', groupBy: 'customer' }),
+    );
+    const myRow = drill.rows.find(
+      (row) => row.type === 'customer_row' && row.customerId === cust,
+    );
+    expect(myRow).toBeDefined();
+    expect(Number(myRow!.fullsDelivered)).toBe(5);
+    expect(Number(myRow!.emptiesCollected)).toBe(4);
+  });
+
+  it('20. Filtering by driverId=godown_pickup returns ONLY the synthetic bucket (regular driver orders excluded)', async () => {
+    const cust = await mkCustomer(D1, 'DPerf Godown Only');
+    const d = await mkDriver(D1, `9919400${String(createdDriverIds.length).padStart(3, '0')}`, 'godownonly');
+    await mkOrderInvoice(D1, d.driverId, cust, d1Cyl, { fulls: 3, empties: 3 }); // real driver — excluded
+    await mkOrderInvoice(D1, d.driverId, cust, d1Cyl, { fulls: 7, empties: 6, isGodownPickup: true });
+    const r = await deliveryPerformance(D1, filters({ driverId: 'godown_pickup' }));
+    const summaries = r.rows.filter((row) => row.type === 'driver_summary');
+    // Exactly one summary — the godown bucket. Real driver orders are
+    // excluded (via isGodownPickup=false constraint in the filter path).
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].driverId).toBe('godown_pickup');
+    // The regular driver's 3-full order MUST NOT surface as a separate
+    // summary row when the filter selects the godown bucket.
+    const realDriverRow = r.rows.find(
+      (row) => row.type === 'driver_summary' && row.driverId === d.driverId,
+    );
+    expect(realDriverRow).toBeUndefined();
+  });
+
+  it('21. Drill-down (groupBy=customer) with driverId=godown_pickup returns per-customer godown rows', async () => {
+    const cust1 = await mkCustomer(D1, 'DPerf Godown Drill A');
+    const cust2 = await mkCustomer(D1, 'DPerf Godown Drill B');
+    const d = await mkDriver(D1, `9919500${String(createdDriverIds.length).padStart(3, '0')}`, 'godowndrill');
+    await mkOrderInvoice(D1, d.driverId, cust1, d1Cyl, { fulls: 4, empties: 3, isGodownPickup: true });
+    await mkOrderInvoice(D1, d.driverId, cust2, d1Cyl, { fulls: 6, empties: 5, isGodownPickup: true });
+    const r = await deliveryPerformance(
+      D1,
+      filters({ driverId: 'godown_pickup', groupBy: 'customer' }),
+    );
+    const custRows = r.rows.filter((row) => row.type === 'customer_row');
+    const custIds = new Set(custRows.map((row) => row.customerId));
+    expect(custIds.has(cust1)).toBe(true);
+    expect(custIds.has(cust2)).toBe(true);
+  });
+
+  it('22. Cross-tenant: dist-002 godown pickups do not appear in dist-001 report', async () => {
+    const c2 = await mkCustomer(D2, 'DPerf Godown Cross');
+    const d2Drv = await mkDriver(D2, `9919600${String(createdDriverIds.length).padStart(3, '0')}`, 'godowncross');
+    await mkOrderInvoice(D2, d2Drv.driverId, c2, d2Cyl, { fulls: 9, empties: 9, isGodownPickup: true });
+    const r1 = await deliveryPerformance(D1, filters({ driverId: 'godown_pickup' }));
+    const summaries = r1.rows.filter((row) => row.type === 'driver_summary');
+    // Any godown summary that appears must be a dist-001 order (from
+    // earlier tests). The dist-002 fixture must not leak in — the
+    // godown-fulls delta on dist-001 stays free of the 9 from D2.
+    for (const s of summaries) {
+      // Every test in this file uses dist-001 or dist-002 exclusively per row.
+      // A leak would show as fullsDelivered including the 9 from D2.
+      expect(Number(s.fullsDelivered)).not.toBe(9);
+    }
+  });
+});

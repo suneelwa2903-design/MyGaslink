@@ -271,3 +271,110 @@ describe('Orders — GET /api/orders driver auto-scoping', () => {
     expect(ids).not.toContain(orderBId);
   });
 });
+
+// Suneel's ask (2026-07-11): the Orders page Statuses dropdown surfaces two
+// pseudo-status filters — "Godown Pickup" and "On-Demand" — alongside the
+// real OrderStatus values. Backend translates them to isGodownPickup=true /
+// isBackdated=true boolean-column filters. Confirms the wire contract.
+describe('Orders — GET /api/orders pseudo-status filters', () => {
+  const GODOWN_ORDER_NUM = 'TEST-DRV-SCOPE-GODOWN';
+  const ONDEMAND_ORDER_NUM = 'TEST-DRV-SCOPE-ONDEMAND';
+  let godownOrderId: string;
+  let onDemandOrderId: string;
+
+  beforeAll(async () => {
+    // Fixture cleanup first — idempotent across reruns.
+    await prisma.orderItem.deleteMany({
+      where: { order: { orderNumber: { in: [GODOWN_ORDER_NUM, ONDEMAND_ORDER_NUM] } } },
+    });
+    await prisma.order.deleteMany({
+      where: { orderNumber: { in: [GODOWN_ORDER_NUM, ONDEMAND_ORDER_NUM] } },
+    });
+    const customer = seedData.customers[0];
+    const cyl = seedData.cylinderTypes[1];
+    const godown = await prisma.order.create({
+      data: {
+        orderNumber: GODOWN_ORDER_NUM,
+        distributorId: 'dist-001',
+        customerId: customer.id,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'pending_delivery',
+        isGodownPickup: true,
+        totalAmount: 1800,
+        items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 1800, totalPrice: 1800 }] },
+      },
+    });
+    godownOrderId = godown.id;
+    const onDemand = await prisma.order.create({
+      data: {
+        orderNumber: ONDEMAND_ORDER_NUM,
+        distributorId: 'dist-001',
+        customerId: customer.id,
+        orderDate: new Date(TEST_DATE),
+        deliveryDate: new Date(TEST_DATE),
+        status: 'delivered',
+        isBackdated: true,
+        totalAmount: 1800,
+        items: { create: [{ cylinderTypeId: cyl.id, quantity: 1, unitPrice: 1800, totalPrice: 1800 }] },
+      },
+    });
+    onDemandOrderId = onDemand.id;
+  });
+
+  afterAll(async () => {
+    await prisma.orderItem.deleteMany({
+      where: { order: { orderNumber: { in: [GODOWN_ORDER_NUM, ONDEMAND_ORDER_NUM] } } },
+    });
+    await prisma.order.deleteMany({
+      where: { orderNumber: { in: [GODOWN_ORDER_NUM, ONDEMAND_ORDER_NUM] } },
+    });
+  });
+
+  it('status=godown_pickup returns ONLY orders with isGodownPickup=true', async () => {
+    const res = await request(app)
+      .get('/api/orders?status=godown_pickup&pageSize=100')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const orders = res.body.data.orders as Array<{ orderId: string; isGodownPickup: boolean }>;
+    expect(orders.length).toBeGreaterThan(0);
+    // Every returned order must have the boolean flag set — no leaks.
+    for (const o of orders) {
+      expect(o.isGodownPickup).toBe(true);
+    }
+    const ids = orders.map((o) => o.orderId);
+    expect(ids).toContain(godownOrderId);
+    expect(ids).not.toContain(onDemandOrderId);
+    expect(ids).not.toContain(orderAId);
+  });
+
+  it('status=on_demand returns ONLY orders with isBackdated=true', async () => {
+    const res = await request(app)
+      .get('/api/orders?status=on_demand&pageSize=100')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const orders = res.body.data.orders as Array<{ orderId: string; isBackdated: boolean }>;
+    expect(orders.length).toBeGreaterThan(0);
+    for (const o of orders) {
+      expect(o.isBackdated).toBe(true);
+    }
+    const ids = orders.map((o) => o.orderId);
+    expect(ids).toContain(onDemandOrderId);
+    expect(ids).not.toContain(godownOrderId);
+    expect(ids).not.toContain(orderAId);
+  });
+
+  it('real OrderStatus values still pass through unchanged (no regression)', async () => {
+    const res = await request(app)
+      .get('/api/orders?status=pending_delivery&pageSize=100')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    const orders = res.body.data.orders as Array<{ orderId: string; status: string }>;
+    for (const o of orders) {
+      expect(o.status).toBe('pending_delivery');
+    }
+    const ids = orders.map((o) => o.orderId);
+    // Regular pending_delivery order (driver A's) is included.
+    expect(ids).toContain(orderAId);
+  });
+});
