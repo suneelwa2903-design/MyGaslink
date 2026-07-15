@@ -8,6 +8,8 @@
 
 This report is built from `git log`, file inspection, and live `pnpm` runs. Where CLAUDE.md disagrees with what is on disk, this file follows the code.
 
+> ⚠️ **STALE (2026-07-15):** `expo-camera`, `packages/mobile/src/components/DeliveryProofCamera.tsx`, and `packages/api/src/lib/s3.ts` were removed in commit `6abbb23` (2026-06-19). References to these three in this document are historical — they were live at audit time but no longer exist on `main`. `lib/s3.ts` is being restored as part of the proof-of-collection feature (Phase 1); `expo-camera` will be restored in Phase 2. Trust this note over the body when planning current work.
+
 ---
 
 ## 1. What shipped since the last doc update

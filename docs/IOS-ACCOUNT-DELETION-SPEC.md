@@ -803,8 +803,9 @@ Models are referenced by their location in [packages/api/prisma/schema.prisma](.
 | 47 | ContactSubmission | :1577 | DEFERRED | Pre-auth lead form. Opportunistic anonymization (rows matching deleted user's `phone`/`email`) is a v1.2 nice-to-have. |
 | 48 | StockMismatchRecord | :1659 | Partial | `resolutionNotes NULL`. RETAIN FKs. |
 | 49 | **AccountDeletionRequest** | (new in §3) | RETAIN | The audit trail of the deletion itself. `status='completed'`, `completedAt=now()`. |
+| 50 | **DeliveryProof** | (new in proof-of-collection Phase 1) | **ANON** | Per-order proof-of-delivery artifact for customers with `requireDeliveryVerification=true`. When cascading a customer/user deletion: `capturedLat NULL`, `capturedLng NULL`, `signingPartyPhone NULL`, `capturedBy='ANONYMIZED'`, `s3Key NULL` **after** the corresponding S3 object is deleted via `deleteDeliveryProofObject()` in `lib/s3.ts`. RETAIN: `id`, `orderId`, `distributorId`, `proofType`, `capturedAt`, `otpVerifiedAt` (audit trail of "delivery was verified via method X at time Y" survives without PII). **⚠️ S3-object deletion is net-new work** — no S3 delete function exists yet in the deployed codebase; it lands in Step 3 of the proof-of-collection feature. The account-deletion worker MUST call `deliveryProofService.deleteProofForDpdp(distributorId, customerId)` in the same phase as Customer/Order anonymization. |
 
-**Coverage summary:** 14 models with anonymization writes, 8 statutory full-retain, ~15 tenant-level/skip, ~4 reference-data/skip. Net: the worker touches ≤20 of 49 models per request.
+**Coverage summary:** 15 models with anonymization writes (+1 for DeliveryProof), 8 statutory full-retain, ~15 tenant-level/skip, ~4 reference-data/skip. Net: the worker touches ≤21 of 50 models per request.
 
 ### 10.3 Statutory anchor — what we PROMISE to retain
 
