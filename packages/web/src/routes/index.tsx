@@ -53,13 +53,15 @@ function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user } = useAuthStore();
 
   if (isAuthenticated && user) {
-    const isCustomer = user.role === UserRole.CUSTOMER;
-    return (
-      <Navigate
-        to={isCustomer ? '/app/customer/dashboard' : '/app/analytics'}
-        replace
-      />
-    );
+    // Feature A (2026-07-15): customer_hq → HQ portal; customer →
+    // single-customer portal; everyone else → admin analytics.
+    const target =
+      user.role === UserRole.CUSTOMER
+        ? '/app/customer/dashboard'
+        : user.role === UserRole.CUSTOMER_HQ
+          ? '/hq'
+          : '/app/analytics';
+    return <Navigate to={target} replace />;
   }
 
   return <>{children}</>;

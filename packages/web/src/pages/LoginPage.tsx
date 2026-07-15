@@ -235,7 +235,13 @@ export default function LoginPage() {
       if (data.user.requiresPasswordReset) { navigate('/force-password-reset', { replace: true }); return; }
       toast.success(t('auth.welcomeBackToast', { name: data.user.firstName }));
       if (from) { navigate(from, { replace: true }); return; }
-      navigate(data.user.role === UserRole.CUSTOMER ? '/app/customer/dashboard' : '/app/dashboard', { replace: true });
+      // Feature A (2026-07-15): customer_hq role → HQ portal (web only in v1).
+      const target = data.user.role === UserRole.CUSTOMER
+        ? '/app/customer/dashboard'
+        : data.user.role === UserRole.CUSTOMER_HQ
+          ? '/hq'
+          : '/app/dashboard';
+      navigate(target, { replace: true });
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });

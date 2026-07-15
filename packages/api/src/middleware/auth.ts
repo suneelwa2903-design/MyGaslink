@@ -24,6 +24,12 @@ declare global {
       user?: JwtPayload;
       requestId?: string;
       distributor?: ResolvedDistributor;
+      // Feature A (2026-07-15): set by requireGroupAccess middleware
+      // for customer_hq routes. Every query in the group-portal service
+      // uses BOTH distributorId (from req.user) AND
+      // customerId: { in: visibleCustomerIds } — never one without the
+      // other (anti-pattern #13 discipline extended to groups).
+      visibleCustomerIds?: string[];
     }
   }
 }
@@ -57,6 +63,11 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       where: { id: decoded.userId },
       select: {
         id: true, status: true, role: true, distributorId: true, customerId: true,
+        // Feature A (2026-07-15): re-read groupId per request so a
+        // customer_hq user whose group changes (rare — e.g. moved from
+        // one HQ bundle to another by staff) picks up the change on
+        // the next request without needing to re-login.
+        groupId: true,
         // 1:1 relation — Prisma include can't filter on a unique-side
         // relation, so we fetch the row (any status) and check it below.
         accountDeletionRequest: {
@@ -75,6 +86,10 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       role: decoded.role,
       distributorId: decoded.distributorId,
       customerId: decoded.customerId,
+      // Read from the fresh DB row, not the token, so a group change
+      // takes effect immediately (same defence-in-depth pattern the
+      // resolveDistributor middleware already applies for tenant).
+      groupId: user.groupId,
     };
 
     // M14 v1.0 (spec §5.1): pending-deletion gate. Only cancel + status
@@ -260,5 +275,54 @@ export function requireDistributor(req: Request, res: Response, next: NextFuncti
       'NO_DISTRIBUTOR_SELECTED',
     );
   }
+  next();
+}
+
+/**
+ * Feature A (2026-07-15): requireGroupAccess middleware.
+ *
+ * Used ONLY on /api/customer-group-portal/* routes. Reads
+ * req.user.groupId, verifies the group belongs to req.user.distributorId
+ * (belt-and-braces tenant check — anti-pattern #13), then attaches
+ * `req.visibleCustomerIds` = the group's non-deleted member ids for
+ * downstream handlers to use in every query.
+ *
+ * Must be composed after authenticate + resolveDistributor +
+ * requireRole('customer_hq') so req.user.distributorId and
+ * req.user.groupId are guaranteed present + tenant-valid.
+ *
+ * Refuses (403) if:
+ *  - the JWT has no groupId claim (shouldn't happen for customer_hq
+ *    but defensive)
+ *  - the group is soft-deleted
+ *  - the group belongs to a different distributor (attack path)
+ */
+export async function requireGroupAccess(req: Request, res: Response, next: NextFunction) {
+  if (!req.user?.groupId) {
+    return sendForbidden(res, 'Group access required');
+  }
+  if (!req.user?.distributorId) {
+    return sendForbidden(res, 'Distributor context required');
+  }
+  const group = await prisma.customerGroup.findFirst({
+    where: {
+      id: req.user.groupId,
+      distributorId: req.user.distributorId,
+      deletedAt: null,
+    },
+    include: {
+      members: {
+        include: {
+          customer: { select: { id: true, deletedAt: true } },
+        },
+      },
+    },
+  });
+  if (!group) {
+    return sendForbidden(res, 'Group not found or access denied');
+  }
+  req.visibleCustomerIds = group.members
+    .filter((m) => !m.customer.deletedAt)
+    .map((m) => m.customerId);
   next();
 }

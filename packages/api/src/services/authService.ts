@@ -238,6 +238,10 @@ export async function login(
     role: user.role as JwtPayload['role'],
     distributorId: user.distributorId,
     customerId: user.customerId,
+    // Feature A (2026-07-15): customer_hq logins carry groupId so the
+    // group-portal middleware can resolve visible customer ids without
+    // a second DB round-trip. Null for every other role.
+    groupId: user.groupId,
   };
 
   const tokens = generateTokens(jwtPayload);
@@ -289,7 +293,7 @@ export async function refreshTokens(refreshToken: string): Promise<AuthTokens> {
 
   const user = await prisma.user.findUnique({
     where: { id: payload.userId },
-    select: { id: true, status: true, email: true, role: true, distributorId: true, customerId: true },
+    select: { id: true, status: true, email: true, role: true, distributorId: true, customerId: true, groupId: true },
   });
 
   if (!user || user.status !== 'active') {
@@ -312,6 +316,9 @@ export async function refreshTokens(refreshToken: string): Promise<AuthTokens> {
     role: user.role as JwtPayload['role'],
     distributorId: user.distributorId,
     customerId: user.customerId,
+    // Feature A (2026-07-15): re-attach groupId on every refresh so
+    // customer_hq logins survive token rotation cleanly.
+    groupId: user.groupId,
   };
 
   const tokens = generateTokens(newPayload);

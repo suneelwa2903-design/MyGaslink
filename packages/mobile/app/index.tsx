@@ -38,6 +38,13 @@ export default function Index() {
       case 'finance':
         router.replace('/(finance)/dashboard');
         break;
+      case 'customer_hq':
+        // Feature A (2026-07-15): HQ portal is web-only in v1. Land
+        // on a dedicated (hq) screen that explains the situation and
+        // offers a "Open in Browser" button. Full mobile HQ UX is
+        // deferred to a later phase per docs/HQ-PORTAL-BRAINSTORM.md §7.
+        router.replace('/(hq)');
+        break;
       default:
         router.replace('/(auth)/login');
     }

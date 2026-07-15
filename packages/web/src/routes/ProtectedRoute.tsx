@@ -58,10 +58,16 @@ function ProtectedRouteInner({
   if (allowedRoles && allowedRoles.length > 0) {
     const userRole = user.role as UserRole;
     if (userRole !== UserRole.SUPER_ADMIN && !allowedRoles.includes(userRole)) {
+      // Feature A (2026-07-15): customer_hq users land on the HQ portal
+      // dashboard, never the admin analytics page (they have no access
+      // there) and never the customer portal (which shows a single
+      // customer's data — HQ needs the group roll-up).
       const fallback =
         userRole === UserRole.CUSTOMER
           ? '/app/customer/dashboard'
-          : '/app/analytics';
+          : userRole === UserRole.CUSTOMER_HQ
+            ? '/hq'
+            : '/app/analytics';
       return <Navigate to={fallback} replace />;
     }
   }
