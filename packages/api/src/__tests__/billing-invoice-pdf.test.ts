@@ -15,10 +15,7 @@
  *     which drifted).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { PDFParse } from 'pdf-parse';
 import { prisma } from '../lib/prisma.js';
 import { generateBillingInvoicePdf } from '../services/pdf/billingInvoicePdfService.js';
 import { numberToWords } from '../services/pdf/pdfLayoutUtils.js';
@@ -61,27 +58,20 @@ async function makeCycle(): Promise<string> {
   return cycle.id;
 }
 
-function extractText(pdf: Buffer): string {
+async function extractText(pdf: Buffer): Promise<string> {
   // PDFKit compresses text streams (FlateDecode). A latin1 grep won't
-  // find plain text. Shell out to pypdf via a small Python one-liner
-  // — same pattern as verify-brief1-brief2.ts uses. If Python isn't
-  // available (e.g. in CI without it), the tests fall back to raw-
-  // buffer assertions only.
-  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bill-inv-')), 'invoice.pdf');
-  fs.writeFileSync(tmp, pdf);
-  // Prefer `python3` (Ubuntu CI runners); fall back to `python` (dev
-  // machines where python IS python3, e.g. Windows / macOS with
-  // homebrew). If neither has pypdf installed the catch returns '' and
-  // the assertions surface as informative failures rather than crashes.
-  const pyScript = `from pypdf import PdfReader; r=PdfReader(r'${tmp.replace(/\\/g, '\\\\')}'); print('\\n'.join(p.extract_text() for p in r.pages))`;
-  for (const bin of ['python3', 'python']) {
-    try {
-      return execSync(`${bin} -c "${pyScript}"`, { encoding: 'utf-8' });
-    } catch {
-      // try next binary
-    }
+  // find plain text. Was previously a shell-out to pypdf (Python +
+  // pypdf install required — commit 8445f81); switched to pdf-parse
+  // (pure Node, zero system deps) so this works on any dev machine
+  // or CI runner without a Python toolchain. Same text-extraction
+  // shape — PDFKit-generated text streams are decoded end-to-end.
+  const parser = new PDFParse({ data: pdf });
+  try {
+    const result = await parser.getText();
+    return result.text;
+  } finally {
+    await parser.destroy();
   }
-  return '';
 }
 
 describe('numberToWords — Indian-English grammar fixes', () => {
@@ -112,7 +102,7 @@ describe('SaaS subscription-invoice PDF template', () => {
   beforeAll(async () => {
     const cycleId = await makeCycle();
     pdf = await generateBillingInvoicePdf(cycleId, D1);
-    content = extractText(pdf);
+    content = await extractText(pdf);
   });
 
   it('generates a non-empty PDF starting with %PDF-', () => {
@@ -167,7 +157,7 @@ describe('SaaS subscription-invoice PDF template', () => {
     // Fresh cycle so we can capture the number for this run.
     const cycleId = await makeCycle();
     const pdf2 = await generateBillingInvoicePdf(cycleId, D1);
-    const c2 = extractText(pdf2);
+    const c2 = await extractText(pdf2);
     const match = c2.match(/IMGL(\d{4})(\d{6})/);
     expect(match).toBeTruthy();
     expect(match![1]).toBe('2627'); // FY code
