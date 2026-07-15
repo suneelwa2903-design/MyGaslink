@@ -738,6 +738,106 @@ describe('Guard 9 — GET /orders/:id/delivery-proof strips otpCode for non-driv
   });
 });
 
+// ─── Proof-of-collection Phase 3 (2026-07-15) — 2 wire-shape guards ───
+
+describe('Guard 10 — customer-portal orders response has otpCode field (null or string)', () => {
+  it('order response includes otpCode as own property (null when not eligible)', async () => {
+    // Seed a customer with a portal login + an order in pending_delivery
+    // but flag OFF — otpCode should be present as `null`, not missing.
+    const stamp = Date.now();
+    const customer = await prisma.customer.create({
+      data: {
+        distributorId: 'dist-001',
+        customerName: `GUARD-10-${stamp}`,
+        customerType: 'B2C',
+        phone: `9${stamp}`.slice(0, 10),
+        requireDeliveryVerification: false,
+      },
+    });
+    const { hashPassword } = await import('../services/authService.js');
+    const user = await prisma.user.create({
+      data: {
+        email: `guard10-${stamp}@example.com`,
+        passwordHash: await hashPassword('Test@1234'),
+        firstName: 'Guard', lastName: '10',
+        role: 'customer', distributorId: 'dist-001', customerId: customer.id,
+        requiresPasswordReset: false,
+      },
+    });
+    const cylinderType = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId: 'dist-001' } });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `ORD-GUARD10-${stamp}`,
+        distributorId: 'dist-001',
+        customerId: customer.id,
+        orderDate: new Date(), deliveryDate: new Date(),
+        status: 'pending_delivery', totalAmount: 100,
+        items: { create: { cylinderTypeId: cylinderType.id, quantity: 1, unitPrice: 100, totalPrice: 100 } },
+      },
+    });
+    try {
+      const token = generateToken({
+        userId: user.id, email: user.email, role: UserRole.CUSTOMER,
+        distributorId: 'dist-001', customerId: customer.id,
+      });
+      const res = await request(app).get('/api/customer-portal/orders').set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      const found = (res.body.data.orders as Array<Record<string, unknown>>).find((o) => o.orderId === order.id);
+      expect(found).toBeDefined();
+      expect(Object.prototype.hasOwnProperty.call(found!, 'otpCode')).toBe(true);
+      expect(found!.otpCode).toBeNull();
+    } finally {
+      await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+      await prisma.customer.delete({ where: { id: customer.id } });
+    }
+  });
+});
+
+describe('Guard 11 — driver /orders response has customerHasPortalAccess boolean', () => {
+  it('order response includes customerHasPortalAccess as boolean', async () => {
+    // Use raju@gasagency (seeded driver on dist-001) so the driver-scoped
+    // filter matches something. Any order created for a customer here
+    // suffices — even a customer without a portal user.
+    const { loginAsDriver: driverLogin } = await import('./helpers.js');
+    const { token, driver } = await driverLogin();
+    const stamp = Date.now();
+    const customer = await prisma.customer.create({
+      data: {
+        distributorId: 'dist-001',
+        customerName: `GUARD-11-${stamp}`,
+        customerType: 'B2C',
+        phone: `9${stamp}`.slice(0, 10),
+      },
+    });
+    const cylinderType = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId: 'dist-001' } });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `ORD-GUARD11-${stamp}`,
+        distributorId: 'dist-001',
+        customerId: customer.id,
+        driverId: driver!.id,
+        orderDate: new Date(), deliveryDate: new Date(),
+        status: 'pending_delivery', totalAmount: 100,
+        items: { create: { cylinderTypeId: cylinderType.id, quantity: 1, unitPrice: 100, totalPrice: 100 } },
+      },
+    });
+    try {
+      const res = await request(app).get('/api/orders').set('Authorization', `Bearer ${token}`).query({ status: 'pending_delivery' });
+      expect(res.status).toBe(200);
+      const found = (res.body.data.orders as Array<Record<string, unknown>>).find((o) => o.orderId === order.id);
+      expect(found).toBeDefined();
+      expect(typeof found!.customerHasPortalAccess).toBe('boolean');
+      expect(found!.customerHasPortalAccess).toBe(false); // no portal user seeded
+    } finally {
+      await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+      await prisma.customer.delete({ where: { id: customer.id } });
+    }
+  });
+});
+
 afterAll(async () => {
   // Belt-and-braces: drop any CNs from this file by reason text.
   await prisma.creditNote.deleteMany({
