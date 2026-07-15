@@ -18,6 +18,7 @@ import { createBackdatedTrip, BackdatedTripError } from '../services/backdatedTr
 import { applyBackdatedInventoryAdjustment } from '../services/backdatedAdjustmentService.js';
 import { preflightDispatch, preflightAddToTrip, PreflightError } from '../services/gst/gstPreflightService.js';
 import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
+import * as deliveryProofService from '../services/deliveryProofService.js';
 import { mapOrder, mapOrders } from '../utils/mappers.js';
 import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
@@ -501,6 +502,103 @@ router.post('/:id/confirm-delivery',
       return sendError(res, e.message, e.statusCode || 500);
     }
   }
+);
+
+// ─── Delivery-proof (proof-of-collection Phase 1, 2026-07-15) ──────────────
+// Three routes. Called by the driver mobile app BEFORE /confirm-delivery
+// when the order's customer has requireDeliveryVerification=true. Proof
+// is written to a separate `delivery_proofs` table via upsert-by-orderId
+// (decouples proof idempotency from delivery idempotency — plan §R1).
+
+const deliveryProofUploadUrlSchema = z.object({
+  proofType: z.enum(['signature', 'photo']),
+});
+
+const deliveryProofUpsertSchema = z.object({
+  proofType: z.enum(['signature', 'photo', 'otp']),
+  proofS3Key: z.string().max(200).optional(),
+  proofSigningPartyPhone: z.string().min(10).max(15).optional(),
+  otpCode: z.string().length(6).optional(),
+  capturedLat: z.number().optional(),
+  capturedLng: z.number().optional(),
+});
+
+// POST /api/orders/:id/delivery-proof-upload-url
+router.post('/:id/delivery-proof-upload-url',
+  requireRole('driver'),
+  validate(deliveryProofUploadUrlSchema),
+  async (req, res) => {
+    try {
+      const driver = await prisma.driver.findFirst({
+        where: { userId: req.user!.userId },
+        select: { id: true },
+      });
+      if (!driver) return sendNotFound(res, 'Driver profile not found for this user');
+      const result = await deliveryProofService.getUploadUrl(
+        req.user!.distributorId!,
+        param(req.params.id),
+        req.body.proofType,
+        driver.id,
+      );
+      return sendSuccess(res, result);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// POST /api/orders/:id/delivery-proof
+router.post('/:id/delivery-proof',
+  requireRole('driver'),
+  validate(deliveryProofUpsertSchema),
+  auditLog('upsert_delivery_proof', 'order'),
+  async (req, res) => {
+    try {
+      const proof = await deliveryProofService.upsertProof(
+        req.user!.distributorId!,
+        param(req.params.id),
+        {
+          proofType: req.body.proofType,
+          s3Key: req.body.proofS3Key,
+          signingPartyPhone: req.body.proofSigningPartyPhone,
+          otpCode: req.body.otpCode,
+          capturedLat: req.body.capturedLat,
+          capturedLng: req.body.capturedLng,
+          capturedBy: req.user!.userId,
+        },
+      );
+      return sendCreated(res, { deliveryProofId: proof.id });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// GET /api/orders/:id/delivery-proof — driver reads own captures for retry
+// diagnostics; admin/finance roles read for review (otpCode redacted).
+router.get('/:id/delivery-proof',
+  requireRole('driver', 'super_admin', 'distributor_admin', 'finance'),
+  async (req, res) => {
+    try {
+      const proof = await deliveryProofService.getProof(
+        req.user!.distributorId!,
+        param(req.params.id),
+      );
+      if (!proof) return sendNotFound(res, 'No proof found for this order');
+      // Never leak otpCode outside the driver role — even to admins
+      // reviewing the row. Driver reads the code from the customer's
+      // portal card in real time; nobody else needs to see it.
+      if (req.user!.role !== 'driver') {
+        return sendSuccess(res, { ...proof, otpCode: null });
+      }
+      return sendSuccess(res, proof);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
 );
 
 // POST /api/orders/:id/resolve-dispute — WI-127
