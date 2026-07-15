@@ -33,6 +33,34 @@ export async function getCurrentLocation(): Promise<LocationCoords | null> {
   }
 }
 
+/**
+ * Proof-of-collection Phase 1 (2026-07-15): one-shot high-accuracy
+ * capture for the delivery-proof workflow. Uses `Accuracy.High` for
+ * ~10-30m precision (vs the ~100m Balanced accuracy used for driver
+ * breadcrumb tracking) — realistic per plan §B GPS notes.
+ *
+ * Returns null on ANY failure — permission denied, no GPS lock, timeout,
+ * device off — so a bad GPS read never blocks delivery confirmation.
+ * The proof-upsert route accepts optional lat/lng; a null return here
+ * just means the proof row's `captured_lat`/`captured_lng` stay null.
+ */
+export async function captureDeliveryLocation(): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const hasPermission = await requestLocationPermission();
+    if (!hasPermission) return null;
+
+    const location = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+    });
+    return {
+      lat: location.coords.latitude,
+      lng: location.coords.longitude,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function reportDriverLocation(
   driverId: string,
   assignmentId?: string,
