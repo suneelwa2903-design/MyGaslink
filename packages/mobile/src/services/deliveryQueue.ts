@@ -21,6 +21,17 @@ export type QueuedDelivery = {
   notes?: string;
   deliveryLatitude?: number;
   deliveryLongitude?: number;
+  // Proof-of-collection Phase 1 (2026-07-15) — proof METADATA only.
+  // Signature PNG bytes are uploaded to S3 BEFORE queuing; only the
+  // resulting S3 key (short string) rides here. Raw image data MUST
+  // NEVER be queued in this table — SecureStore on Android caps each
+  // key at ~2KB and a base64 signature PNG alone exceeds that budget.
+  // On replay, /delivery-proof is POSTed first, then /confirm-delivery.
+  proofType?: 'signature' | 'photo' | 'otp';
+  proofS3Key?: string;
+  proofSigningPartyPhone?: string;
+  proofCapturedLat?: number;
+  proofCapturedLng?: number;
   timestamp: string;
   attemptCount: number;
 };
@@ -91,6 +102,20 @@ export async function syncPendingDeliveries(): Promise<{ synced: number; remaini
 
   for (const item of q) {
     try {
+      // Proof-of-collection Phase 1 (2026-07-15): if the queued item
+      // carries proof metadata, POST /delivery-proof BEFORE
+      // /confirm-delivery so the proof row exists by the time delivery
+      // is confirmed. Upsert-by-orderId (server-side) means a duplicate
+      // replay is idempotent — same proof metadata, same row.
+      if (item.proofType && (item.proofS3Key || item.proofType === 'otp')) {
+        await api.post(`/orders/${item.orderId}/delivery-proof`, {
+          proofType: item.proofType,
+          proofS3Key: item.proofS3Key,
+          proofSigningPartyPhone: item.proofSigningPartyPhone,
+          capturedLat: item.proofCapturedLat,
+          capturedLng: item.proofCapturedLng,
+        });
+      }
       await api.post(`/orders/${item.orderId}/confirm-delivery`, {
         items: item.items,
         notes: item.notes,

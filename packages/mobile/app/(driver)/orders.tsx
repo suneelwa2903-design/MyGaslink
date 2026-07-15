@@ -27,6 +27,10 @@ import {
   syncPendingDeliveries,
   type QueuedDelivery,
 } from '../../src/services/deliveryQueue';
+// Proof-of-collection Phase 1 (2026-07-15) — signature capture wiring.
+import { captureDeliveryLocation } from '../../src/services/location';
+import { uploadToPresignedUrl } from '../../src/services/s3Upload';
+import { SignaturePad } from '../../src/components/SignaturePad';
 
 /**
  * Per-item delivery state — what the driver actually entered for delivered
@@ -57,6 +61,17 @@ export default function DriverOrdersScreen() {
   const [confirming, setConfirming] = useState(false);
   const [pendingQueue, setPendingQueue] = useState<QueuedDelivery[]>([]);
   const [deliveryItems, setDeliveryItems] = useState<Record<string, DeliveryItemEntry>>({});
+  // Proof-of-collection Phase 1 (2026-07-15) — proof-capture state.
+  // Lives on the parent so the "Confirm Delivery" gate can read
+  // proofCaptured directly (avoids a state-lifting round trip).
+  const [proofCaptured, setProofCaptured] = useState(false);
+  const [proofS3Key, setProofS3Key] = useState<string | null>(null);
+  const [signingPartyPhone, setSigningPartyPhone] = useState('');
+  const [signatureBase64, setSignatureBase64] = useState<string | null>(null);
+  const [proofUploading, setProofUploading] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const [proofLat, setProofLat] = useState<number | null>(null);
+  const [proofLng, setProofLng] = useState<number | null>(null);
 
   useEffect(() => {
     const unsub = subscribePendingDeliveries(setPendingQueue);
@@ -75,6 +90,16 @@ export default function DriverOrdersScreen() {
     setSeededFor(selectedOrder);
     if (!selectedOrder) {
       setDeliveryItems({});
+      // Reset proof state when the modal closes so state from order A
+      // can't leak into a fresh order B open.
+      setProofCaptured(false);
+      setProofS3Key(null);
+      setSigningPartyPhone('');
+      setSignatureBase64(null);
+      setProofUploading(false);
+      setProofError(null);
+      setProofLat(null);
+      setProofLng(null);
     } else {
       const seed: Record<string, DeliveryItemEntry> = {};
       for (const item of selectedOrder.items ?? []) {
@@ -118,7 +143,25 @@ export default function DriverOrdersScreen() {
       setDeliveryNotes('');
     } catch (err) {
       if (isNetworkError(err)) {
-        await enqueueDelivery({ orderId, items, notes: deliveryNotes || undefined });
+        // Proof-of-collection Phase 1: if we captured proof metadata on
+        // this attempt, ride it into the offline queue so the sync flush
+        // can POST /delivery-proof before /confirm-delivery on retry.
+        // Only the S3 KEY is queued — the signature PNG bytes were
+        // already uploaded to S3 successfully by handleUploadProof.
+        await enqueueDelivery({
+          orderId,
+          items,
+          notes: deliveryNotes || undefined,
+          ...(proofS3Key && proofCaptured
+            ? {
+                proofType: 'signature',
+                proofS3Key,
+                proofSigningPartyPhone: signingPartyPhone,
+                proofCapturedLat: proofLat ?? undefined,
+                proofCapturedLng: proofLng ?? undefined,
+              }
+            : {}),
+        });
         Alert.alert('Saved offline', 'No network. Delivery will sync automatically when you\'re back online.');
         setSelectedOrder(null);
         setDeliveryNotes('');
@@ -196,8 +239,72 @@ export default function DriverOrdersScreen() {
    * `delivered <= ordered`: short deliveries are legal (the service writes
    * a cancelled_stock_event for the difference, see orderService.ts).
    */
+  /**
+   * Proof-of-collection Phase 1 (2026-07-15): upload the captured
+   * signature to S3, capture GPS, then POST proof metadata to the
+   * server. Runs BEFORE confirm-delivery so proof-idempotency stays
+   * decoupled from delivery-idempotency (plan §R1). GPS failure returns
+   * null and is stored as null — proof is not blocked by GPS.
+   */
+  const handleUploadProof = async () => {
+    if (!selectedOrder || !signatureBase64) return;
+    if (!signingPartyPhone || signingPartyPhone.length < 10) {
+      setProofError('Phone number required (min 10 digits)');
+      return;
+    }
+    setProofUploading(true);
+    setProofError(null);
+    try {
+      // 1. Get presigned URL from server (validates driver + order + flag).
+      const { uploadUrl, s3Key } = await apiPost<{ uploadUrl: string; finalUrl: string; s3Key: string }>(
+        `/orders/${selectedOrder.orderId}/delivery-proof-upload-url`,
+        { proofType: 'signature' },
+      );
+
+      // 2. Convert bare base64 to a Blob for PUT.
+      const dataUri = `data:image/png;base64,${signatureBase64}`;
+      const response = await fetch(dataUri);
+      const blob = await response.blob();
+
+      // 3. Upload to S3.
+      await uploadToPresignedUrl(uploadUrl, blob, 'image/png');
+
+      // 4. Capture GPS (best-effort, never blocks).
+      const location = await captureDeliveryLocation();
+      setProofLat(location?.lat ?? null);
+      setProofLng(location?.lng ?? null);
+
+      // 5. POST proof metadata to server (upsert-by-orderId).
+      await apiPost(`/orders/${selectedOrder.orderId}/delivery-proof`, {
+        proofType: 'signature',
+        proofS3Key: s3Key,
+        proofSigningPartyPhone: signingPartyPhone,
+        capturedLat: location?.lat,
+        capturedLng: location?.lng,
+      });
+
+      setProofS3Key(s3Key);
+      setProofCaptured(true);
+    } catch (err) {
+      setProofError(getErrorMessage(err) || 'Failed to upload proof. Please try again.');
+    } finally {
+      setProofUploading(false);
+    }
+  };
+
   const handleConfirmFromModal = () => {
     if (!selectedOrder) return;
+    // Proof-of-collection Phase 1: if the customer requires verification,
+    // block submit until proof was captured (button gate already renders
+    // as disabled, but defense-in-depth here in case something else
+    // triggers this handler).
+    if (selectedOrder.customerRequiresVerification && !proofCaptured) {
+      Alert.alert(
+        'Proof required',
+        'This customer requires delivery verification. Please capture a signature above before confirming.',
+      );
+      return;
+    }
     const items: { cylinderTypeId: string; deliveredQuantity: number; emptiesCollected: number }[] = [];
     let hasQtyMismatch = false;
     for (const orderItem of selectedOrder.items ?? []) {
@@ -517,6 +624,54 @@ export default function DriverOrdersScreen() {
               ))
             )}
 
+            {/* Proof-of-collection Phase 1 (2026-07-15): signature capture
+                gated on customer.requireDeliveryVerification. Phase 1
+                exposes signature only; photo (Phase 2) and OTP (Phase 3)
+                will add tabs here later. When the customer's flag is
+                false (or missing — most legacy customers), this block
+                renders nothing and the modal behaves exactly as before. */}
+            {selectedOrder?.customerRequiresVerification && selectedOrder.status === 'pending_delivery' && (
+              <View style={{ marginTop: 16, gap: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>
+                  Verification Required
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                  Capture the customer&apos;s signature and mobile number to complete this delivery.
+                </Text>
+                <SignaturePad
+                  onCapture={(base64) => {
+                    setSignatureBase64(base64);
+                    setProofError(null);
+                  }}
+                  onClear={() => {
+                    setSignatureBase64(null);
+                    setProofS3Key(null);
+                    setProofCaptured(false);
+                    setProofError(null);
+                  }}
+                  signingPartyPhone={signingPartyPhone}
+                  onPhoneChange={setSigningPartyPhone}
+                  phoneError={proofError && proofError.toLowerCase().includes('phone') ? proofError : undefined}
+                />
+                {signatureBase64 && signingPartyPhone.length >= 10 && !proofCaptured && (
+                  <Button
+                    title={proofUploading ? 'Uploading…' : 'Upload signature'}
+                    variant="accent"
+                    onPress={handleUploadProof}
+                    loading={proofUploading}
+                  />
+                )}
+                {proofCaptured && (
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#059669' }}>
+                    ✓ Signature captured — ready to confirm delivery
+                  </Text>
+                )}
+                {proofError && !proofError.toLowerCase().includes('phone') && (
+                  <Text style={{ fontSize: 12, color: '#dc2626' }}>{proofError}</Text>
+                )}
+              </View>
+            )}
+
             <View style={{ marginTop: 12 }}>
               <Text style={{ fontSize: 13, fontWeight: '500', color: colors.textSecondary, marginBottom: 6 }}>Delivery Notes</Text>
               <TextInput
@@ -546,7 +701,16 @@ export default function DriverOrdersScreen() {
                     variant="accent"
                     onPress={handleConfirmFromModal}
                     loading={confirming}
+                    disabled={
+                      confirming
+                      || (!!selectedOrder?.customerRequiresVerification && !proofCaptured)
+                    }
                   />
+                  {!!selectedOrder?.customerRequiresVerification && !proofCaptured && (
+                    <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4, textAlign: 'center' }}>
+                      Capture signature above to enable
+                    </Text>
+                  )}
                 </View>
               )}
             </View>

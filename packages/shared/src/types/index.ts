@@ -346,6 +346,12 @@ export interface Order {
   // so the web edit-order modal can gate B2B-only fields without traversing
   // the nested customer relation. Null when the customer has been deleted.
   customerType: 'B2B' | 'B2C' | null;
+  // Proof-of-collection Phase 1 (2026-07-15): flat alias of
+  // customer.requireDeliveryVerification. The driver mobile app reads this
+  // to decide whether to render the proof-capture section in the confirm-
+  // delivery modal. Defaults false — legacy orders and customers without
+  // the flag skip proof capture entirely.
+  customerRequiresVerification?: boolean;
   items: OrderItem[];
   // WI-127: customer dispute lifecycle (drives the order-card dispute UI).
   customerDisputeReason?: string | null;
