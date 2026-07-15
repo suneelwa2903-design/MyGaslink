@@ -28,9 +28,15 @@ import {
   type QueuedDelivery,
 } from '../../src/services/deliveryQueue';
 // Proof-of-collection Phase 1 (2026-07-15) — signature capture wiring.
+// Phase 2 (2026-07-15) adds PhotoCapture + NetInfo-driven online gating.
 import { captureDeliveryLocation } from '../../src/services/location';
 import { uploadToPresignedUrl } from '../../src/services/s3Upload';
 import { SignaturePad } from '../../src/components/SignaturePad';
+import { PhotoCapture } from '../../src/components/PhotoCapture';
+import NetInfo from '@react-native-community/netinfo';
+import { apiPost as apiPostRaw } from '../../src/lib/api';
+// alias to keep imports tidy — apiPost is already imported above.
+void apiPostRaw;
 
 /**
  * Per-item delivery state — what the driver actually entered for delivered
@@ -72,6 +78,20 @@ export default function DriverOrdersScreen() {
   const [proofError, setProofError] = useState<string | null>(null);
   const [proofLat, setProofLat] = useState<number | null>(null);
   const [proofLng, setProofLng] = useState<number | null>(null);
+  // Phase 2 (2026-07-15): which method the driver is currently using in
+  // the tabs, and which method (if any) actually produced the captured
+  // proof. Photo tab requires connectivity (SecureStore 2KB per-key cap
+  // means photo bytes can't be offline-queued the way a signature s3Key
+  // can), so we track NetInfo online state and disable the tab when off.
+  const [activeProofTab, setActiveProofTab] = useState<'signature' | 'photo'>('signature');
+  const [capturedProofType, setCapturedProofType] = useState<'signature' | 'photo' | 'otp' | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener((state) => {
+      setIsOnline(!!state.isConnected);
+    });
+    return () => { unsub(); };
+  }, []);
 
   useEffect(() => {
     const unsub = subscribePendingDeliveries(setPendingQueue);
@@ -100,6 +120,8 @@ export default function DriverOrdersScreen() {
       setProofError(null);
       setProofLat(null);
       setProofLng(null);
+      setActiveProofTab('signature');
+      setCapturedProofType(null);
     } else {
       const seed: Record<string, DeliveryItemEntry> = {};
       for (const item of selectedOrder.items ?? []) {
@@ -152,11 +174,14 @@ export default function DriverOrdersScreen() {
           orderId,
           items,
           notes: deliveryNotes || undefined,
-          ...(proofS3Key && proofCaptured
+          ...(proofS3Key && proofCaptured && capturedProofType
             ? {
-                proofType: 'signature',
+                proofType: capturedProofType,
                 proofS3Key,
-                proofSigningPartyPhone: signingPartyPhone,
+                // signingPartyPhone only for signature — photo has no phone.
+                ...(capturedProofType === 'signature'
+                  ? { proofSigningPartyPhone: signingPartyPhone }
+                  : {}),
                 proofCapturedLat: proofLat ?? undefined,
                 proofCapturedLng: proofLng ?? undefined,
               }
@@ -285,8 +310,40 @@ export default function DriverOrdersScreen() {
 
       setProofS3Key(s3Key);
       setProofCaptured(true);
+      setCapturedProofType('signature');
     } catch (err) {
       setProofError(getErrorMessage(err) || 'Failed to upload proof. Please try again.');
+    } finally {
+      setProofUploading(false);
+    }
+  };
+
+  /**
+   * Phase 2 photo path — PhotoCapture handles the S3 upload internally;
+   * this callback runs once the S3 PUT succeeds and we still need to
+   * capture GPS + POST /delivery-proof for the proof row itself.
+   */
+  const handlePhotoCaptured = async (s3Key: string) => {
+    if (!selectedOrder) return;
+    setProofUploading(true);
+    setProofError(null);
+    try {
+      const location = await captureDeliveryLocation();
+      setProofLat(location?.lat ?? null);
+      setProofLng(location?.lng ?? null);
+
+      await apiPost(`/orders/${selectedOrder.orderId}/delivery-proof`, {
+        proofType: 'photo',
+        proofS3Key: s3Key,
+        capturedLat: location?.lat,
+        capturedLng: location?.lng,
+      });
+
+      setProofS3Key(s3Key);
+      setProofCaptured(true);
+      setCapturedProofType('photo');
+    } catch (err) {
+      setProofError(getErrorMessage(err) || 'Failed to record photo proof. Please try again.');
     } finally {
       setProofUploading(false);
     }
@@ -624,46 +681,100 @@ export default function DriverOrdersScreen() {
               ))
             )}
 
-            {/* Proof-of-collection Phase 1 (2026-07-15): signature capture
-                gated on customer.requireDeliveryVerification. Phase 1
-                exposes signature only; photo (Phase 2) and OTP (Phase 3)
-                will add tabs here later. When the customer's flag is
-                false (or missing — most legacy customers), this block
-                renders nothing and the modal behaves exactly as before. */}
+            {/* Proof-of-collection Phase 1 + Phase 2 (2026-07-15):
+                verification section gated on customer.requireDeliveryVerification.
+                Phase 1 shipped signature; Phase 2 adds a Photo tab. When
+                the customer's flag is false (or missing — most legacy
+                customers), this block renders nothing and the modal
+                behaves exactly as before. */}
             {selectedOrder?.customerRequiresVerification && selectedOrder.status === 'pending_delivery' && (
               <View style={{ marginTop: 16, gap: 10 }}>
                 <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>
                   Verification Required
                 </Text>
                 <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-                  Capture the customer&apos;s signature and mobile number to complete this delivery.
+                  Capture proof of delivery using any one of the methods below.
                 </Text>
-                <SignaturePad
-                  onCapture={(base64) => {
-                    setSignatureBase64(base64);
-                    setProofError(null);
-                  }}
-                  onClear={() => {
-                    setSignatureBase64(null);
-                    setProofS3Key(null);
-                    setProofCaptured(false);
-                    setProofError(null);
-                  }}
-                  signingPartyPhone={signingPartyPhone}
-                  onPhoneChange={setSigningPartyPhone}
-                  phoneError={proofError && proofError.toLowerCase().includes('phone') ? proofError : undefined}
-                />
-                {signatureBase64 && signingPartyPhone.length >= 10 && !proofCaptured && (
-                  <Button
-                    title={proofUploading ? 'Uploading…' : 'Upload signature'}
-                    variant="accent"
-                    onPress={handleUploadProof}
-                    loading={proofUploading}
+
+                {/* Tab bar: [Signature] [Photo] — offline disables Photo. */}
+                <View style={{ flexDirection: 'row', borderRadius: 8, borderWidth: 1, borderColor: colors.inputBorder, overflow: 'hidden' }}>
+                  <TouchableOpacity
+                    onPress={() => setActiveProofTab('signature')}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 10,
+                      backgroundColor: activeProofTab === 'signature' ? ACCENT.navy : 'transparent',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ color: activeProofTab === 'signature' ? '#ffffff' : colors.text, fontWeight: '600', fontSize: 13 }}>
+                      Signature
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => isOnline && setActiveProofTab('photo')}
+                    disabled={!isOnline}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 10,
+                      backgroundColor: activeProofTab === 'photo' && isOnline ? ACCENT.navy : 'transparent',
+                      alignItems: 'center',
+                      opacity: isOnline ? 1 : 0.5,
+                    }}
+                  >
+                    <Text style={{ color: activeProofTab === 'photo' ? '#ffffff' : colors.text, fontWeight: '600', fontSize: 13 }}>
+                      Photo
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {activeProofTab === 'photo' && !isOnline && (
+                  <Text style={{ fontSize: 12, color: '#d97706' }}>
+                    No internet connection. Photo proof requires connectivity.
+                    Use Signature instead — it queues offline and syncs when you&apos;re back online.
+                  </Text>
+                )}
+
+                {activeProofTab === 'signature' && (
+                  <>
+                    <SignaturePad
+                      onCapture={(base64) => {
+                        setSignatureBase64(base64);
+                        setProofError(null);
+                      }}
+                      onClear={() => {
+                        setSignatureBase64(null);
+                        setProofS3Key(null);
+                        setProofCaptured(false);
+                        setCapturedProofType(null);
+                        setProofError(null);
+                      }}
+                      signingPartyPhone={signingPartyPhone}
+                      onPhoneChange={setSigningPartyPhone}
+                      phoneError={proofError && proofError.toLowerCase().includes('phone') ? proofError : undefined}
+                    />
+                    {signatureBase64 && signingPartyPhone.length >= 10 && !proofCaptured && (
+                      <Button
+                        title={proofUploading ? 'Uploading…' : 'Upload signature'}
+                        variant="accent"
+                        onPress={handleUploadProof}
+                        loading={proofUploading}
+                      />
+                    )}
+                  </>
+                )}
+
+                {activeProofTab === 'photo' && isOnline && !proofCaptured && (
+                  <PhotoCapture
+                    orderId={selectedOrder.orderId}
+                    onCapture={(s3Key) => { void handlePhotoCaptured(s3Key); }}
+                    onError={(msg) => setProofError(msg)}
                   />
                 )}
-                {proofCaptured && (
+
+                {proofCaptured && capturedProofType && (
                   <Text style={{ fontSize: 13, fontWeight: '600', color: '#059669' }}>
-                    ✓ Signature captured — ready to confirm delivery
+                    ✓ {capturedProofType === 'signature' ? 'Signature' : capturedProofType === 'photo' ? 'Photo' : 'OTP'} captured — ready to confirm delivery
                   </Text>
                 )}
                 {proofError && !proofError.toLowerCase().includes('phone') && (
