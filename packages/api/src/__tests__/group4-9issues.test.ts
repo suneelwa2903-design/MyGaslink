@@ -34,11 +34,14 @@ describe('Issue 7 — Pay To layout in customer ledger PDF', () => {
     const codeOnly = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     // The phrase "leftY += 11" still appears for the GSTIN+Phone line
     // but NOT inside an `if (distributor.bankAccountNumber && distributor.ifscCode)`
-    // block at the letterhead level. Pin: there are no more than two
-    // `leftY += 11` increments in the codeOnly (one for sellerAddr, one
-    // for GSTIN+Phone). The original Phase 3 block added two more.
+    // block at the letterhead level. Pin: two bumps per letterhead
+    // (sellerAddr + GSTIN+Phone). Feature A (2026-07-15) added a
+    // second letterhead in generateGroupLedgerPdf that legitimately
+    // repeats the same two bumps, hence the ≤4 cap. The original
+    // Phase 3 Pay-To block would have added TWO MORE inside a
+    // bankAccountNumber gate — the ≤4 cap still fails if that regresses.
     const leftYBumps = (codeOnly.match(/leftY\s*\+=\s*11/g) || []).length;
-    expect(leftYBumps).toBeLessThanOrEqual(2);
+    expect(leftYBumps).toBeLessThanOrEqual(4);
   });
 
   it('renders a right-aligned Pay To block starting at customerBlockStartY', () => {

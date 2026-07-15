@@ -33,6 +33,8 @@ import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Combobox, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 import { useAuthStore, selectRole } from '@/stores/authStore';
 import { cn } from '@/lib/cn';
+// Feature A (2026-07-15): HQ customer groups tab.
+import { GroupsTab } from '@/components/groups/GroupsTab';
 
 const STATUS_MAP: Record<string, { variant: 'success' | 'warning' | 'danger' | 'neutral'; label: string }> = {
   [CustomerStatus.ACTIVE]: { variant: 'success', label: 'Active' },     // green
@@ -46,6 +48,11 @@ function formatCurrency(n: number) {
 
 export default function CustomersPage() {
   const queryClient = useQueryClient();
+  // Feature A (2026-07-15): top-level tab bar. 'customers' = existing
+  // customer list; 'groups' = new HQ CustomerGroup management surface
+  // (see GroupsTab). Same border-b-2 + brand-500 pattern as the
+  // customer-detail modal's inner tabs.
+  const [topTab, setTopTab] = useState<'customers' | 'groups'>('customers');
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -156,19 +163,49 @@ export default function CustomersPage() {
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Customers</h1>
           <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Manage your customer base</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={handleDownloadCsv} loading={downloading}>
-            <HiOutlineDocumentArrowDown className="h-4 w-4" />
-            Download CSV
-          </Button>
-          {canManage && (
-            <Button onClick={() => setCreateOpen(true)}>
-              <HiOutlinePlus className="h-4 w-4" />
-              New Customer
+        {/* Actions are per-tab — Customers tab has CSV + New Customer;
+            Groups tab has its own New Group inside the tab body. Hide
+            the CSV/New Customer buttons when Groups is active. */}
+        {topTab === 'customers' && (
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={handleDownloadCsv} loading={downloading}>
+              <HiOutlineDocumentArrowDown className="h-4 w-4" />
+              Download CSV
             </Button>
-          )}
+            {canManage && (
+              <Button onClick={() => setCreateOpen(true)}>
+                <HiOutlinePlus className="h-4 w-4" />
+                New Customer
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Top-level tabs — same visual pattern as the customer detail
+          modal's inner tabs (border-b-2 + brand-500 active). */}
+      <div className="border-b border-surface-200 dark:border-surface-700">
+        <div className="flex gap-6">
+          {(['customers', 'groups'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTopTab(t)}
+              className={cn(
+                'pb-2 text-sm font-medium border-b-2 transition-colors',
+                topTab === t
+                  ? 'border-brand-500 text-brand-600 dark:text-brand-400'
+                  : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+              )}
+            >
+              {t === 'customers' ? 'Customers' : 'Groups'}
+            </button>
+          ))}
         </div>
       </div>
+
+      {topTab === 'groups' ? (
+        <GroupsTab />
+      ) : (<>
 
       <div className="card p-4">
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -330,6 +367,7 @@ export default function CustomersPage() {
           customer={viewCustomer}
         />
       )}
+      </>)}
     </div>
   );
 }

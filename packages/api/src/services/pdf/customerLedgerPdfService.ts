@@ -11,6 +11,7 @@
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
 import { getCustomerLedger } from '../paymentService.js';
+import { getGroupLedger } from '../customerGroupPortalService.js';
 import { formatMoney, formatDate } from './pdfLayoutUtils.js';
 
 // A4 landscape
@@ -549,6 +550,183 @@ export async function generateCustomerLedgerPdf(
   y += 18;
   doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
   doc.text('This is a computer generated statement.', MARGIN.left, y, { width: TABLE_WIDTH });
+
+  doc.end();
+
+  return new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+  });
+}
+
+// ─── Feature A (2026-07-15): group consolidated ledger PDF ─────────────
+//
+// Chronological merged view across all group member customers with a
+// Property column, 6-column layout per Step 7E:
+//   Date | Type | Narration | Amount | Running Balance | Property
+//
+// Narrower than the single-customer 12-column landscape table — plan
+// §7E reclaims space by dropping the empties/full-cylinder detail
+// columns (accountant view, not delivery view). Uses the same
+// pdfkit letterhead + header pattern as generateCustomerLedgerPdf.
+// The per-customer running balance already lives on each row from
+// getGroupLedger (which called processLedgerEntries per bucket) —
+// we render it as-is.
+
+const GROUP_COLS: Col[] = [
+  { label: 'Date', width: 68, align: 'left' },
+  { label: 'Type', width: 60, align: 'left' },
+  { label: 'Narration', width: 200, align: 'left' },
+  { label: 'Amount', width: 90, align: 'right' },
+  { label: 'Balance', width: 100, align: 'right' },
+  { label: 'Property', width: 244, align: 'left' },
+];
+const GROUP_TABLE_WIDTH = GROUP_COLS.reduce((s, c) => s + c.width, 0);
+const GROUP_COL_CHAR_CAP = [10, 14, 46, 16, 18, 42];
+
+/**
+ * Chronologically-merged group ledger PDF. Layout mirrors the single-
+ * customer PDF's letterhead pattern; the table is deliberately simpler
+ * (6 columns) because the HQ persona reads for reconciliation, not
+ * per-cylinder delivery detail.
+ */
+export async function generateGroupLedgerPdf(
+  distributorId: string,
+  visibleCustomerIds: string[],
+  groupName: string,
+  range?: { from?: string; to?: string; customerId?: string },
+): Promise<Buffer> {
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: {
+      businessName: true, legalName: true, gstin: true,
+      address: true, city: true, state: true, pincode: true, phone: true,
+    },
+  });
+  if (!distributor) throw new Error('Distributor not found');
+
+  const ledger = await getGroupLedger(distributorId, visibleCustomerIds, {
+    from: range?.from,
+    to: range?.to,
+    customerId: range?.customerId,
+  });
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
+  const buffers: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => buffers.push(chunk));
+
+  const rightEdge = PAGE_WIDTH - MARGIN.right;
+  let y = MARGIN.top;
+
+  // ── Header: distributor letterhead ──
+  const sellerName = distributor.businessName || distributor.legalName;
+  const sellerAddr = [distributor.address, distributor.city, distributor.state, distributor.pincode]
+    .filter(Boolean).join(', ') || '—';
+
+  doc.font('Helvetica-Bold').fontSize(Math.round(TYPO.H2 * 1.5)).fillColor(THEME.PRIMARY);
+  doc.text(sellerName, MARGIN.left, y, { width: 400 });
+  let leftY = y + 18;
+  doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+  doc.text(sellerAddr, MARGIN.left, leftY, { width: 400 }); leftY += 11;
+  doc.text(`GSTIN: ${distributor.gstin || '—'}   Phone: ${distributor.phone || '—'}`, MARGIN.left, leftY, { width: 400 });
+  leftY += 11;
+
+  doc.font('Helvetica-Bold').fontSize(TYPO.H1).fillColor(THEME.PRIMARY);
+  doc.text('Group Statement', rightEdge - 250, y, { width: 250, align: 'right' });
+
+  y = Math.max(leftY, y + 36) + 4;
+  doc.moveTo(MARGIN.left, y).lineTo(rightEdge, y).strokeColor(THEME.PRIMARY).lineWidth(1).stroke();
+  y += 10;
+
+  // ── Group + range block ──
+  doc.font('Helvetica-Bold').fontSize(TYPO.H2).fillColor(THEME.TEXT);
+  doc.text(groupName, MARGIN.left, y); y += 14;
+  doc.font('Helvetica').fontSize(TYPO.LABEL).fillColor(THEME.MUTED);
+  const rangeLabel = range?.from || range?.to
+    ? `Period: ${range?.from ?? '—'} to ${range?.to ?? '—'}`
+    : 'Period: all time';
+  doc.text(rangeLabel, MARGIN.left, y);
+  const memberCount = new Set(ledger.rows.map((r) => r.customerId)).size;
+  doc.text(`Properties: ${memberCount}`, MARGIN.left + 250, y);
+  y += 20;
+
+  // ── Table header ──
+  const drawGroupHeader = (yy: number): number => {
+    let x = MARGIN.left;
+    doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, 18).fillColor(THEME.PRIMARY).fill();
+    doc.font('Helvetica-Bold').fontSize(TYPO.LABEL).fillColor('#ffffff');
+    for (const c of GROUP_COLS) {
+      doc.text(c.label, x + 4, yy + 5, { width: c.width - 8, align: c.align, lineBreak: false });
+      x += c.width;
+    }
+    return yy + 18;
+  };
+
+  const drawGroupRow = (yy: number, cells: string[], zebra: boolean): number => {
+    if (zebra) {
+      doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, ROW_HEIGHT).fillColor(THEME.ZEBRA).fill();
+    }
+    let x = MARGIN.left;
+    doc.font('Helvetica').fontSize(TYPO.BODY).fillColor(THEME.TEXT);
+    for (let i = 0; i < GROUP_COLS.length; i++) {
+      const text = fitCell(cells[i] ?? '', GROUP_COL_CHAR_CAP[i] ?? 999);
+      doc.text(text, x + 3, yy + 4, {
+        width: GROUP_COLS[i].width - 6,
+        align: GROUP_COLS[i].align,
+        lineBreak: false,
+        ellipsis: true,
+      });
+      x += GROUP_COLS[i].width;
+    }
+    return ROW_HEIGHT;
+  };
+
+  y = drawGroupHeader(y);
+
+  // ── Rows ──
+  let zebra = false;
+  for (const row of ledger.rows) {
+    if (y + ROW_HEIGHT > PAGE_HEIGHT - MARGIN.bottom - 40) {
+      doc.addPage({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
+      y = MARGIN.top;
+      y = drawGroupHeader(y);
+      zebra = false;
+    }
+    const amount = row.amount > 0
+      ? formatMoney(row.amount)
+      : row.receivedAmount > 0
+        ? `(${formatMoney(row.receivedAmount)})`
+        : '—';
+    const balance = formatMoney(row.dueAmount);
+    y += drawGroupRow(y, [
+      formatDate(new Date(row.orderDate)),
+      row.kind ?? '',
+      row.narration ?? '',
+      amount,
+      balance,
+      row.customerName,
+    ], zebra);
+    zebra = !zebra;
+  }
+
+  // ── Totals row ──
+  if (y + ROW_HEIGHT + 24 > PAGE_HEIGHT - MARGIN.bottom - 40) {
+    doc.addPage({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
+    y = MARGIN.top;
+    y = drawGroupHeader(y);
+  }
+  y += 6;
+  doc.rect(MARGIN.left, y, GROUP_TABLE_WIDTH, 20).fillColor(THEME.PRIMARY).fill();
+  doc.font('Helvetica-Bold').fontSize(TYPO.LABEL).fillColor('#ffffff');
+  doc.text('Group totals', MARGIN.left + 6, y + 6, { width: 200, lineBreak: false });
+  doc.text(
+    `Debited ${formatMoney(ledger.totals.totalDebited)}   |   Received ${formatMoney(ledger.totals.totalReceived)}   |   Outstanding ${formatMoney(ledger.totals.netOutstanding)}`,
+    MARGIN.left + 210, y + 6, { width: GROUP_TABLE_WIDTH - 216, align: 'right', lineBreak: false },
+  );
+  y += 30;
+
+  doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+  doc.text('This is a computer generated group statement.', MARGIN.left, y, { width: GROUP_TABLE_WIDTH });
 
   doc.end();
 

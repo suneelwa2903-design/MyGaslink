@@ -25,6 +25,8 @@ import { requireRole, requireGroupAccess } from '../middleware/auth.js';
 import { sendSuccess, sendError, sendNotFound } from '../utils/apiResponse.js';
 import * as service from '../services/customerGroupPortalService.js';
 import { generateInvoicePdf } from '../services/pdf/invoicePdfService.js';
+import { generateGroupLedgerPdf } from '../services/pdf/customerLedgerPdfService.js';
+import { prisma } from '../lib/prisma.js';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
 
@@ -183,11 +185,33 @@ router.get('/ledger', async (req, res) => {
   }
 });
 
-// GET /ledger/pdf — implemented in Step 7E along with the web UI.
-// Documented placeholder so callers get a clear 501 rather than 404
-// if they try before Step 7E lands.
-router.get('/ledger/pdf', async (_req, res) => {
-  return sendError(res, 'Group ledger PDF is not yet implemented', 501);
+// GET /ledger/pdf?customerId=&from=&to= — Step 7E group consolidated ledger.
+router.get('/ledger/pdf', async (req, res) => {
+  try {
+    // Resolve group name for the PDF header. requireGroupAccess already
+    // verified tenant + group; this is a name-only fetch.
+    const group = await prisma.customerGroup.findFirst({
+      where: { id: req.user!.groupId!, distributorId: req.user!.distributorId! },
+      select: { name: true },
+    });
+    if (!group) return sendNotFound(res, 'Group');
+    const buffer = await generateGroupLedgerPdf(
+      req.user!.distributorId!,
+      req.visibleCustomerIds!,
+      group.name,
+      {
+        from: req.query.from as string | undefined,
+        to: req.query.to as string | undefined,
+        customerId: req.query.customerId as string | undefined,
+      },
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="group-statement.pdf"`);
+    return res.send(buffer);
+  } catch (err: unknown) {
+    const e = err as ServiceError;
+    return sendError(res, e.message, e.statusCode || 500);
+  }
 });
 
 // GET /payments?customerId=&from=&to=&page=&pageSize=
