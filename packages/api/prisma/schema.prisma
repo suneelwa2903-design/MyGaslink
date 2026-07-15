@@ -528,6 +528,16 @@ model User {
   // customerId null; a customer user has customerId set and groupId
   // null. Nullable at the schema level to keep the column additive.
   groupId               String?            @map("group_id")
+  // Feature A follow-up (2026-07-15 evening): for role=customer_hq
+  // only. When the HQ user was provisioned by promoting an existing
+  // CustomerContact (the "pick from contacts" UI path), this points
+  // at that source contact so the admin can always trace an HQ login
+  // back to "who is this person? which member customer is it a
+  // contact of?". Nullable because the free-form provision path
+  // (no source contact) still exists. ON DELETE SET NULL so deleting
+  // the contact doesn't cascade-nuke the HQ login (the login is a
+  // separate revenue+access record; only the traceability breaks).
+  sourceContactId       String?            @map("source_contact_id")
   requiresPasswordReset Boolean            @default(true) @map("requires_password_reset")
   refreshToken          String?            @map("refresh_token")
   lastLoginAt           DateTime?          @map("last_login_at")
@@ -543,6 +553,7 @@ model User {
   distributor           Distributor?       @relation(fields: [distributorId], references: [id])
   customer              Customer?          @relation(fields: [customerId], references: [id])
   customerGroup         CustomerGroup?     @relation(fields: [groupId], references: [id])
+  sourceContact         CustomerContact?   @relation("HqSourceContact", fields: [sourceContactId], references: [id], onDelete: SetNull)
   // Group B Part 3 — explicit Driver→User FK lives on the Driver side
   // (Driver.userId String? @unique). 1:0..1 — a driver can exist without
   // a login (orphan), and a user can exist without a driver record
@@ -726,6 +737,11 @@ model CustomerContact {
   isPrimary  Boolean @default(false) @map("is_primary")
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Feature A follow-up (2026-07-15): HQ users promoted from this
+  // contact. 0-or-more — a single contact could theoretically anchor
+  // multiple HQ logins if their credentials rotate, though the common
+  // case is 1. Reverse of User.sourceContact.
+  hqLogins    User[]  @relation("HqSourceContact")
 
   @@map("customer_contacts")
 }

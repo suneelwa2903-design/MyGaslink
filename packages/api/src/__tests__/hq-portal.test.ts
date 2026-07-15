@@ -546,4 +546,222 @@ describe('HQ Portal — Feature A', () => {
       expect(ids).not.toContain(alpha.groupId);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────
+  describe('T8 — Multi-HQ per group + contact-picker (2026-07-15)', () => {
+    it('list groups returns portalEmails[] + portalUserCount (not portalEmail singular)', async () => {
+      const { token } = await loginAsDistAdmin();
+      const res = await request(app)
+        .get('/api/customer-groups')
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      const alphaRow = res.body.data.groups.find((g: { id: string }) => g.id === alpha.groupId);
+      expect(alphaRow).toBeDefined();
+      expect(Array.isArray(alphaRow.portalEmails)).toBe(true);
+      expect(typeof alphaRow.portalUserCount).toBe('number');
+      expect(alphaRow.portalUserCount).toBe(1); // alpha fixture creates 1 HQ user
+      expect(alphaRow.portalEmails.length).toBe(1);
+    });
+
+    it('get group returns portalUsers[] (not portalUser singular)', async () => {
+      const { token } = await loginAsDistAdmin();
+      const res = await request(app)
+        .get(`/api/customer-groups/${alpha.groupId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.data.portalUsers)).toBe(true);
+      expect(res.body.data.portalUsers.length).toBe(1);
+      const u = res.body.data.portalUsers[0];
+      expect(u).toHaveProperty('email');
+      expect(u).toHaveProperty('sourceContactId');
+      expect(u).toHaveProperty('sourceContactName');
+      expect(u).toHaveProperty('sourceCustomerName');
+      // Fixture creates HQ users free-form (no source contact).
+      expect(u.sourceContactId).toBeNull();
+    });
+
+    it('can provision a SECOND HQ user on the same group (multi-HQ)', async () => {
+      const { token } = await loginAsDistAdmin();
+      const res = await request(app)
+        .post(`/api/customer-groups/${alpha.groupId}/portal-access`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          email: `hq-test-second-${Date.now()}@example.com`,
+          password: 'SecondUser@123',
+          firstName: 'Second',
+          lastName: 'HQ',
+        });
+      expect(res.status).toBe(201);
+
+      // Verify group now shows 2 users.
+      const detail = await request(app)
+        .get(`/api/customer-groups/${alpha.groupId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(detail.body.data.portalUsers.length).toBe(2);
+
+      // Cleanup — hard-delete the fixture user (afterAll only touches
+      // the 3 tracked fixtures).
+      await prisma.user.delete({ where: { id: res.body.data.id } });
+    });
+
+    it('GET /:groupId/contacts returns candidate contacts across group members', async () => {
+      const { token } = await loginAsDistAdmin();
+      // Seed a CustomerContact on one of alpha's member customers so
+      // the picker has something to return.
+      const contact = await prisma.customerContact.create({
+        data: {
+          customerId: alpha.memberIds[0],
+          name: 'Test Contact Alpha',
+          phone: '9990001111',
+          email: 'test-contact-alpha@example.com',
+          isPrimary: false,
+        },
+      });
+      try {
+        const res = await request(app)
+          .get(`/api/customer-groups/${alpha.groupId}/contacts`)
+          .set('Authorization', `Bearer ${token}`);
+        expect(res.status).toBe(200);
+        expect(Array.isArray(res.body.data.contacts)).toBe(true);
+        const seeded = res.body.data.contacts.find((c: { contactId: string }) => c.contactId === contact.id);
+        expect(seeded).toBeDefined();
+        expect(seeded.name).toBe('Test Contact Alpha');
+        expect(seeded.customerName).toBeDefined();
+        expect(seeded.hasLogin).toBe(false); // not promoted yet
+      } finally {
+        await prisma.customerContact.delete({ where: { id: contact.id } });
+      }
+    });
+
+    it('promoting a contact links the HQ user via sourceContactId and marks hasLogin=true', async () => {
+      const { token } = await loginAsDistAdmin();
+      const contact = await prisma.customerContact.create({
+        data: {
+          customerId: alpha.memberIds[0],
+          name: 'Rajesh Promotion Test',
+          phone: '9990002222',
+          email: `rajesh-promo-${Date.now()}@example.com`,
+          isPrimary: false,
+        },
+      });
+      let createdUserId: string | null = null;
+      try {
+        const prov = await request(app)
+          .post(`/api/customer-groups/${alpha.groupId}/portal-access`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            email: contact.email!,
+            password: 'PromoUser@123',
+            firstName: 'Rajesh',
+            lastName: 'Promotion',
+            sourceContactId: contact.id,
+          });
+        expect(prov.status).toBe(201);
+        createdUserId = prov.body.data.id;
+
+        // Detail should show the source contact + owning customer.
+        const detail = await request(app)
+          .get(`/api/customer-groups/${alpha.groupId}`)
+          .set('Authorization', `Bearer ${token}`);
+        const created = detail.body.data.portalUsers.find(
+          (u: { id: string }) => u.id === createdUserId,
+        );
+        expect(created).toBeDefined();
+        expect(created.sourceContactId).toBe(contact.id);
+        expect(created.sourceContactName).toBe('Rajesh Promotion Test');
+        expect(created.sourceCustomerName).toBeDefined();
+
+        // Contacts endpoint should now flag this contact as hasLogin=true.
+        const c = await request(app)
+          .get(`/api/customer-groups/${alpha.groupId}/contacts`)
+          .set('Authorization', `Bearer ${token}`);
+        const seeded = c.body.data.contacts.find((x: { contactId: string }) => x.contactId === contact.id);
+        expect(seeded.hasLogin).toBe(true);
+      } finally {
+        if (createdUserId) await prisma.user.delete({ where: { id: createdUserId } });
+        await prisma.customerContact.delete({ where: { id: contact.id } });
+      }
+    });
+
+    it('provisioning with a sourceContactId that isn\'t a group-member contact → 403', async () => {
+      const { token } = await loginAsDistAdmin();
+      // Beta is dist-002 — its members are outside alpha's group. Seed a
+      // contact on a beta member, then try to promote it into alpha.
+      const contact = await prisma.customerContact.create({
+        data: {
+          customerId: beta.memberIds[0],
+          name: 'Cross Group Contact',
+          phone: '9990003333',
+          email: `cross-contact-${Date.now()}@example.com`,
+          isPrimary: false,
+        },
+      });
+      try {
+        const res = await request(app)
+          .post(`/api/customer-groups/${alpha.groupId}/portal-access`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            email: `cross-hq-${Date.now()}@example.com`,
+            password: 'CrossHq@123',
+            firstName: 'Cross',
+            lastName: 'Group',
+            sourceContactId: contact.id,
+          });
+        expect(res.status).toBe(403);
+      } finally {
+        await prisma.customerContact.delete({ where: { id: contact.id } });
+      }
+    });
+
+    it('DELETE /:groupId/portal-access/:userId revokes a single HQ user', async () => {
+      const { token } = await loginAsDistAdmin();
+      // Provision an extra HQ user so we can revoke just that one
+      // without breaking alpha's baseline fixture.
+      const prov = await request(app)
+        .post(`/api/customer-groups/${alpha.groupId}/portal-access`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          email: `hq-extra-revoke-${Date.now()}@example.com`,
+          password: 'ExtraUser@123',
+          firstName: 'Extra',
+          lastName: 'Revoke',
+        });
+      const extraId: string = prov.body.data.id;
+
+      const rev = await request(app)
+        .delete(`/api/customer-groups/${alpha.groupId}/portal-access/${extraId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(rev.status).toBe(200);
+      expect(rev.body.data.revokedCount).toBe(1);
+
+      // Detail should still include alpha's original HQ user (only the
+      // extra one was revoked).
+      const detail = await request(app)
+        .get(`/api/customer-groups/${alpha.groupId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(detail.body.data.portalUsers.length).toBe(1);
+      expect(detail.body.data.portalUsers[0].id).toBe(alpha.hqUserId);
+
+      // Hard-clean the soft-deleted extra user so afterAll doesn't
+      // fail on FK constraints if the seed picks the same id later.
+      await prisma.user.delete({ where: { id: extraId } });
+    });
+
+    it('revoking an HQ user that belongs to a different group → 404', async () => {
+      const { token } = await loginAsDistAdmin();
+      // Alpha admin tries to revoke gamma's HQ user via alpha's path.
+      const res = await request(app)
+        .delete(`/api/customer-groups/${alpha.groupId}/portal-access/${gamma.hqUserId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(404);
+    });
+
+    it('cross-tenant contact-picker query → 404 (dist-001 admin cannot list dist-002 group contacts)', async () => {
+      const { token } = await loginAsDistAdmin();
+      const res = await request(app)
+        .get(`/api/customer-groups/${beta.groupId}/contacts`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(404);
+    });
+  });
 });

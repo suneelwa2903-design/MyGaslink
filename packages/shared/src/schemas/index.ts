@@ -208,6 +208,11 @@ export const provisionGroupPortalAccessSchema = z.object({
   password: z.string().min(8, 'Password must be at least 8 characters'),
   firstName: z.string().min(1, 'First name required').max(80),
   lastName: z.string().min(1, 'Last name required').max(80),
+  // Feature A follow-up (2026-07-15): when provisioning via the
+  // "promote a contact" path, the client passes the source contactId
+  // so the created HQ user carries traceability back to that contact.
+  // Optional — the free-form path still exists.
+  sourceContactId: uuid.optional(),
 });
 export type ProvisionGroupPortalAccessInput = z.infer<typeof provisionGroupPortalAccessSchema>;
 

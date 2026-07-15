@@ -179,7 +179,10 @@ router.post(
   },
 );
 
-// DELETE /api/customer-groups/:groupId/portal-access — revoke customer_hq user
+// DELETE /api/customer-groups/:groupId/portal-access — revoke ALL customer_hq users on this group
+// Feature A follow-up (2026-07-15): still used by the group-deletion
+// preflight ("revoke access before deleting the group"). The per-user
+// revoke lives on the more specific /:userId route below.
 router.delete(
   '/:groupId/portal-access',
   requireRole(...ALLOWED_ROLES),
@@ -191,6 +194,51 @@ router.delete(
         param(req.params.groupId),
       );
       return sendSuccess(res, result);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// DELETE /api/customer-groups/:groupId/portal-access/:userId — revoke ONE HQ login
+// Feature A follow-up (2026-07-15): per-row Revoke button in the
+// Portal Access tab when a group has multiple HQ logins. Service
+// verifies the user belongs to this group before soft-deleting.
+router.delete(
+  '/:groupId/portal-access/:userId',
+  requireRole(...ALLOWED_ROLES),
+  auditLog('revoke_portal_user', 'customer_group'),
+  async (req, res) => {
+    try {
+      const result = await service.revokePortalUser(
+        req.user!.distributorId!,
+        param(req.params.groupId),
+        param(req.params.userId),
+      );
+      return sendSuccess(res, result);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// GET /api/customer-groups/:groupId/contacts — candidate contacts to promote to HQ
+// Feature A follow-up (2026-07-15): powers the "Promote a contact"
+// picker. Returns every CustomerContact across every member customer
+// of this group, with `hasLogin` flagged for contacts that have
+// already been promoted.
+router.get(
+  '/:groupId/contacts',
+  requireRole(...ALLOWED_ROLES),
+  async (req, res) => {
+    try {
+      const contacts = await service.listGroupContacts(
+        req.user!.distributorId!,
+        param(req.params.groupId),
+      );
+      return sendSuccess(res, { contacts });
     } catch (err: unknown) {
       const e = err as ServiceError;
       return sendError(res, e.message, e.statusCode || 500);

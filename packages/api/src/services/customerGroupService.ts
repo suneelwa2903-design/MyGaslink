@@ -22,13 +22,28 @@ export class CustomerGroupError extends Error {
   }
 }
 
+export interface PortalUserShape {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  sourceContactId: string | null;
+  sourceContactName: string | null;
+  sourceCustomerId: string | null;
+  sourceCustomerName: string | null;
+}
+
 export interface CustomerGroupSummaryRow {
   id: string;
   distributorId: string;
   name: string;
   memberCount: number;
   hasPortalAccess: boolean;
-  portalEmail: string | null;
+  // Feature A follow-up (2026-07-15): compact preview of up to 3 HQ
+  // login emails for the Groups tab list card; `portalUserCount` is
+  // the authoritative total.
+  portalEmails: string[];
+  portalUserCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,12 +64,20 @@ export interface CustomerGroupDetail {
     customerType: string;
     addedAt: Date;
   }>;
-  portalUser: {
-    id: string;
-    email: string;
-    firstName: string | null;
-    lastName: string | null;
-  } | null;
+  // Feature A follow-up (2026-07-15): a group can now hold multiple
+  // active HQ logins. Previously singular `portalUser | null`.
+  portalUsers: PortalUserShape[];
+}
+
+export interface GroupCandidateContactRow {
+  contactId: string;
+  name: string;
+  email: string | null;
+  phone: string;
+  isPrimary: boolean;
+  customerId: string;
+  customerName: string;
+  hasLogin: boolean;
 }
 
 /**
@@ -65,22 +88,51 @@ export async function listGroups(distributorId: string): Promise<CustomerGroupSu
   const rows = await prisma.customerGroup.findMany({
     where: { distributorId, deletedAt: null },
     include: {
-      _count: { select: { members: true } },
+      _count: {
+        select: {
+          members: true,
+          // Feature A follow-up: authoritative HQ-login count. Filter
+          // is applied at the `users` include below AND indirectly
+          // here via the where — but Prisma _count.users doesn't take
+          // a where clause on this relation kind, so we count in-code
+          // from the same fetched array.
+          users: true,
+        },
+      },
       users: {
         where: { deletedAt: null, status: 'active' },
         select: { id: true, email: true },
-        take: 1,
+        // Cap at 3 for the compact preview; the total count is on
+        // `portalUserCount` (derived below from users.length here,
+        // since `take` truncates and _count.users is unfiltered).
+        take: 3,
+        orderBy: { createdAt: 'asc' },
       },
     },
     orderBy: { name: 'asc' },
   });
+  // Second pass to get an accurate active-user count per group. Two
+  // small queries are cheaper than joining count-with-filter, and this
+  // preserves the anti-pattern #13 distributorId scoping — every group
+  // in the list is already tenant-verified, so counting users by
+  // groupId + status filter is safe.
+  const groupIds = rows.map((r) => r.id);
+  const activeCounts = groupIds.length === 0
+    ? []
+    : await prisma.user.groupBy({
+        by: ['groupId'],
+        where: { groupId: { in: groupIds }, deletedAt: null, status: 'active' },
+        _count: { _all: true },
+      });
+  const countByGroup = new Map(activeCounts.map((c) => [c.groupId ?? '', c._count._all]));
   return rows.map((r) => ({
     id: r.id,
     distributorId: r.distributorId,
     name: r.name,
     memberCount: r._count.members,
-    hasPortalAccess: r.users.length > 0,
-    portalEmail: r.users[0]?.email ?? null,
+    hasPortalAccess: (countByGroup.get(r.id) ?? 0) > 0,
+    portalEmails: r.users.map((u) => u.email),
+    portalUserCount: countByGroup.get(r.id) ?? 0,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   }));
@@ -114,8 +166,21 @@ export async function getGroup(
       },
       users: {
         where: { deletedAt: null, status: 'active' },
-        select: { id: true, email: true, firstName: true, lastName: true },
-        take: 1,
+        select: {
+          id: true, email: true, firstName: true, lastName: true,
+          sourceContactId: true,
+          // Feature A follow-up: pull the source-contact + owning-
+          // customer names so the admin sees "hq-x@… — Rajesh Kumar
+          // (Kinara Property A)" directly on the Portal Access tab.
+          // Narrow select — never `include: true`.
+          sourceContact: {
+            select: {
+              name: true,
+              customer: { select: { id: true, customerName: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
       },
     },
   });
@@ -138,8 +203,81 @@ export async function getGroup(
         customerType: m.customer.customerType,
         addedAt: m.addedAt,
       })),
-    portalUser: group.users[0] ?? null,
+    portalUsers: group.users.map((u) => ({
+      id: u.id,
+      email: u.email,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      sourceContactId: u.sourceContactId,
+      sourceContactName: u.sourceContact?.name ?? null,
+      sourceCustomerId: u.sourceContact?.customer?.id ?? null,
+      sourceCustomerName: u.sourceContact?.customer?.customerName ?? null,
+    })),
   };
+}
+
+/**
+ * Feature A follow-up (2026-07-15): return every CustomerContact
+ * across every member customer of a group, tagged with whether the
+ * contact has already been promoted to an HQ login. Powers the
+ * "Promote a contact" picker in the Portal Access tab.
+ *
+ * All contacts stay tenant-scoped via the CustomerGroup → members →
+ * customer chain — the outer group is fetched with the distributorId
+ * filter first (anti-pattern #13). We do NOT read contacts by
+ * `distributorId` because CustomerContact doesn't carry that column;
+ * the tenant scope is inherited from the group.
+ */
+export async function listGroupContacts(
+  distributorId: string,
+  groupId: string,
+): Promise<GroupCandidateContactRow[]> {
+  const group = await prisma.customerGroup.findFirst({
+    where: { id: groupId, distributorId, deletedAt: null },
+    include: {
+      members: {
+        include: {
+          customer: {
+            select: {
+              id: true, customerName: true, deletedAt: true,
+              contacts: {
+                select: {
+                  id: true, name: true, email: true, phone: true, isPrimary: true,
+                  // For each candidate contact: does it already have
+                  // an ACTIVE HQ login? Filter on the hqLogins reverse
+                  // relation (`take: 1` = existence check).
+                  hqLogins: {
+                    where: { deletedAt: null, status: 'active' },
+                    select: { id: true },
+                    take: 1,
+                  },
+                },
+                orderBy: [{ isPrimary: 'desc' }, { name: 'asc' }],
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!group) throw new CustomerGroupError('Group not found', 404);
+  const rows: GroupCandidateContactRow[] = [];
+  for (const m of group.members) {
+    if (m.customer.deletedAt) continue;
+    for (const c of m.customer.contacts) {
+      rows.push({
+        contactId: c.id,
+        name: c.name,
+        email: c.email,
+        phone: c.phone,
+        isPrimary: c.isPrimary,
+        customerId: m.customer.id,
+        customerName: m.customer.customerName,
+        hasLogin: c.hqLogins.length > 0,
+      });
+    }
+  }
+  return rows;
 }
 
 export async function createGroup(
@@ -265,23 +403,47 @@ export async function removeMember(
 export async function provisionPortalAccess(
   distributorId: string,
   groupId: string,
-  data: { email: string; password: string; firstName: string; lastName: string },
+  data: {
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    sourceContactId?: string;
+  },
 ): Promise<Pick<User, 'id' | 'email' | 'firstName' | 'lastName' | 'role'>> {
   const group = await prisma.customerGroup.findFirst({
     where: { id: groupId, distributorId, deletedAt: null },
-    select: { id: true },
+    include: {
+      members: { select: { customerId: true } },
+    },
   });
   if (!group) throw new CustomerGroupError('Group not found', 404);
 
-  const activeExisting = await prisma.user.findFirst({
-    where: { groupId, deletedAt: null, status: 'active' },
-    select: { id: true, email: true },
-  });
-  if (activeExisting) {
-    throw new CustomerGroupError(
-      'Group already has portal access. Revoke first before provisioning a new login.',
-      400,
-    );
+  // Feature A follow-up (2026-07-15): the "one active HQ per group"
+  // guard has been REMOVED. Multiple HQ logins per group are now a
+  // legitimate configuration (e.g. Kinara GM + Finance Manager both
+  // need visibility). The email-uniqueness guard below is still the
+  // safety net against accidentally creating a duplicate login.
+
+  // If the caller passed a sourceContactId, verify it belongs to a
+  // contact of one of THIS group's member customers. Rejects out-of-
+  // group ids (403) — this is the tenant/group isolation for the
+  // contact-picker path.
+  if (data.sourceContactId) {
+    const memberCustomerIds = group.members.map((m) => m.customerId);
+    const contact = await prisma.customerContact.findFirst({
+      where: {
+        id: data.sourceContactId,
+        customerId: { in: memberCustomerIds },
+      },
+      select: { id: true },
+    });
+    if (!contact) {
+      throw new CustomerGroupError(
+        'Source contact is not a contact of any group member',
+        403,
+      );
+    }
   }
 
   const emailNormalized = data.email.trim().toLowerCase();
@@ -304,10 +466,49 @@ export async function provisionPortalAccess(
       role: 'customer_hq',
       distributorId,
       groupId,
+      sourceContactId: data.sourceContactId ?? null,
       requiresPasswordReset: true,
     },
     select: { id: true, email: true, firstName: true, lastName: true, role: true },
   });
+}
+
+/**
+ * Feature A follow-up (2026-07-15): revoke ONE specific HQ user by
+ * id. Used by the per-row "Revoke" button in the Portal Access tab
+ * when a group has multiple HQ logins. Verifies the user belongs to
+ * the target group (tenant + group isolation) — passing a userId
+ * that isn't part of this group returns 404 (no info leak).
+ */
+export async function revokePortalUser(
+  distributorId: string,
+  groupId: string,
+  userId: string,
+): Promise<{ revokedCount: number }> {
+  const group = await prisma.customerGroup.findFirst({
+    where: { id: groupId, distributorId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!group) throw new CustomerGroupError('Group not found', 404);
+
+  const user = await prisma.user.findFirst({
+    where: {
+      id: userId,
+      groupId,
+      distributorId,
+      role: 'customer_hq',
+      deletedAt: null,
+      status: 'active',
+    },
+    select: { id: true },
+  });
+  if (!user) throw new CustomerGroupError('HQ user not found', 404);
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { deletedAt: new Date(), status: 'inactive' },
+  });
+  return { revokedCount: 1 };
 }
 
 /**

@@ -280,6 +280,16 @@ export interface CustomerGroupPortalUser {
   email: string;
   firstName: string | null;
   lastName: string | null;
+  // Feature A follow-up (2026-07-15): traceability back to the
+  // CustomerContact this HQ login was promoted from (if any). null =
+  // free-form provision (no source contact) — legitimate for
+  // corporate HQ staff who aren't listed against any specific member.
+  sourceContactId: string | null;
+  sourceContactName: string | null;
+  // The customer that owns the source contact — so the admin can see
+  // "hq-xyz@... is a contact of Property A" without a second lookup.
+  sourceCustomerId: string | null;
+  sourceCustomerName: string | null;
 }
 
 export interface CustomerGroup {
@@ -289,7 +299,11 @@ export interface CustomerGroup {
   memberCount: number;
   members: CustomerGroupMember[];
   hasPortalAccess: boolean;
-  portalUser: CustomerGroupPortalUser | null;
+  // Feature A follow-up (2026-07-15): a group can now have multiple
+  // active HQ logins (previously singular `portalUser`). Empty array
+  // means no active login. `hasPortalAccess` is kept as a derived
+  // convenience for callers that only care about the boolean.
+  portalUsers: CustomerGroupPortalUser[];
   createdAt: string;
   updatedAt: string;
 }
@@ -302,9 +316,28 @@ export interface CustomerGroupSummary {
   name: string;
   memberCount: number;
   hasPortalAccess: boolean;
-  portalEmail: string | null;
+  // Feature A follow-up: emails of the FIRST FEW active HQ logins
+  // (capped at 3 for display; total count is on portalUserCount). Kept
+  // as an array so the list card can show "user1@…, user2@… +1 more".
+  portalEmails: string[];
+  portalUserCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+// Feature A follow-up: shape returned by GET /customer-groups/:id/contacts —
+// candidate contacts (from every group member customer) that the admin
+// can promote to an HQ login. `hasLogin` = true when this contact has
+// already been promoted (via User.sourceContactId).
+export interface GroupCandidateContact {
+  contactId: string;
+  name: string;
+  email: string | null;
+  phone: string;
+  isPrimary: boolean;
+  customerId: string;
+  customerName: string;
+  hasLogin: boolean;
 }
 
 export interface CustomerCylinderDiscount {

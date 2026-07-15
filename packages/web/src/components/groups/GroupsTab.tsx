@@ -32,7 +32,11 @@ interface GroupRow {
   name: string;
   memberCount: number;
   hasPortalAccess: boolean;
-  portalEmail: string | null;
+  // Feature A follow-up (2026-07-15): multi-HQ per group. `portalEmails`
+  // shows up to 3 emails for the list card; `portalUserCount` is the
+  // authoritative total (may exceed emails.length).
+  portalEmails: string[];
+  portalUserCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -133,9 +137,18 @@ export function GroupsTab() {
                   <td>
                     {g.hasPortalAccess ? (
                       <div className="flex flex-col gap-0.5">
-                        <Badge variant="success">Active</Badge>
-                        {g.portalEmail && (
-                          <span className="text-xs text-surface-500 dark:text-surface-400">{g.portalEmail}</span>
+                        <Badge variant="success">
+                          {g.portalUserCount === 1
+                            ? 'Active'
+                            : `Active (${g.portalUserCount})`}
+                        </Badge>
+                        {g.portalEmails.slice(0, 2).map((e) => (
+                          <span key={e} className="text-xs text-surface-500 dark:text-surface-400">{e}</span>
+                        ))}
+                        {g.portalUserCount > 2 && (
+                          <span className="text-xs text-surface-400 italic">
+                            +{g.portalUserCount - 2} more
+                          </span>
                         )}
                       </div>
                     ) : (
