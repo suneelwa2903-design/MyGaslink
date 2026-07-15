@@ -32,6 +32,7 @@ import pendingActionsRoutes from './routes/pendingActions.js';
 import billingRoutes from './routes/billing.js';
 import accountabilityRoutes from './routes/accountability.js';
 import customerPortalRoutes from './routes/customerPortal.js';
+import customerGroupsRoutes from './routes/customerGroups.js';
 import deliveryWorkflowRouter from './routes/deliveryWorkflow.js';
 import assignmentsRouter from './routes/assignments.js';
 import providerCatalogRoutes from './routes/providerCatalog.js';
@@ -143,6 +144,10 @@ export function createApp() {
   // M14 v1.0 — super-admin read-only deletion-request monitor.
   app.use('/api/super-admin', authenticate, superAdminDeletionRoutes);
   app.use('/api/customers', authenticate, resolveDistributor, requireDistributor, customerRoutes);
+  // Feature A (2026-07-15): distributor-facing CustomerGroup management.
+  // Role gates are applied per-route in the router itself (super_admin
+  // + distributor_admin + finance + inventory).
+  app.use('/api/customer-groups', authenticate, resolveDistributor, requireDistributor, customerGroupsRoutes);
   app.use('/api/cylinder-types', authenticate, resolveDistributor, requireDistributor, cylinderTypeRoutes);
   app.use('/api/orders', authenticate, resolveDistributor, requireDistributor, orderRoutes);
   app.use('/api/inventory', authenticate, resolveDistributor, requireDistributor, inventoryRoutes);

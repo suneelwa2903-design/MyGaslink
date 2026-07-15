@@ -240,8 +240,16 @@ export async function generateBillingCycle(
   }
 
   // Customer portal users billing
+  // Feature A (2026-07-15): count both `customer` (single-customer
+  // portal) and `customer_hq` (group portal) logins together — each
+  // is a billable portal seat regardless of which surface they use.
   const customerPortalCount = await prisma.user.count({
-    where: { distributorId, role: 'customer', status: 'active', deletedAt: null },
+    where: {
+      distributorId,
+      role: { in: ['customer', 'customer_hq'] },
+      status: 'active',
+      deletedAt: null,
+    },
   });
   if (customerPortalCount > 0) {
     const portalAmount = customerPortalPrice * customerPortalCount * multiplier;
