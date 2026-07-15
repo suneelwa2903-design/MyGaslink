@@ -436,7 +436,7 @@ export async function getCustomerLedger(
  * ledger flow can reuse the exact same shape — same select tree so
  * every consumer processes the same fields.
  */
-async function loadInvoicesForLedger(
+export async function loadInvoicesForLedger(
   entries: Array<{ invoiceId: string | null }>,
 ): Promise<Map<string, LedgerInvoiceRow>> {
   const invoiceIds = Array.from(
@@ -450,7 +450,7 @@ async function loadInvoicesForLedger(
   return new Map(invoices.map((i) => [i.id, i]));
 }
 
-async function loadEmptyPricesForLedger(distributorId: string): Promise<Map<string, number>> {
+export async function loadEmptyPricesForLedger(distributorId: string): Promise<Map<string, number>> {
   const emptyPrices = await prisma.emptyCylinderPrice.findMany({ where: { distributorId } });
   return new Map<string, number>(
     emptyPrices.map((ep) => [ep.cylinderTypeId, toNum(ep.emptyCylinderPrice)] as const),
