@@ -405,7 +405,6 @@ export async function getCustomerLedger(
     select: { id: true, creditPeriodDays: true },
   });
   if (!customer) throw new PaymentError('Customer not found', 404);
-  const creditDays = customer.creditPeriodDays;
 
   // Pull ALL ledger entries (not range-filtered yet) so we can compute the
   // carry-forward "Opening Balance b/f" amount from pre-range entries.
@@ -414,56 +413,143 @@ export async function getCustomerLedger(
     orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
   });
 
-  // Pre-load referenced invoices (with items + linked order items) so each
-  // invoice_entry row can render per-cylinder-type breakdown without N+1.
-  const invoiceIds = Array.from(
-    new Set(allEntries.map((e) => e.invoiceId).filter((x): x is string => !!x)),
-  );
-  const invoices = invoiceIds.length === 0
-    ? []
-    : await prisma.invoice.findMany({
-        where: { id: { in: invoiceIds } },
-        select: {
-          id: true,
-          // LIVE invoice number — supersedes the frozen text in
-          // CustomerLedgerEntry.narration. When an invoice is reissued
-          // (delivery mismatch / regenerate), gstReissueService updates
-          // invoice.invoiceNumber in-place from ISHD… → RSHD… but the
-          // narration text stays at the original ISHD value. The ledger
-          // now renders the live number so it stays aligned with the
-          // billing list, GSTR-1, and the PDF download.
-          invoiceNumber: true,
-          isOpeningBalance: true,
-          orderId: true,
-          items: {
-            select: {
-              quantity: true,
-              unitPrice: true,
-              discountPerUnit: true,
-              cylinderTypeId: true,
-              cylinderType: { select: { id: true, typeName: true } },
-            },
-          },
-          order: {
-            select: {
-              items: {
-                select: {
-                  cylinderTypeId: true,
-                  quantity: true,
-                  deliveredQuantity: true,
-                  emptiesCollected: true,
-                },
-              },
-            },
-          },
-        },
-      });
-  const invoiceMap = new Map(invoices.map((i) => [i.id, i]));
+  // Pre-load referenced invoices + empty prices then delegate to the
+  // stateless processor. This factoring (Feature A, 2026-07-15) exists
+  // so the group-portal service can prefetch entries for N customer
+  // buckets in a single query and run the processor per bucket without
+  // additional round-trips. The old flow (fetch → process inline) is
+  // preserved exactly here: same DB reads, same output.
+  const invoiceMap = await loadInvoicesForLedger(allEntries);
+  const emptyPriceMap = await loadEmptyPricesForLedger(distributorId);
+  return processLedgerEntries({
+    entries: allEntries,
+    invoiceMap,
+    emptyPriceMap,
+    creditPeriodDays: customer.creditPeriodDays,
+    range,
+  });
+}
 
+/**
+ * Feature A (2026-07-15): load the invoice-detail map required by
+ * processLedgerEntries. Extracted from getCustomerLedger so the group
+ * ledger flow can reuse the exact same shape — same select tree so
+ * every consumer processes the same fields.
+ */
+async function loadInvoicesForLedger(
+  entries: Array<{ invoiceId: string | null }>,
+): Promise<Map<string, LedgerInvoiceRow>> {
+  const invoiceIds = Array.from(
+    new Set(entries.map((e) => e.invoiceId).filter((x): x is string => !!x)),
+  );
+  if (invoiceIds.length === 0) return new Map();
+  const invoices = await prisma.invoice.findMany({
+    where: { id: { in: invoiceIds } },
+    select: LEDGER_INVOICE_SELECT,
+  });
+  return new Map(invoices.map((i) => [i.id, i]));
+}
+
+async function loadEmptyPricesForLedger(distributorId: string): Promise<Map<string, number>> {
   const emptyPrices = await prisma.emptyCylinderPrice.findMany({ where: { distributorId } });
-  const emptyPriceMap = new Map<string, number>(
+  return new Map<string, number>(
     emptyPrices.map((ep) => [ep.cylinderTypeId, toNum(ep.emptyCylinderPrice)] as const),
   );
+}
+
+// Narrow select shape shared by getCustomerLedger + the group-portal
+// loader — the processor closes over invoiceMap's shape.
+const LEDGER_INVOICE_SELECT = {
+  id: true,
+  // LIVE invoice number — supersedes the frozen text in
+  // CustomerLedgerEntry.narration. When an invoice is reissued
+  // (delivery mismatch / regenerate), gstReissueService updates
+  // invoice.invoiceNumber in-place from ISHD… → RSHD… but the
+  // narration text stays at the original ISHD value. The ledger
+  // now renders the live number so it stays aligned with the
+  // billing list, GSTR-1, and the PDF download.
+  invoiceNumber: true,
+  isOpeningBalance: true,
+  orderId: true,
+  items: {
+    select: {
+      quantity: true,
+      unitPrice: true,
+      discountPerUnit: true,
+      cylinderTypeId: true,
+      cylinderType: { select: { id: true, typeName: true } },
+    },
+  },
+  order: {
+    select: {
+      items: {
+        select: {
+          cylinderTypeId: true,
+          quantity: true,
+          deliveredQuantity: true,
+          emptiesCollected: true,
+        },
+      },
+    },
+  },
+} as const;
+
+type LedgerInvoiceRow = {
+  id: string;
+  invoiceNumber: string;
+  isOpeningBalance: boolean;
+  orderId: string | null;
+  items: Array<{
+    quantity: number;
+    unitPrice: import('@prisma/client/runtime/library').Decimal;
+    discountPerUnit: import('@prisma/client/runtime/library').Decimal;
+    cylinderTypeId: string | null;
+    cylinderType: { id: string; typeName: string } | null;
+  }>;
+  order: {
+    items: Array<{
+      cylinderTypeId: string;
+      quantity: number;
+      deliveredQuantity: number | null;
+      emptiesCollected: number | null;
+    }>;
+  } | null;
+};
+
+type LedgerEntryRow = Awaited<
+  ReturnType<typeof prisma.customerLedgerEntry.findMany>
+>[number];
+
+export interface LedgerProcessingInput {
+  entries: LedgerEntryRow[];
+  invoiceMap: Map<string, LedgerInvoiceRow>;
+  emptyPriceMap: Map<string, number>;
+  creditPeriodDays: number;
+  range?: { from?: string; to?: string };
+}
+
+/**
+ * Feature A (2026-07-15): stateless ledger processor.
+ *
+ * Given pre-loaded entries + related invoices + empty prices +
+ * per-customer creditPeriodDays, apply the two-pass FIFO / opening-
+ * balance / running-balance state machine and return the display rows
+ * + summary. Zero DB access inside — every input is passed in — so the
+ * group ledger flow can call this once per customerId bucket against a
+ * single shared DB fetch.
+ *
+ * getCustomerLedger is now a thin wrapper: load, then delegate. This
+ * refactor preserves the exact previous behaviour for the single-
+ * customer path (verified by re-running the full test suite in the
+ * commit that introduced it).
+ *
+ * Enters here already having the money-column state (`cumulative*`),
+ * FIFO deliveries list, and pending-empties map local to this call —
+ * different customers processed by the group flow keep their state
+ * strictly separated.
+ */
+export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedgerResponse {
+  const { entries: allEntries, invoiceMap, emptyPriceMap, creditPeriodDays: creditDays, range } = input;
 
   const fromDate = range?.from ? new Date(range.from) : null;
   const toDate = range?.to ? new Date(range.to) : null;
