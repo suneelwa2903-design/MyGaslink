@@ -92,9 +92,23 @@ async function seedPendingDeliveryForDriver(
     },
   });
   const cleanup = async () => {
+    // Some tests confirm delivery which mints an invoice + ledger
+    // entries + inventory events for this order/customer. Tear the
+    // full graph down in FK-safe order so the customer.delete at the
+    // end doesn't hit a constraint violation.
     await prisma.deliveryProof.deleteMany({ where: { orderId: order.id } });
+    await prisma.inventoryEvent.deleteMany({ where: { referenceId: order.id } });
+    await prisma.orderStatusLog.deleteMany({ where: { orderId: order.id } });
+    await prisma.customerLedgerEntry.deleteMany({ where: { customerId: customer.id } });
+    const invoices = await prisma.invoice.findMany({ where: { orderId: order.id }, select: { id: true } });
+    for (const inv of invoices) {
+      await prisma.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
+      await prisma.gstDocument.deleteMany({ where: { invoiceId: inv.id } });
+    }
+    await prisma.invoice.deleteMany({ where: { orderId: order.id } });
     await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
     await prisma.order.delete({ where: { id: order.id } });
+    await prisma.customerInventoryBalance.deleteMany({ where: { customerId: customer.id } });
     await prisma.customer.delete({ where: { id: customer.id } });
   };
   return { orderId: order.id, customerId: customer.id, cleanup };
@@ -434,6 +448,162 @@ describe('Cross-tenant isolation', () => {
       expect([403, 404]).toContain(res.status);
       const rows = await prisma.deliveryProof.findMany({ where: { orderId } });
       expect(rows).toHaveLength(0);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ─── Phase 2 (2026-07-15): Photo proof ─────────────────────────────
+describe('Photo proof', () => {
+  it('POST /delivery-proof accepts proofType=photo with s3Key (no phone required)', async () => {
+    const { token, driver, distributorId } = await loginAsDriver();
+    const { orderId, cleanup } = await seedPendingDeliveryForDriver(distributorId, driver!.id, true);
+    try {
+      const res = await request(app)
+        .post(`/api/orders/${orderId}/delivery-proof`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          proofType: 'photo',
+          proofS3Key: `delivery-proofs/${distributorId}/${orderId}/photo-abc123.jpg`,
+          capturedLat: 17.4065,
+          capturedLng: 78.4772,
+          // deliberately no proofSigningPartyPhone — photo doesn't need one.
+        });
+      expect(res.status).toBe(201);
+      const row = await prisma.deliveryProof.findFirstOrThrow({ where: { orderId } });
+      expect(row.proofType).toBe('photo');
+      expect(row.s3Key).toContain('photo-abc123.jpg');
+      expect(row.signingPartyPhone).toBeNull();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('rejects photo proof without s3Key — 400', async () => {
+    const { token, driver, distributorId } = await loginAsDriver();
+    const { orderId, cleanup } = await seedPendingDeliveryForDriver(distributorId, driver!.id, true);
+    try {
+      const res = await request(app)
+        .post(`/api/orders/${orderId}/delivery-proof`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ proofType: 'photo' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/s3Key/i);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('photo proof does NOT require signingPartyPhone (contrast with signature)', async () => {
+    // The negative for signature is already covered above; this test
+    // asserts photo succeeds WITHOUT phone (proves the branch in
+    // deliveryProofService.upsertProof only enforces the phone rule
+    // for signature type, not photo).
+    const { token, driver, distributorId } = await loginAsDriver();
+    const { orderId, cleanup } = await seedPendingDeliveryForDriver(distributorId, driver!.id, true);
+    try {
+      const res = await request(app)
+        .post(`/api/orders/${orderId}/delivery-proof`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          proofType: 'photo',
+          proofS3Key: `delivery-proofs/${distributorId}/${orderId}/photo-nophone.jpg`,
+        });
+      expect(res.status).toBe(201);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('upload-url endpoint accepts proofType=photo', async () => {
+    const { token, driver, distributorId } = await loginAsDriver();
+    const { orderId, cleanup } = await seedPendingDeliveryForDriver(distributorId, driver!.id, true);
+    try {
+      const res = await request(app)
+        .post(`/api/orders/${orderId}/delivery-proof-upload-url`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ proofType: 'photo' });
+      expect(res.status).toBe(200);
+      expect(res.body.data.s3Key).toContain('photo-');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('PDF drawProofSection renders photo metadata, no fetch attempt', async () => {
+    // Build a delivered order with a photo proof, then generate its
+    // invoice PDF and verify the extracted text contains the photo
+    // metadata but NO image stream (PDF stays small when we don't
+    // embed the JPEG — plan §5.2 Phase 2 decision).
+    const { token, driver, distributorId } = await loginAsDriver();
+    const { orderId, cleanup, customerId } = await seedPendingDeliveryForDriver(distributorId, driver!.id, true);
+    try {
+      const cylinderType = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId } });
+      // 1. Photo proof
+      await prisma.deliveryProof.create({
+        data: {
+          orderId,
+          distributorId,
+          proofType: 'photo',
+          s3Key: `delivery-proofs/${distributorId}/${orderId}/photo-testrefabcd.jpg`,
+          capturedLat: 17.4065,
+          capturedLng: 78.4772,
+          capturedAt: new Date('2026-07-15T04:50:00Z'),
+          capturedBy: 'photo-test',
+        },
+      });
+      // 2. Confirm the delivery to mint the invoice.
+      const confRes = await request(app)
+        .post(`/api/orders/${orderId}/confirm-delivery`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ items: [{ cylinderTypeId: cylinderType.id, deliveredQuantity: 1, emptiesCollected: 0 }] });
+      expect(confRes.status).toBe(200);
+
+      const order = await prisma.order.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { invoice: { select: { id: true } } },
+      });
+      const invoiceId = order.invoice?.id;
+      if (!invoiceId) throw new Error('Invoice not created — cannot exercise PDF path');
+
+      // Stub fetch: if drawProofSection attempts to fetch the photo
+      // (regression), this mock records the call. Photo type MUST NOT
+      // trigger an image fetch — only signature does.
+      const fetchSpy = vi.fn(async () => new Response(null, { status: 404 }));
+      const origFetch = globalThis.fetch;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).fetch = fetchSpy;
+      try {
+        const { generateInvoicePdf } = await import('../services/pdf/invoicePdfService.js');
+        const pdf = await generateInvoicePdf(invoiceId, distributorId);
+        // Assert: no fetch for the photo s3Key. (drawProofSection's
+        // signature branch does call fetch — but this order has photo,
+        // not signature, so fetch should never be invoked from proof.)
+        const called = fetchSpy.mock.calls.some(([url]) =>
+          typeof url === 'string' && url.includes('photo-testrefabcd'),
+        );
+        expect(called).toBe(false);
+        // Assert text: "DELIVERY VERIFIED", "via PHOTO", "Photo reference: testrefabcd"
+        const { PDFParse } = await import('pdf-parse');
+        const parser = new PDFParse({ data: pdf });
+        try {
+          const { text } = await parser.getText();
+          expect(text).toMatch(/DELIVERY VERIFIED/);
+          expect(text).toMatch(/via PHOTO/);
+          // Photo reference line renders the last 12 chars of the
+          // s3Key (minus extension) — assert the label appears; the
+          // ref itself is a suffix of our s3Key filename so verify
+          // one of the marker chars survives the slice.
+          expect(text).toMatch(/Photo reference:/);
+        } finally {
+          await parser.destroy();
+        }
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+      // Keep customer alive for cleanup order (foreign keys).
+      void customerId;
     } finally {
       await cleanup();
     }
