@@ -9,6 +9,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { prisma } from '../../lib/prisma.js';
+import { config } from '../../config/index.js';
 import {
   formatMoney, formatDate, formatIrnForDisplay, numberToWords,
   round2, drawBox, drawTableHeader, drawTextBlock,
@@ -63,6 +64,10 @@ interface InvoiceForPdf {
     billingState: string | null;
     billingPincode: string | null;
     creditPeriodDays: number;
+    // Proof-of-collection Phase 1 (2026-07-15): gates whether the PDF
+    // renders a "Delivery Verified" section. False (or missing) → 0
+    // height, no section rendered.
+    requireDeliveryVerification: boolean;
   } | null;
   items: Array<{
     id: string;
@@ -91,7 +96,24 @@ interface InvoiceForPdf {
   // Optional Order relation. Used for the self-collection caption — null
   // for manual invoices (no parent Order). Add only the fields the PDF
   // actually reads to keep the projection tight.
-  order: { isGodownPickup: boolean } | null;
+  //
+  // Proof-of-collection Phase 1 (2026-07-15): also carries deliveryProof
+  // (narrow select) so drawProofSection can render without a second
+  // query. Null when no proof exists for this order — 0-height branch.
+  order:
+    | {
+        isGodownPickup: boolean;
+        deliveryProof: {
+          proofType: 'signature' | 'photo' | 'otp';
+          s3Key: string | null;
+          signingPartyPhone: string | null;
+          capturedLat: number | null;
+          capturedLng: number | null;
+          capturedAt: Date;
+          otpVerifiedAt: Date | null;
+        } | null;
+      }
+    | null;
 }
 
 // ─── Layout Constants ───────────────────────────────────────────────────────
@@ -729,6 +751,102 @@ async function drawComplianceSection(
   return maxCardH + 16 + (cardsStartY - startY);
 }
 
+/**
+ * Proof-of-collection Phase 1 (2026-07-15): "Delivery Verified" section
+ * on the invoice PDF. Returns 0 (nothing drawn) when the proof row is
+ * absent OR when the customer doesn't require verification — same
+ * "return-0-when-absent" convention as drawComplianceSection.
+ *
+ * Phase 1 renders signature methods only (image + signing party phone).
+ * Photo (Phase 2) embed decision deferred. OTP (Phase 3) renders as a
+ * simple "OTP Verified" label — the code itself is never on the PDF.
+ *
+ * Signature image fetch from CloudFront is wrapped in try/catch — a
+ * missing/unreadable S3 object downgrades to a text-only "image
+ * unavailable" line rather than failing the whole PDF render (same
+ * pattern as the QR-code branch in drawComplianceSection).
+ */
+async function drawProofSection(
+  doc: PDFKit.PDFDocument,
+  proof: NonNullable<InvoiceForPdf['order']>['deliveryProof'],
+  customerRequiresVerification: boolean,
+  startY: number,
+): Promise<number> {
+  if (!customerRequiresVerification || !proof) return 0;
+
+  const T = LAYOUT.THEME;
+  const F = LAYOUT.TYPO;
+  const contentWidth = A4_WIDTH - LAYOUT.MARGIN.left - LAYOUT.MARGIN.right;
+  const pad = 10;
+  const boxX = LAYOUT.MARGIN.left;
+  const boxTop = startY;
+  let cy = boxTop + pad;
+
+  // Header row
+  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Bold');
+  doc.text('DELIVERY VERIFIED', boxX + pad, cy);
+  doc.font('Helvetica').fillColor(T.MUTED);
+  doc.text(`via ${proof.proofType.toUpperCase()}`,
+    boxX + pad, cy,
+    { width: contentWidth - pad * 2, align: 'right' });
+  cy += 14;
+
+  // Timestamp + GPS
+  const dt = proof.capturedAt;
+  const iso = `${String(dt.getDate()).padStart(2, '0')}-${
+    ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getMonth()]
+  }-${dt.getFullYear()} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')} IST`;
+  const gps =
+    proof.capturedLat != null && proof.capturedLng != null
+      ? `${proof.capturedLat.toFixed(5)}, ${proof.capturedLng.toFixed(5)}`
+      : 'GPS not available';
+  doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica');
+  doc.text(`${iso}  |  GPS: ${gps}`, boxX + pad, cy);
+  cy += 12;
+
+  // Signature image (Phase 1)
+  if (proof.proofType === 'signature' && proof.s3Key) {
+    try {
+      const cdnRoot = config.aws.cloudFrontUrl.replace(/\/+$/, '');
+      const imageUrl = `${cdnRoot}/${proof.s3Key}`;
+      const response = await fetch(imageUrl);
+      if (response.ok) {
+        const buffer = Buffer.from(await response.arrayBuffer());
+        doc.image(buffer, boxX + pad, cy, { fit: [120, 60] });
+        cy += 65;
+      } else {
+        doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
+        doc.text('Signature captured — image unavailable', boxX + pad, cy);
+        cy += 12;
+      }
+    } catch {
+      doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
+      doc.text('Signature captured — image unavailable', boxX + pad, cy);
+      cy += 12;
+    }
+  }
+
+  // Signing party phone
+  if (proof.signingPartyPhone) {
+    doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica');
+    doc.text(`Signed by: ${proof.signingPartyPhone}`, boxX + pad, cy);
+    cy += 12;
+  }
+
+  // OTP verified label (Phase 3 forward-compat — code itself is NEVER
+  // on the PDF, only the fact that verification happened).
+  if (proof.proofType === 'otp' && proof.otpVerifiedAt) {
+    doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica-Bold');
+    doc.text('OTP Verified', boxX + pad, cy);
+    cy += 12;
+  }
+
+  // Bordered box around the whole section — mirrors drawComplianceSection.
+  const height = cy - boxTop + pad;
+  drawBox(doc, boxX, boxTop, contentWidth, height, T.BORDER);
+  return height;
+}
+
 function drawFooter(doc: PDFKit.PDFDocument, sellerName: string, startY: number): number {
   const T = LAYOUT.THEME;
   const F = LAYOUT.TYPO;
@@ -770,7 +888,27 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
       },
       // Self-collection caption needs Order.isGodownPickup. Null for
       // manual invoices (no parent Order).
-      order: { select: { isGodownPickup: true } },
+      //
+      // Proof-of-collection Phase 1 (2026-07-15): also fetch the
+      // deliveryProof row (narrow select, no otpCode — PDF never
+      // renders the code). One extra JOIN, one extra row max
+      // (@unique orderId), zero cost when the order has no proof.
+      order: {
+        select: {
+          isGodownPickup: true,
+          deliveryProof: {
+            select: {
+              proofType: true,
+              s3Key: true,
+              signingPartyPhone: true,
+              capturedLat: true,
+              capturedLng: true,
+              capturedAt: true,
+              otpVerifiedAt: true,
+            },
+          },
+        },
+      },
     },
   }) as unknown as (InvoiceForPdf & { isOpeningBalance?: boolean; notes?: string | null }) | null;
 
@@ -878,6 +1016,21 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
   const compH = await drawComplianceSection(doc, gstDoc, invoice, cursorY);
   cursorY += compH;
   if (compH > 0) cursorY += LAYOUT.SECTION_GAP;
+
+  // Proof-of-collection Phase 1 (2026-07-15): "Delivery Verified" box.
+  // Returns 0 (no-op) when the customer doesn't require verification OR
+  // the proof row is absent — behaviour-preserving for every legacy
+  // invoice. Fetches the signature image from CloudFront best-effort;
+  // downgrades to text on failure. Advances cursor + SECTION_GAP so
+  // the footer-fit check below generalizes cleanly.
+  const proofH = await drawProofSection(
+    doc,
+    invoice.order?.deliveryProof ?? null,
+    !!invoice.customer?.requireDeliveryVerification,
+    cursorY,
+  );
+  cursorY += proofH;
+  if (proofH > 0) cursorY += LAYOUT.SECTION_GAP;
 
   // Footer — ensure it fits, else add page
   const footerNeeded = 50;
