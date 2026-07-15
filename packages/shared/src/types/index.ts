@@ -46,6 +46,12 @@ export interface JwtPayload {
   role: UserRole;
   distributorId: string | null;
   customerId: string | null;
+  // Feature A (2026-07-15): populated for role='customer_hq' only —
+  // the CustomerGroup this HQ login can read. Null for every other
+  // role. Kept optional so old JWTs in-flight during a rolling deploy
+  // remain valid (authenticate() reads groupId from the DB row, not
+  // the token, so a missing claim is harmless anyway).
+  groupId?: string | null;
 }
 
 export interface LoginRequest {
@@ -253,6 +259,52 @@ export interface CustomerContact {
   phone: string;
   email: string | null;
   isPrimary: boolean;
+}
+
+// Feature A (2026-07-15): HQ CustomerGroup + membership + summary
+// shapes surfaced by /api/customer-groups (distributor-facing
+// management) and consumed by the web Groups tab.
+export interface CustomerGroupMember {
+  id: string;
+  groupId: string;
+  customerId: string;
+  customerName: string;
+  businessName: string | null;
+  gstin: string | null;
+  customerType: string;
+  addedAt: string;
+}
+
+export interface CustomerGroupPortalUser {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+}
+
+export interface CustomerGroup {
+  id: string;
+  distributorId: string;
+  name: string;
+  memberCount: number;
+  members: CustomerGroupMember[];
+  hasPortalAccess: boolean;
+  portalUser: CustomerGroupPortalUser | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Compact list-row shape (no members array, just the count) — used by
+// the Groups tab listing before drill-into a detail modal.
+export interface CustomerGroupSummary {
+  id: string;
+  distributorId: string;
+  name: string;
+  memberCount: number;
+  hasPortalAccess: boolean;
+  portalEmail: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CustomerCylinderDiscount {

@@ -183,6 +183,34 @@ export const updateCustomerSchema = createCustomerSchema.partial().extend({
   status: z.nativeEnum(CustomerStatus).optional(),
 });
 
+// ─── Customer Group Schemas ─────────────────────────────────────────────────
+// Feature A (2026-07-15): HQ portal group management. Routes are gated
+// to super_admin | distributor_admin | finance | inventory (same as
+// customer create). distributorId always sourced from JWT server-side.
+
+export const createGroupSchema = z.object({
+  name: z.string().min(1, 'Group name required').max(100),
+});
+export type CreateGroupInput = z.infer<typeof createGroupSchema>;
+
+export const updateGroupSchema = z.object({
+  name: z.string().min(1, 'Group name required').max(100),
+});
+export type UpdateGroupInput = z.infer<typeof updateGroupSchema>;
+
+export const addGroupMemberSchema = z.object({
+  customerId: uuid,
+});
+export type AddGroupMemberInput = z.infer<typeof addGroupMemberSchema>;
+
+export const provisionGroupPortalAccessSchema = z.object({
+  email: email,
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  firstName: z.string().min(1, 'First name required').max(80),
+  lastName: z.string().min(1, 'Last name required').max(80),
+});
+export type ProvisionGroupPortalAccessInput = z.infer<typeof provisionGroupPortalAccessSchema>;
+
 // ─── Order Schemas ───────────────────────────────────────────────────────────
 
 const orderItemSchema = z.object({
