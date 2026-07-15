@@ -168,6 +168,11 @@ export const createCustomerSchema = z.object({
   // building safe — every new rate needs an NIC-sandbox A/B verification
   // per CLAUDE.md anti-pattern #10.
   gstRateOverride: z.union([z.literal(5), z.literal(18)]).nullable().optional(),
+  // Proof-of-collection Phase 1 (2026-07-15): when true, driver's
+  // confirm-delivery flow requires a proof (signature/photo/OTP per phase
+  // rollout). Default false = existing behaviour. updateCustomerSchema
+  // inherits via .partial().extend() — no duplicate addition needed.
+  requireDeliveryVerification: z.boolean().optional(),
   contacts: z.array(customerContactSchema).optional(),
   cylinderDiscounts: z.array(cylinderDiscountSchema).optional(),
 });
@@ -371,6 +376,19 @@ export const deliveryConfirmationSchema = z.object({
   deliveryLatitude: z.number().optional(),
   deliveryLongitude: z.number().optional(),
   notes: z.string().max(500).optional(),
+  // Proof-of-collection Phase 1 (2026-07-15) — all optional; when the
+  // customer has requireDeliveryVerification=true the driver client uses
+  // the separate POST /orders/:id/delivery-proof endpoint to upsert the
+  // proof BEFORE calling /confirm-delivery (plan §R1 mitigation:
+  // decouples proof idempotency from delivery idempotency). These fields
+  // exist as an optional echo channel for backward-compat if any client
+  // sends them inline — server-side treats them as advisory metadata,
+  // never as the primary write path. Business validation (which fields
+  // pair together for a valid proof) lives in the service, not Zod.
+  proofType: z.enum(['signature', 'photo', 'otp']).optional(),
+  proofS3Key: z.string().max(200).optional(),
+  proofSigningPartyPhone: z.string().min(10).max(15).optional(),
+  otpCode: z.string().length(6).optional(),
 });
 
 export const assignDriverSchema = z.object({

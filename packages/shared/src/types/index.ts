@@ -215,11 +215,36 @@ export interface Customer {
   gstRateOverride: number | null;
   status: CustomerStatus;
   stopSupply: boolean;
+  // Proof-of-collection Phase 1 (2026-07-15): when true, driver's
+  // confirm-delivery flow requires proof capture (signature/photo/OTP).
+  // Default false — existing behaviour.
+  requireDeliveryVerification: boolean;
   preferredDriverId: string | null;
   contacts: CustomerContact[];
   cylinderDiscounts: CustomerCylinderDiscount[];
   createdAt: string;
   updatedAt: string;
+}
+
+// Proof-of-collection Phase 1 (2026-07-15): per-order proof-of-delivery
+// artifact. See packages/api/prisma/schema.prisma DeliveryProof model +
+// docs/PROOF-OF-COLLECTION-IMPL-PLAN.md §1.3 for design rationale.
+export interface DeliveryProof {
+  id: string;
+  orderId: string;
+  distributorId: string;
+  proofType: 'signature' | 'photo' | 'otp';
+  s3Key: string | null;
+  signingPartyPhone: string | null;
+  // OTP fields are Phase-3 only; null for signature/photo methods.
+  // Plaintext (no hash) — customer portal must display the code.
+  otpCode: string | null;
+  otpExpiresAt: string | null;
+  otpVerifiedAt: string | null;
+  capturedLat: number | null;
+  capturedLng: number | null;
+  capturedAt: string;
+  capturedBy: string;
 }
 
 export interface CustomerContact {
