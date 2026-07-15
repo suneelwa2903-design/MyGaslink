@@ -83,8 +83,12 @@ export default function DriverOrdersScreen() {
   // proof. Photo tab requires connectivity (SecureStore 2KB per-key cap
   // means photo bytes can't be offline-queued the way a signature s3Key
   // can), so we track NetInfo online state and disable the tab when off.
-  const [activeProofTab, setActiveProofTab] = useState<'signature' | 'photo'>('signature');
+  const [activeProofTab, setActiveProofTab] = useState<'signature' | 'photo' | 'otp'>('signature');
   const [capturedProofType, setCapturedProofType] = useState<'signature' | 'photo' | 'otp' | null>(null);
+  // Phase 3 (2026-07-15): OTP tab state.
+  const [otpInput, setOtpInput] = useState('');
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpResending, setOtpResending] = useState(false);
   const [isOnline, setIsOnline] = useState<boolean>(true);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((state) => {
@@ -122,6 +126,9 @@ export default function DriverOrdersScreen() {
       setProofLng(null);
       setActiveProofTab('signature');
       setCapturedProofType(null);
+      setOtpInput('');
+      setOtpVerifying(false);
+      setOtpResending(false);
     } else {
       const seed: Record<string, DeliveryItemEntry> = {};
       for (const item of selectedOrder.items ?? []) {
@@ -346,6 +353,49 @@ export default function DriverOrdersScreen() {
       setProofError(getErrorMessage(err) || 'Failed to record photo proof. Please try again.');
     } finally {
       setProofUploading(false);
+    }
+  };
+
+  /**
+   * Phase 3 OTP verify — driver types the code the customer reads out
+   * loud from their portal card. String-compared server-side; success
+   * marks proof captured (proofType='otp').
+   */
+  const handleVerifyOtp = async () => {
+    if (!selectedOrder || otpInput.length !== 6) return;
+    setOtpVerifying(true);
+    setProofError(null);
+    try {
+      const location = await captureDeliveryLocation();
+      setProofLat(location?.lat ?? null);
+      setProofLng(location?.lng ?? null);
+      await apiPost(`/orders/${selectedOrder.orderId}/delivery-otp/verify`, { otpCode: otpInput });
+      setProofCaptured(true);
+      setCapturedProofType('otp');
+      setProofS3Key(null); // OTP proofs don't carry an s3Key
+    } catch (err) {
+      // The server returns 400 OTP_INVALID for wrong codes — surface a
+      // human message and clear the input so the driver can retype.
+      const msg = getErrorMessage(err) || 'Verification failed.';
+      setProofError(msg.toLowerCase().includes('incorrect') ? 'Incorrect code. Try again.' : msg);
+      setOtpInput('');
+    } finally {
+      setOtpVerifying(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (!selectedOrder) return;
+    setOtpResending(true);
+    setProofError(null);
+    try {
+      await apiPost(`/orders/${selectedOrder.orderId}/delivery-otp/resend`, {});
+      Alert.alert('OTP refreshed', 'A new code has been sent to the customer\'s app.');
+      setOtpInput('');
+    } catch (err) {
+      setProofError(getErrorMessage(err) || 'Could not resend OTP. Check connectivity.');
+    } finally {
+      setOtpResending(false);
     }
   };
 
@@ -696,7 +746,7 @@ export default function DriverOrdersScreen() {
                   Capture proof of delivery using any one of the methods below.
                 </Text>
 
-                {/* Tab bar: [Signature] [Photo] — offline disables Photo. */}
+                {/* Tab bar: [Signature] [Photo] [OTP] — offline disables Photo. */}
                 <View style={{ flexDirection: 'row', borderRadius: 8, borderWidth: 1, borderColor: colors.inputBorder, overflow: 'hidden' }}>
                   <TouchableOpacity
                     onPress={() => setActiveProofTab('signature')}
@@ -724,6 +774,19 @@ export default function DriverOrdersScreen() {
                   >
                     <Text style={{ color: activeProofTab === 'photo' ? '#ffffff' : colors.text, fontWeight: '600', fontSize: 13 }}>
                       Photo
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setActiveProofTab('otp')}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 10,
+                      backgroundColor: activeProofTab === 'otp' ? ACCENT.navy : 'transparent',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ color: activeProofTab === 'otp' ? '#ffffff' : colors.text, fontWeight: '600', fontSize: 13 }}>
+                      OTP
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -770,6 +833,61 @@ export default function DriverOrdersScreen() {
                     onCapture={(s3Key) => { void handlePhotoCaptured(s3Key); }}
                     onError={(msg) => setProofError(msg)}
                   />
+                )}
+
+                {/* Phase 3 OTP tab. Shows different content depending on
+                    whether the customer has portal access:
+                    - Has app: 6-digit input + Verify + Resend.
+                    - No app: amber "customer doesn't have MyGasLink,
+                      use Signature or Photo instead" info box.
+                    Once verified, the shared proofCaptured line renders
+                    "✓ OTP captured — ready to confirm delivery". */}
+                {activeProofTab === 'otp' && !proofCaptured && (
+                  selectedOrder.customerHasPortalAccess ? (
+                    <View style={{ gap: 10 }}>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                        Ask the customer to open their MyGasLink app and read the delivery code shown on this order&apos;s card.
+                      </Text>
+                      <TextInput
+                        value={otpInput}
+                        onChangeText={(t) => setOtpInput(t.replace(/[^0-9]/g, '').slice(0, 6))}
+                        placeholder="_ _ _ _ _ _"
+                        placeholderTextColor={colors.textMuted}
+                        keyboardType="number-pad"
+                        maxLength={6}
+                        style={{
+                          borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 8,
+                          paddingVertical: 14, paddingHorizontal: 16,
+                          fontSize: 24, letterSpacing: 6, textAlign: 'center',
+                          fontWeight: '600', color: colors.text, backgroundColor: colors.inputBg,
+                        }}
+                      />
+                      <Button
+                        title={otpVerifying ? 'Verifying…' : 'Verify code'}
+                        variant="accent"
+                        onPress={handleVerifyOtp}
+                        loading={otpVerifying}
+                        disabled={otpInput.length !== 6 || otpVerifying}
+                      />
+                      <TouchableOpacity
+                        onPress={handleResendOtp}
+                        disabled={otpResending}
+                      >
+                        <Text style={{ fontSize: 12, color: ACCENT.blue, textAlign: 'center', textDecorationLine: 'underline' }}>
+                          {otpResending ? 'Sending new code…' : 'Resend code to customer'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={{ backgroundColor: '#fef3c7', borderColor: '#fbbf24', borderWidth: 1, borderRadius: 8, padding: 12, gap: 4 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#92400e' }}>
+                        Customer doesn&apos;t have the MyGasLink app
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#92400e' }}>
+                        Use the Signature or Photo tab to complete this delivery instead.
+                      </Text>
+                    </View>
+                  )
                 )}
 
                 {proofCaptured && capturedProofType && (

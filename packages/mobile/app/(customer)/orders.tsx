@@ -586,6 +586,44 @@ export default function CustomerOrdersScreen() {
                 </View>
               )}
 
+              {/* Proof-of-collection Phase 3 (2026-07-15): delivery verification
+                  code, shown ONLY when the API surfaces order.otpCode (server
+                  eligibility per customerPortalService: status=pending_delivery
+                  AND flag=true AND OTP generated AND driver hasn't verified).
+                  Renders as a prominent amber card the driver can read at
+                  delivery time. No polling — API auto-hides when the driver
+                  verifies (otpVerifiedAt set) or the order moves out of
+                  pending_delivery. */}
+              {order.otpCode && (
+                <View style={{
+                  marginTop: 12,
+                  backgroundColor: '#fef3c7',
+                  borderColor: '#fbbf24',
+                  borderWidth: 1,
+                  borderRadius: 12,
+                  padding: 16,
+                  alignItems: 'center',
+                  gap: 6,
+                }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#92400e', letterSpacing: 1.5 }}>
+                    DELIVERY VERIFICATION CODE
+                  </Text>
+                  <Text style={{
+                    fontSize: 36,
+                    fontWeight: '700',
+                    letterSpacing: 8,
+                    color: '#111827',
+                    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
+                    marginVertical: 4,
+                  }}>
+                    {order.otpCode}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#92400e', textAlign: 'center' }}>
+                    Share this code with your MyGasLink delivery driver
+                  </Text>
+                </View>
+              )}
+
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
                 {isPending(order.status || '') && (
                   <View style={{ flexDirection: 'row', gap: 8 }}>
