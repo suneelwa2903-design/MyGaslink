@@ -31,7 +31,12 @@ export function computeOrderTotal(
 const orderInclude = {
   // customerType added so mapOrder can flat-alias it onto the order DTO —
   // the web edit-order modal needs it to gate the B2B-only PO number input.
-  customer: { select: { id: true, customerName: true, customerType: true, stopSupply: true, creditPeriodDays: true } },
+  // requireDeliveryVerification (proof-of-collection Phase 1, 2026-07-15)
+  // is flat-aliased as customerRequiresVerification by mapOrder — driver
+  // mobile app reads it to decide whether to render the proof-capture
+  // section in the confirm-delivery modal. Narrow select only — never
+  // include: true (leak risk).
+  customer: { select: { id: true, customerName: true, customerType: true, stopSupply: true, creditPeriodDays: true, requireDeliveryVerification: true } },
   driver: { select: { id: true, driverName: true } },
   vehicle: { select: { id: true, vehicleNumber: true } },
   items: { include: { cylinderType: { select: { typeName: true } } } },

@@ -29,6 +29,9 @@ interface CustomerUpdateData {
   // 5 or 18 only (enforced by createCustomerSchema). null → use platform default 18%.
   gstRateOverride?: number | null;
   status?: $Enums.CustomerStatus;
+  // Proof-of-collection Phase 1 (2026-07-15): when true, driver's
+  // confirm-delivery flow requires proof capture.
+  requireDeliveryVerification?: boolean;
   contacts?: Array<{ name: string; phone?: string; email?: string | null; isPrimary?: boolean }>;
   cylinderDiscounts?: Array<{ cylinderTypeId: string; discountPerUnit: number }>;
 }
@@ -120,6 +123,9 @@ export async function createCustomer(
     gstRateOverride?: number | null;
     contacts?: { name: string; phone?: string; email?: string; isPrimary?: boolean }[];
     cylinderDiscounts?: { cylinderTypeId: string; discountPerUnit: number }[];
+    // Proof-of-collection Phase 1 (2026-07-15): driver confirm-delivery
+    // proof-capture toggle. Default false = existing behaviour.
+    requireDeliveryVerification?: boolean;
   }
 ) {
   const warnings: string[] = [];
@@ -174,6 +180,7 @@ export async function createCustomer(
       transportChargePerCylinder: data.transportChargePerCylinder ?? 0,
       // null when omitted → invoice paths fall back to platform default 18%.
       gstRateOverride: data.gstRateOverride ?? null,
+      requireDeliveryVerification: data.requireDeliveryVerification ?? false,
       contacts: data.contacts && data.contacts.length > 0
         ? { create: data.contacts.map(c => ({ name: c.name, phone: c.phone || '', email: c.email || null, isPrimary: c.isPrimary ?? false })) }
         : undefined,
@@ -225,7 +232,7 @@ export async function updateCustomer(
       'customerName', 'businessName', 'gstin', 'phone', 'email', 'transportChargePerCylinder',
       'billingAddressLine1', 'billingCity', 'billingState', 'billingPincode',
       'shippingAddressLine1', 'shippingCity', 'shippingState', 'shippingPincode',
-      'creditPeriodDays', 'gstRateOverride', 'status',
+      'creditPeriodDays', 'gstRateOverride', 'status', 'requireDeliveryVerification',
     ];
     const existingRecord = existing as Record<string, unknown>;
     for (const field of trackFields) {
@@ -304,6 +311,9 @@ export async function updateCustomer(
     if (data.status !== undefined) {
       updateData.status = data.status;
       updateData.stopSupply = data.status === 'suspended';
+    }
+    if (data.requireDeliveryVerification !== undefined) {
+      updateData.requireDeliveryVerification = data.requireDeliveryVerification;
     }
 
     const updated = await tx.customer.update({

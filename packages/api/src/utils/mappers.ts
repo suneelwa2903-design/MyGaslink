@@ -83,6 +83,10 @@ interface CustomerInput extends HasId {
   // mapOrder's output so the web UI can gate B2B-only fields (e.g. PO
   // number input) without traversing the nested relation.
   customerType?: 'B2B' | 'B2C' | string | null;
+  // Proof-of-collection Phase 1 (2026-07-15): flat-aliased onto mapOrder's
+  // output as `customerRequiresVerification` so the driver mobile UI can
+  // gate the proof-capture section without traversing the nested relation.
+  requireDeliveryVerification?: boolean | null;
   contacts?: HasId[];
   cylinderDiscounts?: ChildWithCylinderType[];
   inventoryBalances?: ChildWithCylinderType[];
@@ -148,6 +152,12 @@ export function mapOrder(o: OrderInput | null | undefined): MappedRecord | null 
   // Flat customerType alias — the web edit-order modal needs to know whether
   // to render the B2B-only PO number input. Same pattern as customerName.
   mapped.customerType = o.customer?.customerType ?? null;
+  // Proof-of-collection Phase 1 (2026-07-15): flat alias — the driver
+  // mobile app reads `order.customerRequiresVerification` to decide
+  // whether to render the proof-capture section in the confirm-delivery
+  // modal. False (not undefined) when the relation is missing so the UI
+  // fails safe = skip proof, not "crash trying to read undefined.true".
+  mapped.customerRequiresVerification = o.customer?.requireDeliveryVerification ?? false;
   if (o.driver) mapped.driver = mapDriver(o.driver);
   // Flat driverName for the orders list table. assignDriver() does set
   // order.driverId + status correctly, but the table reads order.driverName
