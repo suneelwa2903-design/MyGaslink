@@ -87,6 +87,11 @@ interface CustomerInput extends HasId {
   // output as `customerRequiresVerification` so the driver mobile UI can
   // gate the proof-capture section without traversing the nested relation.
   requireDeliveryVerification?: boolean | null;
+  // Proof-of-collection Phase 3 (2026-07-15): _count.users on the
+  // customer's portal logins. Flat-aliased onto mapOrder's output as
+  // `customerHasPortalAccess` so the driver mobile UI can show/hide
+  // the OTP option and render an "app not installed" hint when false.
+  _count?: { users?: number };
   contacts?: HasId[];
   cylinderDiscounts?: ChildWithCylinderType[];
   inventoryBalances?: ChildWithCylinderType[];
@@ -158,6 +163,13 @@ export function mapOrder(o: OrderInput | null | undefined): MappedRecord | null 
   // modal. False (not undefined) when the relation is missing so the UI
   // fails safe = skip proof, not "crash trying to read undefined.true".
   mapped.customerRequiresVerification = o.customer?.requireDeliveryVerification ?? false;
+  // Proof-of-collection Phase 3 (2026-07-15): flat alias for the OTP
+  // tab gating. True when the customer has at least one `customer`-role
+  // User row (portal login provisioned by staff via /portal-access).
+  // False when the customer master has no login yet — driver UI shows
+  // an amber "no app installed, use Signature or Photo" hint. Defaults
+  // false when the _count relation isn't selected (e.g. old queries).
+  mapped.customerHasPortalAccess = (o.customer?._count?.users ?? 0) > 0;
   if (o.driver) mapped.driver = mapDriver(o.driver);
   // Flat driverName for the orders list table. assignDriver() does set
   // order.driverId + status correctly, but the table reads order.driverName

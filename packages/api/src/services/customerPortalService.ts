@@ -191,6 +191,13 @@ export async function getMyOrders(
       include: {
         items: { include: { cylinderType: { select: { typeName: true } } } },
         driver: { select: { driverName: true, phone: true } },
+        // Proof-of-collection Phase 3 (2026-07-15): narrow-select the
+        // OTP fields + the customer's verification flag so we can decide
+        // whether to surface `otpCode` on the wire below. NEVER
+        // include: true — otpCode is sensitive and must only appear
+        // under the strict eligibility conditions listed there.
+        deliveryProof: { select: { otpCode: true, otpVerifiedAt: true } },
+        customer: { select: { requireDeliveryVerification: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * pageSize,
@@ -207,11 +214,31 @@ export async function getMyOrders(
   const flattened = orders.map((o) => {
     const showDriver = !!o.driver
       && ['pending_dispatch', 'pending_delivery'].includes(o.status);
+    // Proof-of-collection Phase 3 (2026-07-15): OTP appears on the
+    // customer's order card ONLY when:
+    //   1. Order is pending_delivery (out for delivery — earlier
+    //      states have no OTP to display; delivered state clears it).
+    //   2. Customer requires verification (flag on).
+    //   3. An OTP was generated (auto-gen ran successfully).
+    //   4. The driver hasn't verified it yet (otpVerifiedAt is null).
+    // When any of those fail, otpCode is null and the client-side
+    // conditional block simply doesn't render — no polling needed,
+    // OTP naturally disappears when the state changes.
+    const otpEligible =
+      o.status === 'pending_delivery'
+      && o.customer?.requireDeliveryVerification === true
+      && o.deliveryProof?.otpCode != null
+      && o.deliveryProof?.otpVerifiedAt == null;
     return {
       ...o,
       driver: showDriver ? o.driver : null,
       driverName: showDriver ? o.driver?.driverName ?? null : null,
       driverPhone: showDriver ? o.driver?.phone ?? null : null,
+      otpCode: otpEligible ? o.deliveryProof!.otpCode : null,
+      // Strip the join-included branches from the flattened shape so
+      // downstream mappers don't accidentally re-surface them.
+      deliveryProof: undefined,
+      customer: undefined,
     };
   });
 

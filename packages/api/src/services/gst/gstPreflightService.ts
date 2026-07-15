@@ -1025,6 +1025,11 @@ function buildDispatchCtx(
   };
 }
 
+// Proof-of-collection Phase 3 (2026-07-15): fire-and-forget OTP auto-
+// generation after tx commit. Imported here (not at top) to keep the
+// existing GST-focused import cluster tidy.
+import { generateOrRefreshOtp } from '../deliveryProofService.js';
+
 async function transitionToPendingDelivery(
   orderId: string,
   userId: string,
@@ -1078,6 +1083,26 @@ async function transitionToPendingDelivery(
       }
     }
   });
+
+  // Proof-of-collection Phase 3 (2026-07-15): auto-generate OTP after
+  // the transition tx commits. Fire-and-forget — an OTP failure must
+  // NEVER block the order reaching pending_delivery. generateOrRefreshOtp
+  // no-ops when requireDeliveryVerification is false, so this is safe
+  // for every customer. distributorId is present when dispatchCtx is
+  // (most callers), and looked up from the order otherwise (EWB-retry
+  // caller passes undefined dispatchCtx).
+  (async () => {
+    try {
+      const distId = dispatchCtx?.distributorId
+        ?? (await prisma.order.findUnique({ where: { id: orderId }, select: { distributorId: true } }))?.distributorId;
+      if (!distId) return;
+      await generateOrRefreshOtp(distId, orderId, 'auto');
+    } catch (err) {
+      logger.warn('OTP auto-generation failed after preflight transition', {
+        orderId, err: (err as Error).message,
+      });
+    }
+  })();
 }
 
 async function revertToPendingDispatch(orderId: string) {

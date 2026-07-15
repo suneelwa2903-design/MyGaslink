@@ -14,8 +14,10 @@
  * the request body. Follows the paymentSubmissionService.ts convention
  * (10+ WHERE clauses all with distributorId) per anti-pattern #13.
  */
+import * as crypto from 'node:crypto';
 import { prisma } from '../lib/prisma.js';
 import type { DeliveryProof } from '@prisma/client';
+import { logger } from '../utils/logger.js';
 import {
   generateDeliveryProofUploadUrl,
   deleteDeliveryProofObject,
@@ -188,6 +190,85 @@ export async function getProof(
   return prisma.deliveryProof.findFirst({
     where: { orderId, distributorId },
   });
+}
+
+/**
+ * Proof-of-collection Phase 3 (2026-07-15): auto-generate (or refresh
+ * on driver-triggered resend) the OTP for an order.
+ *
+ * Fires whenever an order transitions to `pending_delivery` for a
+ * customer whose `requireDeliveryVerification` is true. Also called by
+ * the driver's `/delivery-otp/resend` endpoint. The generated code is
+ * plaintext (per plan §1.3.3 — customer portal must display it, hash
+ * would be unreversible), lives for the life of the order (no expiry
+ * per locked design), and is naturally invalidated when the order
+ * moves out of `pending_delivery` (mapper stops surfacing it).
+ *
+ * Idempotent: safe to call multiple times per order — upserts by
+ * orderId. Fire-and-forget from the caller's perspective; caller
+ * catches to prevent OTP failure from blocking the order transition.
+ *
+ * Returns the 6-digit code. Nothing about "portal login exists" is
+ * checked here — the OTP is generated regardless so a future
+ * SMS/WhatsApp channel can pick it up. The driver's UI reads a
+ * separate `customerHasPortalAccess` flag to decide whether the
+ * customer will actually see the code.
+ */
+export async function generateOrRefreshOtp(
+  distributorId: string,
+  orderId: string,
+  triggeredBy: 'auto' | 'driver_resend',
+): Promise<string | null> {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, distributorId, deletedAt: null },
+    select: {
+      id: true,
+      customer: { select: { requireDeliveryVerification: true } },
+    },
+  });
+  if (!order) {
+    // Order deleted / cross-tenant / not found — no-op. Caller may be
+    // a fire-and-forget hook, so log at debug and return null.
+    logger.debug('generateOrRefreshOtp: order not found', { orderId, distributorId });
+    return null;
+  }
+  if (!order.customer?.requireDeliveryVerification) {
+    // Verification not required for this customer — no OTP needed.
+    return null;
+  }
+
+  // Cryptographically random 6-digit code (same shape as
+  // authService.generateOtp). No expiry — valid for the life of the
+  // order per locked design.
+  const otp = String(crypto.randomInt(100000, 999999));
+
+  const capturedAt = new Date();
+
+  await prisma.deliveryProof.upsert({
+    where: { orderId },
+    update: {
+      otpCode: otp,
+      // Do NOT reset proofType or otpVerifiedAt here — the driver may
+      // already have captured a signature/photo before requesting an
+      // OTP refresh. proofType only changes when the driver actually
+      // completes verification via /delivery-otp/verify or via a
+      // signature/photo submission through /delivery-proof.
+    },
+    create: {
+      orderId,
+      distributorId,
+      // Provisional proofType — will be overwritten when the driver
+      // actually submits a proof. Chosen 'otp' rather than a nullable
+      // enum because the schema doesn't allow null here.
+      proofType: 'otp',
+      otpCode: otp,
+      capturedAt,
+      capturedBy: `system:${triggeredBy}`,
+    },
+  });
+
+  logger.debug('OTP generated', { orderId, distributorId, triggeredBy });
+  return otp;
 }
 
 /**

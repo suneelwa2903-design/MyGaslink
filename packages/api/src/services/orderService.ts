@@ -4,6 +4,7 @@ import { getEffectivePrice } from './cylinderTypeService.js';
 import { createInventoryEvent, recalculateSummariesFromDate } from './inventoryService.js';
 import { isDispatchDebitEnabled } from '../utils/inventoryFlags.js';
 import { createInvoiceFromOrder } from './invoiceService.js';
+import { generateOrRefreshOtp } from './deliveryProofService.js';
 import { logger } from '../utils/logger.js';
 import { toNum } from '../utils/decimal.js';
 import { allocateNumber } from './numberingService.js';
@@ -36,7 +37,27 @@ const orderInclude = {
   // mobile app reads it to decide whether to render the proof-capture
   // section in the confirm-delivery modal. Narrow select only — never
   // include: true (leak risk).
-  customer: { select: { id: true, customerName: true, customerType: true, stopSupply: true, creditPeriodDays: true, requireDeliveryVerification: true } },
+  //
+  // _count.users (Phase 3, 2026-07-15): drives the customerHasPortalAccess
+  // flat alias — driver UI shows OTP tab only when > 0, otherwise renders
+  // an amber "customer doesn't have the app — use Signature or Photo"
+  // message. Filter: role='customer', not soft-deleted. Small extra
+  // aggregate per order; negligible at typical page sizes.
+  customer: {
+    select: {
+      id: true,
+      customerName: true,
+      customerType: true,
+      stopSupply: true,
+      creditPeriodDays: true,
+      requireDeliveryVerification: true,
+      _count: {
+        select: {
+          users: { where: { role: 'customer', deletedAt: null } },
+        },
+      },
+    },
+  },
   driver: { select: { id: true, driverName: true } },
   vehicle: { select: { id: true, vehicleNumber: true } },
   items: { include: { cylinderType: { select: { typeName: true } } } },
@@ -548,6 +569,18 @@ export async function createOrderFromCancelledStock(
       },
     });
 
+    // Proof-of-collection Phase 3 (2026-07-15): auto-generate OTP if
+    // the customer requires verification. Fire-and-forget after the
+    // tx commits so an OTP hiccup can never block the order create.
+    // generateOrRefreshOtp is a no-op when requireDeliveryVerification
+    // is false, so this is safe for every customer.
+    return order;
+  }).then((order) => {
+    generateOrRefreshOtp(distributorId, order.id, 'auto').catch((err) => {
+      logger.warn('OTP auto-generation failed after cancelled-stock reroute', {
+        orderId: order.id, err: (err as Error).message,
+      });
+    });
     return order;
   });
 }

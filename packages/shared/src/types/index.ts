@@ -352,6 +352,17 @@ export interface Order {
   // delivery modal. Defaults false — legacy orders and customers without
   // the flag skip proof capture entirely.
   customerRequiresVerification?: boolean;
+  // Proof-of-collection Phase 3 (2026-07-15): flat alias derived from
+  // Customer._count.users where role='customer'. Drives the driver's
+  // OTP-tab gating (show/hide the amber "no app installed" message).
+  // Only surfaced on the driver-scoped GET /orders response.
+  customerHasPortalAccess?: boolean;
+  // Proof-of-collection Phase 3 (2026-07-15): the 6-digit delivery
+  // verification code, populated ONLY on the customer-portal GET
+  // /orders response and ONLY when: order.status='pending_delivery',
+  // customer.requireDeliveryVerification=true, OTP was generated, and
+  // driver hasn't verified yet. Never on driver/admin responses.
+  otpCode?: string | null;
   items: OrderItem[];
   // WI-127: customer dispute lifecycle (drives the order-card dispute UI).
   customerDisputeReason?: string | null;

@@ -611,6 +611,130 @@ router.get('/:id/delivery-proof',
   },
 );
 
+// ─── Delivery-OTP (proof-of-collection Phase 3, 2026-07-15) ───────────────
+// Two driver-only endpoints. Auto-generation happens elsewhere (fire-and-
+// forget in transitionToPendingDelivery + createOrderFromCancelledStock);
+// these routes cover the driver-initiated flows.
+
+// POST /api/orders/:id/delivery-otp/resend — driver taps "Resend OTP" when
+// the customer says they didn't see the code. Generates a fresh 6-digit
+// code, overwrites the previous one, valid for the life of the order.
+router.post('/:id/delivery-otp/resend',
+  requireRole('driver'),
+  auditLog('resend_delivery_otp', 'order'),
+  async (req, res) => {
+    try {
+      const usr = await prisma.user.findUnique({
+        where: { id: req.user!.userId },
+        select: { phone: true },
+      });
+      const driver = usr?.phone
+        ? await prisma.driver.findFirst({
+            where: { distributorId: req.user!.distributorId!, phone: usr.phone, deletedAt: null },
+            select: { id: true },
+          })
+        : null;
+      if (!driver) return sendNotFound(res, 'Driver profile not found for this user');
+      const order = await prisma.order.findFirst({
+        where: {
+          id: param(req.params.id),
+          distributorId: req.user!.distributorId!,
+          driverId: driver.id,
+          status: 'pending_delivery',
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (!order) return sendNotFound(res, 'Order not found or not in pending_delivery');
+      const otp = await deliveryProofService.generateOrRefreshOtp(
+        req.user!.distributorId!,
+        order.id,
+        'driver_resend',
+      );
+      // Deliberately do NOT return the OTP to the driver — the driver
+      // reads it off the customer's portal card, not from this response.
+      // A returned code here would be a leak vector if the driver's
+      // device is ever screenshotted / compromised.
+      if (otp == null) {
+        return sendError(res, 'This customer does not require delivery verification', 400);
+      }
+      return sendSuccess(res, { refreshed: true });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// POST /api/orders/:id/delivery-otp/verify — driver types the code the
+// customer reads out. Body: { otpCode: string }. String-compares against
+// the stored plaintext (per plan §1.3.3 — customer must be able to
+// display it). Sets otpVerifiedAt on success; idempotent on already-verified.
+const deliveryOtpVerifySchema = z.object({
+  otpCode: z.string().length(6),
+});
+
+router.post('/:id/delivery-otp/verify',
+  requireRole('driver'),
+  validate(deliveryOtpVerifySchema),
+  auditLog('verify_delivery_otp', 'order'),
+  async (req, res) => {
+    try {
+      const usr = await prisma.user.findUnique({
+        where: { id: req.user!.userId },
+        select: { phone: true },
+      });
+      const driver = usr?.phone
+        ? await prisma.driver.findFirst({
+            where: { distributorId: req.user!.distributorId!, phone: usr.phone, deletedAt: null },
+            select: { id: true },
+          })
+        : null;
+      if (!driver) return sendNotFound(res, 'Driver profile not found for this user');
+      const order = await prisma.order.findFirst({
+        where: {
+          id: param(req.params.id),
+          distributorId: req.user!.distributorId!,
+          driverId: driver.id,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (!order) return sendNotFound(res, 'Order');
+      const proof = await prisma.deliveryProof.findFirst({
+        where: { orderId: order.id, distributorId: req.user!.distributorId! },
+      });
+      if (!proof || !proof.otpCode) {
+        return sendError(res, 'No OTP found for this order', 400);
+      }
+      // Idempotent — already verified means the driver may be retrying
+      // after a UI hiccup; return success without touching the row.
+      if (proof.otpVerifiedAt) {
+        return sendSuccess(res, { verified: true, alreadyVerified: true });
+      }
+      if (proof.otpCode !== req.body.otpCode) {
+        return sendError(res, 'Incorrect code. Try again.', 400, 'OTP_INVALID');
+      }
+      await prisma.deliveryProof.update({
+        where: { id: proof.id },
+        data: {
+          otpVerifiedAt: new Date(),
+          // Now that verification succeeded, promote the proof row's
+          // type from the provisional 'otp' set at auto-generation time
+          // to the final 'otp' (idempotent — already 'otp'). Preserves
+          // signingPartyPhone / s3Key if the driver had also captured
+          // one of those first (unusual but not forbidden).
+          proofType: 'otp',
+        },
+      });
+      return sendSuccess(res, { verified: true });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
 // POST /api/orders/:id/resolve-dispute — WI-127
 router.post('/:id/resolve-dispute',
   requireRole('distributor_admin', 'finance', 'inventory'),

@@ -580,9 +580,10 @@ describe('Photo proof', () => {
         // Assert: no fetch for the photo s3Key. (drawProofSection's
         // signature branch does call fetch — but this order has photo,
         // not signature, so fetch should never be invoked from proof.)
-        const called = fetchSpy.mock.calls.some(([url]) =>
-          typeof url === 'string' && url.includes('photo-testrefabcd'),
-        );
+        const called = fetchSpy.mock.calls.some((args: unknown[]) => {
+          const url = args[0];
+          return typeof url === 'string' && url.includes('photo-testrefabcd');
+        });
         expect(called).toBe(false);
         // Assert text: "DELIVERY VERIFIED", "via PHOTO", "Photo reference: testrefabcd"
         const { PDFParse } = await import('pdf-parse');
