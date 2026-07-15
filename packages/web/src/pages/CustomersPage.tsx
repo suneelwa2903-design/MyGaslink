@@ -421,6 +421,7 @@ function CustomerFormModal({
           // back is harmless because the service writes null when the
           // value matches the platform default).
           gstRateOverride: (customer.gstRateOverride === 5 ? 5 : 18) as 5 | 18,
+          requireDeliveryVerification: customer.requireDeliveryVerification,
           contacts: customer.contacts.map((c) => ({ name: c.name, phone: c.phone, email: c.email || '', isPrimary: c.isPrimary })),
           cylinderDiscounts: customer.cylinderDiscounts.map((d) => ({ cylinderTypeId: d.cylinderTypeId, discountPerUnit: d.discountPerUnit })),
         }
@@ -430,6 +431,7 @@ function CustomerFormModal({
           creditPeriodDays: 30,
           transportChargePerCylinder: 0,
           gstRateOverride: 18 as 5 | 18,
+          requireDeliveryVerification: false,
           contacts: [],
           cylinderDiscounts: [],
         },
@@ -748,6 +750,29 @@ function CustomerFormModal({
               <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
                 5% applies to customers using LPG for food preparation (hotels, restaurants, canteens).
               </p>
+            </div>
+            {/* Proof-of-collection Phase 1 (2026-07-15): when checked, the
+                driver's confirm-delivery flow requires capturing a proof
+                (signature/photo/OTP per phase rollout). Off by default —
+                existing customers keep behaving exactly as before. */}
+            <div className="sm:col-span-2">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  {...register('requireDeliveryVerification')}
+                />
+                <span>
+                  <span className="text-sm font-medium text-surface-900 dark:text-white">
+                    Require delivery verification
+                  </span>
+                  <span className="block mt-0.5 text-xs text-surface-500 dark:text-surface-400">
+                    Driver must capture a signature, photo, or OTP before
+                    marking delivery complete. Recommended for B2B customers
+                    with statutory delivery-record needs.
+                  </span>
+                </span>
+              </label>
             </div>
           </div>
         </div>
