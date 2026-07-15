@@ -45,6 +45,12 @@ export interface ReportFilters {
   dateFrom?: string;
   dateTo?: string;
   customerId?: string;
+  // Feature A (2026-07-15): optional customer-id list for the HQ
+  // group portal — narrows outstandingAging to a set of customers
+  // (a CustomerGroup's members) instead of the full distributor.
+  // When both `customerId` and `customerIds` are provided, `customerId`
+  // wins (single-property drill-down from the group view).
+  customerIds?: string[];
   cylinderTypeId?: string;
   driverId?: string;
   vehicleId?: string;
@@ -184,6 +190,15 @@ export async function outstandingAging(distributorId: string, f: ReportFilters):
     invoiceWhere.issueDate = {};
     if (dateFrom) (invoiceWhere.issueDate as Prisma.DateTimeFilter).gte = dateFrom;
     if (dateTo) (invoiceWhere.issueDate as Prisma.DateTimeFilter).lte = dateTo;
+  }
+  // Feature A (2026-07-15): HQ group portal filter. A single customer
+  // narrow overrides the group list (single-property drill-down from
+  // the group aging view). When both are absent the report stays
+  // distributor-wide as before.
+  if (f?.customerId) {
+    invoiceWhere.customerId = f.customerId;
+  } else if (f?.customerIds && f.customerIds.length > 0) {
+    invoiceWhere.customerId = { in: f.customerIds };
   }
   const invoices = await prisma.invoice.findMany({
     where: invoiceWhere,

@@ -319,6 +319,13 @@ interface CustomerInvoiceInput extends HasId {
     billingState?: string | null;
     billingPincode?: string | null;
   } | null;
+  // Feature A (2026-07-15): distributor.gstin surfaced as `sellerGstin`
+  // for GSTR-2A/2B reconciliation — the identified customer-facing
+  // wire-shape gap flagged in docs/HQ-PORTAL-BRAINSTORM.md §3.
+  // Requires the caller's Prisma query to include
+  // `distributor: { select: { gstin: true } }`; absent when not
+  // selected (the mapper defaults to null).
+  distributor?: { gstin?: string | null } | null;
   order?: { status?: string | null } | null;
   paymentAllocations?: CustomerInvoiceAllocationRow[] | null;
   cgstValue?: unknown;
@@ -392,6 +399,10 @@ export function mapCustomerInvoiceDetail(
   const mapped = renameId(inv, 'invoiceId');
   mapped.customerName = inv.customer?.customerName ?? 'Customer';
   mapped.customerGstin = inv.customer?.gstin ?? null;
+  // Feature A (2026-07-15): fills the GSTR-2A/2B reconciliation gap
+  // for HQ-portal CA cross-matching. Null when the query didn't select
+  // distributor.gstin — old callers keep working unchanged.
+  mapped.sellerGstin = inv.distributor?.gstin ?? null;
   mapped.billingAddress = billingAddress;
   mapped.items = items;
   mapped.subtotal = subtotal;
