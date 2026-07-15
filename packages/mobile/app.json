@@ -22,6 +22,7 @@
       },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "We need your location for delivery tracking",
+        "NSCameraUsageDescription": "MyGasLink needs camera access to capture proof of delivery photos.",
         "ITSAppUsesNonExemptEncryption": false,
         "LSApplicationQueriesSchemes": [
           "mailto",
@@ -38,7 +39,8 @@
       "softwareKeyboardLayoutMode": "pan",
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA"
       ],
       "intentFilters": [
         {
@@ -75,7 +77,14 @@
       ],
       "@react-native-community/datetimepicker",
       "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "MyGasLink needs camera access to capture proof of delivery photos."
+        }
+      ],
       "./plugins/withResizeableActivity",
+      "./plugins/withoutRecordAudio",
       [
         "expo-navigation-bar",
         {
