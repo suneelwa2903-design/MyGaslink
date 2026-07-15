@@ -7,6 +7,11 @@ export enum UserRole {
   INVENTORY = 'inventory',
   DRIVER = 'driver',
   CUSTOMER = 'customer',
+  // Feature A (2026-07-15): HQ user for a CustomerGroup — read-only
+  // consolidated view across N B2B customer records under one
+  // distributor. Kept in lockstep with the Prisma enum
+  // (anti-pattern #9 discipline — wire-shape drift risk).
+  CUSTOMER_HQ = 'customer_hq',
 }
 
 export enum UserStatus {

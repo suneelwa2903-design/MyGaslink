@@ -18,6 +18,12 @@ enum UserRole {
   inventory
   driver
   customer
+  // Feature A (2026-07-15): HQ user for a customer group (e.g. hotel
+  // chain finance manager). Read-only across N customers in the same
+  // CustomerGroup. Web-only in v1; mobile shows a "please use web"
+  // fallback. Distinct role gate so we NEVER extend `requireRole('customer')`
+  // — that gate protects Razorpay money endpoints on customerPortal.ts.
+  customer_hq
 }
 
 enum UserStatus {
@@ -497,6 +503,9 @@ model Distributor {
   // Proof-of-collection Phase 1 (2026-07-15): per-order proof-of-delivery
   // artifacts. See DeliveryProof model.
   deliveryProofs       DeliveryProof[]
+  // Feature A (2026-07-15): HQ groups (e.g. hotel chains) that span
+  // multiple customer records under this distributor.
+  customerGroups       CustomerGroup[]
 
   @@map("distributors")
 }
@@ -513,6 +522,12 @@ model User {
   provisioningStatus    ProvisioningStatus @default(active) @map("provisioning_status")
   distributorId         String?            @map("distributor_id")
   customerId            String?            @map("customer_id")
+  // Feature A (2026-07-15): for role=customer_hq only. Points at the
+  // CustomerGroup this HQ login can read. Mutually-exclusive with
+  // customerId in practice — a customer_hq user has groupId set and
+  // customerId null; a customer user has customerId set and groupId
+  // null. Nullable at the schema level to keep the column additive.
+  groupId               String?            @map("group_id")
   requiresPasswordReset Boolean            @default(true) @map("requires_password_reset")
   refreshToken          String?            @map("refresh_token")
   lastLoginAt           DateTime?          @map("last_login_at")
@@ -527,6 +542,7 @@ model User {
   // Relations
   distributor           Distributor?       @relation(fields: [distributorId], references: [id])
   customer              Customer?          @relation(fields: [customerId], references: [id])
+  customerGroup         CustomerGroup?     @relation(fields: [groupId], references: [id])
   // Group B Part 3 — explicit Driver→User FK lives on the Driver side
   // (Driver.userId String? @unique). 1:0..1 — a driver can exist without
   // a login (orphan), and a user can exist without a driver record
@@ -647,11 +663,58 @@ model Customer {
   stockMismatchRecords StockMismatchRecord[]
   // WI-PENDING-PAYMENTS: self-reported payment claims awaiting verification.
   paymentSubmissions   PaymentSubmission[]
+  // Feature A (2026-07-15): rows linking this customer to any HQ
+  // CustomerGroup(s) it belongs to. Typically 0 or 1 memberships;
+  // schema allows multiple to keep the model flexible for future
+  // sub-group hierarchies.
+  groupMemberships     CustomerGroupMember[]
 
   @@index([distributorId, status])
   @@index([distributorId, customerName])
   @@index([gstin])
   @@map("customers")
+}
+
+// Feature A (2026-07-15): HQ customer group. A CustomerGroup is a
+// distributor-scoped bundle of related B2B customer records (e.g. the
+// three Kinara Grand hotels under one HQ). A customer_hq user is
+// pinned to exactly one group via User.groupId and reads consolidated
+// data across the group's members through /api/customer-group-portal.
+// Groups themselves never cross tenants — distributorId is the
+// tenant-isolation anchor.
+model CustomerGroup {
+  id            String    @id @default(uuid())
+  distributorId String    @map("distributor_id")
+  name          String
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  distributor Distributor           @relation(fields: [distributorId], references: [id])
+  members     CustomerGroupMember[]
+  users       User[]
+
+  @@index([distributorId])
+  @@map("customer_groups")
+}
+
+// Join table between CustomerGroup and Customer. Unique on
+// (groupId, customerId) prevents duplicate memberships. Deletion is
+// hard-delete (removing a customer from a group is not a statutory
+// record) — the row simply goes away when the office removes the
+// member from the group.
+model CustomerGroupMember {
+  id         String   @id @default(uuid())
+  groupId    String   @map("group_id")
+  customerId String   @map("customer_id")
+  addedAt    DateTime @default(now()) @map("added_at")
+
+  group    CustomerGroup @relation(fields: [groupId], references: [id])
+  customer Customer      @relation(fields: [customerId], references: [id])
+
+  @@unique([groupId, customerId])
+  @@index([customerId])
+  @@map("customer_group_members")
 }
 
 model CustomerContact {
