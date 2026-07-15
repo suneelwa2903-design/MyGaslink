@@ -826,6 +826,20 @@ async function drawProofSection(
     }
   }
 
+  // Photo reference (Phase 2, 2026-07-15) — metadata only, image NOT
+  // embedded. A 30-80KB JPEG per invoice would multiply the base PDF
+  // size several-fold; plan §5.2 Phase 2 decision was to ship a text
+  // reference (last 8 chars of s3Key) so a CA can locate the photo
+  // via the S3/CloudFront path if audit-review is ever needed. The
+  // customer keeps their delivery-receipt copy; the invoice PDF stays
+  // small enough to email cheaply.
+  if (proof.proofType === 'photo' && proof.s3Key) {
+    const shortRef = proof.s3Key.slice(-12).replace(/\.[a-z]+$/i, '');
+    doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica');
+    doc.text(`Photo reference: ${shortRef}`, boxX + pad, cy);
+    cy += 12;
+  }
+
   // Signing party phone
   if (proof.signingPartyPhone) {
     doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica');
