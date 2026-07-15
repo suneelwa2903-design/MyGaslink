@@ -32,6 +32,8 @@ export function DashboardLayout() {
   const location = useLocation();
 
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
+  const isHq = user?.role === UserRole.CUSTOMER_HQ;
+  const isCustomer = user?.role === UserRole.CUSTOMER;
 
   // Super admin always sees the distributor selector — they need to pick one for any data page
   // Hide only on purely platform-level pages (Distributors list, Provider Catalog, Health)
@@ -49,11 +51,14 @@ export function DashboardLayout() {
   // Fetch pending actions for notification bell — skip when super admin has
   // no distributor selected (server returns empty list, but we avoid the
   // round-trip and any per-tenant noise).
+  // Feature A (2026-07-15): customer_hq + customer roles have no
+  // access to the internal /pending-actions endpoint (staff-only) —
+  // skip the request outright so no 403 gets logged on every page.
   const { data: pendingActionsData } = useQuery({
     queryKey: ['pending-actions-notif', distributorId],
     queryFn: () => apiGet<{ actions: Array<{ actionId: string; description: string; severity: string; module: string; createdAt: string; actionType: string }> }>('/pending-actions', { status: 'open' }),
     refetchInterval: 60000, // refresh every minute
-    enabled: !!distributorId,
+    enabled: !!distributorId && !isHq && !isCustomer,
   });
 
   const pendingActions = pendingActionsData?.actions || [];
@@ -86,8 +91,14 @@ export function DashboardLayout() {
 
   function handleProfile() {
     setUserMenuOpen(false);
-    const isCustomer = user?.role === UserRole.CUSTOMER;
-    navigate(isCustomer ? '/app/customer/account' : '/app/profile');
+    const role = user?.role;
+    const target =
+      role === UserRole.CUSTOMER
+        ? '/app/customer/account'
+        : role === UserRole.CUSTOMER_HQ
+          ? '/hq/profile'
+          : '/app/profile';
+    navigate(target);
   }
 
   return (
@@ -139,14 +150,17 @@ export function DashboardLayout() {
 
           {/* Right: controls */}
           <div className="flex items-center gap-2">
-            {/* WI-080 FIX2: loud AI Demand Forecast shortcut → inventory Forecast tab */}
-            <button
-              onClick={() => navigate('/app/inventory?tab=forecast')}
-              className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-purple-600 to-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:from-purple-700 hover:to-blue-700 transition-colors"
-            >
-              <HiOutlineSparkles className="h-4 w-4" />
-              AI Demand Forecast
-            </button>
+            {/* WI-080 FIX2: loud AI Demand Forecast shortcut → inventory Forecast tab.
+                Hidden for customer + customer_hq roles — they don't have access. */}
+            {!isHq && !isCustomer && (
+              <button
+                onClick={() => navigate('/app/inventory?tab=forecast')}
+                className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-purple-600 to-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:from-purple-700 hover:to-blue-700 transition-colors"
+              >
+                <HiOutlineSparkles className="h-4 w-4" />
+                AI Demand Forecast
+              </button>
+            )}
             <ThemeToggle />
 
             {/* Notifications bell */}

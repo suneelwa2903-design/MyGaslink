@@ -165,6 +165,54 @@ const adminMenuItems: MenuItem[] = [
   },
 ];
 
+// Feature A (2026-07-15): HQ portal menu — customer_hq role only.
+// Base path is /hq (not /app/customer/*) because HQ is a distinct
+// area with a consolidated group view, not a single-customer portal.
+const hqMenuItems: MenuItem[] = [
+  {
+    label: 'Dashboard',
+    path: '/hq',
+    icon: HiOutlineHome,
+    roles: [UserRole.CUSTOMER_HQ],
+  },
+  {
+    label: 'Orders',
+    path: '/hq/orders',
+    icon: HiOutlineClipboardDocumentList,
+    roles: [UserRole.CUSTOMER_HQ],
+  },
+  {
+    label: 'Invoices',
+    path: '/hq/invoices',
+    icon: HiOutlineDocumentText,
+    roles: [UserRole.CUSTOMER_HQ],
+  },
+  {
+    label: 'Ledger',
+    path: '/hq/ledger',
+    icon: HiOutlineRectangleStack,
+    roles: [UserRole.CUSTOMER_HQ],
+  },
+  {
+    label: 'Payments',
+    path: '/hq/payments',
+    icon: HiOutlineBanknotes,
+    roles: [UserRole.CUSTOMER_HQ],
+  },
+  {
+    label: 'Aging',
+    path: '/hq/aging',
+    icon: HiOutlineChartBar,
+    roles: [UserRole.CUSTOMER_HQ],
+  },
+  {
+    label: 'Profile',
+    path: '/hq/profile',
+    icon: HiOutlineHeart,
+    roles: [UserRole.CUSTOMER_HQ],
+  },
+];
+
 const customerMenuItems: MenuItem[] = [
   {
     label: 'Dashboard',
@@ -216,8 +264,9 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
 
   const userRole = user?.role as UserRole | undefined;
   const isCustomer = userRole === UserRole.CUSTOMER;
+  const isHq = userRole === UserRole.CUSTOMER_HQ;
 
-  const menuItems = isCustomer ? customerMenuItems : adminMenuItems;
+  const menuItems = isHq ? hqMenuItems : isCustomer ? customerMenuItems : adminMenuItems;
 
   // WI-PENDING-PAYMENTS: red badge on the Billing & Payments nav item
   // when there are pending payment submissions to approve. Only the

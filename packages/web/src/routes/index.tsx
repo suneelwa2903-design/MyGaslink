@@ -47,6 +47,15 @@ const CustomerInvoicesPage = lazy(() => import('@/pages/customer/InvoicesPage'))
 const CustomerPaymentsPage = lazy(() => import('@/pages/customer/PaymentsPage'));
 const CustomerAccountPage = lazy(() => import('@/pages/customer/AccountPage'));
 
+// HQ portal pages (Feature A 2026-07-15) — customer_hq role only
+const HqDashboardPage = lazy(() => import('@/pages/hq/DashboardPage'));
+const HqOrdersPage = lazy(() => import('@/pages/hq/OrdersPage'));
+const HqInvoicesPage = lazy(() => import('@/pages/hq/InvoicesPage'));
+const HqLedgerPage = lazy(() => import('@/pages/hq/LedgerPage'));
+const HqPaymentsPage = lazy(() => import('@/pages/hq/PaymentsPage'));
+const HqAgingPage = lazy(() => import('@/pages/hq/AgingPage'));
+const HqProfilePage = lazy(() => import('@/pages/hq/ProfilePage'));
+
 // ─── Auth redirect wrapper ──────────────────────────────────────────────────
 
 function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
@@ -355,6 +364,27 @@ export function AppRoutes() {
             <Route path="payments" element={<CustomerPaymentsPage />} />
             <Route path="account" element={<CustomerAccountPage />} />
           </Route>
+        </Route>
+
+        {/* HQ portal — Feature A (2026-07-15). Separate route tree at
+            /hq (not /app/hq) so it's clearly a distinct portal, but
+            re-uses the DashboardLayout + Sidebar for design consistency.
+            The Sidebar renders hqMenuItems when role=customer_hq. */}
+        <Route
+          path="/hq"
+          element={
+            <ProtectedRoute allowedRoles={[UserRole.CUSTOMER_HQ]}>
+              <DashboardLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<HqDashboardPage />} />
+          <Route path="orders" element={<HqOrdersPage />} />
+          <Route path="invoices" element={<HqInvoicesPage />} />
+          <Route path="ledger" element={<HqLedgerPage />} />
+          <Route path="payments" element={<HqPaymentsPage />} />
+          <Route path="aging" element={<HqAgingPage />} />
+          <Route path="profile" element={<HqProfilePage />} />
         </Route>
 
         {/* 404 catch-all */}
