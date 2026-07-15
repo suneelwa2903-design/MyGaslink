@@ -526,4 +526,60 @@ describe('POST /api/orders/:id/confirm-delivery — idempotency', () => {
     await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
     await prisma.order.delete({ where: { id: order.id } });
   });
+
+  // Proof-of-collection Phase 1 (2026-07-15): confirmDelivery's
+  // idempotency comparison at orderService.ts:865-889 checks ONLY
+  // deliveredQuantity + emptiesCollected. Proof fields are handled by
+  // a separate /delivery-proof endpoint (plan §R1 mitigation), so a
+  // retry with same qty but extra proof fields in the body must still
+  // return 200 no-op — the proof echo is silently ignored here (the
+  // real write happens through the separate route).
+  it('retry with same qty + inline proof echo fields returns 200 no-op (proof not written from this route)', async () => {
+    const ct = await prisma.cylinderType.findFirstOrThrow({ where: { distributorId: dist1Id, isActive: true } });
+    const customer = await prisma.customer.findFirstOrThrow({ where: { distributorId: dist1Id, deletedAt: null } });
+    const driver = await prisma.driver.findFirstOrThrow({ where: { distributorId: dist1Id, deletedAt: null } });
+
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `IDEM-PROOF-${Date.now()}`,
+        distributorId: dist1Id,
+        customerId: customer.id,
+        driverId: driver.id,
+        orderDate: new Date(),
+        deliveryDate: new Date(),
+        status: 'pending_delivery',
+        totalAmount: 100,
+        items: { create: [{ cylinderTypeId: ct.id, quantity: 1, unitPrice: 100, discountPerUnit: 0, totalPrice: 100 }] },
+      },
+    });
+
+    const first = { items: [{ cylinderTypeId: ct.id, deliveredQuantity: 1, emptiesCollected: 0 }] };
+    const res1 = await request(app).post(`/api/orders/${order.id}/confirm-delivery`).set(auth(adminToken)).send(first);
+    expect(res1.status).toBe(200);
+
+    // Retry with same qty + advisory proof-echo fields. These pass the
+    // extended deliveryConfirmationSchema, get stripped-through by the
+    // service (only items/notes/lat/lng touch orders), and MUST NOT
+    // trigger a 409.
+    const retry = {
+      items: [{ cylinderTypeId: ct.id, deliveredQuantity: 1, emptiesCollected: 0 }],
+      proofType: 'signature',
+      proofS3Key: 'delivery-proofs/dist-001/x/signature-ignored.png',
+      proofSigningPartyPhone: '9876543210',
+    };
+    const res2 = await request(app).post(`/api/orders/${order.id}/confirm-delivery`).set(auth(adminToken)).send(retry);
+    expect(res2.status).toBe(200);
+
+    // Confirm no DeliveryProof row was written by this route — the
+    // primary write path is a distinct /delivery-proof POST.
+    const proofRows = await prisma.deliveryProof.findMany({ where: { orderId: order.id } });
+    expect(proofRows).toHaveLength(0);
+
+    // cleanup
+    await prisma.orderStatusLog.deleteMany({ where: { orderId: order.id } });
+    await prisma.inventoryEvent.deleteMany({ where: { referenceId: order.id } });
+    await prisma.invoice.deleteMany({ where: { orderId: order.id } });
+    await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
+    await prisma.order.delete({ where: { id: order.id } });
+  });
 });

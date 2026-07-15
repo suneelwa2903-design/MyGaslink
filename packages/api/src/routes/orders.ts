@@ -529,10 +529,20 @@ router.post('/:id/delivery-proof-upload-url',
   validate(deliveryProofUploadUrlSchema),
   async (req, res) => {
     try {
-      const driver = await prisma.driver.findFirst({
-        where: { userId: req.user!.userId },
-        select: { id: true },
+      // Resolve driver via phone-match (Driver.userId FK is nullable and
+      // not populated for seeded drivers) — mirrors resolveDriverFromUser
+      // in driversVehicles.ts. Copy-paste over inter-route import to
+      // keep the routes self-contained.
+      const usr = await prisma.user.findUnique({
+        where: { id: req.user!.userId },
+        select: { phone: true },
       });
+      const driver = usr?.phone
+        ? await prisma.driver.findFirst({
+            where: { distributorId: req.user!.distributorId!, phone: usr.phone, deletedAt: null },
+            select: { id: true },
+          })
+        : null;
       if (!driver) return sendNotFound(res, 'Driver profile not found for this user');
       const result = await deliveryProofService.getUploadUrl(
         req.user!.distributorId!,

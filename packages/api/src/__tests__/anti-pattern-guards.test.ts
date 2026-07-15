@@ -639,6 +639,105 @@ describe('Guard 6 — lookupGstin uses the caller\'s tenant credentials, not wha
   });
 });
 
+// ─── Proof-of-collection Phase 1 (2026-07-15) — 3 wire-shape guards ───
+// Every anti-pattern #9 addition to a wire type gets pinned here so a
+// future edit that quietly drops the field is caught in CI.
+
+describe('Guard 7 — deliveryConfirmationSchema optional proof fields (backward-compat)', () => {
+  it('old client without proof fields still passes validation', async () => {
+    const { deliveryConfirmationSchema } = await import('@gaslink/shared');
+    const result = deliveryConfirmationSchema.safeParse({
+      items: [{ cylinderTypeId: '00000000-0000-0000-0000-000000000001', deliveredQuantity: 1, emptiesCollected: 0 }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('new client with all four proof fields passes validation', async () => {
+    const { deliveryConfirmationSchema } = await import('@gaslink/shared');
+    const result = deliveryConfirmationSchema.safeParse({
+      items: [{ cylinderTypeId: '00000000-0000-0000-0000-000000000001', deliveredQuantity: 1, emptiesCollected: 0 }],
+      proofType: 'signature',
+      proofS3Key: 'delivery-proofs/dist-001/o1/signature-abc.png',
+      proofSigningPartyPhone: '9876543210',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects invalid proofType enum value', async () => {
+    const { deliveryConfirmationSchema } = await import('@gaslink/shared');
+    const result = deliveryConfirmationSchema.safeParse({
+      items: [{ cylinderTypeId: '00000000-0000-0000-0000-000000000001', deliveredQuantity: 1, emptiesCollected: 0 }],
+      proofType: 'thumbprint',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('Guard 8 — Customer response includes requireDeliveryVerification (wire-shape #9)', () => {
+  it('GET /customers/:id returns requireDeliveryVerification as boolean', async () => {
+    const seedCustomer = await prisma.customer.findFirstOrThrow({
+      where: { distributorId: 'dist-001', deletedAt: null },
+      select: { id: true },
+    });
+    const res = await request(app)
+      .get(`/api/customers/${seedCustomer.id}`)
+      .set(auth(dist1AdminToken));
+    expect(res.status).toBe(200);
+    expect(typeof res.body.data.requireDeliveryVerification).toBe('boolean');
+  });
+});
+
+describe('Guard 9 — GET /orders/:id/delivery-proof strips otpCode for non-driver callers', () => {
+  it('finance role reading a proof with a live otpCode sees otpCode: null', async () => {
+    // Direct DB seed of the proof — bypass the driver flow to focus this
+    // guard on the route's redaction, not on the write path. Create a
+    // minimal order + customer inline (seed has no dist-001 orders).
+    const customer = await prisma.customer.create({
+      data: {
+        distributorId: 'dist-001',
+        customerName: `GUARD-9-CUST-${Date.now()}`,
+        customerType: 'B2C',
+        phone: `9${Date.now()}`.slice(0, 10),
+      },
+    });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `ORD-GUARD9-${Date.now()}`,
+        distributorId: 'dist-001',
+        customerId: customer.id,
+        orderDate: new Date('2099-12-31'),
+        deliveryDate: new Date('2099-12-31'),
+        status: 'pending_delivery',
+        totalAmount: 100,
+      },
+    });
+    await prisma.deliveryProof.create({
+      data: {
+        orderId: order.id,
+        distributorId: 'dist-001',
+        proofType: 'otp',
+        otpCode: '987654',
+        otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        capturedAt: new Date(),
+        capturedBy: 'guard-9',
+      },
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/orders/${order.id}/delivery-proof`)
+        .set(auth(dist1FinanceToken));
+      expect(res.status).toBe(200);
+      // The row exists with a non-null otpCode in DB; the route MUST
+      // return null to a non-driver role.
+      expect(res.body.data.otpCode).toBeNull();
+    } finally {
+      await prisma.deliveryProof.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+      await prisma.customer.delete({ where: { id: customer.id } });
+    }
+  });
+});
+
 afterAll(async () => {
   // Belt-and-braces: drop any CNs from this file by reason text.
   await prisma.creditNote.deleteMany({
@@ -647,5 +746,10 @@ afterAll(async () => {
   // WI-058 cleanup: anything left from the tenant-isolation guards.
   await prisma.gstCredential.deleteMany({
     where: { clientId: { startsWith: 'WI058-' } },
+  });
+  // Proof-of-collection Guard 9 cleanup — belt-and-braces if the try/
+  // finally above ever short-circuits.
+  await prisma.deliveryProof.deleteMany({
+    where: { capturedBy: 'guard-9' },
   });
 });
