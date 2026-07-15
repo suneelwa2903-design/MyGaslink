@@ -12,6 +12,10 @@ export function generateToken(payload: {
   role: UserRole;
   distributorId: string | null;
   customerId?: string | null;
+  // Feature A (2026-07-15): populated only for role=customer_hq.
+  // Middleware `requireGroupAccess` reads this to resolve
+  // req.visibleCustomerIds. Nullable so non-HQ callers omit it.
+  groupId?: string | null;
 }): string {
   return jwt.sign(
     {
@@ -20,6 +24,7 @@ export function generateToken(payload: {
       role: payload.role,
       distributorId: payload.distributorId,
       customerId: payload.customerId ?? null,
+      groupId: payload.groupId ?? null,
     },
     config.jwt.accessSecret,
     { expiresIn: '1h' },
