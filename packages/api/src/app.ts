@@ -33,6 +33,7 @@ import billingRoutes from './routes/billing.js';
 import accountabilityRoutes from './routes/accountability.js';
 import customerPortalRoutes from './routes/customerPortal.js';
 import customerGroupsRoutes from './routes/customerGroups.js';
+import customerGroupPortalRoutes from './routes/customerGroupPortal.js';
 import deliveryWorkflowRouter from './routes/deliveryWorkflow.js';
 import assignmentsRouter from './routes/assignments.js';
 import providerCatalogRoutes from './routes/providerCatalog.js';
@@ -165,6 +166,12 @@ export function createApp() {
   app.use('/api/accountability', authenticate, resolveDistributor, requireDistributor, accountabilityRoutes);
   app.use('/api/billing', authenticate, resolveDistributor, billingRoutes);
   app.use('/api/customer-portal', authenticate, resolveDistributor, requireDistributor, customerPortalRoutes);
+  // Feature A (2026-07-15): customer_hq HQ portal. requireDistributor is
+  // enforced (customer_hq users always have a distributorId); the router
+  // itself layers requireRole('customer_hq') + requireGroupAccess so
+  // handlers can trust req.visibleCustomerIds. GET-only method guard
+  // inside the router is defence-in-depth against future accidental writes.
+  app.use('/api/customer-group-portal', authenticate, resolveDistributor, requireDistributor, customerGroupPortalRoutes);
   app.use('/api/delivery', authenticate, resolveDistributor, requireDistributor, deliveryWorkflowRouter);
   app.use('/api/assignments', authenticate, resolveDistributor, requireDistributor, assignmentsRouter);
   app.use('/api/provider-catalog', authenticate, providerCatalogRoutes);
