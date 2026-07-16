@@ -41,7 +41,7 @@ vi.mock('../services/gst/whitebooksClient.js', async (orig) => {
 
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { loginAsDistAdmin, loginAsFinance, loginAsInventory, generateToken } from './helpers.js';
+import { loginAsDistAdmin, loginAsFinance, loginAsInventory, loginAsSuperAdmin, generateToken } from './helpers.js';
 import { UserRole } from '@gaslink/shared';
 import type { Express } from 'express';
 
@@ -838,6 +838,70 @@ describe('Guard 11 — driver /orders response has customerHasPortalAccess boole
   });
 });
 
+// ─── Mini-Operator (2026-07-16) — wire-shape + role-escalation guards ────────
+//
+// Guard 10 pins the anti-pattern #9 shape decisions on the new mini-operator
+// resource routers so a future refactor can't silently drop or rename fields
+// without CI screaming.
+describe('Guard 10 — Mini-operator wire shapes + role escalation', () => {
+  it('distributor_admin cannot POST /api/source-distributors (403, not silent success)', async () => {
+    const res = await request(app)
+      .post('/api/source-distributors')
+      .set('Authorization', `Bearer ${dist1AdminToken}`)
+      .send({ name: 'ATTEMPT' });
+    expect(res.status).toBe(403);
+    // Row must not exist — belt-and-braces against a future accidental
+    // downgrade of the requireRole gate.
+    const leaked = await prisma.sourceDistributor.findFirst({
+      where: { name: 'ATTEMPT' },
+      select: { id: true },
+    });
+    expect(leaked).toBeNull();
+  });
+
+  it('distributor_admin cannot POST /api/purchase-entries (403)', async () => {
+    const res = await request(app)
+      .post('/api/purchase-entries')
+      .set('Authorization', `Bearer ${dist1AdminToken}`)
+      .send({
+        purchaseDate: '2099-12-31',
+        items: [{ cylinderTypeId: '00000000-0000-0000-0000-000000000000', fullsReceived: 1, emptiesGivenOut: 0 }],
+      });
+    expect(res.status).toBe(403);
+  });
+
+  it('finance cannot POST /api/purchase-entries (403)', async () => {
+    const res = await request(app)
+      .post('/api/purchase-entries')
+      .set('Authorization', `Bearer ${dist1FinanceToken}`)
+      .send({
+        purchaseDate: '2099-12-31',
+        items: [{ cylinderTypeId: '00000000-0000-0000-0000-000000000000', fullsReceived: 1, emptiesGivenOut: 0 }],
+      });
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /api/distributors response carries accountType (never undefined)', async () => {
+    // Uses the seeded super-admin so `authenticate` finds the user row.
+    // Fake JWTs w/ a made-up userId fail the DB lookup and return 401.
+    const { token } = await loginAsSuperAdmin();
+    const res = await request(app)
+      .get('/api/distributors')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    // Response shape: { distributors: Distributor[] } OR Distributor[] — accept
+    // either but assert every row has an accountType.
+    const rows: Array<Record<string, unknown>> = Array.isArray(res.body.data)
+      ? (res.body.data as Array<Record<string, unknown>>)
+      : ((res.body.data?.distributors as Array<Record<string, unknown>>) ?? []);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toHaveProperty('accountType');
+      expect(row.accountType).toMatch(/^(distributor|mini_operator)$/);
+    }
+  });
+});
+
 afterAll(async () => {
   // Belt-and-braces: drop any CNs from this file by reason text.
   await prisma.creditNote.deleteMany({
@@ -851,5 +915,9 @@ afterAll(async () => {
   // finally above ever short-circuits.
   await prisma.deliveryProof.deleteMany({
     where: { capturedBy: 'guard-9' },
+  });
+  // Guard 10 cleanup — any ATTEMPT rows that leaked past the 403 guard.
+  await prisma.sourceDistributor.deleteMany({
+    where: { name: 'ATTEMPT' },
   });
 });

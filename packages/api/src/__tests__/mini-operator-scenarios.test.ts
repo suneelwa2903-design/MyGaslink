@@ -496,4 +496,94 @@ describe('Mini-Operator — CP2 Scenarios', () => {
       expect(dist001?.accountType).toBe('distributor');
     });
   });
+
+  // ─── S8 — Purchase entry deletion + inventory event reversal ─────────────
+  // Pins the deletePurchaseEntry design: hard-delete of the derived
+  // InventoryEvent rows (referenceType='purchase_entry'), soft-delete of the
+  // PurchaseEntry, followed by a recomputeSummariesFromDate. A naive
+  // reversal-event approach would double-debit outgoingEmpties because the
+  // summary aggregator uses `Math.abs(event.emptiesChange)` — this test
+  // pins the correct behaviour so a future refactor can't regress.
+
+  describe('S8 — Purchase entry deletion reverses inventory movement', () => {
+    let sourceDistributorId: string;
+    let purchaseEntryId: string;
+
+    it('sets up a fresh purchase entry to delete', async () => {
+      const src = await request(app)
+        .post('/api/source-distributors')
+        .set(auth(fixture.adminToken))
+        .send({ name: 'S8-Source' });
+      expect(src.status).toBe(201);
+      sourceDistributorId = src.body.data.id;
+
+      const created = await request(app)
+        .post('/api/purchase-entries')
+        .set(auth(fixture.adminToken))
+        .send({
+          sourceDistributorId,
+          purchaseDate: TEST_DATE,
+          notes: 'S8 scenario — to be deleted',
+          items: [{
+            cylinderTypeId: fixture.cylinderTypeId,
+            fullsReceived: 5,
+            emptiesGivenOut: 3,
+          }],
+        });
+      expect(created.status).toBe(201);
+      purchaseEntryId = created.body.data.id;
+
+      // Sanity: the derived events exist.
+      const eventsBefore = await prisma.inventoryEvent.count({
+        where: {
+          distributorId: fixture.distributorId,
+          referenceId: purchaseEntryId,
+          referenceType: 'purchase_entry',
+        },
+      });
+      expect(eventsBefore).toBe(2); // incoming_fulls + outgoing_empties
+    });
+
+    it('DELETE /api/purchase-entries/:id hard-deletes derived events, soft-deletes the entry', async () => {
+      const res = await request(app)
+        .delete(`/api/purchase-entries/${purchaseEntryId}`)
+        .set(auth(fixture.adminToken));
+      expect(res.status).toBe(200);
+      expect(res.body.data).toMatchObject({ id: purchaseEntryId, deleted: true });
+
+      // Derived events must be GONE (hard-delete).
+      const eventsAfter = await prisma.inventoryEvent.count({
+        where: {
+          distributorId: fixture.distributorId,
+          referenceId: purchaseEntryId,
+          referenceType: 'purchase_entry',
+        },
+      });
+      expect(eventsAfter).toBe(0);
+
+      // PurchaseEntry itself is soft-deleted (deletedAt set), NOT hard-deleted —
+      // the audit trail keeps the header + items.
+      const row = await prisma.purchaseEntry.findUnique({
+        where: { id: purchaseEntryId },
+        select: { id: true, deletedAt: true },
+      });
+      expect(row?.deletedAt).not.toBeNull();
+    });
+
+    it('GET /api/purchase-entries excludes the soft-deleted row', async () => {
+      const res = await request(app)
+        .get('/api/purchase-entries')
+        .set(auth(fixture.adminToken));
+      expect(res.status).toBe(200);
+      const ids = (res.body.data.purchaseEntries as Array<{ id: string }>).map((e) => e.id);
+      expect(ids).not.toContain(purchaseEntryId);
+    });
+
+    it('GET /api/purchase-entries/:id on a soft-deleted id returns 404', async () => {
+      const res = await request(app)
+        .get(`/api/purchase-entries/${purchaseEntryId}`)
+        .set(auth(fixture.adminToken));
+      expect(res.status).toBe(404);
+    });
+  });
 });
