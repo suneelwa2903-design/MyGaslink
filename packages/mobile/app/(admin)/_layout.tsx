@@ -20,6 +20,9 @@ const TAB_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   fleet: 'car-sport-outline',
   collections: 'wallet-outline',
   more: 'menu-outline',
+  // Mini-Operator (2026-07-16): purchases screen — stock IN from source
+  // distributors. Only surfaced for accountType='mini_operator' tenants.
+  purchases: 'cart-outline',
 };
 
 const TAB_ICONS_FOCUSED: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -32,6 +35,7 @@ const TAB_ICONS_FOCUSED: Record<string, keyof typeof Ionicons.glyphMap> = {
   fleet: 'car-sport',
   collections: 'wallet',
   more: 'menu',
+  purchases: 'cart',
 };
 
 export default function AdminLayout() {
@@ -132,6 +136,26 @@ export default function AdminLayout() {
             />
           ),
         }}
+      />
+      {/* Mini-Operator (2026-07-16): Purchases tab is visible ONLY for
+          mini_operator_admin. For every other role (distributor_admin,
+          super_admin, etc.) the tab is hidden via the standard
+          `href: null + tabBarItemStyle:{display:'none'}` pattern used
+          elsewhere in this layout — the file itself still exists so
+          expo-router can route to it programmatically, but it never
+          appears in the tab bar. */}
+      <Tabs.Screen
+        name="purchases"
+        options={isMiniOperator ? {
+          title: 'Purchases',
+          tabBarIcon: ({ focused }) => (
+            <Ionicons
+              name={focused ? TAB_ICONS_FOCUSED.purchases : TAB_ICONS.purchases}
+              size={22}
+              color={focused ? activeColor : inactiveColor}
+            />
+          ),
+        } : { href: null, title: 'Purchases', tabBarItemStyle: { display: 'none' } }}
       />
       {/* STAGE-H: new — was a 3-tab quasi-modal (Revenue/Top Customers/Drivers)
           inside more.tsx. Now a real screen that hits every report at
