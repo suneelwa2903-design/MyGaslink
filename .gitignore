@@ -84,3 +84,9 @@ security-review.md
 
 # Local Claude Code worktrees (not part of the project)
 .claude/worktrees/
+
+# Dev-mode local S3 fallback — see packages/api/src/lib/s3.ts. Contains
+# real captured signature JSONs / photo JPGs from local driver-flow
+# testing (Sharma dist-002 dev DB). Contents are PII-adjacent and must
+# never enter git history.
+packages/api/uploads/

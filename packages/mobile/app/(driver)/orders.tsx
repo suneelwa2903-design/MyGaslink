@@ -5,6 +5,7 @@ import {
   ScrollView,
   RefreshControl,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   Alert,
   Modal,
   TextInput,
@@ -30,8 +31,7 @@ import {
 // Proof-of-collection Phase 1 (2026-07-15) — signature capture wiring.
 // Phase 2 (2026-07-15) adds PhotoCapture + NetInfo-driven online gating.
 import { captureDeliveryLocation } from '../../src/services/location';
-import { uploadToPresignedUrl } from '../../src/services/s3Upload';
-import { SignaturePad } from '../../src/components/SignaturePad';
+import { SignaturePadPanResponder } from '../../src/components/SignaturePadPanResponder';
 import { PhotoCapture } from '../../src/components/PhotoCapture';
 import NetInfo from '@react-native-community/netinfo';
 import { apiPost as apiPostRaw } from '../../src/lib/api';
@@ -73,8 +73,11 @@ export default function DriverOrdersScreen() {
   const [proofCaptured, setProofCaptured] = useState(false);
   const [proofS3Key, setProofS3Key] = useState<string | null>(null);
   const [signingPartyPhone, setSigningPartyPhone] = useState('');
-  const [signatureBase64, setSignatureBase64] = useState<string | null>(null);
-  const [proofUploading, setProofUploading] = useState(false);
+  // Path C (2026-07-16) obsoleted signatureBase64 + proofUploading — the
+  // new PanResponder pad uploads internally and hands back an s3Key.
+  // proofUploading is still written by the Photo path (handlePhotoCaptured)
+  // but never read, so we drop the reader with a comma-hole destructure.
+  const [, setProofUploading] = useState(false);
   const [proofError, setProofError] = useState<string | null>(null);
   const [proofLat, setProofLat] = useState<number | null>(null);
   const [proofLng, setProofLng] = useState<number | null>(null);
@@ -90,6 +93,8 @@ export default function DriverOrdersScreen() {
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpResending, setOtpResending] = useState(false);
   const [isOnline, setIsOnline] = useState<boolean>(true);
+  // Fix #4 (2026-07-16): signature fullscreen popout state.
+  const [sigModalOpen, setSigModalOpen] = useState(false);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((state) => {
       setIsOnline(!!state.isConnected);
@@ -119,7 +124,6 @@ export default function DriverOrdersScreen() {
       setProofCaptured(false);
       setProofS3Key(null);
       setSigningPartyPhone('');
-      setSignatureBase64(null);
       setProofUploading(false);
       setProofError(null);
       setProofLat(null);
@@ -129,6 +133,7 @@ export default function DriverOrdersScreen() {
       setOtpInput('');
       setOtpVerifying(false);
       setOtpResending(false);
+      setSigModalOpen(false);
     } else {
       const seed: Record<string, DeliveryItemEntry> = {};
       for (const item of selectedOrder.items ?? []) {
@@ -271,60 +276,6 @@ export default function DriverOrdersScreen() {
    * `delivered <= ordered`: short deliveries are legal (the service writes
    * a cancelled_stock_event for the difference, see orderService.ts).
    */
-  /**
-   * Proof-of-collection Phase 1 (2026-07-15): upload the captured
-   * signature to S3, capture GPS, then POST proof metadata to the
-   * server. Runs BEFORE confirm-delivery so proof-idempotency stays
-   * decoupled from delivery-idempotency (plan §R1). GPS failure returns
-   * null and is stored as null — proof is not blocked by GPS.
-   */
-  const handleUploadProof = async () => {
-    if (!selectedOrder || !signatureBase64) return;
-    if (!signingPartyPhone || signingPartyPhone.length < 10) {
-      setProofError('Phone number required (min 10 digits)');
-      return;
-    }
-    setProofUploading(true);
-    setProofError(null);
-    try {
-      // 1. Get presigned URL from server (validates driver + order + flag).
-      const { uploadUrl, s3Key } = await apiPost<{ uploadUrl: string; finalUrl: string; s3Key: string }>(
-        `/orders/${selectedOrder.orderId}/delivery-proof-upload-url`,
-        { proofType: 'signature' },
-      );
-
-      // 2. Convert bare base64 to a Blob for PUT.
-      const dataUri = `data:image/png;base64,${signatureBase64}`;
-      const response = await fetch(dataUri);
-      const blob = await response.blob();
-
-      // 3. Upload to S3.
-      await uploadToPresignedUrl(uploadUrl, blob, 'image/png');
-
-      // 4. Capture GPS (best-effort, never blocks).
-      const location = await captureDeliveryLocation();
-      setProofLat(location?.lat ?? null);
-      setProofLng(location?.lng ?? null);
-
-      // 5. POST proof metadata to server (upsert-by-orderId).
-      await apiPost(`/orders/${selectedOrder.orderId}/delivery-proof`, {
-        proofType: 'signature',
-        proofS3Key: s3Key,
-        proofSigningPartyPhone: signingPartyPhone,
-        capturedLat: location?.lat,
-        capturedLng: location?.lng,
-      });
-
-      setProofS3Key(s3Key);
-      setProofCaptured(true);
-      setCapturedProofType('signature');
-    } catch (err) {
-      setProofError(getErrorMessage(err) || 'Failed to upload proof. Please try again.');
-    } finally {
-      setProofUploading(false);
-    }
-  };
-
   /**
    * Phase 2 photo path — PhotoCapture handles the S3 upload internally;
    * this callback runs once the S3 PUT succeeds and we still need to
@@ -600,8 +551,20 @@ export default function DriverOrdersScreen() {
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
-          style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
+          style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}
         >
+          {/* Fix #3 (2026-07-16) — full-cover scrim above the sheet.
+              Absolute-fill + pointerEvents="auto" absorbs any tap that
+              would otherwise fall through to the underlying orders
+              list (Deliver/Cancel row buttons were tap-through-able
+              even though the modal was visually on top). Tapping the
+              scrim dismisses the sheet, matching iOS sheet conventions. */}
+          <TouchableWithoutFeedback onPress={() => { setSelectedOrder(null); setDeliveryNotes(''); }}>
+            <View
+              pointerEvents="auto"
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+            />
+          </TouchableWithoutFeedback>
           <View style={{
             backgroundColor: colors.cardBg,
             borderTopLeftRadius: 24,
@@ -749,7 +712,7 @@ export default function DriverOrdersScreen() {
                 {/* Tab bar: [Signature] [Photo] [OTP] — offline disables Photo. */}
                 <View style={{ flexDirection: 'row', borderRadius: 8, borderWidth: 1, borderColor: colors.inputBorder, overflow: 'hidden' }}>
                   <TouchableOpacity
-                    onPress={() => setActiveProofTab('signature')}
+                    onPress={() => { setProofError(null); setActiveProofTab('signature'); }}
                     style={{
                       flex: 1,
                       paddingVertical: 10,
@@ -762,7 +725,7 @@ export default function DriverOrdersScreen() {
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => isOnline && setActiveProofTab('photo')}
+                    onPress={() => { if (isOnline) { setProofError(null); setActiveProofTab('photo'); } }}
                     disabled={!isOnline}
                     style={{
                       flex: 1,
@@ -777,7 +740,7 @@ export default function DriverOrdersScreen() {
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => setActiveProofTab('otp')}
+                    onPress={() => { setProofError(null); setActiveProofTab('otp'); }}
                     style={{
                       flex: 1,
                       paddingVertical: 10,
@@ -799,32 +762,41 @@ export default function DriverOrdersScreen() {
                 )}
 
                 {activeProofTab === 'signature' && (
-                  <>
-                    <SignaturePad
-                      onCapture={(base64) => {
-                        setSignatureBase64(base64);
-                        setProofError(null);
-                      }}
-                      onClear={() => {
-                        setSignatureBase64(null);
-                        setProofS3Key(null);
-                        setProofCaptured(false);
-                        setCapturedProofType(null);
-                        setProofError(null);
-                      }}
-                      signingPartyPhone={signingPartyPhone}
-                      onPhoneChange={setSigningPartyPhone}
-                      phoneError={proofError && proofError.toLowerCase().includes('phone') ? proofError : undefined}
-                    />
-                    {signatureBase64 && signingPartyPhone.length >= 10 && !proofCaptured && (
-                      <Button
-                        title={proofUploading ? 'Uploading…' : 'Upload signature'}
-                        variant="accent"
-                        onPress={handleUploadProof}
-                        loading={proofUploading}
-                      />
+                  <View style={{ gap: 12 }}>
+                    {/* Path C (2026-07-16) — the fullscreen PanResponder pad
+                        handles capture AND upload internally, so the parent
+                        just gets a ready-to-use s3Key back. When captured,
+                        the shared "✓ Signature captured — ready to confirm
+                        delivery" line below the tab bar is the sole
+                        confirmation UI. */}
+                    {!proofCaptured && (
+                      <TouchableOpacity
+                        onPress={() => { setProofError(null); setSigModalOpen(true); }}
+                        style={{
+                          paddingVertical: 32,
+                          borderWidth: 2,
+                          borderStyle: 'dashed',
+                          borderColor: colors.inputBorder,
+                          borderRadius: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: colors.inputBg,
+                          gap: 6,
+                        }}
+                      >
+                        <Text style={{ fontSize: 28 }}>✍️</Text>
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>
+                          Tap to Sign
+                        </Text>
+                        <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                          Opens a fullscreen signing pad
+                        </Text>
+                      </TouchableOpacity>
                     )}
-                  </>
+                    {proofError && proofError.toLowerCase().includes('phone') && (
+                      <Text style={{ fontSize: 12, color: '#dc2626' }}>{proofError}</Text>
+                    )}
+                  </View>
                 )}
 
                 {activeProofTab === 'photo' && isOnline && !proofCaptured && (
@@ -980,6 +952,48 @@ export default function DriverOrdersScreen() {
         </KeyboardAvoidingView>
         </SafeAreaProvider>
       </Modal>
+
+      {/* Path C (2026-07-16) — pure-RN PanResponder signature pad.
+          Replaces the WebView-based SignaturePadModal that produced
+          dots-only on Android. Uploads the point-list JSON internally
+          via /orders/:id/delivery-proof/signature-vector and hands back
+          the s3Key + phone via onConfirm; the parent then upserts the
+          proof row with proofType='signature'. */}
+      {selectedOrder && (
+        <SignaturePadPanResponder
+          visible={sigModalOpen}
+          orderId={selectedOrder.orderId}
+          onClose={() => setSigModalOpen(false)}
+          initialPhone={signingPartyPhone}
+          onConfirm={async (s3Key, phone) => {
+            setSigModalOpen(false);
+            setProofError(null);
+            setSigningPartyPhone(phone);
+            setProofS3Key(s3Key);
+            try {
+              const location = await captureDeliveryLocation();
+              const capturedLat = location?.lat ?? undefined;
+              const capturedLng = location?.lng ?? undefined;
+              await apiPost(`/orders/${selectedOrder.orderId}/delivery-proof`, {
+                proofType: 'signature',
+                proofS3Key: s3Key,
+                proofSigningPartyPhone: phone,
+                capturedLat,
+                capturedLng,
+              });
+              if (capturedLat != null) setProofLat(capturedLat);
+              if (capturedLng != null) setProofLng(capturedLng);
+              setProofCaptured(true);
+              setCapturedProofType('signature');
+            } catch (err) {
+              setProofError(getErrorMessage(err) || 'Failed to record signature. Please try again.');
+              setProofCaptured(false);
+              setCapturedProofType(null);
+              setProofS3Key(null);
+            }
+          }}
+        />
+      )}
 
       {/* FLOAT-001 (2026-06-17): walk-in order FAB + modal */}
       <TouchableOpacity

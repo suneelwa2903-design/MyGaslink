@@ -25,6 +25,8 @@ vi.mock('../lib/s3.js', () => ({
   })),
   deleteDeliveryProofObject: vi.fn(async () => undefined),
   validateProofUploadKey: () => true,
+  isS3ConfiguredForUploads: () => false,
+  LOCAL_UPLOADS_ROOT: '/tmp/mock-uploads',
 }));
 
 import { createApp } from '../app.js';

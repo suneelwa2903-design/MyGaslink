@@ -523,6 +523,15 @@ const deliveryProofUpsertSchema = z.object({
   capturedLng: z.number().optional(),
 });
 
+// Path C (2026-07-16) — signature-vector submission body.
+const signatureVectorSchema = z.object({
+  points: z.array(
+    z.array(z.tuple([z.number(), z.number()])).min(1).max(400),
+  ).min(1).max(40),
+  w: z.number().positive().max(4096),
+  h: z.number().positive().max(4096),
+});
+
 // POST /api/orders/:id/delivery-proof-upload-url
 router.post('/:id/delivery-proof-upload-url',
   requireRole('driver'),
@@ -549,6 +558,43 @@ router.post('/:id/delivery-proof-upload-url',
         param(req.params.id),
         req.body.proofType,
         driver.id,
+        req.get('host') || undefined,
+      );
+      return sendSuccess(res, result);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// POST /api/orders/:id/delivery-proof/signature-vector
+// Path C (2026-07-16): server-side rasterization pipeline. Client sends
+// a JSON point list captured via RN PanResponder; server persists as a
+// .json file and returns the s3Key. Client then upserts the proof row
+// via the existing /delivery-proof route with proofType='signature'.
+router.post('/:id/delivery-proof/signature-vector',
+  requireRole('driver'),
+  validate(signatureVectorSchema),
+  async (req, res) => {
+    try {
+      const usr = await prisma.user.findUnique({
+        where: { id: req.user!.userId },
+        select: { phone: true },
+      });
+      const driver = usr?.phone
+        ? await prisma.driver.findFirst({
+            where: { distributorId: req.user!.distributorId!, phone: usr.phone, deletedAt: null },
+            select: { id: true },
+          })
+        : null;
+      if (!driver) return sendNotFound(res, 'Driver profile not found for this user');
+      const result = await deliveryProofService.submitSignatureVector(
+        req.user!.distributorId!,
+        param(req.params.id),
+        driver.id,
+        { points: req.body.points, w: req.body.w, h: req.body.h },
+        req.get('host') || undefined,
       );
       return sendSuccess(res, result);
     } catch (err: unknown) {

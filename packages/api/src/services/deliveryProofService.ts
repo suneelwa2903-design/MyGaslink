@@ -20,6 +20,7 @@ import type { DeliveryProof } from '@prisma/client';
 import { logger } from '../utils/logger.js';
 import {
   generateDeliveryProofUploadUrl,
+  saveSignatureVectorJson,
   deleteDeliveryProofObject,
   validateProofUploadKey,
   type PresignedUploadUrl,
@@ -49,6 +50,7 @@ export async function getUploadUrl(
   orderId: string,
   proofType: DeliveryProofUploadType,
   requestingDriverId: string,
+  hostHint?: string,
 ): Promise<PresignedUploadUrl> {
   const order = await prisma.order.findFirst({
     where: { id: orderId, distributorId, deletedAt: null },
@@ -77,7 +79,58 @@ export async function getUploadUrl(
       400,
     );
   }
-  return generateDeliveryProofUploadUrl(distributorId, orderId, proofType);
+  return generateDeliveryProofUploadUrl(distributorId, orderId, proofType, hostHint);
+}
+
+/**
+ * Path C (2026-07-16) — persist a signature captured as a stroke-point
+ * list rather than a PNG. Same auth gates as getUploadUrl above. Writes
+ * the JSON to the delivery-proofs namespace and returns the s3Key so the
+ * caller can then POST to /delivery-proof to upsert the proof row.
+ */
+export async function submitSignatureVector(
+  distributorId: string,
+  orderId: string,
+  requestingDriverId: string,
+  payload: { points: Array<Array<[number, number]>>; w: number; h: number },
+  hostHint?: string,
+): Promise<PresignedUploadUrl> {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, distributorId, deletedAt: null },
+    select: {
+      id: true,
+      status: true,
+      driverId: true,
+      customer: { select: { requireDeliveryVerification: true } },
+    },
+  });
+  if (!order) throw new DeliveryProofError('Order not found', 404);
+  if (order.driverId !== requestingDriverId) {
+    throw new DeliveryProofError('You are not the driver assigned to this order', 403);
+  }
+  if (order.status !== 'pending_delivery') {
+    throw new DeliveryProofError(
+      `Order status is ${order.status} — signature only allowed while pending_delivery`,
+      400,
+    );
+  }
+  if (!order.customer?.requireDeliveryVerification) {
+    throw new DeliveryProofError('This customer does not require delivery verification', 400);
+  }
+  // Bound the payload — a legitimate signature is at most ~10 strokes with
+  // ~200 points each. Reject anything larger to keep a single request
+  // from filling the uploads dir.
+  if (!Array.isArray(payload.points) || payload.points.length === 0 || payload.points.length > 40) {
+    throw new DeliveryProofError('Invalid signature payload: point group count out of range', 400);
+  }
+  const totalPoints = payload.points.reduce((n, g) => n + (Array.isArray(g) ? g.length : 0), 0);
+  if (totalPoints === 0 || totalPoints > 8000) {
+    throw new DeliveryProofError('Invalid signature payload: total point count out of range', 400);
+  }
+  if (!(payload.w > 0 && payload.h > 0)) {
+    throw new DeliveryProofError('Invalid signature payload: non-positive canvas dimensions', 400);
+  }
+  return saveSignatureVectorJson(distributorId, orderId, JSON.stringify(payload), hostHint);
 }
 
 export interface UpsertProofInput {

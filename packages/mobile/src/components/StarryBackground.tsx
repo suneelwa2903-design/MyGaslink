@@ -51,12 +51,12 @@ function AnimatedStar({ star, dark }: { star: Star; dark: boolean }) {
         Animated.timing(opacity, {
           toValue: minOpacity,
           duration: twinkleDuration,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(opacity, {
           toValue: star.baseOpacity,
           duration: twinkleDuration * 0.8,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ]),
     );
@@ -70,12 +70,12 @@ function AnimatedStar({ star, dark }: { star: Star; dark: boolean }) {
         Animated.timing(translateX, {
           toValue: (Math.random() - 0.5) * driftRange * 2,
           duration: driftDuration,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(translateX, {
           toValue: 0,
           duration: driftDuration,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ]),
     );
@@ -85,12 +85,12 @@ function AnimatedStar({ star, dark }: { star: Star; dark: boolean }) {
         Animated.timing(translateY, {
           toValue: (Math.random() - 0.5) * driftRange * 2,
           duration: driftDuration * 1.3,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(translateY, {
           toValue: 0,
           duration: driftDuration * 1.3,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ]),
     );

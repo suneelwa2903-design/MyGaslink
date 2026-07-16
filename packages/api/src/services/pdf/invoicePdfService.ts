@@ -8,12 +8,47 @@
 
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
+import { promises as fs } from 'fs';
+import path from 'path';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../config/index.js';
+import { isS3ConfiguredForUploads, LOCAL_UPLOADS_ROOT } from '../../lib/s3.js';
 import {
   formatMoney, formatDate, formatIrnForDisplay, numberToWords,
   round2, drawBox, drawTableHeader, drawTextBlock,
 } from './pdfLayoutUtils.js';
+
+/**
+ * Resolve a delivery-proof s3Key to a Buffer of its bytes.
+ *
+ * Prod: fetch from CloudFront (config.aws.cloudFrontUrl). Dev fallback:
+ * read the file directly from LOCAL_UPLOADS_ROOT so photos and
+ * signatures captured against the /api/dev-uploads endpoint show up in
+ * the PDF without needing a real S3 bucket.
+ *
+ * Silent-returns null on any error — callers already handle the null
+ * branch by falling back to text-only layout.
+ */
+async function readProofBytes(s3Key: string): Promise<Buffer | null> {
+  try {
+    if (isS3ConfiguredForUploads()) {
+      const cdnRoot = config.aws.cloudFrontUrl.replace(/\/+$/, '');
+      const imageUrl = `${cdnRoot}/${s3Key}`;
+      const response = await fetch(imageUrl);
+      if (!response.ok) return null;
+      return Buffer.from(await response.arrayBuffer());
+    }
+    // Dev fallback — read from the local uploads dir.
+    const safeKey = path.posix.normalize(s3Key);
+    if (safeKey.startsWith('..') || safeKey.includes('/../') || safeKey.startsWith('/')) {
+      return null;
+    }
+    const absPath = path.join(LOCAL_UPLOADS_ROOT, safeKey);
+    return await fs.readFile(absPath);
+  } catch {
+    return null;
+  }
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -782,13 +817,38 @@ async function drawProofSection(
   const boxTop = startY;
   let cy = boxTop + pad;
 
+  // 2026-07-16 (FIX 1) — for photo proofs, embed the actual JPEG at
+  // 2.5cm × 2.5cm (71pt × 71pt) on the LEFT side of the box; all text
+  // (header + timestamp/GPS + maps link + signing-party) then flows to
+  // the RIGHT of the image. When the fetch fails (dev-mode local S3,
+  // missing file, network drop) the branch silent-fails and text takes
+  // the full width as before — never emit a "Photo reference: …" line
+  // or any s3Key exposure to the customer.
+  const PHOTO_SIDE = 71;
+  const PHOTO_GAP = 8;
+  let photoEmbedded = false;
+  const photoLeftX = boxX + pad;
+  if (proof.proofType === 'photo' && proof.s3Key) {
+    const buffer = await readProofBytes(proof.s3Key);
+    if (buffer) {
+      try {
+        doc.image(buffer, photoLeftX, cy, { fit: [PHOTO_SIDE, PHOTO_SIDE] });
+        photoEmbedded = true;
+      } catch {
+        // Silent fail — text-only layout kicks in below.
+      }
+    }
+  }
+  const textLeftX = photoEmbedded ? photoLeftX + PHOTO_SIDE + PHOTO_GAP : boxX + pad;
+  const textWidth = contentWidth - (textLeftX - boxX) - pad;
+
   // Header row
   doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Bold');
-  doc.text('DELIVERY VERIFIED', boxX + pad, cy);
+  doc.text('DELIVERY VERIFIED', textLeftX, cy);
   doc.font('Helvetica').fillColor(T.MUTED);
   doc.text(`via ${proof.proofType.toUpperCase()}`,
-    boxX + pad, cy,
-    { width: contentWidth - pad * 2, align: 'right' });
+    textLeftX, cy,
+    { width: textWidth, align: 'right' });
   cy += 14;
 
   // Timestamp + GPS
@@ -801,49 +861,99 @@ async function drawProofSection(
       ? `${proof.capturedLat.toFixed(5)}, ${proof.capturedLng.toFixed(5)}`
       : 'GPS not available';
   doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica');
-  doc.text(`${iso}  |  GPS: ${gps}`, boxX + pad, cy);
+  doc.text(`${iso}  |  GPS: ${gps}`, textLeftX, cy, { width: textWidth });
   cy += 12;
 
-  // Signature image (Phase 1)
+  // 2026-07-16: clickable Google Maps link when GPS is available. PDFKit
+  // draws the text and the passed `link` option turns it into a clickable
+  // annotation. Colour + underline are the visual cue — pdfkit doesn't
+  // style link text automatically. Only rendered when both coords are
+  // present; otherwise the "GPS not available" line above is the ceiling.
+  if (proof.capturedLat != null && proof.capturedLng != null) {
+    const mapsUrl = `https://www.google.com/maps?q=${proof.capturedLat},${proof.capturedLng}`;
+    doc.fontSize(F.CAPTION).fillColor('#1a56db').font('Helvetica');
+    // 2026-07-16 fix: the trailing ↗ (U+2197) is not in WinAnsi, so
+    // PDFKit's built-in Helvetica renders its 3 UTF-8 bytes as a stray
+    // "â†—" sequence (dagger + em-dash). Blue + underline already reads
+    // as a link — no arrow needed. If a glyph is ever wanted here,
+    // register a Unicode TTF (e.g. DejaVu) via doc.registerFont first.
+    doc.text('Verify delivery location', textLeftX, cy, {
+      link: mapsUrl,
+      underline: true,
+      width: textWidth,
+    });
+    // Reset link + underline for subsequent lines drawn in this section.
+    doc.fillColor(T.TEXT);
+    cy += 12;
+  }
+
+  // Signature (Phase 1 = PNG; Path C 2026-07-16 = vector JSON) — draws
+  // a full-width strip below the header block. Two storage formats:
+  //   *.png  → doc.image() the raster
+  //   *.json → parse {points, w, h}, replay strokes via PDFKit's path
+  //            API (moveTo/lineTo/stroke) so the signature stays
+  //            vector-crisp at any PDF zoom.
   if (proof.proofType === 'signature' && proof.s3Key) {
-    try {
-      const cdnRoot = config.aws.cloudFrontUrl.replace(/\/+$/, '');
-      const imageUrl = `${cdnRoot}/${proof.s3Key}`;
-      const response = await fetch(imageUrl);
-      if (response.ok) {
-        const buffer = Buffer.from(await response.arrayBuffer());
-        doc.image(buffer, boxX + pad, cy, { fit: [120, 60] });
-        cy += 65;
-      } else {
-        doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
-        doc.text('Signature captured — image unavailable', boxX + pad, cy);
-        cy += 12;
+    const isVector = proof.s3Key.endsWith('.json');
+    const buffer = await readProofBytes(proof.s3Key);
+    let drewSignature = false;
+    if (buffer) {
+      try {
+        if (isVector) {
+          const parsed = JSON.parse(buffer.toString('utf8')) as {
+            points: Array<Array<[number, number]>>;
+            w: number;
+            h: number;
+          };
+          if (parsed.points?.length && parsed.w > 0 && parsed.h > 0) {
+            const targetW = 120;
+            const targetH = 60;
+            const scale = Math.min(targetW / parsed.w, targetH / parsed.h);
+            const drawH = parsed.h * scale;
+            const originX = boxX + pad;
+            const originY = cy;
+            doc.save();
+            doc.lineWidth(1.2).strokeColor('#111827').lineCap('round').lineJoin('round');
+            for (const stroke of parsed.points) {
+              if (!Array.isArray(stroke) || stroke.length === 0) continue;
+              if (stroke.length === 1) {
+                const [x, y] = stroke[0];
+                doc.circle(originX + x * scale, originY + y * scale, 0.9).fill('#111827');
+                continue;
+              }
+              const [x0, y0] = stroke[0];
+              doc.moveTo(originX + x0 * scale, originY + y0 * scale);
+              for (let i = 1; i < stroke.length; i++) {
+                const [xi, yi] = stroke[i];
+                doc.lineTo(originX + xi * scale, originY + yi * scale);
+              }
+              doc.stroke();
+            }
+            doc.restore();
+            cy += Math.max(drawH, 40) + 5;
+            drewSignature = true;
+          }
+        } else {
+          doc.image(buffer, boxX + pad, cy, { fit: [120, 60] });
+          cy += 65;
+          drewSignature = true;
+        }
+      } catch {
+        // Fall through to the fallback text below.
       }
-    } catch {
+    }
+    if (!drewSignature) {
       doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
       doc.text('Signature captured — image unavailable', boxX + pad, cy);
       cy += 12;
     }
   }
 
-  // Photo reference (Phase 2, 2026-07-15) — metadata only, image NOT
-  // embedded. A 30-80KB JPEG per invoice would multiply the base PDF
-  // size several-fold; plan §5.2 Phase 2 decision was to ship a text
-  // reference (last 8 chars of s3Key) so a CA can locate the photo
-  // via the S3/CloudFront path if audit-review is ever needed. The
-  // customer keeps their delivery-receipt copy; the invoice PDF stays
-  // small enough to email cheaply.
-  if (proof.proofType === 'photo' && proof.s3Key) {
-    const shortRef = proof.s3Key.slice(-12).replace(/\.[a-z]+$/i, '');
-    doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica');
-    doc.text(`Photo reference: ${shortRef}`, boxX + pad, cy);
-    cy += 12;
-  }
-
-  // Signing party phone
+  // Signing party phone — sits to the right of the photo when a photo
+  // was embedded (textLeftX shifted); otherwise normal left margin.
   if (proof.signingPartyPhone) {
     doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica');
-    doc.text(`Signed by: ${proof.signingPartyPhone}`, boxX + pad, cy);
+    doc.text(`Signed by: ${proof.signingPartyPhone}`, textLeftX, cy, { width: textWidth });
     cy += 12;
   }
 
@@ -851,8 +961,17 @@ async function drawProofSection(
   // on the PDF, only the fact that verification happened).
   if (proof.proofType === 'otp' && proof.otpVerifiedAt) {
     doc.fontSize(F.CAPTION).fillColor(T.TEXT).font('Helvetica-Bold');
-    doc.text('OTP Verified', boxX + pad, cy);
+    doc.text('OTP Verified', textLeftX, cy, { width: textWidth });
     cy += 12;
+  }
+
+  // 2026-07-16 (FIX 1): if the photo thumbnail was embedded but the
+  // right-side text ended above the photo's bottom edge, extend cy so
+  // the surrounding box wraps the full image height (avoids a squashed
+  // box that clips the photo).
+  if (photoEmbedded) {
+    const photoBottom = boxTop + pad + PHOTO_SIDE;
+    if (cy < photoBottom) cy = photoBottom;
   }
 
   // Bordered box around the whole section — mirrors drawComplianceSection.

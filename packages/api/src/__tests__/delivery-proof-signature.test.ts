@@ -27,6 +27,8 @@ vi.mock('../lib/s3.js', () => ({
   deleteDeliveryProofObject: vi.fn(async () => undefined),
   validateProofUploadKey: (s3Key: string, distributorId: string) =>
     s3Key.startsWith(`delivery-proofs/${distributorId}/`),
+  isS3ConfiguredForUploads: () => false,
+  LOCAL_UPLOADS_ROOT: '/tmp/mock-uploads',
 }));
 
 import { createApp } from '../app.js';
@@ -531,11 +533,18 @@ describe('Photo proof', () => {
     }
   });
 
-  it('PDF drawProofSection renders photo metadata, no fetch attempt', async () => {
+  it('PDF drawProofSection renders photo header, no reference line, no CDN fetch in dev', async () => {
     // Build a delivered order with a photo proof, then generate its
     // invoice PDF and verify the extracted text contains the photo
-    // metadata but NO image stream (PDF stays small when we don't
-    // embed the JPEG — plan §5.2 Phase 2 decision).
+    // header text but NOT the obsolete "Photo reference:" line.
+    // 2026-07-16 (FIX 1) — drawProofSection now embeds the photo as
+    // a 71×71pt image when readProofBytes returns bytes. In this test
+    // the mocked s3.js reports isS3ConfiguredForUploads=false, so the
+    // fetch code path is NOT reached (dev-mode reads the local uploads
+    // dir instead — and that file doesn't exist here, so photoEmbedded
+    // stays false and the layout gracefully falls back to text-only).
+    // The dropped "Photo reference:" line is asserted negatively so a
+    // future regression re-adding it fails loudly.
     const { token, driver, distributorId } = await loginAsDriver();
     const { orderId, cleanup, customerId } = await seedPendingDeliveryForDriver(distributorId, driver!.id, true);
     try {
@@ -585,18 +594,16 @@ describe('Photo proof', () => {
           return typeof url === 'string' && url.includes('photo-testrefabcd');
         });
         expect(called).toBe(false);
-        // Assert text: "DELIVERY VERIFIED", "via PHOTO", "Photo reference: testrefabcd"
+        // Assert text: DELIVERY VERIFIED + via PHOTO present; the old
+        // "Photo reference: …" line MUST NOT appear (FIX 1 removed it
+        // in favour of an embedded thumbnail — see the it() comment).
         const { PDFParse } = await import('pdf-parse');
         const parser = new PDFParse({ data: pdf });
         try {
           const { text } = await parser.getText();
           expect(text).toMatch(/DELIVERY VERIFIED/);
           expect(text).toMatch(/via PHOTO/);
-          // Photo reference line renders the last 12 chars of the
-          // s3Key (minus extension) — assert the label appears; the
-          // ref itself is a suffix of our s3Key filename so verify
-          // one of the marker chars survives the slice.
-          expect(text).toMatch(/Photo reference:/);
+          expect(text).not.toMatch(/Photo reference:/);
         } finally {
           await parser.destroy();
         }

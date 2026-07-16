@@ -46,6 +46,8 @@ import razorpayWebhookRoutes from './routes/razorpayWebhook.js';
 import razorpayCustomerWebhookRoutes from './routes/razorpayCustomerWebhook.js';
 import tallySettingsRoutes from './routes/tallySettings.js';
 import manifestsRoutes from './routes/manifests.js';
+import devUploadsRoutes from './routes/devUploads.js';
+import { LOCAL_UPLOADS_ROOT, isS3ConfiguredForUploads } from './lib/s3.js';
 
 export function createApp() {
   const app = express();
@@ -187,6 +189,19 @@ export function createApp() {
   // inside the router itself provides belt-and-suspenders protection.
   if (process.env.NODE_ENV !== 'production') {
     app.use('/test', testHelpersRouter);
+  }
+
+  // ─── Dev-mode local-file upload fallback (2026-07-16) ─────────────────────
+  // When AWS_S3_BUCKET is empty the S3 lib hands out URLs pointing here.
+  // Never mounted in production — even a stray request would fail the
+  // isS3ConfiguredForUploads() gate anyway. Static /uploads serves the
+  // written files back so the persisted finalUrl is fetchable.
+  if (process.env.NODE_ENV !== 'production' && !isS3ConfiguredForUploads()) {
+    app.use('/api/dev-uploads', devUploadsRoutes);
+    app.use('/uploads', express.static(LOCAL_UPLOADS_ROOT));
+    logger.info('Dev-mode local-file upload fallback active', {
+      root: LOCAL_UPLOADS_ROOT,
+    });
   }
 
   // ─── API Documentation (super_admin only) ─────────────────────────────────
