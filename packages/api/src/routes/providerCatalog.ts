@@ -205,10 +205,21 @@ router.post('/import',
 
       if (catalogItems.length === 0) return sendError(res, 'No valid catalog items found', 400);
 
-      // Mini-Operator (2026-07-16) fix — dedupe by `providerCatalogId`
-      // (unique per catalog row). The previous key `${typeName}-${capacity}`
-      // meant HPCL 5KG and IOCL 5KG collided and the second import silently
-      // failed with "All selected cylinder types already exist".
+      // Mini-Operator (2026-07-16) — read accountType so mini-op imports
+      // ALWAYS include the provider prefix (their whole workflow spans
+      // multiple corporations; ambiguous "5 KG" in the picker is a bug).
+      // Regular distributors keep the plain shortName unless there's a
+      // name collision.
+      const distributor = await prisma.distributor.findUnique({
+        where: { id: distributorId },
+        select: { accountType: true },
+      });
+      const isMiniOperator = distributor?.accountType === 'mini_operator';
+
+      // Dedupe by `providerCatalogId` (unique per catalog row). The
+      // previous key `${typeName}-${capacity}` collided on multi-provider
+      // duplicates and the second import silently failed with "All
+      // selected cylinder types already exist".
       const existing = await prisma.cylinderType.findMany({
         where: { distributorId },
         select: { typeName: true, providerCatalogId: true },
@@ -224,15 +235,21 @@ router.post('/import',
         return sendError(res, 'All selected cylinder types are already imported', 400);
       }
 
-      // typeName collision handling — Prisma constraint is
-      // @@unique([distributorId, typeName]). If plain shortName ("5 KG") is
-      // already used (e.g. HPCL 5KG imported earlier as "5 KG"), prefix the
-      // new one with providerCode ("IOCL 5 KG") so both can co-exist.
+      // Naming policy:
+      //   • mini_operator — ALWAYS "PROVIDERCODE shortName" (e.g. "HPCL 5 KG")
+      //     so multi-corporation stock is unambiguous in every picker.
+      //   • distributor — plain shortName ("5 KG") unless it collides with
+      //     an existing tenant type; then prefixed. Preserves the legacy
+      //     single-corporation naming most full distributors use.
       const created = await prisma.$transaction(
         toCreate.map((c) => {
           const shortName = c.shortName;
           const prefixedName = `${c.providerCode} ${shortName}`;
-          const typeName = existingTypeNames.has(shortName) ? prefixedName : shortName;
+          const typeName = isMiniOperator
+            ? prefixedName
+            : existingTypeNames.has(shortName)
+              ? prefixedName
+              : shortName;
           // Track the name we just decided on so a batch of two IOCL rows
           // in one call doesn't both fall through to shortName.
           existingTypeNames.add(typeName);
