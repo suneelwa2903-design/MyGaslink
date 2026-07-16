@@ -191,7 +191,7 @@ export async function activateGst(
 ): Promise<{ gstMode: GstMode; einvoiceFingerprint: string; ewaybillFingerprint: string }> {
   const dist = await prisma.distributor.findUnique({
     where: { id: distributorId },
-    select: { id: true, gstin: true, gstMode: true, isTestTenant: true },
+    select: { id: true, gstin: true, gstMode: true, isTestTenant: true, accountType: true },
   });
   if (!dist) {
     throw new GstActivationError(`Distributor ${distributorId} not found`, 'DISTRIBUTOR_NOT_FOUND');
@@ -200,6 +200,17 @@ export async function activateGst(
     throw new GstActivationError(
       'Distributor has no GSTIN configured — cannot activate GST',
       'NO_DISTRIBUTOR_GSTIN',
+    );
+  }
+  // Mini-Operator (2026-07-16) invariant: mini-operator accounts never
+  // process GST — IRN/EWB flows are entirely disabled for this tenant
+  // class. Refusing here means the activation endpoint stays the single
+  // authoritative gate; distributorService.updateDistributor enforces
+  // the inverse (cannot flip to mini_operator while GST is active).
+  if (dist.accountType === 'mini_operator') {
+    throw new GstActivationError(
+      'Mini-operator distributors cannot enable GST. Change accountType to distributor first.',
+      'MINI_OPERATOR_NO_GST',
     );
   }
   const fromMode = dist.gstMode as GstMode;

@@ -426,6 +426,36 @@ function DistributorFormModal({
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Distributor' : 'Add Distributor'} size="lg">
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
 
+        {/* ── Account Type — Mini-Operator (2026-07-16) ─────────────────
+            Super-admin picks between the full distributor variant and the
+            lightweight mini-operator variant. Default is 'distributor' so
+            legacy behaviour is preserved for anyone who doesn't touch this
+            field. Selecting 'mini_operator' silently enforces gstMode=
+            disabled downstream — the actual invariant lives in
+            distributorService.updateDistributor + gstActivationService. */}
+        <div>
+          <label
+            htmlFor="accountType"
+            className="mb-1 block text-sm font-medium text-surface-700 dark:text-surface-300"
+          >
+            Account Type
+          </label>
+          <select
+            id="accountType"
+            defaultValue={distributor?.accountType ?? 'distributor'}
+            className="input"
+            {...register('accountType')}
+          >
+            <option value="distributor">Distributor (Full)</option>
+            <option value="mini_operator">Mini-Operator (Lightweight — no GST, no fleet)</option>
+          </select>
+          <p className="mt-1 text-xs text-surface-500">
+            Mini-operators are locked to GST-disabled and cannot use the fleet /
+            trip flow. Change requires the distributor to be on GST-disabled
+            first.
+          </p>
+        </div>
+
         {/* ── Step 1: GSTIN Lookup ──────────────────────────────────── */}
         <div className="card p-4 bg-primary-50 dark:bg-primary-900/20 border-primary-200 dark:border-primary-800">
           <h3 className="text-sm font-semibold text-surface-700 dark:text-surface-300 mb-3">

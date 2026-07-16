@@ -133,6 +133,12 @@ router.put('/:id',
         delete body.razorpayKeySecret;
         delete body.razorpayWebhookSecret;
       }
+      // Mini-Operator (2026-07-16): same defense-in-depth — only
+      // super-admin can flip accountType (a distributor_admin flipping
+      // themselves to mini_operator would bypass the plan-tier decision).
+      if (req.user!.role !== 'super_admin' && 'accountType' in req.body) {
+        delete (req.body as Record<string, unknown>).accountType;
+      }
       const distributor = await distributorService.updateDistributor(param(req.params.id), req.body);
       return sendSuccess(res, mapDistributor(distributor));
     } catch (err) {

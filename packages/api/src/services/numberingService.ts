@@ -3,6 +3,7 @@
  *
  * Format: <TYPE 1><CODE 3><FY 4><SEQ 6> = 14 chars, e.g. ISHD2526000123.
  *   TYPE: I=invoice R=revision C=credit-note D=debit-note O=order
+ *         P=purchase-entry (mini-operator, 2026-07-16)
  *   CODE: the distributor's 3-letter docCode (uppercase)
  *   FY  : Indian financial year, 4 digits (Apr–Mar), e.g. 2025-26 → "2526"
  *   SEQ : per-(distributor, type, FY) sequence, zero-padded to 6
@@ -14,11 +15,16 @@
  * The sequence is allocated with an atomic upsert-increment on a single
  * counter row, and MUST be called inside the same transaction as the
  * invoice/order create so a rollback frees the number (gapless).
+ *
+ * Mini-Operator note (2026-07-16): 'P' is added for purchase entries. It
+ * reuses the same `invoice_counters` table (unique key is
+ * distributor_id + type + financial_year, so 'P' rows sit alongside
+ * 'I' rows without collision). No new counter table is required.
  */
 import type { Prisma } from '@prisma/client';
 
-export type DocNumberType = 'I' | 'R' | 'C' | 'D' | 'O';
-const VALID_TYPES: ReadonlySet<string> = new Set(['I', 'R', 'C', 'D', 'O']);
+export type DocNumberType = 'I' | 'R' | 'C' | 'D' | 'O' | 'P';
+const VALID_TYPES: ReadonlySet<string> = new Set(['I', 'R', 'C', 'D', 'O', 'P']);
 
 /**
  * Indian financial year (April start) as a 4-char string.

@@ -17,6 +17,10 @@ const distributorSelect = {
   email: true,
   status: true,
   gstMode: true,
+  // Mini-Operator (2026-07-16): account type discriminator — always
+  // returned so the web sidebar + Settings gate off it. Default
+  // `distributor` for every pre-migration row.
+  accountType: true,
   providerCodes: true,
   subscriptionPlan: true,
   billingTier: true,
@@ -135,6 +139,10 @@ export async function createDistributor(data: {
   bankBranchName?: string;
   ifscCode?: string;
   upiId?: string;
+  // Mini-Operator (2026-07-16): distributor variant. Defaults to
+  // 'distributor' (full-featured) at the DB layer via `@default`; the
+  // shared schema also defaults it when the caller omits the field.
+  accountType?: 'distributor' | 'mini_operator';
 }) {
   const docCode = data.docCode?.trim().toUpperCase() || null;
   if (docCode) await assertDocCodeUnique(docCode);
@@ -145,6 +153,7 @@ export async function createDistributor(data: {
       legalName: data.legalName,
       docCode,
       gstin: data.gstin || null,
+      accountType: (data.accountType ?? 'distributor') as Prisma.DistributorCreateInput['accountType'],
       address: data.address || null,
       city: data.city || null,
       state: data.state || null,
@@ -222,7 +231,32 @@ export async function updateDistributor(id: string, data: Partial<{
   razorpayKeyId: string;
   razorpayKeySecret: string;
   razorpayWebhookSecret: string;
+  // Mini-Operator (2026-07-16): distributor variant. Super-admin only —
+  // stripped by the route handler for non-super-admin callers, same
+  // pattern as isTestTenant/razorpay. Transitioning TO mini_operator
+  // requires the current gstMode to be 'disabled' (invariant enforced
+  // below) so we never end up with a mini_operator on live GST.
+  accountType: 'distributor' | 'mini_operator';
 }>) {
+  // Mini-Operator invariant: setting accountType='mini_operator' is only
+  // allowed when the tenant is currently on gstMode='disabled'. We fetch
+  // the current gstMode when accountType is being written to enforce
+  // this — a 400 here is a lot friendlier than a downstream WhiteBooks
+  // rejection or an accidentally-live mini-op.
+  if (data.accountType === 'mini_operator') {
+    const current = await prisma.distributor.findUnique({
+      where: { id },
+      select: { gstMode: true },
+    });
+    if (current && current.gstMode !== 'disabled') {
+      throw new DistributorError(
+        'Cannot switch to mini-operator while GST is active. Disable GST first.',
+        400,
+        'MINI_OPERATOR_REQUIRES_GST_DISABLED',
+      );
+    }
+  }
+
   // Group L2 (2026-06-11): normalise + uniqueness-check docCode before
   // hitting the DB so the 409 reply happens in this service, not as a
   // raw Postgres unique-constraint violation surfacing through Prisma.
