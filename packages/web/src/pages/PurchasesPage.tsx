@@ -316,7 +316,7 @@ function SourcesTab() {
 
 // ─── New purchase entry modal ────────────────────────────────────────────────
 
-interface NewPurchaseEntryFormValues extends CreatePurchaseEntryInput {}
+type NewPurchaseEntryFormValues = CreatePurchaseEntryInput;
 
 function NewPurchaseEntryModal({
   open,
