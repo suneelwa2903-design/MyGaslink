@@ -306,7 +306,7 @@ const pendingQuerySchema = z.object({
 });
 
 router.get('/pending',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
   validateQuery(pendingQuerySchema),
   async (req, res) => {
     try {
@@ -326,7 +326,7 @@ router.get('/pending',
 
 // GET /api/payments/pending/count — badge count for the nav
 router.get('/pending/count',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const count = await submissionService.countPending(req.user!.distributorId!);
@@ -350,7 +350,7 @@ const verifySubmissionSchema = z.object({
 });
 
 router.post('/:id/verify',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
   validate(verifySubmissionSchema),
   auditLog('verify', 'payment_submission'),
   async (req, res) => {
@@ -379,7 +379,7 @@ const rejectSubmissionSchema = z.object({
 });
 
 router.post('/:id/reject',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
   validate(rejectSubmissionSchema),
   auditLog('reject', 'payment_submission'),
   async (req, res) => {

@@ -147,7 +147,7 @@ router.post('/import-opening-balances',
 
 // GET /api/customers/onboarding/progress
 router.get('/onboarding/progress',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const data = await customerService.getOnboardingProgress(req.user!.distributorId!);
@@ -161,7 +161,7 @@ router.get('/onboarding/progress',
 
 // POST /api/customers/onboarding/dismiss
 router.post('/onboarding/dismiss',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   auditLog('dismiss_onboarding', 'distributor'),
   async (req, res) => {
     try {
@@ -221,7 +221,7 @@ router.get('/:id/contacts',
 // GET /api/customers/:id/ledger/pdf — customer statement PDF (WI-092)
 // Accessible to staff roles and to the customer themselves (own statement only).
 router.get('/:id/ledger/pdf',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'customer'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'customer', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const customerId = param(req.params.id);
@@ -297,7 +297,7 @@ router.put('/:id',
 
 // DELETE /api/customers/:id
 router.delete('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   auditLog('delete', 'customer'),
   async (req, res) => {
     try {
@@ -474,7 +474,7 @@ router.post('/:id/balance-setup',
 
 // POST /api/customers/:id/portal-access
 router.post('/:id/portal-access',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({
     email: z.string().email(),
     password: z.string().min(8),

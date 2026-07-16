@@ -127,7 +127,7 @@ router.post('/manual',
 
 // POST /api/invoices/retroactive-gst - Generate GST invoices for pre-toggle orders
 router.post('/retroactive-gst',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({
     fromDate: z.string().optional(),
     toDate: z.string().optional(),
@@ -166,7 +166,7 @@ router.put('/:id/status',
 
 // POST /api/invoices/mark-overdue
 router.post('/mark-overdue',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   auditLog('mark_overdue', 'invoice'),
   async (req, res) => {
     try {
@@ -388,7 +388,7 @@ router.post('/credit-notes',
 );
 
 router.put('/credit-notes/:id/approve',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
   auditLog('approve', 'credit_note'),
   async (req, res) => {
     try {
@@ -402,7 +402,7 @@ router.put('/credit-notes/:id/approve',
 );
 
 router.put('/credit-notes/:id/reject',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
   // Optional `reason` — captured by auditLog middleware in the request body
   // for compliance trail. Not stored on the credit_note row (no column
   // for it; deferred until a separate audit column is added).
@@ -482,7 +482,7 @@ router.post('/debit-notes',
 );
 
 router.put('/debit-notes/:id/approve',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
   auditLog('approve', 'debit_note'),
   async (req, res) => {
     try {
@@ -496,7 +496,7 @@ router.put('/debit-notes/:id/approve',
 );
 
 router.put('/debit-notes/:id/reject',
-  requireRole('super_admin', 'distributor_admin', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
   validate(z.object({ reason: z.string().max(500).optional() })),
   auditLog('reject', 'debit_note'),
   async (req, res) => {

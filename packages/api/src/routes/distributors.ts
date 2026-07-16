@@ -19,7 +19,7 @@ const router = Router();
 // data is platform-level (the NIC portal owns it).
 router.get(
   '/gstin-lookup/:gstin',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const gstin = (param(req.params.gstin) || '').toUpperCase();

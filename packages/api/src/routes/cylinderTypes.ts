@@ -128,7 +128,7 @@ router.get('/empty-prices/list', async (req, res) => {
 // WI-2: admin-only — deposit price drives downstream mismatch unit-amount calcs;
 // inventory/finance roles must not be able to silently shift those amounts.
 router.put('/empty-prices',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(emptyPriceSchema),
   auditLog('upsert', 'empty_cylinder_price'),
   async (req, res) => {

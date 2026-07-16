@@ -38,7 +38,7 @@ router.get('/', async (req, res) => {
 
 // POST /api/licenses — create a license for the caller's distributor
 router.post('/',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   validate(createLicenseSchema),
   auditLog('create', 'license'),
   async (req, res) => {
@@ -55,7 +55,7 @@ router.post('/',
 
 // DELETE /api/licenses/:id — delete with ownership check
 router.delete('/:id',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   auditLog('delete', 'license'),
   async (req, res) => {
     try {

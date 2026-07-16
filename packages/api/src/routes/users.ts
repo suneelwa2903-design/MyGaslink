@@ -44,7 +44,7 @@ router.get('/profile', async (req, res) => {
 //   includePortal=true  include customer + driver roles in the default
 //                       response (rare — typically only for a portal
 //                       roster view)
-router.get('/', requireRole('super_admin', 'distributor_admin'), async (req, res) => {
+router.get('/', requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'), async (req, res) => {
   try {
     const q = req.query as Record<string, string | undefined>;
     const users = await userService.listUsers(req.user!.distributorId, req.user!.role, {
@@ -87,7 +87,7 @@ router.get('/:id', async (req, res) => {
 // banner + WhatsApp share button. This is the ONLY response shape that
 // exposes the plaintext password — every other user endpoint omits it.
 router.post('/',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(createUserSchema),
   auditLog('create', 'user'),
   async (req, res) => {
@@ -186,7 +186,7 @@ router.put('/me',
 
 // PUT /api/users/:id - update user
 router.put('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(updateUserSchema),
   auditLog('update', 'user'),
   async (req, res) => {
@@ -210,7 +210,7 @@ router.put('/:id',
 
 // DELETE /api/users/:id - soft delete
 router.delete('/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   auditLog('delete', 'user'),
   async (req, res) => {
     try {
@@ -235,7 +235,7 @@ router.delete('/:id',
 // existing session can't be renewed. Audit log written on both
 // transitions. Tenant + role guards live in the service.
 router.post('/:id/suspend',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   auditLog('suspend', 'user'),
   async (req, res) => {
     try {
@@ -254,7 +254,7 @@ router.post('/:id/suspend',
 );
 
 router.post('/:id/reactivate',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   auditLog('reactivate', 'user'),
   async (req, res) => {
     try {

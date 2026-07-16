@@ -98,7 +98,7 @@ router.post('/returns-only',
 // literal segment wins the router match — matches the same defensive
 // ordering as /in-transit below.
 router.post('/backdated',
-  requireRole('distributor_admin'),
+  requireRole('distributor_admin', 'mini_operator_admin'),
   validate(backdatedOrderSchema),
   auditLog('create_backdated', 'order'),
   async (req, res) => {
@@ -122,7 +122,7 @@ router.post('/backdated',
 // (up to 50). See backdatedTripService.ts for semantics. Route lives
 // BEFORE /:id for the same reason as /backdated above.
 router.post('/backdated-trip',
-  requireRole('distributor_admin'),
+  requireRole('distributor_admin', 'mini_operator_admin'),
   validate(backdatedTripSchema),
   auditLog('create_backdated_trip', 'order'),
   async (req, res) => {

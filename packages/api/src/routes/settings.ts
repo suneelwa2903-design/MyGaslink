@@ -73,7 +73,7 @@ router.get('/', async (req, res) => {
 // WI-108: structured-numbering tenant code. Registered BEFORE the generic
 // `/:key` routes so "doc-code" isn't swallowed as a JSONB setting key.
 router.put('/doc-code',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({ docCode: z.string().trim().regex(/^[A-Z]{3}$/, 'Must be exactly 3 uppercase letters (A–Z)') })),
   auditLog('upsert', 'doc_code'),
   async (req, res) => {
@@ -109,7 +109,7 @@ router.put('/doc-code',
 // non-empty. Empty strings clear the field (write as NULL via service
 // normalisation in distributorService.updateDistributor).
 router.put('/payment-details',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({
     bankName: z.string().max(100).optional().or(z.literal('')),
     bankAccountNumber: z.string().max(30).optional().or(z.literal('')),
@@ -150,7 +150,7 @@ router.get('/:key', async (req, res) => {
 });
 
 router.put('/:key',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({ value: z.any() })),
   auditLog('upsert', 'setting'),
   async (req, res) => {
@@ -168,7 +168,7 @@ router.put('/:key',
 );
 
 router.delete('/:key',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   auditLog('delete', 'setting'),
   async (req, res) => {
     try {
@@ -436,7 +436,7 @@ router.get('/approval-workflows/list', async (req, res) => {
 });
 
 router.put('/approval-workflows',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({ workflows: z.array(approvalWorkflowSchema) })),
   auditLog('update', 'approval_workflows'),
   async (req, res) => {
@@ -467,7 +467,7 @@ router.get('/licenses/list', async (req, res) => {
 });
 
 router.post('/licenses',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({
     licenseType: z.string().min(1),
     licenseName: z.string().min(1).max(200),
@@ -489,7 +489,7 @@ router.post('/licenses',
 );
 
 router.put('/licenses/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({
     licenseName: z.string().min(1).max(200).optional(),
     licenseNumber: z.string().optional(),
@@ -511,7 +511,7 @@ router.put('/licenses/:id',
 );
 
 router.delete('/licenses/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   auditLog('delete', 'license'),
   async (req, res) => {
     try {

@@ -217,7 +217,7 @@ router.get('/manual-adjustments',
 // of creation. Numeric change (qty/bucket) is immutable so the summary
 // stays consistent.
 router.patch('/manual-adjustments/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({ notes: z.string().min(1).max(500) })),
   auditLog('update', 'manual_adjustment'),
   async (req, res) => {
@@ -549,7 +549,7 @@ router.get('/mismatch-reports',
 // PATCH /api/inventory/mismatch-reports/:id — admin notes/resolution edit
 // within 24 hours of creation.
 router.patch('/mismatch-reports/:id',
-  requireRole('super_admin', 'distributor_admin'),
+  requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(z.object({
     resolutionNotes: z.string().min(1).max(1000).optional(),
     resolutionAction: z.enum(['write_off', 'settle_against_due']).optional(),
