@@ -109,6 +109,13 @@ function formatCurrency(n: number) {
 export default function BillingPaymentsPage() {
   const [tab, setTab] = useState<'invoices' | 'payments' | 'pending_approval'>('invoices');
 
+  // Mini-Operator (2026-07-16): pending-approval is driver-submitted
+  // payments awaiting office verification (WI-PENDING-PAYMENTS). Mini-op
+  // has no separate drivers — the same person creates the order and
+  // collects payment, so there's no queue. Hide the tab entirely.
+  const role = useAuthStore(selectRole);
+  const isMiniOperator = role === 'mini_operator_admin';
+
   // WI-PENDING-PAYMENTS: poll the pending count for the badge.
   // 60s polling matches the spec — pending payments are low-volume so
   // real-time isn't needed; this keeps DB load minimal.
@@ -116,17 +123,23 @@ export default function BillingPaymentsPage() {
     queryKey: ['payment-submissions-pending-count'],
     queryFn: () => apiGet<{ count: number }>('/payments/pending/count'),
     refetchInterval: 60_000,
+    enabled: !isMiniOperator, // skip the poll entirely for mini-op
   });
   const pendingCount = pendingCountData?.count ?? 0;
 
-  const tabs = [
-    { key: 'invoices' as const, label: 'Invoices' },
-    { key: 'payments' as const, label: 'Payments' },
-    {
-      key: 'pending_approval' as const,
-      label: pendingCount > 0 ? `Pending Approval (${pendingCount})` : 'Pending Approval',
-    },
-  ];
+  const tabs = isMiniOperator
+    ? [
+        { key: 'invoices' as const, label: 'Invoices' },
+        { key: 'payments' as const, label: 'Payments' },
+      ]
+    : [
+        { key: 'invoices' as const, label: 'Invoices' },
+        { key: 'payments' as const, label: 'Payments' },
+        {
+          key: 'pending_approval' as const,
+          label: pendingCount > 0 ? `Pending Approval (${pendingCount})` : 'Pending Approval',
+        },
+      ];
 
   return (
     <div className="space-y-6">

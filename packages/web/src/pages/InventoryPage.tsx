@@ -37,6 +37,9 @@ import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState, CustomerSearchInput } from '@/components/ui';
 import { ReportMismatchModal, MismatchLogSection } from '@/components/inventory/ReportMismatchModal';
 import { cn } from '@/lib/cn';
+// Mini-Operator (2026-07-16): role-aware branches — rename Godown/Purchase,
+// hide fleet-adjacent tabs and buttons.
+import { useAuthStore, selectRole } from '@/stores/authStore';
 
 function todayString(): string {
   return localTodayISO();
@@ -151,6 +154,13 @@ interface BackdatedHistoryRow {
 
 export default function InventoryPage() {
   const queryClient = useQueryClient();
+  // Mini-Operator (2026-07-16): drives the header rename (Godown), tab
+  // filter (hide Depot History / AI Forecast / Vehicle Return), buttons
+  // filter (hide Incoming Fulls / Outgoing Empties — mini-op uses the
+  // Purchases page instead), and column-group label ("Corporation" →
+  // "Purchase").
+  const role = useAuthStore(selectRole);
+  const isMiniOperator = role === 'mini_operator_admin';
   const [selectedDate, setSelectedDate] = useState(todayString());
   // WI-080 FIX2: allow deep-linking to a tab via ?tab= (e.g. the
   // "AI Demand Forecast" header button → /app/inventory?tab=forecast).
@@ -333,32 +343,56 @@ export default function InventoryPage() {
   // vehicle's Vehicle Return card, and the single "Confirm" action there
   // returns them to depot as part of closing the trip. Historical undelivered
   // stock is available via the Vehicle Ledger and Inventory Movement reports.
-  const tabs = [
-    { key: 'daily' as const, label: 'Daily Summary' },
-    { key: 'depot' as const, label: 'Depot History' },
-    { key: 'onboarding' as const, label: 'Stock at Onboarding' },
-    { key: 'forecast' as const, label: 'AI Demand Forecast' },
-    { key: 'customer' as const, label: 'Customer Balances' },
-    { key: 'reconciliation' as const, label: 'Vehicle Return' },
-    { key: 'backdated' as const, label: 'On-Demand Adjustments' },
-  ];
+  const tabs = isMiniOperator
+    // Mini-Operator: no fleet ⇒ no Vehicle Return; no AI Forecast entry (the
+    // top-bar shortcut is hidden too); Depot History is too much for a
+    // single-user shop; backdated stock adjustments belong to a Distributor
+    // admin flow. Leave Daily Summary + Stock at Onboarding + Customer
+    // Balances — the only three that make sense for a mini-op godown.
+    ? [
+        { key: 'daily' as const, label: 'Daily Summary' },
+        { key: 'onboarding' as const, label: 'Stock at Onboarding' },
+        { key: 'customer' as const, label: 'Customer Balances' },
+      ]
+    : [
+        { key: 'daily' as const, label: 'Daily Summary' },
+        { key: 'depot' as const, label: 'Depot History' },
+        { key: 'onboarding' as const, label: 'Stock at Onboarding' },
+        { key: 'forecast' as const, label: 'AI Demand Forecast' },
+        { key: 'customer' as const, label: 'Customer Balances' },
+        { key: 'reconciliation' as const, label: 'Vehicle Return' },
+        { key: 'backdated' as const, label: 'On-Demand Adjustments' },
+      ];
 
   return (
     <div className="space-y-6 w-full">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Inventory</h1>
-          <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Track cylinder stock levels</p>
+          <h1 className="text-2xl font-bold text-surface-900 dark:text-white">
+            {isMiniOperator ? 'Godown' : 'Inventory'}
+          </h1>
+          <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
+            {isMiniOperator ? 'Fulls and empties in your depot' : 'Track cylinder stock levels'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {tab === 'daily' && !isLocked && (
             <>
-              <Button variant="secondary" size="sm" onClick={() => setIncomingOpen(true)}>
-                <HiOutlinePlus className="h-4 w-4" />Incoming Fulls
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => setOutgoingOpen(true)}>
-                <HiOutlinePlus className="h-4 w-4" />Outgoing Empties
-              </Button>
+              {/* Mini-Operator: hide Incoming Fulls + Outgoing Empties — those
+                  are stock movements against the corporation supply pipeline
+                  for full distributors. Mini-op logs the same events via the
+                  Purchases page (source distributor + line items). Adjust
+                  Stock and Empties Return stay — they're generic corrections. */}
+              {!isMiniOperator && (
+                <>
+                  <Button variant="secondary" size="sm" onClick={() => setIncomingOpen(true)}>
+                    <HiOutlinePlus className="h-4 w-4" />Incoming Fulls
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setOutgoingOpen(true)}>
+                    <HiOutlinePlus className="h-4 w-4" />Outgoing Empties
+                  </Button>
+                </>
+              )}
               <Button variant="secondary" size="sm" onClick={() => setAdjustOpen(true)}>
                 <HiOutlineAdjustmentsHorizontal className="h-4 w-4" />Adjust Stock
               </Button>
@@ -1007,6 +1041,11 @@ function saveHidden(h: Set<ColKey>) {
 }
 
 function DailySummary({ inventory }: { inventory: InventorySummary[] }) {
+  // Mini-Operator (2026-07-16): sub-component reads role directly so the
+  // "CORPORATION → PURCHASE" header relabel doesn't require a new prop
+  // through every DailySummary callsite.
+  const role = useAuthStore(selectRole);
+  const isMiniOperator = role === 'mini_operator_admin';
   const [hidden, setHidden] = useState<Set<ColKey>>(() => loadHidden());
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -1064,7 +1103,11 @@ function DailySummary({ inventory }: { inventory: InventorySummary[] }) {
               <th rowSpan={2} className="align-bottom">Cylinder Type</th>
               {visibleGroups.map((g) => (
                 <th key={g.name} colSpan={g.cols.length} className={cn('text-center text-[11px] uppercase tracking-wide', GROUP_TINT[g.name], GROUP_TITLE[g.name])}>
-                  {g.name}
+                  {/* Mini-Operator: relabel "CORPORATION" → "PURCHASE"
+                      because mini-op supply comes from their listed source
+                      distributors, not a corporation refill. Data stays
+                      the same; only the header column band changes. */}
+                  {isMiniOperator && g.name === 'CORPORATION' ? 'PURCHASE' : g.name}
                 </th>
               ))}
               <th rowSpan={2} className={cn('align-bottom', GROUP_TINT.CLOSING)}>Status</th>

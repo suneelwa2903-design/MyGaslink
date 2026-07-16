@@ -183,25 +183,29 @@ export default function CustomersPage() {
       </div>
 
       {/* Top-level tabs — same visual pattern as the customer detail
-          modal's inner tabs (border-b-2 + brand-500 active). */}
-      <div className="border-b border-surface-200 dark:border-surface-700">
-        <div className="flex gap-6">
-          {(['customers', 'groups'] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTopTab(t)}
-              className={cn(
-                'pb-2 text-sm font-medium border-b-2 transition-colors',
-                topTab === t
-                  ? 'border-brand-500 text-brand-600 dark:text-brand-400'
-                  : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
-              )}
-            >
-              {t === 'customers' ? 'Customers' : 'Groups'}
-            </button>
-          ))}
+          modal's inner tabs (border-b-2 + brand-500 active).
+          Mini-Operator (2026-07-16): hide the Groups tab entirely — mini-op
+          tenants are single-shop operations, HQ portal is out of scope. */}
+      {role !== UserRole.MINI_OPERATOR_ADMIN && (
+        <div className="border-b border-surface-200 dark:border-surface-700">
+          <div className="flex gap-6">
+            {(['customers', 'groups'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTopTab(t)}
+                className={cn(
+                  'pb-2 text-sm font-medium border-b-2 transition-colors',
+                  topTab === t
+                    ? 'border-brand-500 text-brand-600 dark:text-brand-400'
+                    : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+                )}
+              >
+                {t === 'customers' ? 'Customers' : 'Groups'}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {topTab === 'groups' ? (
         <GroupsTab />

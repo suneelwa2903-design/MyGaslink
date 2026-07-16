@@ -7,6 +7,7 @@ import { api, apiGet, getErrorMessage } from '@/lib/api';
 import { Button, Select, Loader, EmptyState, Modal } from '@/components/ui';
 import { CustomerSearchInput } from '@/components/ui/CustomerSearchInput';
 import TallyExportPanel from '@/components/reports/TallyExportPanel';
+import { useAuthStore, selectRole } from '@/stores/authStore';
 
 type ReportCellValue = string | number | null;
 type LineChartData = { x: string; y: number }[];
@@ -149,12 +150,20 @@ export default function ReportsPage() {
   );
   const downloadPdf = () => customerId && downloadBlob(`/customers/${customerId}/ledger/pdf`, { from: dateFrom, to: dateTo }, `statement-${dateFrom}_${dateTo}.pdf`);
 
+  // Mini-Operator (2026-07-16): hide the Tally Export section — mini-op
+  // uses their own bookkeeping and doesn't sync to Tally. The rest of the
+  // Reports page (Sales Summary, Outstanding, Inventory Movement, etc.)
+  // stays visible.
+  const role = useAuthStore(selectRole);
+  const isMiniOperator = role === 'mini_operator_admin';
+
   return (
     <div className="space-y-6">
       {/* Tally Export — separate from the per-report selector below
           because it's an accounting-software bulk export, not a printable
-          report. Picks up dateFrom/dateTo from the same filter row. */}
-      <TallyExportPanel dateFrom={dateFrom} dateTo={dateTo} />
+          report. Picks up dateFrom/dateTo from the same filter row.
+          Hidden for mini_operator_admin (no Tally sync in v1). */}
+      {!isMiniOperator && <TallyExportPanel dateFrom={dateFrom} dateTo={dateTo} />}
 
       {/* Report selector */}
       <div className="flex flex-wrap gap-2">

@@ -12,7 +12,7 @@ const router = Router();
 
 // GET /api/pending-actions
 router.get('/',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const distributorId = req.user!.distributorId;
@@ -40,7 +40,7 @@ router.get('/',
 
 // GET /api/pending-actions/overdue
 router.get('/overdue',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const distributorId = req.user!.distributorId;
@@ -71,7 +71,7 @@ router.put('/:id/approve',
 
 // PUT /api/pending-actions/:id/resolve
 router.put('/:id/resolve',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({ notes: z.string().optional() })),
   auditLog('resolve', 'pending_action'),
   async (req, res) => {

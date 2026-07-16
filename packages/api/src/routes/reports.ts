@@ -42,7 +42,7 @@ function parseFilters(q: Request['query']): ReportFilters {
 // export's only output is XML — there is no JSON variant — so it lives
 // outside the REPORTS table by design.
 router.get('/tally-export',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
@@ -66,7 +66,7 @@ router.get('/tally-export',
 //   Registered BEFORE the generic /:reportType handler so the path segments
 //   aren't misinterpreted.
 router.get('/delivery-performance/driver/:driverId/pdf',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const driverId = String(req.params.driverId);
@@ -99,7 +99,7 @@ router.get('/delivery-performance/driver/:driverId/pdf',
 // GET /api/reports/:reportType            → JSON { columns, rows, totals?, chart? }
 // GET /api/reports/:reportType?format=csv → text/csv attachment
 router.get('/:reportType',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const reportType = String(req.params.reportType);

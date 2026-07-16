@@ -64,17 +64,23 @@ export default function SettingsPage() {
   // tabs (Onboarding, General, Subscription, GST, Approvals, Users) stay
   // hidden from them — the backend enforces the same split.
   const isOps = user?.role === UserRole.INVENTORY || user?.role === UserRole.FINANCE;
-  const showPrices = isAdmin;
+  // Mini-Operator (2026-07-16): before this branch, isAdmin=false + isOps=
+  // false meant NO tabs, blank page. Show a lean set — General (business
+  // profile), Cylinder Types, Cylinder Prices, Thresholds — everything a
+  // one-person shop needs to configure without the full-distributor surface
+  // (Subscription/GST/Approvals/Users/Licenses/Tally).
+  const isMiniOperator = user?.role === UserRole.MINI_OPERATOR_ADMIN;
+  const showPrices = isAdmin || isMiniOperator;
   const showOnboarding = isAdmin;
 
   const tabs = [
     ...(showOnboarding ? [{ key: 'onboarding' as const, label: 'Onboarding', icon: HiOutlineCheckCircle }] : []),
-    ...(isAdmin ? [{ key: 'general' as const, label: 'General', icon: HiOutlineCog6Tooth }] : []),
-    ...(showPrices ? [{ key: 'subscription' as const, label: 'Subscription', icon: HiOutlineCurrencyRupee }] : []),
+    ...(isAdmin || isMiniOperator ? [{ key: 'general' as const, label: 'General', icon: HiOutlineCog6Tooth }] : []),
+    ...(showPrices && !isMiniOperator ? [{ key: 'subscription' as const, label: 'Subscription', icon: HiOutlineCurrencyRupee }] : []),
     ...(isAdmin ? [{ key: 'gst' as const, label: 'GST', icon: HiOutlineShieldCheck }] : []),
-    ...(isAdmin || isOps ? [{ key: 'cylinders' as const, label: 'Cylinder Types', icon: HiOutlineCube }] : []),
-    ...(isAdmin || isOps ? [{ key: 'prices' as const, label: 'Cylinder Prices', icon: HiOutlineCurrencyRupee }] : []),
-    ...(isAdmin || isOps ? [{ key: 'thresholds' as const, label: 'Thresholds', icon: HiOutlineExclamationTriangle }] : []),
+    ...(isAdmin || isOps || isMiniOperator ? [{ key: 'cylinders' as const, label: 'Cylinder Types', icon: HiOutlineCube }] : []),
+    ...(isAdmin || isOps || isMiniOperator ? [{ key: 'prices' as const, label: 'Cylinder Prices', icon: HiOutlineCurrencyRupee }] : []),
+    ...(isAdmin || isOps || isMiniOperator ? [{ key: 'thresholds' as const, label: 'Thresholds', icon: HiOutlineExclamationTriangle }] : []),
     ...(isAdmin ? [{ key: 'approvals' as const, label: 'Approvals', icon: HiOutlineCheckCircle }] : []),
     ...(isAdmin ? [{ key: 'users' as const, label: 'Users', icon: HiOutlineUsers }] : []),
     ...(isAdmin || isOps ? [{ key: 'licenses' as const, label: 'Licenses', icon: HiOutlineDocumentText }] : []),
@@ -87,9 +93,10 @@ export default function SettingsPage() {
   const rawTab = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null;
   const initialTab = rawTab as SettingsTabKey | null;
   // Admin/super-admin land on Onboarding (the setup checklist) by default;
-  // ops roles (inventory/finance) don't see Onboarding, so they default to
-  // Cylinder Types. A ?tab= query param still overrides either default.
-  const defaultTab = isOps ? 'cylinders' : 'onboarding';
+  // ops roles (inventory/finance) and mini-op don't see Onboarding, so
+  // they default to Cylinder Types. A ?tab= query param still overrides
+  // either default.
+  const defaultTab = isOps || isMiniOperator ? 'cylinders' : 'onboarding';
   const [tab, setTab] = useState<SettingsTabKey>(
     initialTab && allowedTabs.includes(initialTab) ? initialTab : defaultTab,
   );

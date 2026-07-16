@@ -66,6 +66,12 @@ export default function AnalyticsPage() {
   const isInventory = role === UserRole.INVENTORY;
   const isDriver = role === UserRole.DRIVER;
   const isAdminLike = role === UserRole.DISTRIBUTOR_ADMIN || (isSuperAdmin && !!selectedDistributorId);
+  // Mini-Operator (2026-07-16): mini-op tenants see ONLY the Dashboard tab
+  // (KPI cards + onboarding card). Overview / Reports / Pending Actions
+  // pull data from services they don't need + trigger 403s (analytics
+  // dashboard, insights, tally-settings, reports/sales-summary,
+  // pending-actions are all admin+ops routes). Hide the tabs entirely.
+  const isMiniOperator = role === UserRole.MINI_OPERATOR_ADMIN;
 
   const [tab, setTab] = useState<'dashboard' | 'overview' | 'reports' | 'pending-actions'>('dashboard');
   const [resolveAction, setResolveAction] = useState<PendingAction | null>(null);
@@ -78,6 +84,10 @@ export default function AnalyticsPage() {
   // Super admin needs a distributor selected to view analytics data
   const hasDistributor = isSuperAdmin ? !!selectedDistributorId : true;
 
+  // Mini-Operator: /analytics/* routes are opened for mini_operator_admin
+  // (see routes/analytics.ts) so header-metrics + dashboard + insights work.
+  // /pending-actions stays admin+ops only — the tab is hidden and the
+  // standalone card is gated on !isMiniOperator, so no 403s reach the UI.
   const { data: metrics, isLoading: metricsLoading } = useQuery({
     queryKey: ['analytics-metrics', dateFrom, dateTo],
     queryFn: () => apiGet<AnalyticsMetrics>('/analytics/header-metrics', { dateFrom, dateTo }),
@@ -100,7 +110,7 @@ export default function AnalyticsPage() {
     queryKey: ['pending-actions', { status: 'open' }],
     queryFn: () => apiGet<{ actions: PendingAction[] }>('/pending-actions', { status: 'open' }),
     select: (data) => data.actions,
-    enabled: tab === 'dashboard',
+    enabled: tab === 'dashboard' && !isMiniOperator,
   });
 
   // ─── Role-aware morning briefing data ────────────────────────────────────────
@@ -224,12 +234,22 @@ export default function AnalyticsPage() {
       ]
     : [];
 
-  const tabs = [
-    { key: 'dashboard' as const, label: 'Dashboard' },
-    { key: 'overview' as const, label: 'Overview' },
-    { key: 'reports' as const, label: 'Reports' },
-    { key: 'pending-actions' as const, label: 'Pending Actions' },
-  ];
+  const tabs = isMiniOperator
+    // Mini-Operator: hide Pending Actions entirely (per-user feedback —
+    // mini-op is a one-person shop, there's no queue to review). Keep
+    // Dashboard + Overview + Reports; the Tally section inside Reports is
+    // filtered separately at ReportsPage.
+    ? [
+        { key: 'dashboard' as const, label: 'Dashboard' },
+        { key: 'overview' as const, label: 'Overview' },
+        { key: 'reports' as const, label: 'Reports' },
+      ]
+    : [
+        { key: 'dashboard' as const, label: 'Dashboard' },
+        { key: 'overview' as const, label: 'Overview' },
+        { key: 'reports' as const, label: 'Reports' },
+        { key: 'pending-actions' as const, label: 'Pending Actions' },
+      ];
 
   if (isSuperAdmin && !selectedDistributorId) {
     return (
@@ -316,8 +336,10 @@ export default function AnalyticsPage() {
                 <span className="text-amber-600 dark:text-amber-400 font-medium">→</span>
               </div>
             )}
-            {/* ─── Section A — STOCK POSITION (admin / inventory) ──────────── */}
-            {(isAdminLike || isInventory) && (
+            {/* ─── Section A — STOCK POSITION (admin / inventory / mini-op) ─
+                Mini-op needs to see their godown snapshot on the Dashboard —
+                /api/inventory/summary is already in their allowlist. */}
+            {(isAdminLike || isInventory || isMiniOperator) && (
               <div className="card p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-semibold text-surface-900 dark:text-white">Stock position</h3>
@@ -522,7 +544,11 @@ export default function AnalyticsPage() {
             </div>
             )}
 
-            {/* Pending Actions Section */}
+            {/* Pending Actions Section — hidden entirely for mini-op
+                (user feedback: mini-op is a single-user shop, no approval
+                queue). Also the "View all →" jumps to the pending-actions
+                tab which mini-op no longer has. */}
+            {!isMiniOperator && (
             <div className="card p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-semibold text-surface-900 dark:text-white">Pending Actions</h3>
@@ -603,6 +629,7 @@ export default function AnalyticsPage() {
                 </div>
               )}
             </div>
+            )}
           </div>
         )
       )}

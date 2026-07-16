@@ -151,8 +151,10 @@ export function DashboardLayout() {
           {/* Right: controls */}
           <div className="flex items-center gap-2">
             {/* WI-080 FIX2: loud AI Demand Forecast shortcut → inventory Forecast tab.
-                Hidden for customer + customer_hq roles — they don't have access. */}
-            {!isHq && !isCustomer && (
+                Hidden for customer + customer_hq roles (no access) and for
+                mini_operator_admin — mini-op doesn't have the forecast tab
+                on their Godown page and shouldn't see the entry point. */}
+            {!isHq && !isCustomer && user?.role !== 'mini_operator_admin' && (
               <button
                 onClick={() => navigate('/app/inventory?tab=forecast')}
                 className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-purple-600 to-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:from-purple-700 hover:to-blue-700 transition-colors"
