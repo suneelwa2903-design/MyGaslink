@@ -174,8 +174,14 @@ export function mapOrder(o: OrderInput | null | undefined): MappedRecord | null 
   // Flat driverName for the orders list table. assignDriver() does set
   // order.driverId + status correctly, but the table reads order.driverName
   // (flat) — without this it always rendered "Unassigned" even after a
-  // driver was assigned. null when genuinely unassigned.
-  mapped.driverName = o.driver?.driverName ?? null;
+  // driver was assigned.
+  //
+  // Mini-Operator (2026-07-16): mini-op orders have no Driver FK — the
+  // free-text driverNameFreeText field on the Order row IS the driver
+  // name. Fall back to it so the orders list shows "Suresh" instead of
+  // "Unassigned" for mini-op orders. The frontend can still tell the two
+  // sources apart via `driverNameFreeText` on the wire shape.
+  mapped.driverName = o.driver?.driverName ?? (o as { driverNameFreeText?: string | null }).driverNameFreeText ?? null;
   if (o.vehicle) mapped.vehicle = mapVehicle(o.vehicle);
   // WI-065: flat vehicleNumber alias, mirroring the driverName flat
   // alias above. The shared Order type declares vehicleNumber at the

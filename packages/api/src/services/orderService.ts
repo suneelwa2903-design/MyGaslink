@@ -905,9 +905,17 @@ export async function confirmDelivery(
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, distributorId, deletedAt: null },
-    include: { items: true, customer: { select: { id: true, creditPeriodDays: true, transportChargePerCylinder: true } } },
+    include: {
+      items: true,
+      customer: { select: { id: true, creditPeriodDays: true, transportChargePerCylinder: true } },
+      // Mini-Operator (2026-07-16): read accountType so the synthetic
+      // dispatch + reconciliation_empties_return events fire for mini-op
+      // orders too — they skip preflight just like isGodownPickup.
+      distributor: { select: { accountType: true } },
+    },
   });
   if (!order) throw new OrderError('Order not found', 404);
+  const isMiniOperatorOrder = order.distributor?.accountType === 'mini_operator';
   // Returns-only orders are confirmed through the same endpoint — the
   // confirmation modal in the frontend always POSTs to /confirm-delivery,
   // regardless of order type. Delegate to confirmReturnsCollection with the
@@ -1096,7 +1104,7 @@ export async function confirmDelivery(
         // `INVENTORY_DISPATCH_DEBIT=true` flag depot stock would inflate by
         // every godown pickup. Reference: TRANSACTION AUDIT in
         // docs/GODOWN-PICKUP-INVESTIGATION.md, Step C.
-        if (order.isGodownPickup) {
+        if (order.isGodownPickup || isMiniOperatorOrder) {
           await createInventoryEvent(tx, {
             distributorId,
             cylinderTypeId: item.cylinderTypeId,
@@ -1105,9 +1113,11 @@ export async function confirmDelivery(
             emptiesChange: 0,
             eventDate: order.deliveryDate,
             referenceId: orderId,
-            referenceType: 'godown_pickup',
+            referenceType: order.isGodownPickup ? 'godown_pickup' : 'mini_operator_order',
             createdBy: userId,
-            notes: `Godown pickup ${order.orderNumber} — synthetic dispatch event`,
+            notes: order.isGodownPickup
+              ? `Godown pickup ${order.orderNumber} — synthetic dispatch event`
+              : `Mini-operator ${order.orderNumber} — synthetic dispatch event (no preflight)`,
           });
         }
         await createInventoryEvent(tx, {
@@ -1148,7 +1158,7 @@ export async function confirmDelivery(
         // Symptom hit on 2026-06-25 (OSHD2627000747, Maruthi 19 KG):
         // 2 empties collected via godown stayed "on vehicle" while
         // closingEmpties was undercounted by 2.
-        if (order.isGodownPickup) {
+        if (order.isGodownPickup || isMiniOperatorOrder) {
           await createInventoryEvent(tx, {
             distributorId,
             cylinderTypeId: item.cylinderTypeId,
@@ -1157,9 +1167,11 @@ export async function confirmDelivery(
             emptiesChange: item.emptiesCollected,
             eventDate: order.deliveryDate,
             referenceId: orderId,
-            referenceType: 'godown_pickup',
+            referenceType: order.isGodownPickup ? 'godown_pickup' : 'mini_operator_order',
             createdBy: userId,
-            notes: `Godown pickup ${order.orderNumber} — synthetic empties return (no vehicle reconcile)`,
+            notes: order.isGodownPickup
+              ? `Godown pickup ${order.orderNumber} — synthetic empties return (no vehicle reconcile)`
+              : `Mini-operator ${order.orderNumber} — synthetic empties return (no vehicle reconcile)`,
           });
         }
       }

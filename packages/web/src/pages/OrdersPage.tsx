@@ -79,11 +79,18 @@ export default function OrdersPage() {
   // morning depot dispatch is an inventory task). Driver role sees only
   // the Orders tab.
   const role = useAuthStore(selectRole);
+  // Mini-Operator (2026-07-16): they're a one-person shop — the same
+  // person creates the order and edits/cancels it. Include them here so
+  // the Cancel + Edit row-action buttons show up on their orders. They
+  // don't have a driver-assignment tab but that section is already gated
+  // separately at line 236 on the tab render.
   const canAssignDrivers =
     role === UserRole.DISTRIBUTOR_ADMIN ||
     role === UserRole.SUPER_ADMIN ||
     role === UserRole.FINANCE ||
-    role === UserRole.INVENTORY;
+    role === UserRole.INVENTORY ||
+    role === UserRole.MINI_OPERATOR_ADMIN;
+  const isMiniOperatorRole = role === UserRole.MINI_OPERATOR_ADMIN;
   // Read ?tab= so other pages (e.g. the AssignmentModal empty state)
   // can deep-link straight into the Driver Assignment tab.
   const [searchParams] = useSearchParams();
@@ -232,8 +239,11 @@ export default function OrdersPage() {
         )}
       </div>
 
-      {/* Tabs — Orders | Driver Assignment (admins only) */}
-      {canAssignDrivers && (
+      {/* Tabs — Orders | Driver Assignment (admins only, and NOT mini-op:
+          mini-op has no Driver records, and canAssignDrivers was widened
+          above so Cancel/Edit row-actions surface — the Assignment tab
+          would be a dead-end for them). */}
+      {canAssignDrivers && !isMiniOperatorRole && (
         <div className="border-b border-surface-200 dark:border-surface-700">
           <div className="flex gap-4">
             {([
@@ -407,7 +417,12 @@ export default function OrdersPage() {
                             <HiOutlineCheckCircle className="h-4 w-4" />
                           </button>
                         )}
-                        {(order.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT || order.status === OrderStatus.PENDING_DISPATCH) && (
+                        {(order.status === OrderStatus.PENDING_DRIVER_ASSIGNMENT
+                          || order.status === OrderStatus.PENDING_DISPATCH
+                          // Mini-op orders land in PENDING_DELIVERY on
+                          // create (no dispatch step). Allow edit until
+                          // the delivery is confirmed.
+                          || (isMiniOperatorRole && order.status === OrderStatus.PENDING_DELIVERY)) && (
                           <button
                             onClick={() => setEditOrder(order)}
                             className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500"
