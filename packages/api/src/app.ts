@@ -47,6 +47,12 @@ import razorpayCustomerWebhookRoutes from './routes/razorpayCustomerWebhook.js';
 import tallySettingsRoutes from './routes/tallySettings.js';
 import manifestsRoutes from './routes/manifests.js';
 import devUploadsRoutes from './routes/devUploads.js';
+// Mini-Operator (2026-07-16): lightweight distributor variant. Two
+// new tenant-scoped resource routers — both gate to
+// requireRole('mini_operator_admin') at the route level so distributor
+// admins and other roles never see them.
+import sourceDistributorsRoutes from './routes/sourceDistributors.js';
+import purchaseEntriesRoutes from './routes/purchaseEntries.js';
 import { LOCAL_UPLOADS_ROOT, isS3ConfiguredForUploads } from './lib/s3.js';
 
 export function createApp() {
@@ -182,6 +188,13 @@ export function createApp() {
   app.use('/api/tally-settings', authenticate, resolveDistributor, requireDistributor, tallySettingsRoutes);
   // FLOAT-001 (2026-06-17): vehicle load manifests.
   app.use('/api/manifests', authenticate, resolveDistributor, requireDistributor, manifestsRoutes);
+  // Mini-Operator (2026-07-16): the two mini-operator resource routers.
+  // Both routers already `router.use(authenticate)` at their top level, so
+  // the middleware stack here mirrors the other tenant-scoped mounts —
+  // authenticate → resolveDistributor → requireDistributor — for correct
+  // req.user.distributorId population and hard-fail on missing tenant.
+  app.use('/api/source-distributors', authenticate, resolveDistributor, requireDistributor, sourceDistributorsRoutes);
+  app.use('/api/purchase-entries', authenticate, resolveDistributor, requireDistributor, purchaseEntriesRoutes);
 
   // ─── Dev / test helpers (never mounted in production) ─────────────────────
   // Provides POST /test/inject-stale-token and GET /test/token-cache-state

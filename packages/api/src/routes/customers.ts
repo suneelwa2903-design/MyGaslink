@@ -68,7 +68,7 @@ const customerImportRowSchema = z.object({
 });
 
 router.post('/import-csv',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({ rows: z.array(customerImportRowSchema).min(1).max(1000) })),
   auditLog('import', 'customer'),
   async (req, res) => {
@@ -93,7 +93,7 @@ const emptyBalanceRowSchema = z.object({
 });
 
 router.post('/import-empty-balances',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({ rows: z.array(emptyBalanceRowSchema).min(1).max(5000) })),
   auditLog('import_empty_balances', 'customer'),
   async (req, res) => {
@@ -122,7 +122,7 @@ const openingBalanceRowSchema = z.object({
 });
 
 router.post('/import-opening-balances',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({
     rows: z.array(openingBalanceRowSchema).min(1).max(2000),
     // Group 3 (2026-06-11): when true, existing OB invoices for matched
@@ -176,7 +176,7 @@ router.post('/onboarding/dismiss',
 
 // GET /api/customers/:id
 router.get('/:id',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const customer = await customerService.getCustomerById(param(req.params.id), req.user!.distributorId!);
@@ -197,7 +197,7 @@ router.get('/:id',
 // so the picker doesn't fetch the full customer with all its relations just
 // to read the contacts subtree.
 router.get('/:id/contacts',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const customer = await customerService.getCustomerById(param(req.params.id), req.user!.distributorId!);
@@ -313,7 +313,7 @@ router.delete('/:id',
 
 // POST /api/customers/:id/modification-requests
 router.post('/:id/modification-requests',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({
     modificationType: z.enum(['update_info', 'credit_limit_change', 'stop_supply', 'resume_supply']),
     reason: z.string().optional(),
@@ -335,7 +335,7 @@ router.post('/:id/modification-requests',
 
 // PUT /api/customers/modification-requests/:requestId/approve
 router.put('/modification-requests/:requestId/approve',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   auditLog('approve', 'customer_modification_request'),
   async (req, res) => {
     try {
@@ -350,7 +350,7 @@ router.put('/modification-requests/:requestId/approve',
 
 // PUT /api/customers/modification-requests/:requestId/reject
 router.put('/modification-requests/:requestId/reject',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({ reason: z.string().optional() })),
   auditLog('reject', 'customer_modification_request'),
   async (req, res) => {
@@ -368,7 +368,7 @@ router.put('/modification-requests/:requestId/reject',
 
 // GET /api/customers/:id/audit-trail
 router.get('/:id/audit-trail',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const trail = await customerService.getCustomerAuditTrail(param(req.params.id), req.user!.distributorId!);
@@ -415,7 +415,7 @@ router.post('/:id/resume-supply',
 // established in Group 4 (K7). The two endpoints now respond identically
 // to the same probe.
 router.get('/:id/balance',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const { prisma } = await import('../lib/prisma.js');
@@ -452,7 +452,7 @@ router.get('/:id/balance',
 // CrossTenantError path returns 403 with CROSS_TENANT_ACCESS instead of
 // silently writing to another distributor's customer (K7 in the audit).
 router.post('/:id/balance-setup',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(customerBalanceSetupSchema.omit({ customerId: true })),
   auditLog('balance_setup', 'customer'),
   async (req, res) => {

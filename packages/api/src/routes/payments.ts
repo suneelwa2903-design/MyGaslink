@@ -24,7 +24,7 @@ const allocatePaymentSchema = z.object({
 
 // GET /api/payments
 router.get('/',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validateQuery(paymentFilterSchema),
   async (req, res) => {
     try {
@@ -44,7 +44,7 @@ router.get('/',
 // register with the distributor letterhead. Filters honoured:
 //   paymentMethod, dateFrom, dateTo, search.
 router.get('/export',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const format = String(req.query.format ?? 'csv').toLowerCase();
@@ -126,7 +126,7 @@ router.get('/export',
 
 // POST /api/payments
 router.post('/',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(createPaymentSchema),
   auditLog('create', 'payment'),
   async (req, res) => {
@@ -144,7 +144,7 @@ router.post('/',
 
 // POST /api/payments/:id/allocate — apply unallocated payment to an invoice
 router.post('/:id/allocate',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(allocatePaymentSchema),
   auditLog('allocate', 'payment'),
   async (req, res) => {
@@ -183,7 +183,7 @@ const ledgerQuerySchema = z.object({
 // this endpoint to return what the UI actually wants. PDF callers stay
 // on /api/customers/:id/ledger/pdf, which still calls getCustomerLedger.
 router.get('/ledger/:customerId',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validateQuery(ledgerQuerySchema),
   async (req, res) => {
   try {

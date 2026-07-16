@@ -25,7 +25,7 @@ const router = Router();
 
 // GET /api/inventory/summary (defaults to today)
 router.get('/summary',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     // Phase D (2026-06-12): local TZ, not UTC. Server runs with
@@ -41,7 +41,7 @@ router.get('/summary',
 
 // GET /api/inventory/summary/:date
 router.get('/summary/:date',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const summaries = await inventoryService.getInventorySummary(req.user!.distributorId!, param(req.params.date));
@@ -53,7 +53,7 @@ router.get('/summary/:date',
 
 // POST /api/inventory/incoming-fulls
 router.post('/incoming-fulls',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(incomingFullsSchema),
   auditLog('incoming_fulls', 'inventory'),
   async (req, res) => {
@@ -70,7 +70,7 @@ router.post('/incoming-fulls',
 
 // POST /api/inventory/outgoing-empties
 router.post('/outgoing-empties',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(outgoingEmptiesSchema),
   auditLog('outgoing_empties', 'inventory'),
   async (req, res) => {
@@ -115,7 +115,7 @@ router.post('/empties-return',
 // values so the web modal can prompt for confirmation. With `true`, the
 // prior events are hard-deleted before the new ones are written.
 router.post('/initial-balance',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({
     entries: z.array(z.object({
       cylinderTypeId: z.string().uuid(),

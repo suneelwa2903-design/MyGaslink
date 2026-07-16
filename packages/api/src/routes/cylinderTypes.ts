@@ -53,7 +53,7 @@ router.get('/:id', async (req, res) => {
 });
 
 router.post('/',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   validate(createCylinderTypeSchema),
   auditLog('create', 'cylinder_type'),
   async (req, res) => {
@@ -86,7 +86,7 @@ router.get('/prices/list', async (req, res) => {
 });
 
 router.post('/prices',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   validate(createPriceSchema),
   auditLog('create', 'cylinder_price'),
   async (req, res) => {
@@ -100,7 +100,7 @@ router.post('/prices',
 );
 
 router.delete('/prices/:id',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   auditLog('delete', 'cylinder_price'),
   async (req, res) => {
     try {
@@ -145,7 +145,7 @@ router.put('/empty-prices',
 
 // PUT /thresholds must be before PUT /:id (static beats param in registration order).
 router.put('/thresholds',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   validate(cylinderThresholdSchema),
   auditLog('upsert', 'cylinder_threshold'),
   async (req, res) => {
@@ -161,7 +161,7 @@ router.put('/thresholds',
 // ─── Cylinder Type by ID (must come AFTER all static-path PUT/DELETE routes) ──
 
 router.put('/:id',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   validate(createCylinderTypeSchema.partial()),
   auditLog('update', 'cylinder_type'),
   async (req, res) => {

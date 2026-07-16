@@ -244,9 +244,12 @@ export async function createOrder(
   const deliveryDate = new Date(data.deliveryDate);
   // WI-108: structured number when docCode is set, else legacy random
   // (allocated inside the tx below so it rolls back with the order).
+  // Mini-Operator (2026-07-16): accountType is read alongside docCode
+  // so we can skip the driver-assignment path for mini-op tenants.
   const distributor = await prisma.distributor.findUnique({
-    where: { id: distributorId }, select: { docCode: true },
+    where: { id: distributorId }, select: { docCode: true, accountType: true },
   });
+  const isMiniOperator = distributor?.accountType === 'mini_operator';
 
   // Calculate prices for each item
   const itemsWithPrices = await Promise.all(data.items.map(async (item) => {
@@ -285,6 +288,12 @@ export async function createOrder(
   if (isGodownPickup) {
     // Skip the entire driver/vehicle/dispatch path. Stay on null
     // driver+vehicle and land in pending_delivery from the start.
+    status = 'pending_delivery';
+  } else if (isMiniOperator) {
+    // Mini-Operator (2026-07-16): mini-operator tenants have no Driver
+    // records + no dispatch flow — every order goes straight to
+    // pending_delivery so confirmDelivery can close it. Driver+vehicle
+    // stay null (driverNameFreeText is the free-text substitute).
     status = 'pending_delivery';
   } else if (options?.walkIn) {
     // FLOAT-001: walk-in path bypasses the preferredDriverId lookup. The driver
