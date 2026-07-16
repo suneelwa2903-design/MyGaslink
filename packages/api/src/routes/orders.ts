@@ -34,7 +34,7 @@ const router = Router();
 
 // GET /api/orders
 router.get('/',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver', 'mini_operator_admin'),
   validateQuery(orderFilterSchema),
   async (req, res) => {
     try {
@@ -267,7 +267,7 @@ router.get('/in-transit',
 // can close the billing loop (the apply step is what makes the
 // backdated invoice's stock figures real).
 router.post('/:id/apply-inventory-adjustment',
-  requireRole('distributor_admin', 'inventory', 'finance'),
+  requireRole('distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   auditLog('apply_inventory_adjustment', 'order'),
   async (req, res) => {
     try {
@@ -288,7 +288,7 @@ router.post('/:id/apply-inventory-adjustment',
 
 // GET /api/orders/:id
 router.get('/:id',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const order = await orderService.getOrderById(param(req.params.id), req.user!.distributorId!);
@@ -340,7 +340,7 @@ router.put('/:id',
 
 // PUT /api/orders/:id/status
 router.put('/:id/status',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory', 'mini_operator_admin'),
   validate(z.object({
     status: z.string().min(1),
     notes: z.string().optional(),
@@ -783,7 +783,7 @@ router.post('/:id/delivery-otp/verify',
 
 // POST /api/orders/:id/resolve-dispute — WI-127
 router.post('/:id/resolve-dispute',
-  requireRole('distributor_admin', 'finance', 'inventory'),
+  requireRole('distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({
     resolutionNote: z.string().min(1).max(1000),
     issueCreditNote: z.boolean().optional(),
@@ -824,7 +824,7 @@ router.post('/:id/cancel',
 
 // POST /api/orders/:id/confirm-returns - Confirm returns collection
 router.post('/:id/confirm-returns',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory', 'mini_operator_admin'),
   validate(returnsConfirmationSchema),
   auditLog('confirm_returns', 'order'),
   async (req, res) => {

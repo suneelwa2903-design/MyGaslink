@@ -72,6 +72,14 @@ interface CylinderType {
   capacity: number;
   unit: string;
   isActive: boolean;
+  // Provider catalog row that this per-tenant type was imported from.
+  // Nullable — legacy custom-only types have no catalog link. Used to
+  // render "HPCL 19KG Commercial" in the purchase-entry dropdown.
+  providerCatalog?: {
+    providerCode: string;
+    shortName: string;
+    weight: number;
+  } | null;
 }
 
 interface CylinderTypesListResponse {
@@ -463,11 +471,19 @@ function NewPurchaseEntryModal({
                     {...register(`items.${i}.cylinderTypeId` as const)}
                   >
                     <option value="">Select cylinder…</option>
-                    {activeTypes.map((t) => (
-                      <option key={t.cylinderTypeId} value={t.cylinderTypeId}>
-                        {t.typeName}
-                      </option>
-                    ))}
+                    {activeTypes.map((t) => {
+                      // Prefix with provider code when available so a
+                      // mini-op with HPCL + BPCL cylinders can tell them
+                      // apart in the picker.
+                      const label = t.providerCatalog?.providerCode
+                        ? `${t.providerCatalog.providerCode} — ${t.typeName}`
+                        : t.typeName;
+                      return (
+                        <option key={t.cylinderTypeId} value={t.cylinderTypeId}>
+                          {label}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 <div className="col-span-2">

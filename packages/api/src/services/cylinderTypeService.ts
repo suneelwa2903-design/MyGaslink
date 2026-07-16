@@ -9,6 +9,13 @@ export async function listCylinderTypes(distributorId: string) {
       prices: { orderBy: { effectiveDate: 'desc' }, take: 1 },
       emptyPrices: true,
       thresholds: true,
+      // Mini-Operator (2026-07-16): include the provider catalog row so the
+      // frontend can render "HPCL 19KG Commercial" in the purchase-entry
+      // dropdown. Nullable — legacy custom types without a catalog link
+      // just show typeName as before.
+      providerCatalog: {
+        select: { providerCode: true, shortName: true, weight: true },
+      },
     },
     orderBy: { typeName: 'asc' },
   });

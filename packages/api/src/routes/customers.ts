@@ -23,7 +23,7 @@ const router = Router();
 // req.user.distributorId so tenant isolation holds — driver only sees their
 // own tenant's customers. POST /customers stays admin-only (mutations gated).
 router.get('/',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'driver', 'mini_operator_admin'),
   validateQuery(customerFilterSchema),
   async (req, res) => {
     try {
@@ -247,7 +247,7 @@ router.get('/:id/ledger/pdf',
 
 // POST /api/customers
 router.post('/',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'mini_operator_admin'),
   validate(createCustomerSchema),
   auditLog('create', 'customer'),
   async (req, res) => {
@@ -268,7 +268,7 @@ router.post('/',
 
 // PUT /api/customers/:id
 router.put('/:id',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   validate(updateCustomerSchema),
   auditLog('update', 'customer'),
   async (req, res) => {
@@ -381,7 +381,7 @@ router.get('/:id/audit-trail',
 
 // POST /api/customers/:id/stop-supply
 router.post('/:id/stop-supply',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'mini_operator_admin'),
   auditLog('stop_supply', 'customer'),
   async (req, res) => {
     try {
@@ -395,7 +395,7 @@ router.post('/:id/stop-supply',
 
 // POST /api/customers/:id/resume-supply
 router.post('/:id/resume-supply',
-  requireRole('super_admin', 'distributor_admin', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'mini_operator_admin'),
   auditLog('resume_supply', 'customer'),
   async (req, res) => {
     try {
