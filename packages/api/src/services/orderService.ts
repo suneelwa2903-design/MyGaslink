@@ -147,6 +147,10 @@ export async function createOrder(
     // straight to pending_delivery so confirmDelivery can close it via
     // the existing "confirm delivery" flow.
     isGodownPickup?: boolean;
+    // Mini-Operator (2026-07-16): free-text driver name for mini-operator
+    // tenants that don't maintain Driver records. Optional; unrelated to
+    // driverId FK. Max 100 chars enforced upstream at the Zod schema.
+    driverNameFreeText?: string;
     items: { cylinderTypeId: string; quantity: number }[];
   },
   options?: {
@@ -333,6 +337,11 @@ export async function createOrder(
         // (data.poNumber?.trim()) is symmetric with what's stored.
         poNumber: data.poNumber?.trim() || null,
         isGodownPickup,
+        // Mini-Operator (2026-07-16): trim + null-fold matches the
+        // poNumber convention above. Not read by any regular-distributor
+        // code path (they use driverId); rendered on invoice PDF for
+        // mini_operator tenants.
+        driverNameFreeText: data.driverNameFreeText?.trim() || null,
         items: { create: itemsWithPrices },
       },
       include: orderInclude,
@@ -593,6 +602,8 @@ export async function updateOrder(
     deliveryDate?: string;
     specialInstructions?: string;
     poNumber?: string;
+    // Mini-Operator (2026-07-16): editable free-text driver name.
+    driverNameFreeText?: string;
     items?: { cylinderTypeId: string; quantity: number }[];
   }
 ) {
@@ -613,6 +624,10 @@ export async function updateOrder(
     // field (null), matching the trim+null-fold convention used at create.
     if (data.poNumber !== undefined) {
       updateData.poNumber = data.poNumber.trim() || null;
+    }
+    // Mini-Operator (2026-07-16): trim+null-fold mirrors poNumber above.
+    if (data.driverNameFreeText !== undefined) {
+      updateData.driverNameFreeText = data.driverNameFreeText.trim() || null;
     }
 
     if (data.items) {
