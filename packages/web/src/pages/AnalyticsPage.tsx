@@ -27,6 +27,9 @@ import { Button, Badge, Loader, EmptyState, Modal } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import ReportsPanel from '@/pages/ReportsPage';
 import PendingActionsPanel from '@/pages/PendingActionsPage';
+// Mini-Operator (2026-07-16): setup checklist card. Renders only for
+// accountType='mini_operator' tenants who have missing setup steps.
+import { MiniOpOnboardingCard } from '@/components/MiniOpOnboardingCard';
 
 interface Insight { icon: string; text: string; severity: 'critical' | 'warning' | 'info'; link?: string; }
 
@@ -266,6 +269,9 @@ export default function AnalyticsPage() {
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input py-2 text-xs" />
         </div>
       </div>
+
+      {/* Mini-Operator setup checklist — no-op for other roles. */}
+      <MiniOpOnboardingCard />
 
       {/* Tabs */}
       <div className="border-b border-surface-200 dark:border-surface-700">

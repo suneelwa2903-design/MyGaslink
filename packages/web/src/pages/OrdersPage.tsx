@@ -578,6 +578,14 @@ function CreateOrderModal({
 }) {
   const queryClient = useQueryClient();
 
+  // Mini-Operator (2026-07-16): the driver-name-free-text input is only
+  // rendered for mini_operator_admin (their orders skip the Driver FK path
+  // via orderService.createOrder isMiniOperator branch; the field is the
+  // only place the shipping driver's name is captured). Regular
+  // distributor_admin flows continue to use the driver-assignment path.
+  const roleForOrder = useAuthStore(selectRole);
+  const isMiniOperatorAdmin = roleForOrder === 'mini_operator_admin';
+
   const { register, handleSubmit, control, setValue, watch, formState: { errors } } = useForm<CreateOrderInput>({
     resolver: zodResolver(createOrderSchema),
     defaultValues: {
@@ -587,6 +595,7 @@ function CreateOrderModal({
       specialInstructions: '',
       poNumber: '',
       isGodownPickup: false,
+      driverNameFreeText: '',
       items: [{ cylinderTypeId: '', quantity: 1 }],
     },
   });
@@ -648,6 +657,16 @@ function CreateOrderModal({
             maxLength={16}
             error={errors.poNumber?.message}
             {...register('poNumber')}
+          />
+        )}
+
+        {isMiniOperatorAdmin && (
+          <Input
+            label="Driver Name"
+            placeholder="e.g. Raju"
+            maxLength={100}
+            error={errors.driverNameFreeText?.message}
+            {...register('driverNameFreeText')}
           />
         )}
 
