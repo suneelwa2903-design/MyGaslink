@@ -160,17 +160,25 @@ router.get('/for-distributor',
         orderBy: [{ providerCode: 'asc' }, { weight: 'asc' }],
       });
 
-      // Also get existing cylinder types for this distributor to mark which are already added
+      // Mini-Operator (2026-07-16) bug fix — the previous dedup key was
+      // `${typeName}-${capacity}` which meant HPCL 5KG and IOCL 5KG appeared
+      // as the SAME row (both share shortName='5 KG', weight=5). Import
+      // HPCL 5KG, then IOCL 5KG shows "alreadyAdded=true" even though it's
+      // not imported — visible in the "Already Imported from Catalog"
+      // section (8 chips) vs "Your Cylinder Types" table (5 rows). Correct
+      // key is `providerCatalogId` which is unique per catalog row.
       const existing = await prisma.cylinderType.findMany({
         where: { distributorId, isActive: true },
-        select: { typeName: true, capacity: true },
+        select: { providerCatalogId: true },
       });
 
-      const existingSet = new Set(existing.map(e => `${e.typeName}-${e.capacity}`));
+      const importedCatalogIds = new Set(
+        existing.map((e) => e.providerCatalogId).filter((id): id is string => !!id),
+      );
 
-      const itemsWithStatus = items.map(item => ({
+      const itemsWithStatus = items.map((item) => ({
         ...item,
-        alreadyAdded: existingSet.has(`${item.shortName}-${item.weight}`),
+        alreadyAdded: importedCatalogIds.has(item.id),
       }));
 
       return sendSuccess(res, { items: itemsWithStatus, providers: distributor.providerCodes });
@@ -197,28 +205,48 @@ router.post('/import',
 
       if (catalogItems.length === 0) return sendError(res, 'No valid catalog items found', 400);
 
-      // Check which ones already exist
+      // Mini-Operator (2026-07-16) fix — dedupe by `providerCatalogId`
+      // (unique per catalog row). The previous key `${typeName}-${capacity}`
+      // meant HPCL 5KG and IOCL 5KG collided and the second import silently
+      // failed with "All selected cylinder types already exist".
       const existing = await prisma.cylinderType.findMany({
         where: { distributorId },
-        select: { typeName: true, capacity: true },
+        select: { typeName: true, providerCatalogId: true },
       });
-      const existingSet = new Set(existing.map(e => `${e.typeName}-${e.capacity}`));
+      const importedCatalogIds = new Set(
+        existing.map((e) => e.providerCatalogId).filter((id): id is string => !!id),
+      );
+      const existingTypeNames = new Set(existing.map((e) => e.typeName));
 
-      const toCreate = catalogItems.filter(c => !existingSet.has(`${c.shortName}-${c.weight}`));
+      const toCreate = catalogItems.filter((c) => !importedCatalogIds.has(c.id));
 
-      if (toCreate.length === 0) return sendError(res, 'All selected cylinder types already exist for this distributor', 400);
+      if (toCreate.length === 0) {
+        return sendError(res, 'All selected cylinder types are already imported', 400);
+      }
 
+      // typeName collision handling — Prisma constraint is
+      // @@unique([distributorId, typeName]). If plain shortName ("5 KG") is
+      // already used (e.g. HPCL 5KG imported earlier as "5 KG"), prefix the
+      // new one with providerCode ("IOCL 5 KG") so both can co-exist.
       const created = await prisma.$transaction(
-        toCreate.map(c => prisma.cylinderType.create({
-          data: {
-            distributorId,
-            typeName: c.shortName,
-            capacity: c.weight,
-            unit: 'KG',
-            hsnCode: c.hsnCode,
-            providerCatalogId: c.id,
-          },
-        }))
+        toCreate.map((c) => {
+          const shortName = c.shortName;
+          const prefixedName = `${c.providerCode} ${shortName}`;
+          const typeName = existingTypeNames.has(shortName) ? prefixedName : shortName;
+          // Track the name we just decided on so a batch of two IOCL rows
+          // in one call doesn't both fall through to shortName.
+          existingTypeNames.add(typeName);
+          return prisma.cylinderType.create({
+            data: {
+              distributorId,
+              typeName,
+              capacity: c.weight,
+              unit: 'KG',
+              hsnCode: c.hsnCode,
+              providerCatalogId: c.id,
+            },
+          });
+        }),
       );
 
       return sendCreated(res, { imported: created.length, cylinderTypes: created });

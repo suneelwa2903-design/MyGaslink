@@ -2026,7 +2026,16 @@ function CylinderConfigTab() {
 
   const { data: existingTypes } = useQuery({
     queryKey: ['cylinder-types', distributorId],
-    queryFn: () => apiGet<{ cylinderTypes: Array<{ cylinderTypeId: string; typeName: string; capacity: number; isActive: boolean }> }>('/cylinder-types'),
+    queryFn: () => apiGet<{ cylinderTypes: Array<{
+      cylinderTypeId: string;
+      typeName: string;
+      capacity: number;
+      isActive: boolean;
+      // Provider catalog snapshot for the "Provider" column + Delete button
+      // (mini-op tester feedback — needs to see which corporation each type
+      // was imported from).
+      providerCatalog?: { providerCode: string; shortName: string; weight: number } | null;
+    }> }>('/cylinder-types'),
     enabled: !!distributorId,
   });
 
@@ -2036,6 +2045,20 @@ function CylinderConfigTab() {
     onSuccess: (data) => {
       toast.success(`Imported ${data.imported} cylinder type(s)`);
       setSelectedIds([]);
+      queryClient.invalidateQueries({ queryKey: ['provider-catalog-for-distributor'] });
+      queryClient.invalidateQueries({ queryKey: ['cylinder-types'] });
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  // Delete tenant cylinder type — service refuses if it has stock movement
+  // history (blocked from the route with a friendly message). Frontend just
+  // confirms + surfaces the error via toast.
+  const deleteMutation = useMutation({
+    mutationFn: (cylinderTypeId: string) =>
+      apiDelete(`/cylinder-types/${cylinderTypeId}`),
+    onSuccess: () => {
+      toast.success('Cylinder type removed');
       queryClient.invalidateQueries({ queryKey: ['provider-catalog-for-distributor'] });
       queryClient.invalidateQueries({ queryKey: ['cylinder-types'] });
     },
@@ -2131,13 +2154,46 @@ function CylinderConfigTab() {
         ) : (
           <div className="table-container">
             <table className="table">
-              <thead><tr><th>Type</th><th>Capacity</th><th>Status</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Type</th>
+                  <th>Capacity</th>
+                  <th>Status</th>
+                  <th className="text-right">Actions</th>
+                </tr>
+              </thead>
               <tbody>
-                {existingTypes.cylinderTypes.map(ct => (
+                {existingTypes.cylinderTypes.map((ct) => (
                   <tr key={ct.cylinderTypeId}>
+                    <td>
+                      {ct.providerCatalog?.providerCode ? (
+                        <Badge variant="neutral">{ct.providerCatalog.providerCode}</Badge>
+                      ) : (
+                        <span className="text-xs text-surface-400">Custom</span>
+                      )}
+                    </td>
                     <td className="font-medium text-surface-900 dark:text-white">{ct.typeName}</td>
                     <td>{ct.capacity} KG</td>
-                    <td><Badge variant={ct.isActive ? 'success' : 'danger'}>{ct.isActive ? 'Active' : 'Inactive'}</Badge></td>
+                    <td>
+                      <Badge variant={ct.isActive ? 'success' : 'danger'}>
+                        {ct.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </td>
+                    <td className="text-right">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Remove "${ct.typeName}"? This will fail if the type has any stock or order history.`)) {
+                            deleteMutation.mutate(ct.cylinderTypeId);
+                          }
+                        }}
+                        className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline"
+                        disabled={deleteMutation.isPending}
+                      >
+                        Remove
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

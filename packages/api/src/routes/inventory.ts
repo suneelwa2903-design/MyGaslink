@@ -89,7 +89,7 @@ router.post('/outgoing-empties',
 // Lightweight "customer X returned N empties" event. NO order, NO invoice,
 // NO money movement — pure stock movement. See emptiesReturnService.ts.
 router.post('/empties-return',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(emptiesReturnSchema),
   auditLog('empties_return', 'inventory'),
   async (req, res) => {
@@ -157,7 +157,7 @@ router.post('/initial-balance',
 
 // POST /api/inventory/manual-adjustment
 router.post('/manual-adjustment',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(manualAdjustmentSchema),
   auditLog('manual_adjustment', 'inventory'),
   async (req, res) => {
@@ -177,7 +177,7 @@ router.post('/manual-adjustment',
 // hydrated. Filter by date range, cylinder type, and bucket (fulls/empties/all).
 // Pass format=csv for a downloadable spreadsheet.
 router.get('/manual-adjustments',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const result = await inventoryService.listManualAdjustments(
@@ -237,7 +237,7 @@ router.patch('/manual-adjustments/:id',
 // Backdated orders whose stock has not yet been settled. Drives the
 // pending list on the Backdated Adjustments tab.
 router.get('/backdated-adjustments/pending',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const rows = await getPendingBackdatedAdjustments(req.user!.distributorId!);
@@ -253,7 +253,7 @@ router.get('/backdated-adjustments/pending',
 // The most-recent backdated_inventory_adjustment events (50). Drives
 // the inline history section on the Backdated Adjustments tab.
 router.get('/backdated-adjustments/history',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const rows = await getBackdatedAdjustmentHistory(req.user!.distributorId!);
@@ -267,7 +267,7 @@ router.get('/backdated-adjustments/history',
 
 // GET /api/inventory/depot-history
 router.get('/depot-history',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const { events, meta } = await inventoryService.getDepotHistory(
@@ -289,7 +289,7 @@ router.get('/depot-history',
 // GET /api/inventory/onboarding-stock — WI-080: opening stock recorded
 // at onboarding (initial_balance events). Read-only.
 router.get('/onboarding-stock',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const rows = await inventoryService.getOnboardingStock(req.user!.distributorId!);
@@ -301,7 +301,7 @@ router.get('/onboarding-stock',
 
 // GET /api/inventory/cancelled-stock
 router.get('/cancelled-stock',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const events = await inventoryService.getCancelledStock(
@@ -320,7 +320,7 @@ router.get('/cancelled-stock',
 
 // POST /api/inventory/cancelled-stock/return
 router.post('/cancelled-stock/return',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(cancelledStockReturnSchema),
   auditLog('return_cancelled_stock', 'inventory'),
   async (req, res) => {
@@ -337,7 +337,7 @@ router.post('/cancelled-stock/return',
 
 // GET /api/inventory/threshold-alerts
 router.get('/threshold-alerts',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const alerts = await inventoryService.checkThresholds(req.user!.distributorId!);
@@ -349,7 +349,7 @@ router.get('/threshold-alerts',
 
 // GET /api/inventory/customer-balances  (all customers, optional ?customerId=)
 router.get('/customer-balances',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const balances = await inventoryService.getCustomerBalances(
@@ -367,7 +367,7 @@ router.get('/customer-balances',
 // inside getCustomerBalances — it filters via `customer: { distributorId }`,
 // so a customerId belonging to another distributor simply returns [].
 router.get('/customer-balances/:customerId',
-  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance'),
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const balances = await inventoryService.getCustomerBalances(
@@ -387,7 +387,7 @@ router.get('/customer-balances/:customerId',
 // cylinderTypeId and lock are optional; lock defaults to true so the
 // frontend's day-level "Lock Day" button can just send { date }.
 router.put('/lock-summary',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({
     cylinderTypeId: z.string().uuid().optional(),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -420,7 +420,7 @@ router.put('/lock-summary',
 
 // POST /api/inventory/unlock
 router.post('/unlock',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   })),
@@ -441,7 +441,7 @@ router.post('/unlock',
 
 // GET /api/inventory/forecast
 router.get('/forecast',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const forecast = await inventoryService.getInventoryForecast(req.user!.distributorId!);
@@ -453,7 +453,7 @@ router.get('/forecast',
 
 // GET /api/inventory/reconciliation
 router.get('/reconciliation',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
   try {
     const data = await inventoryService.getReconciliationDashboard(req.user!.distributorId!);
@@ -486,7 +486,7 @@ const createMismatchReportSchema = z.object({
 
 // POST /api/inventory/mismatch-reports
 router.post('/mismatch-reports',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   validate(createMismatchReportSchema),
   auditLog('create', 'stock_mismatch_report'),
   async (req, res) => {
@@ -505,7 +505,7 @@ router.post('/mismatch-reports',
 
 // GET /api/inventory/mismatch-reports — paginated, filterable Mismatch Log.
 router.get('/mismatch-reports',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   async (req, res) => {
     try {
       const { listMismatchReports } = await import('../services/stockMismatchService.js');
