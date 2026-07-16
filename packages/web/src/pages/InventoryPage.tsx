@@ -40,6 +40,10 @@ import { cn } from '@/lib/cn';
 // Mini-Operator (2026-07-16): role-aware branches — rename Godown/Purchase,
 // hide fleet-adjacent tabs and buttons.
 import { useAuthStore, selectRole } from '@/stores/authStore';
+// "Set Opening Stock" modal reused from the Settings → Onboarding checklist.
+// Mini-op tenants don't have the Settings → Onboarding tab, so the Godown →
+// Stock at Onboarding tab surfaces the same modal via a button.
+import { OpeningStockModal } from '@/components/OnboardingTab';
 
 function todayString(): string {
   return localTodayISO();
@@ -176,6 +180,10 @@ export default function InventoryPage() {
   const [adjustOpen, setAdjustOpen] = useState(false);
   // Item 7 (2026-07-09) — lightweight customer empties return.
   const [emptiesReturnOpen, setEmptiesReturnOpen] = useState(false);
+  // Mini-Operator (2026-07-16): opening-stock modal state, opened from the
+  // Stock at Onboarding tab button. Available to all roles that reach the
+  // Godown page — the backend still gates the write.
+  const [openingStockOpen, setOpeningStockOpen] = useState(false);
   // WI-4 — Report Mismatch modal is opened per-vehicle from a Vehicle
   // Return card. Null = closed.
   const [mismatchVehicle, setMismatchVehicle] = useState<ReconciliationVehicle | null>(null);
@@ -597,36 +605,60 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* WI-080 F5: read-only opening stock recorded at onboarding. */}
+      {/* WI-080 F5 + Mini-Op (2026-07-16): opening stock — now has a
+          "Set Opening Stock" button so mini-op tenants (who don't have
+          Settings → Onboarding) can enter it. Existing rows stay read-only
+          in the table but a top-right "Update" button opens the same modal
+          with replaceExisting semantics (backend surfaces the conflict). */}
       {tab === 'onboarding' && (
-        onboardingLoading ? (
-          <div className="flex justify-center py-20"><Loader size="lg" /></div>
-        ) : !onboardingStock?.length ? (
-          <EmptyState title="No opening stock recorded at onboarding." description="Opening balances entered during onboarding will appear here." />
-        ) : (
-          <div className="table-container">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Cylinder Type</th>
-                  <th className="text-center">Opening Fulls</th>
-                  <th className="text-center">Opening Empties</th>
-                  <th>Date Set</th>
-                </tr>
-              </thead>
-              <tbody>
-                {onboardingStock.map((s) => (
-                  <tr key={s.cylinderTypeId}>
-                    <td className="font-medium text-surface-900 dark:text-white">{s.cylinderTypeName}</td>
-                    <td className="text-center">{s.openingFulls}</td>
-                    <td className="text-center">{s.openingEmpties}</td>
-                    <td className="text-surface-500 dark:text-surface-400">{new Date(s.dateSet).toLocaleDateString('en-IN')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-surface-500 dark:text-surface-400">
+              Fulls and empties in your depot at go-live. Recorded once per
+              cylinder type; drives Opening Fulls / Opening Empties on the
+              Daily Summary tab.
+            </p>
+            <Button
+              variant={onboardingStock?.length ? 'secondary' : 'primary'}
+              size="sm"
+              onClick={() => setOpeningStockOpen(true)}
+            >
+              <HiOutlinePlus className="h-4 w-4" />
+              {onboardingStock?.length ? 'Update Opening Stock' : 'Set Opening Stock'}
+            </Button>
           </div>
-        )
+          {onboardingLoading ? (
+            <div className="flex justify-center py-20"><Loader size="lg" /></div>
+          ) : !onboardingStock?.length ? (
+            <EmptyState
+              title="No opening stock recorded yet"
+              description="Click the button above to record how many fulls and empties are in your depot right now."
+            />
+          ) : (
+            <div className="table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Cylinder Type</th>
+                    <th className="text-center">Opening Fulls</th>
+                    <th className="text-center">Opening Empties</th>
+                    <th>Date Set</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {onboardingStock.map((s) => (
+                    <tr key={s.cylinderTypeId}>
+                      <td className="font-medium text-surface-900 dark:text-white">{s.cylinderTypeName}</td>
+                      <td className="text-center">{s.openingFulls}</td>
+                      <td className="text-center">{s.openingEmpties}</td>
+                      <td className="text-surface-500 dark:text-surface-400">{new Date(s.dateSet).toLocaleDateString('en-IN')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'forecast' && (
@@ -947,6 +979,20 @@ export default function InventoryPage() {
           open={emptiesReturnOpen}
           onClose={() => setEmptiesReturnOpen(false)}
           cylinderTypes={cylinderTypes ?? []}
+        />
+      )}
+
+      {/* Mini-Op (2026-07-16) — Opening Stock modal. Reuses the modal
+          from the Settings → Onboarding checklist so the mini-op path
+          and the regular-distributor path emit the exact same payload
+          to POST /api/inventory/initial-balance. */}
+      {openingStockOpen && (
+        <OpeningStockModal
+          onClose={() => {
+            setOpeningStockOpen(false);
+            queryClient.invalidateQueries({ queryKey: ['onboarding-stock'] });
+            queryClient.invalidateQueries({ queryKey: ['inventory-summary'] });
+          }}
         />
       )}
     </div>

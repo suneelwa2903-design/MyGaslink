@@ -209,7 +209,11 @@ export function OnboardingTab() {
 
 type CylinderTypeRow = { cylinderTypeId: string; typeName: string; capacity: number; unit: string };
 
-function OpeningStockModal({ onClose }: { onClose: () => void }) {
+// Exported so InventoryPage → Godown → Stock at Onboarding can surface a
+// "Set / Update Opening Stock" button that opens the same modal — mini-op
+// tenants don't have the Settings → Onboarding tab, so this is their only
+// entry point for opening stock.
+export function OpeningStockModal({ onClose }: { onClose: () => void }) {
   const distributorId = useAuthStore(selectDistributorId);
   const { data: types, isLoading } = useQuery<CylinderTypeRow[]>({
     queryKey: ['cylinder-types-active', distributorId],
