@@ -56,6 +56,10 @@ interface CylinderType {
   isActive: boolean;
 }
 
+interface CylinderTypesListResponse {
+  cylinderTypes: CylinderType[];
+}
+
 interface PurchaseEntriesListResponse {
   purchaseEntries: PurchaseEntry[];
   meta: { page: number; pageSize: number; total: number; totalPages: number };
@@ -184,12 +188,18 @@ function NewPurchaseModal({
     ['source-distributors'],
     '/source-distributors',
   );
-  const { data: types } = useApiQuery<CylinderType[]>(
+  const { data: typesResponse } = useApiQuery<CylinderTypesListResponse>(
     ['cylinder-types'],
     '/cylinder-types',
   );
 
-  const activeTypes = useMemo(() => (types ?? []).filter((t) => t.isActive), [types]);
+  // GET /api/cylinder-types wraps the array as { cylinderTypes: [...] } — the
+  // web PurchasesPage hit the same trap. Unwrap here so the filter/map paths
+  // see a plain array.
+  const activeTypes = useMemo(
+    () => (typesResponse?.cylinderTypes ?? []).filter((t) => t.isActive),
+    [typesResponse],
+  );
 
   const sourceOptions: SelectOption[] = useMemo(
     () => [

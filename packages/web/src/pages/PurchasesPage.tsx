@@ -74,6 +74,10 @@ interface CylinderType {
   isActive: boolean;
 }
 
+interface CylinderTypesListResponse {
+  cylinderTypes: CylinderType[];
+}
+
 interface PurchaseEntriesListResponse {
   purchaseEntries: PurchaseEntry[];
   meta: { page: number; pageSize: number; total: number; totalPages: number };
@@ -331,14 +335,17 @@ function NewPurchaseEntryModal({
     queryKey: ['source-distributors'],
     queryFn: () => apiGet<SourceDistributor[]>('/source-distributors'),
   });
-  const { data: types } = useQuery({
+  const { data: typesResponse } = useQuery({
     queryKey: ['cylinder-types'],
-    queryFn: () => apiGet<CylinderType[]>('/cylinder-types'),
+    queryFn: () => apiGet<CylinderTypesListResponse>('/cylinder-types'),
   });
 
+  // GET /api/cylinder-types wraps the array as { cylinderTypes: [...] }; unwrap
+  // it here so the filter/map paths below see a plain array. Without this the
+  // modal render throws (surfaced by the CP3 browser check).
   const activeTypes = useMemo(
-    () => (types ?? []).filter((t) => t.isActive),
-    [types],
+    () => (typesResponse?.cylinderTypes ?? []).filter((t) => t.isActive),
+    [typesResponse],
   );
 
   const {
