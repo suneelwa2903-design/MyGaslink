@@ -304,7 +304,7 @@ router.get('/:id',
 // access (finance for invoicing-driven creation); customer covers the
 // self-service portal flow.
 router.post('/',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'customer'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'customer', 'mini_operator_admin'),
   validate(createOrderSchema),
   auditLog('create', 'order'),
   async (req, res) => {
@@ -488,7 +488,7 @@ router.get('/trip-sheet/:assignmentId',
 
 // POST /api/orders/:id/confirm-delivery
 router.post('/:id/confirm-delivery',
-  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory'),
+  requireRole('super_admin', 'distributor_admin', 'finance', 'driver', 'inventory', 'mini_operator_admin'),
   validate(deliveryConfirmationSchema),
   auditLog('confirm_delivery', 'order'),
   async (req, res) => {
