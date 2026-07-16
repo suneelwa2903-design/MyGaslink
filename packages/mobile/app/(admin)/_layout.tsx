@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsDark } from '../../src/stores/themeStore';
+import { useAuthStore } from '../../src/stores/authStore';
 import { AppHeader } from '../../src/components/AppHeader';
 import { ScrollableTabBar } from '../../src/components/ui/ScrollableTabBar';
 
@@ -35,6 +36,13 @@ const TAB_ICONS_FOCUSED: Record<string, keyof typeof Ionicons.glyphMap> = {
 
 export default function AdminLayout() {
   const dark = useIsDark();
+  // Mini-Operator (2026-07-16): reduce the tab set for accountType=
+  // mini_operator tenants. Purchases tab lands in Step 8 — for now the
+  // visible-for-mini-op set is Dashboard / Orders / Inventory /
+  // Customers / More. Hidden: finance (Billing), fleet, reports,
+  // collections. Regular distributor_admin sees every tab as before.
+  const user = useAuthStore((s) => s.user);
+  const isMiniOperator = user?.role === 'mini_operator_admin';
 
   const bg = dark ? '#0f172a' : '#ffffff';
   const headerBg = dark ? '#1e293b' : '#ffffff';
@@ -101,7 +109,7 @@ export default function AdminLayout() {
       />
       <Tabs.Screen
         name="finance"
-        options={{
+        options={isMiniOperator ? { href: null, title: 'Billing', tabBarItemStyle: { display: 'none' } } : {
           title: 'Billing',
           tabBarIcon: ({ focused }) => (
             <Ionicons
@@ -130,7 +138,7 @@ export default function AdminLayout() {
           /api/reports/:reportType. */}
       <Tabs.Screen
         name="reports"
-        options={{
+        options={isMiniOperator ? { href: null, title: 'Reports', tabBarItemStyle: { display: 'none' } } : {
           title: 'Reports',
           tabBarIcon: ({ focused }) => (
             <Ionicons
@@ -158,7 +166,7 @@ export default function AdminLayout() {
       {/* STAGE-H: promoted from FleetModal in more.tsx. */}
       <Tabs.Screen
         name="fleet"
-        options={{
+        options={isMiniOperator ? { href: null, title: 'Fleet', tabBarItemStyle: { display: 'none' } } : {
           title: 'Fleet',
           tabBarIcon: ({ focused }) => (
             <Ionicons
@@ -173,7 +181,7 @@ export default function AdminLayout() {
           More → Collections row. Now a first-class tab. */}
       <Tabs.Screen
         name="collections"
-        options={{
+        options={isMiniOperator ? { href: null, title: 'Collections', tabBarItemStyle: { display: 'none' } } : {
           title: 'Collections',
           tabBarIcon: ({ focused }) => (
             <Ionicons

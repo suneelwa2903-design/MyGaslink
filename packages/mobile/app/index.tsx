@@ -45,6 +45,13 @@ export default function Index() {
         // deferred to a later phase per docs/HQ-PORTAL-BRAINSTORM.md §7.
         router.replace('/(hq)');
         break;
+      case 'mini_operator_admin':
+        // Mini-Operator (2026-07-16): reuses the (admin) route group
+        // with a filtered tab bar (see (admin)/_layout.tsx). Lands on
+        // the admin dashboard; the tab bar hides Fleet/Reports/
+        // Collections/Billing tabs for this role.
+        router.replace('/(admin)/dashboard');
+        break;
       default:
         router.replace('/(auth)/login');
     }

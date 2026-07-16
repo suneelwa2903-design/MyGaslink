@@ -62,12 +62,18 @@ function ProtectedRouteInner({
       // dashboard, never the admin analytics page (they have no access
       // there) and never the customer portal (which shows a single
       // customer's data — HQ needs the group roll-up).
+      // Mini-Operator (2026-07-16): mini-operator admins land on
+      // /app/orders — the primary daily workflow (record purchases,
+      // deliver orders). Analytics/dashboard is a nice-to-have they can
+      // click into from the sidebar rather than a natural landing page.
       const fallback =
         userRole === UserRole.CUSTOMER
           ? '/app/customer/dashboard'
           : userRole === UserRole.CUSTOMER_HQ
             ? '/hq'
-            : '/app/analytics';
+            : userRole === UserRole.MINI_OPERATOR_ADMIN
+              ? '/app/orders'
+              : '/app/analytics';
       return <Navigate to={fallback} replace />;
     }
   }

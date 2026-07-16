@@ -20,6 +20,7 @@ import {
   HiOutlineDocumentText,
   HiOutlineUserMinus,
   HiOutlineRectangleStack,
+  HiOutlineShoppingCart,
   HiChevronDoubleLeft,
   HiChevronDoubleRight,
 } from 'react-icons/hi2';
@@ -213,6 +214,64 @@ const hqMenuItems: MenuItem[] = [
   },
 ];
 
+// Mini-Operator (2026-07-16): reduced sidebar for accountType='mini_operator'
+// tenants. Landing route is /app/orders (per ProtectedRoute fallback), but
+// Dashboard remains the first sidebar item as a UX convention. Fleet /
+// Collections / Reports / Distributors / Provider Catalog / Health are
+// intentionally excluded — mini-operators have no fleet, no drivers, no
+// distributor-network overhead. Purchases is the mini-operator-only tab
+// added in Step 7 (points at /app/purchases).
+const miniOperatorMenuItems: MenuItem[] = [
+  {
+    label: 'Dashboard',
+    labelKey: 'nav.analytics',
+    path: '/app/analytics',
+    icon: HiOutlineChartBar,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+  {
+    label: 'Orders',
+    labelKey: 'nav.orders',
+    path: '/app/orders',
+    icon: HiOutlineClipboardDocumentList,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+  {
+    label: 'Inventory',
+    labelKey: 'nav.inventory',
+    path: '/app/inventory',
+    icon: HiOutlineCube,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+  {
+    label: 'Purchases',
+    path: '/app/purchases',
+    icon: HiOutlineShoppingCart,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+  {
+    label: 'Customers',
+    labelKey: 'nav.customers',
+    path: '/app/customers',
+    icon: HiOutlineUsers,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+  {
+    label: 'Billing & Payments',
+    labelKey: 'nav.billing',
+    path: '/app/billing-payments',
+    icon: HiOutlineBanknotes,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+  {
+    label: 'Settings',
+    labelKey: 'nav.settings',
+    path: '/app/settings',
+    icon: HiOutlineCog6Tooth,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+];
+
 const customerMenuItems: MenuItem[] = [
   {
     label: 'Dashboard',
@@ -265,8 +324,15 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
   const userRole = user?.role as UserRole | undefined;
   const isCustomer = userRole === UserRole.CUSTOMER;
   const isHq = userRole === UserRole.CUSTOMER_HQ;
+  const isMiniOperator = userRole === UserRole.MINI_OPERATOR_ADMIN;
 
-  const menuItems = isHq ? hqMenuItems : isCustomer ? customerMenuItems : adminMenuItems;
+  const menuItems = isHq
+    ? hqMenuItems
+    : isCustomer
+      ? customerMenuItems
+      : isMiniOperator
+        ? miniOperatorMenuItems
+        : adminMenuItems;
 
   // WI-PENDING-PAYMENTS: red badge on the Billing & Payments nav item
   // when there are pending payment submissions to approve. Only the
