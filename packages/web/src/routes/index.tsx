@@ -23,6 +23,8 @@ const SupportAppPage = lazy(() => import('@/pages/SupportAppPage'));
 // Admin pages
 const OrdersPage = lazy(() => import('@/pages/OrdersPage'));
 const InventoryPage = lazy(() => import('@/pages/InventoryPage'));
+// Mini-Operator (2026-07-16): purchase entries + source distributors.
+const PurchasesPage = lazy(() => import('@/pages/PurchasesPage'));
 const CustomersPage = lazy(() => import('@/pages/CustomersPage'));
 const BillingPaymentsPage = lazy(() => import('@/pages/BillingPaymentsPage'));
 const FleetPage = lazy(() => import('@/pages/FleetPage'));
@@ -63,13 +65,16 @@ function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
 
   if (isAuthenticated && user) {
     // Feature A (2026-07-15): customer_hq → HQ portal; customer →
-    // single-customer portal; everyone else → admin analytics.
+    // single-customer portal; mini_operator_admin → /app/orders (their
+    // primary daily workflow); everyone else → admin analytics.
     const target =
       user.role === UserRole.CUSTOMER
         ? '/app/customer/dashboard'
         : user.role === UserRole.CUSTOMER_HQ
           ? '/hq'
-          : '/app/analytics';
+          : user.role === UserRole.MINI_OPERATOR_ADMIN
+            ? '/app/orders'
+            : '/app/analytics';
     return <Navigate to={target} replace />;
   }
 
@@ -125,6 +130,7 @@ export function AppRoutes() {
                   UserRole.FINANCE,
                   UserRole.INVENTORY,
                   UserRole.DRIVER,
+                  UserRole.MINI_OPERATOR_ADMIN,
                 ]}
                 requireDistributor
               />
@@ -142,12 +148,28 @@ export function AppRoutes() {
                   UserRole.DISTRIBUTOR_ADMIN,
                   UserRole.FINANCE,
                   UserRole.INVENTORY,
+                  UserRole.MINI_OPERATOR_ADMIN,
                 ]}
                 requireDistributor
               />
             }
           >
             <Route index element={<InventoryPage />} />
+          </Route>
+
+          {/* Mini-Operator (2026-07-16): purchase entries + source
+              distributors. Only mini_operator_admin (and super_admin via
+              the built-in bypass) reach this page. */}
+          <Route
+            path="purchases"
+            element={
+              <ProtectedRoute
+                allowedRoles={[UserRole.MINI_OPERATOR_ADMIN]}
+                requireDistributor
+              />
+            }
+          >
+            <Route index element={<PurchasesPage />} />
           </Route>
 
           <Route
@@ -159,6 +181,7 @@ export function AppRoutes() {
                   UserRole.DISTRIBUTOR_ADMIN,
                   UserRole.INVENTORY,
                   UserRole.FINANCE,
+                  UserRole.MINI_OPERATOR_ADMIN,
                 ]}
                 requireDistributor
               />
@@ -176,6 +199,7 @@ export function AppRoutes() {
                   UserRole.DISTRIBUTOR_ADMIN,
                   UserRole.FINANCE,
                   UserRole.INVENTORY,
+                  UserRole.MINI_OPERATOR_ADMIN,
                 ]}
                 requireDistributor
               />
@@ -219,6 +243,7 @@ export function AppRoutes() {
                   UserRole.FINANCE,
                   UserRole.INVENTORY,
                   UserRole.DRIVER,
+                  UserRole.MINI_OPERATOR_ADMIN,
                 ]}
               />
             }
@@ -273,6 +298,7 @@ export function AppRoutes() {
                   UserRole.DISTRIBUTOR_ADMIN,
                   UserRole.INVENTORY,
                   UserRole.FINANCE,
+                  UserRole.MINI_OPERATOR_ADMIN,
                 ]}
               />
             }
@@ -331,8 +357,9 @@ export function AppRoutes() {
             <Route index element={<DeletionRequestsPage />} />
           </Route>
 
-          {/* Staff profile (admin / finance / inventory / super_admin / driver).
-              Customer role still routes through /app/customer/account. */}
+          {/* Staff profile (admin / finance / inventory / super_admin / driver /
+              mini_operator_admin). Customer role still routes through
+              /app/customer/account. */}
           <Route
             path="profile"
             element={
@@ -343,6 +370,7 @@ export function AppRoutes() {
                   UserRole.FINANCE,
                   UserRole.INVENTORY,
                   UserRole.DRIVER,
+                  UserRole.MINI_OPERATOR_ADMIN,
                 ]}
               />
             }
