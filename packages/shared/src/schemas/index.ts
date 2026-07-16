@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import {
   UserRole, PaymentMethod, OrderStatus, InvoiceStatus,
-  CustomerStatus, GstMode, AccountabilityType,
+  CustomerStatus, GstMode, AccountabilityType, AccountType,
 } from '../enums/index.js';
 import { GSTIN_REGEX, IFSC_REGEX, UPI_REGEX, localTodayISO } from '../constants/index.js';
 
@@ -231,6 +231,11 @@ export const createOrderSchema = z.object({
   // field for B2C customers but the schema accepts it from any caller; the
   // IRN payload builder gates emission on customerType === 'B2B'.
   poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
+  // Mini-Operator (2026-07-16): free-text driver name for accountType=
+  // mini_operator tenants that don't maintain Driver records. Optional
+  // and unrelated to the driverId FK; regular distributors continue to
+  // use driver assignment. Max 100 matches the DB column.
+  driverNameFreeText: z.string().max(100).optional(),
   // Customer self-collects from godown — no driver/vehicle/EWB flow.
   // Optional + default so existing API callers keep working unchanged.
   // The orderService.createOrder pass-through (`data.isGodownPickup ?? false`)
@@ -267,6 +272,9 @@ export const updateOrderSchema = z.object({
   // denormalised Invoice.poNumber snapshot still reflects the value at
   // creation time, so post-issue edits are visual-only on the Order view.
   poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
+  // Mini-Operator (2026-07-16): free-text driver name mirrors the field
+  // on createOrderSchema so mini-operators can amend after creation.
+  driverNameFreeText: z.string().max(100).optional(),
   items: z.array(orderItemSchema).min(1).optional(),
 });
 
@@ -673,6 +681,12 @@ const docCode = z.string()
   .or(z.literal(''));
 
 export const createDistributorSchema = z.object({
+  // Mini-Operator (2026-07-16): account type discriminator. Defaults to
+  // `distributor` (full-featured) when the caller omits it, preserving
+  // existing behaviour for every caller not yet updated. Super Admin
+  // sets `mini_operator` from the Distributors page. Downstream service
+  // rejects mini_operator + gstMode transitions to sandbox/live.
+  accountType: z.nativeEnum(AccountType).default(AccountType.DISTRIBUTOR).optional(),
   businessName: z.string().min(1).max(200),
   legalName: z.string().min(1).max(200),
   docCode: docCode,
@@ -855,6 +869,45 @@ export type PaymentFilterInput = z.infer<typeof paymentFilterSchema>;
 export type CustomerFilterInput = z.infer<typeof customerFilterSchema>;
 export type ReturnsOnlyOrderInput = z.infer<typeof returnsOnlyOrderSchema>;
 export type ReturnsConfirmationInput = z.infer<typeof returnsConfirmationSchema>;
+
+// ─── Mini-Operator (2026-07-16) — Source Distributors + Purchase Entries ─────
+
+// Source distributor = free-text supplier the mini-operator buys stock from.
+// Just a name; no address/GSTIN/phone in v1 — the mini-operator writes the
+// name into a purchase-entry dropdown, that's it. Unique per tenant enforced
+// at the DB layer; the service layer surfaces the 409 as a user-friendly
+// "already exists" error.
+export const createSourceDistributorSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100),
+});
+export const updateSourceDistributorSchema = createSourceDistributorSchema.partial();
+
+// Purchase entry — stock IN to the mini-operator's godown. Records one batch
+// received from a source distributor on a given date. Each item may have
+// non-zero `fullsReceived`, non-zero `emptiesGivenOut`, or both; the service
+// layer rejects an entry where every item is zero (no-op guard).
+export const createPurchaseEntrySchema = z.object({
+  sourceDistributorId: uuid.optional(),
+  // purchaseDate is a YYYY-MM-DD string (local calendar date, no time).
+  // Matches the `PurchaseEntry.purchaseDate String` column — see the model
+  // docstring for the rationale; using string here (not DateTime) avoids
+  // TZ drift for the single-user mini-operator workflow.
+  purchaseDate: dateString,
+  notes: z.string().max(500).optional(),
+  items: z
+    .array(
+      z.object({
+        cylinderTypeId: uuid,
+        fullsReceived: z.number().int().min(0),
+        emptiesGivenOut: z.number().int().min(0),
+      }),
+    )
+    .min(1, 'At least one cylinder type entry is required'),
+});
+
+export type CreateSourceDistributorInput = z.infer<typeof createSourceDistributorSchema>;
+export type UpdateSourceDistributorInput = z.infer<typeof updateSourceDistributorSchema>;
+export type CreatePurchaseEntryInput = z.infer<typeof createPurchaseEntrySchema>;
 
 // ─── FLOAT-001 — Vehicle Load Manifest + Driver walk-in order ────────────────
 

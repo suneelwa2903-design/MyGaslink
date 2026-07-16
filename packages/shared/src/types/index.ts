@@ -6,7 +6,7 @@ import type {
   BillingPeriodType, BillingStatus,
   BillingTier, BillingItemType, PendingActionModule, PendingActionStatus,
   PendingActionSeverity, AccountabilityType, AccountabilityStatus,
-  LedgerEntryType, InventoryEventType, LicenseType,
+  LedgerEntryType, InventoryEventType, LicenseType, AccountType,
 } from '../enums/index.js';
 
 // ─── API Response ────────────────────────────────────────────────────────────
@@ -136,6 +136,11 @@ export interface Distributor {
   email: string | null;
   status: DistributorStatus;
   gstMode: GstMode;
+  // Mini-Operator (2026-07-16): distributor variant discriminator. Present
+  // on every wire response after the migration; 'distributor' for every
+  // existing tenant. Web + mobile use this to filter the sidebar and the
+  // Super Admin uses it to gate GST-activation UI.
+  accountType: AccountType;
   providerCodes: string[];
   subscriptionPlan: SubscriptionPlan | null;
   billingTier: BillingTier | null;
@@ -399,6 +404,11 @@ export interface Order {
   driverId: string | null;
   driverName: string | null;
   driverPhone?: string | null;
+  // Mini-Operator (2026-07-16): free-text driver name for mini-operator
+  // tenants that don't maintain Driver records. Null on regular
+  // distributor orders (they use driverId → driverName). Written by the
+  // order-create form and rendered on invoice PDF + admin order detail.
+  driverNameFreeText?: string | null;
   vehicleId: string | null;
   vehicleNumber: string | null;
   orderDate: string;
@@ -1147,6 +1157,41 @@ export interface InventoryForecast {
   forecastedDemand30Days: number;
   recommendedReorderQty: number;
   trendDirection: 'increasing' | 'stable' | 'decreasing';
+}
+
+// ─── Mini-Operator (2026-07-16) — Source Distributors + Purchase Entries ─────
+
+export interface SourceDistributor {
+  id: string;
+  distributorId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PurchaseEntryItem {
+  id: string;
+  purchaseEntryId: string;
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  fullsReceived: number;
+  emptiesGivenOut: number;
+}
+
+export interface PurchaseEntry {
+  id: string;
+  purchaseNumber: string;
+  distributorId: string;
+  sourceDistributorId: string | null;
+  // Denormalised snapshot of the source distributor's name at write time —
+  // survives rename/soft-delete of the underlying SourceDistributor row.
+  sourceDistributorName: string | null;
+  purchaseDate: string;
+  notes: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  items: PurchaseEntryItem[];
 }
 
 // M14 v1.0 — super-admin read-only monitor for account deletion requests.
