@@ -24,6 +24,23 @@ enum UserRole {
   // fallback. Distinct role gate so we NEVER extend `requireRole('customer')`
   // — that gate protects Razorpay money endpoints on customerPortal.ts.
   customer_hq
+  // Mini-Operator (2026-07-16): admin of a lightweight "mini_operator"
+  // distributor. Same JWT/tenant model as distributor_admin (carries
+  // distributorId), but restricted to a reduced UI + no GST/fleet/trip
+  // surface. Enforced by explicit requireRole allow-list additions per
+  // endpoint (positive-allow-list means missing = 403, fail-safe).
+  mini_operator_admin
+}
+
+enum AccountType {
+  // Standard full-featured distributor (default for every existing row).
+  distributor
+  // Mini-Operator (2026-07-16): lightweight distributor variant priced
+  // at ₹1,999/month. No GST/IRN/EWB, no fleet, no drivers/trips. Adds
+  // purchase-entry workflow + source-distributor list + free-text
+  // driver name on orders. Invariant: accountType=mini_operator MUST
+  // stay on gstMode=disabled — enforced in distributorService.
+  mini_operator
 }
 
 enum UserStatus {
@@ -402,6 +419,12 @@ model Distributor {
   // any future internal-only test tenants. Real distributors transition
   // disabled → live without ever passing through sandbox.
   isTestTenant            Boolean           @default(false) @map("is_test_tenant")
+  // Mini-Operator (2026-07-16): account type discriminator. `distributor`
+  // (default) preserves the existing full-featured behaviour for every
+  // existing row after the migration backfill. `mini_operator` gates the
+  // reduced UI + forbids gstMode transitions to sandbox/live. See enum
+  // AccountType docstring for the full policy.
+  accountType             AccountType       @default(distributor) @map("account_type")
   // WI-108: 3-letter tenant code embedded in structured invoice/order
   // numbers (e.g. "SHD" → ISHD2526000123). Nullable: when unset the legacy
   // random INV-/ORD- format is used. Globally unique so codes never clash
@@ -506,8 +529,96 @@ model Distributor {
   // Feature A (2026-07-15): HQ groups (e.g. hotel chains) that span
   // multiple customer records under this distributor.
   customerGroups       CustomerGroup[]
+  // Mini-Operator (2026-07-16): mini-operator-only relations. Both are
+  // empty for regular distributors (accountType='distributor'); nothing
+  // in the standard distributor code paths reads them.
+  sourceDistributors   SourceDistributor[]
+  purchaseEntries      PurchaseEntry[]
 
   @@map("distributors")
+}
+
+// ─── Mini-Operator: Source Distributors + Purchase Entries ───────────────────
+// (2026-07-16) — see docs/MINI-OPERATOR-INVESTIGATION.md §6.
+//
+// These three tables serve mini_operator accountType tenants only. Standard
+// distributor code paths ignore them. Tenant isolation follows the same
+// convention as every other tenant-scoped table: distributorId column on
+// every row, distributorId in every WHERE clause (anti-pattern #13).
+
+/// Free-text supplier the mini-operator buys stock from. Not linked to any
+/// existing Distributor row — mini-operators may buy from a local kirana
+/// depot or an out-of-network agency. Soft-deleted so historical
+/// PurchaseEntry rows keep a valid FK; UI filters `deletedAt IS NULL`.
+model SourceDistributor {
+  id            String    @id @default(uuid()) @map("source_distributor_id")
+  distributorId String    @map("distributor_id")
+  name          String
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  distributor     Distributor     @relation(fields: [distributorId], references: [id])
+  purchaseEntries PurchaseEntry[]
+
+  @@unique([distributorId, name])
+  @@index([distributorId])
+  @@map("source_distributors")
+}
+
+/// Purchase-in event recorded by a mini-operator. Header row for a batch of
+/// cylinders received from a source distributor on a given date. Writes N
+/// InventoryEvent rows (one `incoming_fulls` and/or one `outgoing_empties`
+/// per PurchaseEntryItem) inside the SAME prisma.$transaction — see
+/// purchaseEntryService.createPurchaseEntry.
+///
+/// purchaseDate is a STRING YYYY-MM-DD (local date, no time component) per
+/// the Mini-Operator brief §Deviation 2 — matches the shared
+/// localTodayISO() helper the mobile form emits and avoids TZ drift on the
+/// single-user workflow. All other date-only columns in the schema use
+/// DateTime @db.Date; this is a deliberate, narrow exception.
+///
+/// sourceDistributorName is a denormalised snapshot at write time (same
+/// pattern as Invoice.customerNameSnapshot) so historical PurchaseEntry
+/// rows stay readable if the SourceDistributor row is later renamed or
+/// soft-deleted.
+model PurchaseEntry {
+  id                    String    @id @default(uuid()) @map("purchase_entry_id")
+  purchaseNumber        String    @unique @map("purchase_number")
+  distributorId         String    @map("distributor_id")
+  sourceDistributorId   String?   @map("source_distributor_id")
+  sourceDistributorName String?   @map("source_distributor_name")
+  purchaseDate          String    @map("purchase_date")
+  notes                 String?
+  createdBy             String    @map("created_by")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  deletedAt             DateTime? @map("deleted_at")
+
+  distributor       Distributor         @relation(fields: [distributorId], references: [id])
+  sourceDistributor SourceDistributor?  @relation(fields: [sourceDistributorId], references: [id])
+  items             PurchaseEntryItem[]
+
+  @@index([distributorId, purchaseDate(sort: Desc)])
+  @@map("purchase_entries")
+}
+
+/// Per-cylinder-type line inside a PurchaseEntry. Each item may contribute
+/// zero, one, or two InventoryEvent rows at commit time — see
+/// purchaseEntryService.createPurchaseEntry.
+model PurchaseEntryItem {
+  id              String   @id @default(uuid()) @map("purchase_entry_item_id")
+  purchaseEntryId String   @map("purchase_entry_id")
+  cylinderTypeId  String   @map("cylinder_type_id")
+  fullsReceived   Int      @default(0) @map("fulls_received")
+  emptiesGivenOut Int      @default(0) @map("empties_given_out")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  purchaseEntry PurchaseEntry @relation(fields: [purchaseEntryId], references: [id])
+  cylinderType  CylinderType  @relation(fields: [cylinderTypeId], references: [id])
+
+  @@index([purchaseEntryId])
+  @@map("purchase_entry_items")
 }
 
 model User {
@@ -864,6 +975,8 @@ model CylinderType {
   stockMismatchRecords StockMismatchRecord[]
   // FLOAT-001 (2026-06-17): manifest rows recording per-trip loaded qty of this type.
   dvaLoadManifests     DVALoadManifest[]
+  // Mini-Operator (2026-07-16): purchase-entry line items by cylinder type.
+  purchaseEntryItems   PurchaseEntryItem[]
 
   @@unique([distributorId, typeName])
   @@index([providerCatalogId])
@@ -922,6 +1035,13 @@ model Order {
   customerId            String      @map("customer_id")
   driverId              String?     @map("driver_id")
   vehicleId             String?     @map("vehicle_id")
+  // Mini-Operator (2026-07-16): free-text driver name for mini-operators
+  // that don't maintain a Driver record. Unrelated to driverId FK — the
+  // two are mutually exclusive in practice (regular distributors use
+  // driverId; mini-operators use driverNameFreeText). Optional so all
+  // existing rows stay valid without backfill. Rendered on invoice PDF
+  // and admin order detail view.
+  driverNameFreeText    String?     @map("driver_name_free_text")
   orderDate             DateTime    @map("order_date") @db.Date
   deliveryDate          DateTime    @map("delivery_date") @db.Date
   status                OrderStatus @default(pending_driver_assignment)

@@ -12,6 +12,16 @@ export enum UserRole {
   // distributor. Kept in lockstep with the Prisma enum
   // (anti-pattern #9 discipline — wire-shape drift risk).
   CUSTOMER_HQ = 'customer_hq',
+  // Mini-Operator (2026-07-16): admin of a lightweight mini_operator
+  // distributor. Same auth stack + tenant scoping as DISTRIBUTOR_ADMIN;
+  // reduced UI + no GST/fleet/trip surface. See enum in prisma schema
+  // for the full policy.
+  MINI_OPERATOR_ADMIN = 'mini_operator_admin',
+}
+
+export enum AccountType {
+  DISTRIBUTOR = 'distributor',
+  MINI_OPERATOR = 'mini_operator',
 }
 
 export enum UserStatus {
