@@ -21,16 +21,22 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { HiOutlinePlus, HiOutlineTrash, HiOutlineShoppingCart } from 'react-icons/hi2';
+import {
+  HiOutlinePlus,
+  HiOutlineTrash,
+  HiOutlineShoppingCart,
+  HiOutlineArrowDownTray,
+} from 'react-icons/hi2';
 import {
   createPurchaseEntrySchema,
   createSourceDistributorSchema,
   type CreatePurchaseEntryInput,
   type CreateSourceDistributorInput,
   localTodayISO,
+  localDateISO,
 } from '@gaslink/shared';
-import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
-import { Button, Input, Loader, EmptyState, Modal } from '@/components/ui';
+import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
+import { Button, Input, Loader, EmptyState, Modal, Select } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
 // ─── Wire types ─────────────────────────────────────────────────────────────
@@ -98,6 +104,7 @@ type Tab = 'entries' | 'sources';
 export default function PurchasesPage() {
   const [tab, setTab] = useState<Tab>('entries');
   const [newEntryOpen, setNewEntryOpen] = useState(false);
+  const [ledgerOpen, setLedgerOpen] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -111,10 +118,16 @@ export default function PurchasesPage() {
           </p>
         </div>
         {tab === 'entries' && (
-          <Button onClick={() => setNewEntryOpen(true)}>
-            <HiOutlinePlus className="h-4 w-4" />
-            New Purchase Entry
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setLedgerOpen(true)}>
+              <HiOutlineArrowDownTray className="h-4 w-4" />
+              Download Ledger
+            </Button>
+            <Button onClick={() => setNewEntryOpen(true)}>
+              <HiOutlinePlus className="h-4 w-4" />
+              New Purchase Entry
+            </Button>
+          </div>
         )}
       </div>
 
@@ -138,7 +151,118 @@ export default function PurchasesPage() {
           onClose={() => setNewEntryOpen(false)}
         />
       )}
+
+      {ledgerOpen && (
+        <DownloadLedgerModal
+          open={ledgerOpen}
+          onClose={() => setLedgerOpen(false)}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── Download Ledger modal ───────────────────────────────────────────────────
+//
+// Backend: GET /api/purchase-entries/ledger.pdf with query params from/to/
+// sourceDistributorId/cylinderTypeId. Returns application/pdf. We fetch via
+// the shared axios instance (JWT + X-Distributor-Id are injected there) and
+// hand the blob to a download anchor. Same pattern as customer-statement PDF
+// download in CustomersPage.
+
+function DownloadLedgerModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [from, setFrom] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return localDateISO(d);
+  });
+  const [to, setTo] = useState(() => localTodayISO());
+  const [sourceDistributorId, setSourceDistributorId] = useState<string>('');
+  const [cylinderTypeId, setCylinderTypeId] = useState<string>('');
+  const [downloading, setDownloading] = useState(false);
+
+  const { data: sources } = useQuery({
+    queryKey: ['source-distributors'],
+    queryFn: () => apiGet<SourceDistributor[]>('/source-distributors'),
+  });
+  const { data: typeResponse } = useQuery({
+    queryKey: ['cylinder-types'],
+    queryFn: () => apiGet<CylinderTypesListResponse>('/cylinder-types'),
+  });
+  const types = typeResponse?.cylinderTypes ?? [];
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const params: Record<string, string> = { from, to };
+      if (sourceDistributorId) params.sourceDistributorId = sourceDistributorId;
+      if (cylinderTypeId) params.cylinderTypeId = cylinderTypeId;
+      const resp = await api.get('/purchase-entries/ledger.pdf', {
+        params,
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(resp.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `purchase-ledger-${from}-${to}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      onClose();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Download Purchase Ledger" size="md">
+      <div className="space-y-4">
+        <p className="text-sm text-surface-600 dark:text-surface-300">
+          Choose a date range and optionally narrow by source distributor or cylinder type.
+          The PDF lists every purchase entry line in the window.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            type="date"
+            label="From"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+          />
+          <Input
+            type="date"
+            label="To"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+          />
+        </div>
+        <Select
+          label="Source Distributor (optional)"
+          value={sourceDistributorId}
+          onChange={(e) => setSourceDistributorId(e.target.value)}
+          options={[
+            { value: '', label: 'All source distributors' },
+            ...(sources ?? []).map((s) => ({ value: s.id, label: s.name })),
+          ]}
+        />
+        <Select
+          label="Cylinder Type (optional)"
+          value={cylinderTypeId}
+          onChange={(e) => setCylinderTypeId(e.target.value)}
+          options={[
+            { value: '', label: 'All cylinder types' },
+            ...types.map((t) => ({ value: t.cylinderTypeId, label: t.typeName })),
+          ]}
+        />
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleDownload} loading={downloading}>
+            <HiOutlineArrowDownTray className="h-4 w-4" />
+            Download PDF
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -377,7 +377,7 @@ export default function InventoryPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white">
-            {isMiniOperator ? 'Godown' : 'Inventory'}
+            {isMiniOperator ? 'Stock' : 'Inventory'}
           </h1>
           <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
             {isMiniOperator ? 'Fulls and empties in your depot' : 'Track cylinder stock levels'}

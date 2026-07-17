@@ -17,6 +17,7 @@ import { param } from '../utils/params.js';
 import { sendSuccess, sendCreated, sendError, sendNotFound } from '../utils/apiResponse.js';
 import { createPurchaseEntrySchema } from '@gaslink/shared';
 import * as purchaseEntryService from '../services/purchaseEntryService.js';
+import { generatePurchaseLedgerPdf } from '../services/pdf/purchaseLedgerPdfService.js';
 
 // `authenticate` + `resolveDistributor` + `requireDistributor` are wired in
 // app.ts on the mount path — same pattern as every other tenant-scoped
@@ -66,6 +67,38 @@ router.post('/',
       if (err instanceof purchaseEntryService.PurchaseEntryError) {
         return sendError(res, err.message, err.statusCode);
       }
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// GET /api/purchase-entries/ledger.pdf
+//
+// Mini-Operator (2026-07-17) — downloadable purchase ledger.
+// Filterable by date range, source distributor, and/or cylinder type.
+// MUST be registered BEFORE the wildcard GET /:id below or Express will
+// treat "ledger.pdf" as an :id param and hand it to getPurchaseEntry.
+const ledgerQuerySchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  sourceDistributorId: z.string().uuid().optional(),
+  cylinderTypeId: z.string().uuid().optional(),
+});
+
+router.get('/ledger.pdf',
+  requireRole('mini_operator_admin'),
+  validateQuery(ledgerQuerySchema),
+  async (req, res) => {
+    try {
+      const q = (req.validated?.query ?? req.query) as z.infer<typeof ledgerQuerySchema>;
+      const pdf = await generatePurchaseLedgerPdf(req.user!.distributorId!, q);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="purchase-ledger-${q.from ?? 'beginning'}-${q.to ?? 'today'}.pdf"`,
+      );
+      return res.send(pdf);
+    } catch (err) {
       return sendError(res, (err as Error).message);
     }
   },

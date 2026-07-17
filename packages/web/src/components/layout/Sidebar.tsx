@@ -237,11 +237,11 @@ const miniOperatorMenuItems: MenuItem[] = [
     roles: [UserRole.MINI_OPERATOR_ADMIN],
   },
   {
-    // Mini-Operator (2026-07-16): rename "Inventory" → "Godown" for
+    // Mini-Operator (2026-07-16): rename "Inventory" → "Stock" for
     // mini-op tenants — they don't have vehicles or fleet inventory, just
     // a physical godown of fulls + empties. Same route + page, different
     // label. No labelKey — falls through to the plain `label`.
-    label: 'Godown',
+    label: 'Stock',
     path: '/app/inventory',
     icon: HiOutlineCube,
     roles: [UserRole.MINI_OPERATOR_ADMIN],
