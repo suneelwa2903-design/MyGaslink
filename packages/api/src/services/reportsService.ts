@@ -1104,7 +1104,14 @@ export async function deliveryPerformanceStatement(
       creditDays,
       status,
       amountCollected: +collected.toFixed(2),
-      overdueAmount: status === 'Overdue' ? +outstanding.toFixed(2) : '',
+      // 2026-07-17: renamed to "Balance Due" in the column label. Populate
+      // for EVERY non-Paid row (Overdue + Partial + Pending) — the previous
+      // "only when Overdue" gate hid partial-payment tails (like the
+      // ₹4-₹28 rounding balances) that made the Driver Statement look like
+      // it was showing full invoice value in the Amount column instead of
+      // actual pending. Status column still tells the reader which bucket
+      // (Overdue vs Partial vs Pending). The blank stays only for 'Paid'.
+      overdueAmount: status === 'Paid' ? '' : +outstanding.toFixed(2),
     });
   }
 
@@ -1129,7 +1136,7 @@ export async function deliveryPerformanceStatement(
       { key: 'amount', label: 'Amount', money: true },
       { key: 'creditDays', label: 'Cr Days' },
       { key: 'status', label: 'Status' },
-      { key: 'overdueAmount', label: 'Overdue Amt', money: true },
+      { key: 'overdueAmount', label: 'Balance Due', money: true },
     ],
     rows,
     totals: {

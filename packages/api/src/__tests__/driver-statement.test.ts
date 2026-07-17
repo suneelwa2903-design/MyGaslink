@@ -203,7 +203,7 @@ describe('deliveryPerformanceStatement — service', () => {
     expect(r.rows.every((row) => row.type === 'statement_row')).toBe(true);
     // Columns present + labels match spec
     const labels = r.columns.map((c) => c.label);
-    expect(labels).toEqual(['Date', 'Invoice #', 'Customer', 'Cylinders', 'F Del', 'E Coll', 'E Pend', 'Amount', 'Cr Days', 'Status', 'Overdue Amt']);
+    expect(labels).toEqual(['Date', 'Invoice #', 'Customer', 'Cylinders', 'F Del', 'E Coll', 'E Pend', 'Amount', 'Cr Days', 'Status', 'Balance Due']);
   });
 
   it('7. Cancelled invoices are excluded from the driver statement', async () => {

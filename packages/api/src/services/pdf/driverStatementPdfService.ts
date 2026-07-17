@@ -54,7 +54,7 @@ const COLS: Col[] = [
   { key: 'amount',          label: 'Amount',      width: 82, align: 'right',  charCap: 17 },
   { key: 'creditDays',      label: 'Cr Days',     width: 40, align: 'right',  charCap: 4 },
   { key: 'status',          label: 'Status',      width: 62, align: 'center', charCap: 10 },
-  { key: 'overdueAmount',   label: 'Overdue Amt', width: 82, align: 'right',  charCap: 17 },
+  { key: 'overdueAmount',   label: 'Balance Due', width: 82, align: 'right',  charCap: 17 },
 ];
 
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
