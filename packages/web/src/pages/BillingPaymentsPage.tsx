@@ -1951,6 +1951,13 @@ function PayInvoiceModal({ open, onClose, invoice }: { open: boolean; onClose: (
       toast.success('Payment recorded');
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
+      // 2026-07-17: every report that reads payments/invoices/allocations
+      // was serving stale data after a payment landed until its TanStack
+      // Query staleTime expired. Nuke all report caches so Delivery
+      // Performance / Payment Collections / Customer Statement / Aging
+      // refetch on next render.
+      queryClient.invalidateQueries({ queryKey: ['report'] });
+      queryClient.invalidateQueries({ queryKey: ['customer-ledger'] });
       onClose();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -2014,6 +2021,9 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
       toast.success('Payment recorded');
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      // 2026-07-17: nuke report + ledger caches so downstream views refresh.
+      queryClient.invalidateQueries({ queryKey: ['report'] });
+      queryClient.invalidateQueries({ queryKey: ['customer-ledger'] });
       onClose();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -2143,6 +2153,10 @@ function AllocatePaymentModal({ open, onClose, payment }: { open: boolean; onClo
       toast.success('Payment allocated');
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      // 2026-07-17: allocation ALSO changes invoice.amountPaid/outstanding
+      // and payment_allocations — invalidate report + ledger caches too.
+      queryClient.invalidateQueries({ queryKey: ['report'] });
+      queryClient.invalidateQueries({ queryKey: ['customer-ledger'] });
       onClose();
     },
     onError: (error) => toast.error(getErrorMessage(error)),

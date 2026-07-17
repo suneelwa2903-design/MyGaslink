@@ -263,6 +263,10 @@ function CreatePaymentModal({ open, onClose }: { open: boolean; onClose: () => v
       toast.success('Payment recorded');
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      // 2026-07-17: nuke report + ledger caches so Delivery Performance,
+      // Payment Collections, Customer Statement etc. refetch immediately.
+      queryClient.invalidateQueries({ queryKey: ['report'] });
+      queryClient.invalidateQueries({ queryKey: ['customer-ledger'] });
       onClose();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
