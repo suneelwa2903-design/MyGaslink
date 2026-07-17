@@ -88,7 +88,7 @@ export default function AdminLayout() {
       <Tabs.Screen
         name="dashboard"
         options={{
-          title: 'Dashboard',
+          title: isMiniOperator ? 'Home' : 'Dashboard',
           tabBarIcon: ({ focused }) => (
             <Ionicons
               name={focused ? TAB_ICONS_FOCUSED.dashboard : TAB_ICONS.dashboard}
@@ -111,9 +111,14 @@ export default function AdminLayout() {
           ),
         }}
       />
+      {/* Mini-Operator (2026-07-17): user asked for Billing back on the
+          bottom bar even for mini_operator_admin. Route is now unhidden for
+          both distributor_admin AND mini_operator_admin — the finance page
+          itself already branches on role to hide GST / pending-approval /
+          Tally sections that don't apply to mini-op. */}
       <Tabs.Screen
         name="finance"
-        options={isMiniOperator ? { href: null, title: 'Billing', tabBarItemStyle: { display: 'none' } } : {
+        options={{
           title: 'Billing',
           tabBarIcon: ({ focused }) => (
             <Ionicons
@@ -127,7 +132,7 @@ export default function AdminLayout() {
       <Tabs.Screen
         name="inventory"
         options={{
-          title: 'Inventory',
+          title: isMiniOperator ? 'Stock' : 'Inventory',
           tabBarIcon: ({ focused }) => (
             <Ionicons
               name={focused ? TAB_ICONS_FOCUSED.inventory : TAB_ICONS.inventory}

@@ -8,13 +8,20 @@ import {
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
+  Modal,
+  Alert,
+  TextInput,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme } from '../../src/theme';
-import { DateInput } from '../../src/components/ui';
+import { DateInput, SelectField } from '../../src/components/ui';
+import { api, getErrorMessage } from '../../src/lib/api';
 // STAGE-A A6: PendingAction type import dropped — the PA section/query were
 // both removed from the dashboard, so the type is no longer referenced.
 import type { DashboardStats, OverdueCallListEntry } from '@gaslink/shared';
@@ -184,6 +191,24 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
   },
 ];
 
+// Mini-Operator (2026-07-17): reduced KPI grid — Customers, Delivered,
+// Sales Today (Revenue relabeled), Overdue Bills (invoices relabeled).
+// No Outstanding, no Inventory Alerts (per user feedback: reseller
+// doesn't have vehicle-in-market outstanding, and stock alerts are
+// noise for a small godown they can eyeball). Sales Today shows the
+// cylinders delivered count as a subtitle so ₹ and qty read together.
+const MINI_OP_KPI_KEYS: (keyof DashboardStats)[] = [
+  'totalCustomers',
+  'deliveredToday',
+  'revenueToday',
+  'overdueInvoices',
+];
+const MINI_OP_KPI_LABEL_OVERRIDES: Partial<Record<keyof DashboardStats, string>> = {
+  deliveredToday: 'Delivered Today',
+  revenueToday: 'Sales Today',
+  overdueInvoices: 'Overdue Bills',
+};
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 // ─── Date helpers (mirror STEP-3A pattern) ───────────────────────────────────
@@ -208,6 +233,22 @@ export default function AdminDashboardScreen() {
 
   const user = useAuthStore((s) => s.user);
   const firstName = user?.firstName ?? 'Admin';
+  const isMiniOperator = user?.role === 'mini_operator_admin';
+
+  // Mini-op-only: filter the KPI grid down to the 4 tiles the user asked
+  // for. Also swap labels via MINI_OP_KPI_LABEL_OVERRIDES ("Sales Today"
+  // etc.). Regular admin/finance keep the 6-card grid unchanged.
+  const visibleKpiCards = isMiniOperator
+    ? KPI_CARDS.filter((c) => MINI_OP_KPI_KEYS.includes(c.key)).map((c) => ({
+        ...c,
+        label: MINI_OP_KPI_LABEL_OVERRIDES[c.key] ?? c.label,
+      }))
+    : KPI_CARDS;
+
+  // Mini-op Reports section state — Customer Ledger + Purchase Ledger
+  // modal open flags. Both modals render inline (see bottom of file).
+  const [customerLedgerOpen, setCustomerLedgerOpen] = useState(false);
+  const [purchaseLedgerOpen, setPurchaseLedgerOpen] = useState(false);
 
   // ── Date range state (STEP-3G) ──
   // Default to last 30 days. The current /analytics/dashboard +
@@ -357,14 +398,20 @@ export default function AdminDashboardScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* KPI cards grid (6 cards, 2 per row, tappable to drill-down).
-            Icon sits inline (left) with label + value stacked beside it. */}
+        {/* KPI cards grid — 6 cards for regular admin, 4 for mini-op.
+            Icon sits inline (left) with label + value stacked beside it.
+            For mini-op Sales Today, the delivered-order count is rendered
+            as a smaller subtitle so ₹ + qty read together. */}
         <View style={styles.kpiGrid}>
-          {KPI_CARDS.map((card, index) => {
+          {visibleKpiCards.map((card, index) => {
             const rawValue = stats?.[card.key] ?? 0;
             const displayValue = card.isCurrency
               ? formatCurrency(rawValue as number)
               : String(rawValue);
+            const showQtySubtitle = isMiniOperator && card.key === 'revenueToday';
+            const qtySubtitle = showQtySubtitle
+              ? `${stats?.deliveredToday ?? 0} cyl. delivered`
+              : null;
 
             return (
               <TouchableOpacity
@@ -410,6 +457,14 @@ export default function AdminDashboardScreen() {
                     >
                       {displayValue}
                     </Text>
+                    {qtySubtitle && (
+                      <Text
+                        style={{ fontSize: 11, color: theme.textMuted, marginTop: 1 }}
+                        numberOfLines={1}
+                      >
+                        {qtySubtitle}
+                      </Text>
+                    )}
                   </View>
                 </View>
               </TouchableOpacity>
@@ -417,11 +472,96 @@ export default function AdminDashboardScreen() {
           })}
         </View>
 
+        {/* Mini-Operator (2026-07-17): Reports section on the Home
+            screen — two tiles, tapping either opens a filter modal that
+            downloads the corresponding PDF from an existing backend
+            endpoint. Customer Ledger uses GET /customers/:id/ledger/pdf;
+            Purchase Ledger uses GET /purchase-entries/ledger.pdf. Both
+            routes already allow mini_operator_admin (see prior 403 sweep
+            + purchase ledger commit). Rendered ONLY for mini-op. */}
+        {isMiniOperator && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>Reports</Text>
+            </View>
+            <View style={styles.kpiGrid}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setCustomerLedgerOpen(true)}
+                style={[styles.kpiCard, styles.kpiCardLeft]}
+              >
+                <View
+                  style={[
+                    styles.kpiCardInner,
+                    { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, flexDirection: 'row', alignItems: 'center', gap: 12 },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.kpiIconContainer,
+                      {
+                        backgroundColor: isDark ? 'rgba(59, 130, 246, 0.15)' : '#eff6ff',
+                        marginBottom: 0,
+                      },
+                    ]}
+                  >
+                    <Ionicons name="document-text-outline" size={22} color={ACCENT.blue} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[styles.kpiLabel, { color: theme.textSecondary, marginBottom: 2 }]} numberOfLines={1}>
+                      Customer Ledger
+                    </Text>
+                    <Text style={{ fontSize: 12, color: theme.textMuted }} numberOfLines={1}>
+                      Pick customer + dates
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setPurchaseLedgerOpen(true)}
+                style={[styles.kpiCard, styles.kpiCardRight]}
+              >
+                <View
+                  style={[
+                    styles.kpiCardInner,
+                    { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, flexDirection: 'row', alignItems: 'center', gap: 12 },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.kpiIconContainer,
+                      {
+                        backgroundColor: isDark ? 'rgba(139, 92, 246, 0.15)' : '#f5f3ff',
+                        marginBottom: 0,
+                      },
+                    ]}
+                  >
+                    <Ionicons name="cart-outline" size={22} color={ACCENT.purple} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[styles.kpiLabel, { color: theme.textSecondary, marginBottom: 2 }]} numberOfLines={1}>
+                      Purchase Ledger
+                    </Text>
+                    <Text style={{ fontSize: 12, color: theme.textMuted }} numberOfLines={1}>
+                      Source / cylinder filters
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
         {/* STAGE-A A6: Pending Actions section removed entirely from the
             dashboard per Suneel. The PA screen at /(admin)/pending-actions
             is still reachable from elsewhere in the app. */}
+        {/* Mini-Operator (2026-07-17): hide the Stock Position / Call These
+            Customers / Threshold Alerts briefing sections for
+            mini_operator_admin — reseller asked for a cleaner Home. */}
         {/* ── STEP-3G: Stock Summary section (admin) ── */}
-        {stockSummary && stockSummary.length > 0 && (
+        {!isMiniOperator && stockSummary && stockSummary.length > 0 && (
           <>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>Stock Position</Text>
@@ -473,7 +613,7 @@ export default function AdminDashboardScreen() {
         )}
 
         {/* ── STEP-3G: Overdue Call List preview (admin) ── */}
-        {callList && callList.length > 0 && (
+        {!isMiniOperator && callList && callList.length > 0 && (
           <>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>Call These Customers</Text>
@@ -550,7 +690,7 @@ export default function AdminDashboardScreen() {
         )}
 
         {/* ── STEP-3G: Threshold Alerts (admin) ── */}
-        {thresholdAlerts && thresholdAlerts.length > 0 && (
+        {!isMiniOperator && thresholdAlerts && thresholdAlerts.length > 0 && (
           <>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>Threshold Alerts</Text>
@@ -615,9 +755,378 @@ export default function AdminDashboardScreen() {
         {/* Bottom spacing */}
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      {/* Mini-Operator (2026-07-17): Reports modals rendered only for
+          mini_operator_admin. Both defer to existing PDF endpoints
+          (customer ledger, purchase ledger) which were opened for
+          mini-op in prior commits. */}
+      {isMiniOperator && (
+        <>
+          <CustomerLedgerModal
+            visible={customerLedgerOpen}
+            onClose={() => setCustomerLedgerOpen(false)}
+          />
+          <PurchaseLedgerModal
+            visible={purchaseLedgerOpen}
+            onClose={() => setPurchaseLedgerOpen(false)}
+          />
+        </>
+      )}
     </SafeAreaView>
   );
 }
+
+// ─── Mini-Operator Reports modals ────────────────────────────────────────────
+
+interface CustomerRow {
+  customerId: string;
+  customerName: string;
+  businessName?: string | null;
+  phone?: string | null;
+}
+
+interface SourceDistributorRow {
+  id: string;
+  name: string;
+}
+
+interface CylinderTypeRow {
+  cylinderTypeId: string;
+  typeName: string;
+}
+
+// Shared blob-fetch + share helper (mirrors the pattern in customer-detail.tsx
+// and reports.tsx — expo-file-system write + Sharing.shareAsync).
+async function downloadAndSharePdf(
+  path: string,
+  params: Record<string, string>,
+  filename: string,
+  dialogTitle: string,
+): Promise<void> {
+  const res = await api.get(path, { params, responseType: 'arraybuffer' });
+  const bytes = new Uint8Array(res.data);
+  const file = new File(Paths.cache, filename);
+  try { file.create(); } catch { /* file already exists */ }
+  file.write(bytes);
+  if (!(await Sharing.isAvailableAsync())) {
+    Alert.alert('Sharing unavailable', 'This device does not support sharing.');
+    return;
+  }
+  await Sharing.shareAsync(file.uri, {
+    mimeType: 'application/pdf',
+    dialogTitle,
+    UTI: 'com.adobe.pdf',
+  });
+}
+
+function CustomerLedgerModal({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { colors: theme } = useTheme();
+  const [customerId, setCustomerId] = useState<string>('');
+  const [customerName, setCustomerName] = useState<string>('');
+  const [search, setSearch] = useState('');
+  const [from, setFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return localDateISO(d);
+  });
+  const [to, setTo] = useState<string>(() => localDateISO(new Date()));
+  const [downloading, setDownloading] = useState(false);
+
+  const { data: customersResponse } = useApiQuery<{ customers: CustomerRow[] }>(
+    ['dashboard-customers-list'],
+    '/customers',
+    { limit: 200 },
+    { enabled: visible },
+  );
+  const allCustomers = customersResponse?.customers ?? [];
+  const filteredCustomers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return allCustomers;
+    return allCustomers.filter((c) => {
+      const name = (c.businessName || c.customerName || '').toLowerCase();
+      const phone = (c.phone || '').toLowerCase();
+      return name.includes(q) || phone.includes(q);
+    });
+  }, [allCustomers, search]);
+
+  const handleDownload = async () => {
+    if (!customerId) {
+      Alert.alert('Pick a customer', 'Select a customer first.');
+      return;
+    }
+    setDownloading(true);
+    try {
+      await downloadAndSharePdf(
+        `/customers/${customerId}/ledger/pdf`,
+        { from, to },
+        `customer-ledger-${customerId}-${from}-${to}.pdf`,
+        'Customer Ledger',
+      );
+      onClose();
+    } catch (err) {
+      Alert.alert('Could not download ledger', getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View style={reportsStyles.header}>
+          <Text style={[reportsStyles.headerTitle, { color: theme.text }]}>Customer Ledger</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Ionicons name="close" size={26} color={theme.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ padding: 16, gap: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <DateInput label="From" value={from || null} onChange={setFrom} placeholder="From" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <DateInput label="To" value={to || null} onChange={setTo} placeholder="To" />
+            </View>
+          </View>
+
+          <Text style={{ fontSize: 12, fontWeight: '600', color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+            Customer
+          </Text>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search by name or phone"
+            placeholderTextColor={theme.textMuted}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+              borderRadius: 10,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              fontSize: 15,
+              color: theme.text,
+              backgroundColor: theme.cardBg,
+            }}
+          />
+          {customerName ? (
+            <View style={{ backgroundColor: theme.cardBg, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: theme.cardBorder }}>
+              <Text style={{ fontSize: 13, color: theme.textSecondary }}>Selected</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: theme.text }}>{customerName}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <FlatList
+          data={filteredCustomers}
+          keyExtractor={(c) => c.customerId}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}
+          renderItem={({ item }) => {
+            const selected = item.customerId === customerId;
+            const display = item.businessName || item.customerName;
+            return (
+              <TouchableOpacity
+                onPress={() => {
+                  setCustomerId(item.customerId);
+                  setCustomerName(display);
+                }}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 12,
+                  borderRadius: 8,
+                  backgroundColor: selected ? ACCENT.blue + '18' : 'transparent',
+                  marginBottom: 4,
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: theme.text }}>{display}</Text>
+                {item.phone ? (
+                  <Text style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>{item.phone}</Text>
+                ) : null}
+              </TouchableOpacity>
+            );
+          }}
+        />
+
+        <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: theme.divider, flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity onPress={onClose} style={[reportsStyles.secondaryBtn, { borderColor: theme.cardBorder }]}>
+            <Text style={{ color: theme.textSecondary, fontWeight: '600' }}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleDownload}
+            disabled={downloading || !customerId}
+            style={[reportsStyles.primaryBtn, { opacity: downloading || !customerId ? 0.5 : 1 }]}
+          >
+            {downloading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="download-outline" size={16} color="#fff" />
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Download PDF</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function PurchaseLedgerModal({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { colors: theme } = useTheme();
+  const [from, setFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return localDateISO(d);
+  });
+  const [to, setTo] = useState<string>(() => localDateISO(new Date()));
+  const [sourceDistributorId, setSourceDistributorId] = useState('');
+  const [cylinderTypeId, setCylinderTypeId] = useState('');
+  const [downloading, setDownloading] = useState(false);
+
+  const { data: sources } = useApiQuery<SourceDistributorRow[]>(
+    ['source-distributors'],
+    '/source-distributors',
+    undefined,
+    { enabled: visible },
+  );
+  const { data: typesResp } = useApiQuery<{ cylinderTypes: CylinderTypeRow[] }>(
+    ['cylinder-types'],
+    '/cylinder-types',
+    undefined,
+    { enabled: visible },
+  );
+  const types = typesResp?.cylinderTypes ?? [];
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const params: Record<string, string> = { from, to };
+      if (sourceDistributorId) params.sourceDistributorId = sourceDistributorId;
+      if (cylinderTypeId) params.cylinderTypeId = cylinderTypeId;
+      await downloadAndSharePdf(
+        '/purchase-entries/ledger.pdf',
+        params,
+        `purchase-ledger-${from}-${to}.pdf`,
+        'Purchase Ledger',
+      );
+      onClose();
+    } catch (err) {
+      Alert.alert('Could not download ledger', getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View style={reportsStyles.header}>
+          <Text style={[reportsStyles.headerTitle, { color: theme.text }]}>Purchase Ledger</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Ionicons name="close" size={26} color={theme.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <DateInput label="From" value={from || null} onChange={setFrom} placeholder="From" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <DateInput label="To" value={to || null} onChange={setTo} placeholder="To" />
+            </View>
+          </View>
+
+          <SelectField
+            label="Source Distributor"
+            value={sourceDistributorId}
+            onChange={setSourceDistributorId}
+            options={[
+              { value: '', label: 'All source distributors' },
+              ...(sources ?? []).map((s) => ({ value: s.id, label: s.name })),
+            ]}
+          />
+
+          <SelectField
+            label="Cylinder Type"
+            value={cylinderTypeId}
+            onChange={setCylinderTypeId}
+            options={[
+              { value: '', label: 'All cylinder types' },
+              ...types.map((t) => ({ value: t.cylinderTypeId, label: t.typeName })),
+            ]}
+          />
+        </ScrollView>
+
+        <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: theme.divider, flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity onPress={onClose} style={[reportsStyles.secondaryBtn, { borderColor: theme.cardBorder }]}>
+            <Text style={{ color: theme.textSecondary, fontWeight: '600' }}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleDownload}
+            disabled={downloading}
+            style={[reportsStyles.primaryBtn, { opacity: downloading ? 0.5 : 1 }]}
+          >
+            {downloading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="download-outline" size={16} color="#fff" />
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Download PDF</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+const reportsStyles = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  primaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#3b82f6',
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  secondaryBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+});
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 

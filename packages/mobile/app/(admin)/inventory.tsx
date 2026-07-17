@@ -21,6 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { apiGet, apiPost, getErrorMessage } from '../../src/lib/api';
+import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme, ACCENT } from '../../src/theme';
 import { DateInput } from '../../src/components/ui';
 
@@ -269,6 +270,22 @@ function useInventoryTheme() {
 
 export default function AdminInventoryScreen() {
   const t = useInventoryTheme();
+  const user = useAuthStore((s) => s.user);
+  const isMiniOperator = user?.role === 'mini_operator_admin';
+  // Mini-Operator (2026-07-17): trim the tab strip to the three tabs a
+  // reseller actually uses. Depot History (vehicle-return event log) and
+  // Vehicle Return (reconciliation) are fleet concepts that don't apply.
+  // "Customer Balances" is renamed to "Customer Empties" for mini-op —
+  // the underlying data is the same but the terminology matches the
+  // reseller's mental model (they think in empties, not "balance").
+  const visibleTabs = useMemo(() => {
+    if (isMiniOperator) {
+      return TABS
+        .filter((tb) => tb.key === 'summary' || tb.key === 'onboarding' || tb.key === 'balances')
+        .map((tb) => (tb.key === 'balances' ? { ...tb, label: 'Customer Empties' } : tb));
+    }
+    return TABS;
+  }, [isMiniOperator]);
   const [activeTab, setActiveTab] = useState<TabKey>('summary');
   const [selectedDate, setSelectedDate] = useState(todayString());
 
@@ -293,7 +310,7 @@ export default function AdminInventoryScreen() {
         style={{ flexGrow: 0, borderBottomWidth: 1, borderBottomColor: t.divider }}
         contentContainerStyle={{ paddingHorizontal: 12, gap: 4 }}
       >
-        {TABS.map((tab) => {
+        {visibleTabs.map((tab) => {
           const isActive = activeTab === tab.key;
           return (
             <TouchableOpacity

@@ -20,6 +20,7 @@ import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
+import { useAuthStore } from '../../src/stores/authStore';
 import { api, getErrorMessage } from '../../src/lib/api';
 import { Badge, DateInput } from '../../src/components/ui';
 import { LoadListDispatchModal } from '../../src/components/LoadListDispatchModal';
@@ -159,6 +160,16 @@ const STATUS_TABS = [
   { label: orderStatusLabel('cancelled'), value: 'cancelled' },
 ] as const;
 
+// Mini-Operator (2026-07-17): reseller flow skips driver-assignment +
+// dispatch (mini-op orders land directly in pending_delivery). Trim the
+// filter strip so the tabs match the reachable statuses.
+const MINI_OP_STATUS_TABS = [
+  { label: 'All', value: 'all' },
+  { label: orderStatusLabel('pending_delivery'), value: 'pending_delivery' },
+  { label: orderStatusLabel('delivered'), value: 'delivered' },
+  { label: orderStatusLabel('cancelled'), value: 'cancelled' },
+] as const;
+
 // STEP-3A: default date range = last 30 days, matches web OrdersPage default.
 function getDateNDaysAgoISO(days: number): string {
   const d = new Date();
@@ -215,6 +226,13 @@ function getTodayISO(): string {
 export default function AdminOrdersScreen() {
   const { dark } = useTheme();
   const C = getColors(dark);
+  const user = useAuthStore((s) => s.user);
+  const isMiniOperator = user?.role === 'mini_operator_admin';
+  // Mini-op reseller flow never transitions through driver-assignment /
+  // pending-dispatch / preflight — orders land directly in pending_delivery
+  // then jump to delivered on Mark as Delivered. Hide those irrelevant
+  // filter chips.
+  const statusTabs = isMiniOperator ? MINI_OP_STATUS_TABS : STATUS_TABS;
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -674,7 +692,7 @@ export default function AdminOrdersScreen() {
         style={{ flexGrow: 0 }}
         contentContainerStyle={styles.tabBar}
       >
-        {STATUS_TABS.map((tab) => {
+        {statusTabs.map((tab) => {
           const active = statusFilter === tab.value;
           return (
             <TouchableOpacity

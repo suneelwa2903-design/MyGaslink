@@ -1826,6 +1826,7 @@ export default function AdminMoreScreen() {
   const router = useRouter();
   const theme = useMoreTheme();
   const { user, logout } = useAuthStore();
+  const isMiniOperator = user?.role === 'mini_operator_admin';
   // STAGE-A A7: dark-mode toggle wiring (matches driver/more.tsx pattern).
   const dark = useIsDark();
   const toggleMode = useThemeStore((s) => s.toggleMode);
@@ -1865,24 +1866,25 @@ export default function AdminMoreScreen() {
             it's a snapshot/dashboard surface, not its own destination. */}
 
         {/* ── Section: Analytics ─────────────────────────────────── */}
-        <SectionCard title="Analytics" theme={theme}>
-          <MenuRow icon="stats-chart" label="Overview" subtitle="Key business metrics" onPress={() => setShowOverview(true)} theme={theme} />
-          <Divider theme={theme} />
-          {/* WI-PENDING-PAYMENTS: pending approval queue. Stack-pushed
-              from here — finance/admin can review driver+customer
-              self-reported payments. */}
-          <MenuRow
-            icon="time-outline"
-            label="Pending Payment Approvals"
-            subtitle="Verify or reject self-reported payments"
-            // Group-relative path so the same MenuRow keeps working when
-            // (admin)/more.tsx is re-rendered under (finance) (none today,
-            // but the test guard at phaseB-inventory-reexport-parity.test.ts
-            // enforces this convention).
-            onPress={() => router.push('/pending-payments')}
-            theme={theme}
-          />
-        </SectionCard>
+        {/* Mini-Operator (2026-07-17): hide the entire Analytics section
+            for mini_operator_admin — Overview + Pending Payment Approvals
+            are noise for a small reseller. Regular admin keeps both. */}
+        {!isMiniOperator && (
+          <SectionCard title="Analytics" theme={theme}>
+            <MenuRow icon="stats-chart" label="Overview" subtitle="Key business metrics" onPress={() => setShowOverview(true)} theme={theme} />
+            <Divider theme={theme} />
+            {/* WI-PENDING-PAYMENTS: pending approval queue. Stack-pushed
+                from here — finance/admin can review driver+customer
+                self-reported payments. */}
+            <MenuRow
+              icon="time-outline"
+              label="Pending Payment Approvals"
+              subtitle="Verify or reject self-reported payments"
+              onPress={() => router.push('/pending-payments')}
+              theme={theme}
+            />
+          </SectionCard>
+        )}
 
         {/* ── STAGE-A A7: Appearance ──────────────────────────────── */}
         {/* Dark-mode toggle parity with (driver)/more.tsx. The themeStore
@@ -1927,16 +1929,27 @@ export default function AdminMoreScreen() {
         </SectionCard>
 
         {/* ── Section 3: Settings ──────────────────────────────────── */}
+        {/* Mini-Operator (2026-07-17): drop GST / Thresholds / Users rows
+            for mini_operator_admin — reseller only needs Cylinder Types
+            + Cylinder Prices in this section. */}
         <SectionCard title="Settings" theme={theme}>
-          <MenuRow icon="document-text" label="GST" subtitle="Mode, credentials & GSP setup" onPress={() => setShowGst(true)} theme={theme} />
-          <Divider theme={theme} />
+          {!isMiniOperator && (
+            <>
+              <MenuRow icon="document-text" label="GST" subtitle="Mode, credentials & GSP setup" onPress={() => setShowGst(true)} theme={theme} />
+              <Divider theme={theme} />
+            </>
+          )}
           <MenuRow icon="cube" label="Cylinder Types" subtitle="Add, edit & remove cylinder types" onPress={() => setShowCylinderTypes(true)} theme={theme} />
           <Divider theme={theme} />
           <MenuRow icon="pricetag" label="Cylinder Prices" subtitle="Price list per cylinder type" onPress={() => setShowPrices(true)} theme={theme} />
-          <Divider theme={theme} />
-          <MenuRow icon="alert-circle" label="Thresholds" subtitle="Warning & critical levels" onPress={() => setShowThresholds(true)} theme={theme} />
-          <Divider theme={theme} />
-          <MenuRow icon="person-add" label="Users" subtitle="Users, roles & access" onPress={() => setShowUsers(true)} theme={theme} />
+          {!isMiniOperator && (
+            <>
+              <Divider theme={theme} />
+              <MenuRow icon="alert-circle" label="Thresholds" subtitle="Warning & critical levels" onPress={() => setShowThresholds(true)} theme={theme} />
+              <Divider theme={theme} />
+              <MenuRow icon="person-add" label="Users" subtitle="Users, roles & access" onPress={() => setShowUsers(true)} theme={theme} />
+            </>
+          )}
         </SectionCard>
 
         {/* ── Section 4: Account ───────────────────────────────────── */}
