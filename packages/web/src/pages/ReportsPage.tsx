@@ -17,7 +17,7 @@ interface ReportChart { type: 'line' | 'bar'; title: string; data: LineChartData
 interface ReportTableData { title: string; columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue> }
 interface ReportResult { columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue>; chart?: ReportChart; secondary?: ReportTableData }
 
-type FilterKey = 'cylinderType' | 'driver' | 'customer' | 'vehicle' | 'groupBy';
+type FilterKey = 'cylinderType' | 'driver' | 'customer' | 'vehicle' | 'groupBy' | 'entryDate';
 interface ReportDef { key: string; label: string; filters: FilterKey[]; customerRequired?: boolean }
 
 const REPORTS: ReportDef[] = [
@@ -35,7 +35,11 @@ const REPORTS: ReportDef[] = [
   //     order was delivered by that driver.
   // One row per payment_allocation (bulk payment covering 3 invoices
   // = 3 rows).
-  { key: 'payment-collections', label: 'Payment Collections', filters: ['driver'] },
+  // 2026-07-17: entry-date filter narrows to payments whose
+  // PaymentTransaction.createdAt (data-entry timestamp) falls in the
+  // range. Stacks with the existing Payment Date range (dateFrom/dateTo
+  // = transactionDate). See docs/reportsService.paymentCollections.
+  { key: 'payment-collections', label: 'Payment Collections', filters: ['driver', 'entryDate'] },
 ];
 
 const fmtMoney = (v: ReportCellValue | undefined) => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -56,6 +60,12 @@ export default function ReportsPage() {
   const [customerId, setCustomerId] = useState('');
   const [vehicleId, setVehicleId] = useState('');
   const [groupBy, setGroupBy] = useState<'day' | 'trip'>('day');
+  // 2026-07-17: Payment Collections entry-date filter — narrows by
+  // PaymentTransaction.createdAt (data-entry timestamp). Both blank by
+  // default so the initial Payment Collections view keeps historical
+  // behavior (Payment Date range only).
+  const [entryDateFrom, setEntryDateFrom] = useState('');
+  const [entryDateTo, setEntryDateTo] = useState('');
   // WI-5 — Vehicle Ledger View dropdown: All / Corporation Loads Only /
   // Vehicle Trips Only. Client-side filter over the unified table; the
   // backend continues to return both primary (trips) and secondary
@@ -111,8 +121,12 @@ export default function ReportsPage() {
     if (def.filters.includes('customer') && customerId) p.customerId = customerId;
     if (def.filters.includes('vehicle') && vehicleId) p.vehicleId = vehicleId;
     if (def.filters.includes('groupBy')) p.groupBy = groupBy;
+    if (def.filters.includes('entryDate')) {
+      if (entryDateFrom) p.entryDateFrom = entryDateFrom;
+      if (entryDateTo) p.entryDateTo = entryDateTo;
+    }
     return p;
-  }, [dateFrom, dateTo, cylinderTypeId, driverId, customerId, vehicleId, groupBy, def]);
+  }, [dateFrom, dateTo, cylinderTypeId, driverId, customerId, vehicleId, groupBy, entryDateFrom, entryDateTo, def]);
 
   const needsCustomer = def.customerRequired && !customerId;
 
@@ -226,6 +240,22 @@ export default function ReportsPage() {
               <Select value={groupBy} onChange={(e) => setGroupBy(e.target.value as 'day' | 'trip')}
                 options={[{ value: 'day', label: 'Day' }, { value: 'trip', label: 'Trip' }]} />
             </div>
+          )}
+          {/* 2026-07-17: entry-date filter, currently only Payment Collections.
+              Narrows by PaymentTransaction.createdAt (data-entry timestamp);
+              stacks with the top-of-row Payment Date range. Both blank =
+              no entry-date constraint (default). */}
+          {def.filters.includes('entryDate') && (
+            <>
+              <div>
+                <label className="label text-xs">Entry Date From</label>
+                <input type="date" value={entryDateFrom} onChange={(e) => setEntryDateFrom(e.target.value)} className="input py-2 text-sm" />
+              </div>
+              <div>
+                <label className="label text-xs">Entry Date To</label>
+                <input type="date" value={entryDateTo} onChange={(e) => setEntryDateTo(e.target.value)} className="input py-2 text-sm" />
+              </div>
+            </>
           )}
           {/* WI-5 — View filter, Vehicle Ledger only */}
           {reportKey === 'vehicle-ledger' && (

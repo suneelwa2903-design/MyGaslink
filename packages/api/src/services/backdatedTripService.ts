@@ -209,7 +209,10 @@ export async function createBackdatedTrip(
           orderDate: issueDate,
           deliveryDate: issueDate,
           deliveredAt: issueDate,
-          specialInstructions: data.specialInstructions ?? null,
+          // 2026-07-17: per-customer note (from the backdated batch entry
+          // card) wins over the trip-level fallback. Both optional; null
+          // if neither supplied.
+          specialInstructions: orderInput.specialInstructions ?? data.specialInstructions ?? null,
           totalAmount,
           orderNumber,
           items: {

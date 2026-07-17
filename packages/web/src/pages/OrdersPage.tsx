@@ -13,6 +13,7 @@ import {
   HiOutlineTrash,
   HiOutlineEye,
   HiOutlineXCircle,
+  HiOutlineArrowDownTray,
 } from 'react-icons/hi2';
 import {
   type Order,
@@ -120,6 +121,32 @@ export default function OrdersPage() {
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [cancelOrderTarget, setCancelOrderTarget] = useState<Order | null>(null);
+  // 2026-07-17: CSV / PDF download button state — mirrors the Payments tab
+  // pattern. Never scoped to the visible page; always downloads the full
+  // filter result set (up to 10k rows on the server side).
+  const [ordersDownloading, setOrdersDownloading] = useState<'csv' | 'pdf' | null>(null);
+  async function handleOrdersDownload(format: 'csv' | 'pdf') {
+    setOrdersDownloading(format);
+    try {
+      const params = new URLSearchParams({ format });
+      if (search) params.set('search', search);
+      if (statusFilter) params.set('status', statusFilter);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      const res = await api.get(`/orders/export?${params.toString()}`, { responseType: 'blob' });
+      const href = window.URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `orders-${dateFrom || 'all'}_${dateTo || 'all'}.${format}`;
+      a.click();
+      window.URL.revokeObjectURL(href);
+      toast.success(`${format.toUpperCase()} download started`);
+    } catch (e) {
+      toast.error(getErrorMessage(e));
+    } finally {
+      setOrdersDownloading(null);
+    }
+  }
 
   const queryParams: Record<string, unknown> = { page, pageSize: 25 };
   if (search) queryParams.search = search;
@@ -231,6 +258,17 @@ export default function OrdersPage() {
                 Backdated / On-Demand
               </Button>
             )}
+            {/* 2026-07-17: bulk CSV / PDF download of the current filter set.
+                Same pattern as the Payments tab — never limited to the current
+                page, always the full filter result (up to 10k rows). */}
+            <Button variant="secondary" onClick={() => handleOrdersDownload('csv')} disabled={ordersDownloading !== null}>
+              <HiOutlineArrowDownTray className="h-4 w-4" />
+              {ordersDownloading === 'csv' ? 'Downloading…' : 'CSV'}
+            </Button>
+            <Button variant="secondary" onClick={() => handleOrdersDownload('pdf')} disabled={ordersDownloading !== null}>
+              <HiOutlineArrowDownTray className="h-4 w-4" />
+              {ordersDownloading === 'pdf' ? 'Downloading…' : 'PDF'}
+            </Button>
             <Button onClick={() => setCreateOpen(true)}>
               <HiOutlinePlus className="h-4 w-4" />
               New Order
@@ -2831,6 +2869,11 @@ function BackdatedTripModal({
         items: o.items,
         poNumber: o.poNumber && o.poNumber.trim().length > 0 ? o.poNumber : undefined,
         payment: o.payment && o.payment.amount > 0 ? o.payment : undefined,
+        // 2026-07-17: per-customer notes; blank → undefined so the schema
+        // treats "omitted" and "cleared field" identically. Trip-level
+        // specialInstructions still stitches in at the service if this
+        // per-order value is undefined.
+        specialInstructions: o.specialInstructions?.trim() || undefined,
       })),
       specialInstructions: data.specialInstructions?.trim() || undefined,
       applyInventoryAdjustment: applyInventory,
@@ -3118,6 +3161,24 @@ function BackdatedTripOrderCard({
         error={orderErrors?.poNumber?.message}
         {...register(`orders.${orderIdx}.poNumber`)}
       />
+
+      {/* 2026-07-17: per-customer notes. Mirrors the regular order form's
+          Special Instructions field (max 500 chars). Optional — blank goes
+          through as undefined; the backend falls through to trip-level
+          specialInstructions if this per-customer note is empty. */}
+      <div>
+        <label className="label text-sm">Notes (optional)</label>
+        <textarea
+          rows={2}
+          placeholder="Delivery notes for this customer — e.g. 'call before arrival'"
+          className="input py-2 w-full text-sm"
+          maxLength={500}
+          {...register(`orders.${orderIdx}.specialInstructions`)}
+        />
+        {orderErrors?.specialInstructions?.message && (
+          <p className="mt-1 text-xs text-red-500">{orderErrors.specialInstructions.message}</p>
+        )}
+      </div>
 
       {/* Optional payment — toggle-gated so the payment sub-fields are
           NOT registered with react-hook-form when the operator doesn't

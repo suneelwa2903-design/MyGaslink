@@ -18,6 +18,7 @@ import { createBackdatedTrip, BackdatedTripError } from '../services/backdatedTr
 import { applyBackdatedInventoryAdjustment } from '../services/backdatedAdjustmentService.js';
 import { preflightDispatch, preflightAddToTrip, PreflightError } from '../services/gst/gstPreflightService.js';
 import { generateTripSheetPdf, TripSheetError } from '../services/pdf/tripSheetPdfService.js';
+import { generateOrderRegisterPdf } from '../services/pdf/orderRegisterPdfService.js';
 import * as deliveryProofService from '../services/deliveryProofService.js';
 import { mapOrder, mapOrders } from '../utils/mappers.js';
 import { prisma } from '../lib/prisma.js';
@@ -69,6 +70,80 @@ router.get('/',
       const result = await orderService.listOrders(req.user!.distributorId!, filters);
       // meta nested in data — see invoices.ts list comment.
       return sendSuccess(res, { orders: mapOrders(result.data), meta: result.meta }, 200, result.meta);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+// GET /api/orders/export?format=csv|pdf
+//
+// 2026-07-17: bulk export of the current Orders filter (all pages).
+// CSV mirrors the on-screen columns; PDF is a landscape A4 register with
+// the distributor letterhead. Filters honoured: status, customerId,
+// driverId, dateFrom, dateTo, search. Registered BEFORE /:id so the
+// literal segment wins the router match (same defensive ordering as
+// /backdated and /in-transit below).
+router.get('/export',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const format = String(req.query.format ?? 'csv').toLowerCase();
+      if (format !== 'csv' && format !== 'pdf') {
+        return sendError(res, "format must be 'csv' or 'pdf'", 400);
+      }
+      const filters = {
+        status: typeof req.query.status === 'string' ? req.query.status : undefined,
+        customerId: typeof req.query.customerId === 'string' ? req.query.customerId : undefined,
+        driverId: typeof req.query.driverId === 'string' ? req.query.driverId : undefined,
+        dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+        dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      };
+      const distributorId = req.user!.distributorId!;
+
+      if (format === 'pdf') {
+        const buf = await generateOrderRegisterPdf(distributorId, filters);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="orders-${filters.dateFrom ?? 'all'}_${filters.dateTo ?? 'all'}.pdf"`);
+        return res.status(200).send(buf);
+      }
+
+      // CSV: sort by delivery date desc for parity with the on-screen table.
+      const { data: rows } = await orderService.listOrders(distributorId, {
+        ...filters,
+        page: 1,
+        pageSize: 10_000,
+        sortBy: 'deliveryDate',
+        sortOrder: 'desc',
+      });
+      const esc = (v: unknown): string => {
+        const s = v == null ? '' : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = ['Delivery Date','Order Date','Order #','Customer','Status','Driver','Fulls','Total','PO Number','Notes','Created At (Entry Timestamp)'];
+      const lines = [header.map(esc).join(',')];
+      for (const o of rows) {
+        const items = (o as { items?: { quantity?: number; deliveredQuantity?: number | null }[] }).items ?? [];
+        const fulls = items.reduce((s, it) => s + Number(it.deliveredQuantity ?? it.quantity ?? 0), 0);
+        lines.push([
+          o.deliveryDate ? new Date(o.deliveryDate).toISOString().slice(0, 10) : '',
+          o.orderDate ? new Date(o.orderDate).toISOString().slice(0, 10) : '',
+          (o as { orderNumber?: string }).orderNumber ?? '',
+          (o as { customer?: { customerName?: string } }).customer?.customerName ?? '',
+          String((o as { status?: string }).status ?? '').replace(/_/g, ' '),
+          (o as { driver?: { driverName?: string } }).driver?.driverName ?? '',
+          fulls,
+          Number((o as { totalAmount?: unknown }).totalAmount ?? 0),
+          (o as { poNumber?: string | null }).poNumber ?? '',
+          (o as { specialInstructions?: string | null }).specialInstructions ?? '',
+          o.createdAt ? new Date(o.createdAt).toISOString() : '',
+        ].map(esc).join(','));
+      }
+      const csv = lines.join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="orders-${filters.dateFrom ?? 'all'}_${filters.dateTo ?? 'all'}.csv"`);
+      return res.status(200).send(csv);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

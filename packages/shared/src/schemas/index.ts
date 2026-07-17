@@ -384,6 +384,12 @@ export const backdatedTripSchema = z.object({
       paymentMethod: z.enum(['cash', 'upi', 'cheque', 'neft', 'rtgs', 'other']),
       referenceNumber: z.string().optional(),
     }).optional(),
+    // 2026-07-17: per-customer notes on the backdated batch entry card,
+    // mirroring the regular order form's specialInstructions field.
+    // Optional; if provided it wins over the trip-level specialInstructions
+    // in the service so each customer entry can carry its own note. Max
+    // 500 chars matches Order.specialInstructions constraint.
+    specialInstructions: z.string().max(500).optional(),
   })).min(1, 'At least one order is required').max(50, 'Cannot create more than 50 orders in one trip'),
   specialInstructions: z.string().max(500).optional(),
   // Q2 (2026-07-09) — inventory auto-apply. When true, the service will

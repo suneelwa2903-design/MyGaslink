@@ -442,6 +442,42 @@ describe('Item 6 — backdated driver trip service', () => {
     expect(res.status).toBe(403);
   });
 
+  // 2026-07-17: per-customer notes (specialInstructions) on the backdated
+  // batch entry — new optional field per order. Verifies (a) the schema
+  // accepts it, (b) it lands on Order.specialInstructions, (c) it wins
+  // over the trip-level fallback when both are provided.
+  it('T14b — per-order specialInstructions wins over trip-level fallback', async () => {
+    if (!hasValidBackdatedSlot()) { expect(true).toBe(true); return; }
+    const c1 = await makeCustomer('T14b-c1', 'B2C');
+    const c2 = await makeCustomer('T14b-c2', 'B2C');
+    const res = await request(app)
+      .post('/api/orders/backdated-trip')
+      .set(auth(adminToken))
+      .send({
+        issueDate: yesterdayLocalISO(),
+        driverId: seedData.drivers[0].id,
+        vehicleId: seedData.vehicles[0].id,
+        specialInstructions: 'TRIP-LEVEL-FALLBACK',
+        orders: [
+          { customerId: c1.id, items: [{ cylinderTypeId: ctId, quantity: 1 }], specialInstructions: 'PER-ORDER-NOTE-1' },
+          { customerId: c2.id, items: [{ cylinderTypeId: ctId, quantity: 1 }] /* no per-order note → falls back */ },
+        ],
+      });
+    expect(res.status).toBe(201);
+    for (const o of res.body.data.orders) trackedOrderIds.push(o.orderId);
+    for (const o of res.body.data.orders) if (o.invoiceId) trackedInvoiceIds.push(o.invoiceId);
+    trackedDvaIds.push(res.body.data.dvaId);
+    // Re-fetch from DB and assert the two orders carry different notes.
+    const orderRows = await prisma.order.findMany({
+      where: { id: { in: res.body.data.orders.map((o: { orderId: string }) => o.orderId) } },
+      select: { customerId: true, specialInstructions: true },
+    });
+    const o1 = orderRows.find((r) => r.customerId === c1.id);
+    const o2 = orderRows.find((r) => r.customerId === c2.id);
+    expect(o1?.specialInstructions).toBe('PER-ORDER-NOTE-1');
+    expect(o2?.specialInstructions).toBe('TRIP-LEVEL-FALLBACK');
+  });
+
   it('T15 — distributor_admin role allowed (201)', async () => {
     if (!hasValidBackdatedSlot()) { expect(true).toBe(true); return; }
     const c1 = await makeCustomer('T15-c1', 'B2C');
