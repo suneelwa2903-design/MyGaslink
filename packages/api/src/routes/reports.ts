@@ -12,6 +12,8 @@ function parseFilters(q: Request['query']): ReportFilters {
   return {
     dateFrom: typeof q.dateFrom === 'string' ? q.dateFrom : undefined,
     dateTo: typeof q.dateTo === 'string' ? q.dateTo : undefined,
+    entryDateFrom: typeof q.entryDateFrom === 'string' ? q.entryDateFrom : undefined,
+    entryDateTo: typeof q.entryDateTo === 'string' ? q.entryDateTo : undefined,
     customerId: typeof q.customerId === 'string' ? q.customerId : undefined,
     cylinderTypeId: typeof q.cylinderTypeId === 'string' ? q.cylinderTypeId : undefined,
     driverId: typeof q.driverId === 'string' ? q.driverId : undefined,

@@ -540,6 +540,13 @@ function PaymentsTab() {
     return localDateISO(d);
   });
   const [dateTo, setDateTo] = useState(() => localTodayISO());
+  // 2026-07-17: entry-date filter — narrows by PaymentTransaction.createdAt
+  // (data-entry timestamp) alongside the existing Payment Date (transactionDate)
+  // range. Default blank so the initial view keeps its historical semantics
+  // (Payment-Date 30d window). Ops uses this to reconcile "what got entered
+  // today" separately from "what business date is on the receipt".
+  const [entryDateFrom, setEntryDateFrom] = useState('');
+  const [entryDateTo, setEntryDateTo] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
   const [allocatePayment, setAllocatePayment] = useState<Payment | null>(null);
@@ -553,6 +560,8 @@ function PaymentsTab() {
   if (methodFilter) queryParams.paymentMethod = methodFilter;
   if (dateFrom) queryParams.dateFrom = dateFrom;
   if (dateTo) queryParams.dateTo = dateTo;
+  if (entryDateFrom) queryParams.entryDateFrom = entryDateFrom;
+  if (entryDateTo) queryParams.entryDateTo = entryDateTo;
   if (search.trim()) queryParams.search = search.trim();
 
   const { data, isLoading } = useQuery({
@@ -576,6 +585,8 @@ function PaymentsTab() {
       if (methodFilter) params.set('paymentMethod', methodFilter);
       if (dateFrom) params.set('dateFrom', dateFrom);
       if (dateTo) params.set('dateTo', dateTo);
+      if (entryDateFrom) params.set('entryDateFrom', entryDateFrom);
+      if (entryDateTo) params.set('entryDateTo', entryDateTo);
       if (search.trim()) params.set('search', search.trim());
       const res = await api.get(`/payments/export?${params.toString()}`, { responseType: 'blob' });
       const href = window.URL.createObjectURL(res.data);
@@ -632,8 +643,27 @@ function PaymentsTab() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Select options={methodOptions} placeholder="All Methods" value={methodFilter} onChange={(e) => { setMethodFilter(e.target.value); setPage(1); }} />
-          <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="input py-2" />
-          <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="input py-2" />
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Payment Date From</label>
+            <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="input py-2 w-full" />
+          </div>
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Payment Date To</label>
+            <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="input py-2 w-full" />
+          </div>
+        </div>
+        {/* 2026-07-17: entry-date filter — the date the payment ROW was
+            recorded in the system. Blank = no entry-date constraint (default).
+            Stacks (AND) with the Payment Date range above. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Entry Date From</label>
+            <input type="date" value={entryDateFrom} onChange={(e) => { setEntryDateFrom(e.target.value); setPage(1); }} className="input py-2 w-full" />
+          </div>
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Entry Date To</label>
+            <input type="date" value={entryDateTo} onChange={(e) => { setEntryDateTo(e.target.value); setPage(1); }} className="input py-2 w-full" />
+          </div>
         </div>
       </div>
 
@@ -652,6 +682,7 @@ function PaymentsTab() {
               <thead>
                 <tr>
                   <th>Payment Date</th>
+                  <th>Entered On</th>
                   <th>Customer</th>
                   <th>Amount</th>
                   <th>Method</th>
@@ -679,6 +710,17 @@ function PaymentsTab() {
                   return (
                   <tr key={payment.paymentId}>
                     <td>{new Date(payment.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td className="text-xs text-surface-600 dark:text-surface-400">
+                      {/* 2026-07-17: Entered On = createdAt (data-entry
+                          timestamp). Spread through mapPayment.renameId()
+                          so it arrives untyped on the Payment shape —
+                          read via cast. Blank if legacy row lacks
+                          createdAt (shouldn't happen; every Prisma row
+                          has it). */}
+                      {(payment as { createdAt?: string }).createdAt
+                        ? new Date((payment as { createdAt?: string }).createdAt!).toLocaleDateString('en-IN')
+                        : '-'}
+                    </td>
                     <td className="font-medium text-surface-900 dark:text-white">{payment.customerName}</td>
                     <td className="font-medium">{formatCurrency(payment.amount)}</td>
                     <td>
@@ -695,7 +737,12 @@ function PaymentsTab() {
                         )}
                       </div>
                     </td>
-                    <td className="text-xs">{payment.referenceNumber || '-'}</td>
+                    {/* 2026-07-17: raw UPI txn refs run 30+ chars and were
+                        overflowing the table cell into unreadable slivers.
+                        break-all lets the string wrap on any character;
+                        max-w-[14ch] caps the column width so a single long
+                        ref doesn't push out sibling columns. */}
+                    <td className="text-xs whitespace-normal break-all max-w-[14ch]">{payment.referenceNumber || '-'}</td>
                     <td className="text-xs">
                       {singleAlloc ? (
                         <button

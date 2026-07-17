@@ -55,6 +55,8 @@ router.get('/export',
         paymentMethod: typeof req.query.paymentMethod === 'string' ? req.query.paymentMethod : undefined,
         dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
         dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+        entryDateFrom: typeof req.query.entryDateFrom === 'string' ? req.query.entryDateFrom : undefined,
+        entryDateTo: typeof req.query.entryDateTo === 'string' ? req.query.entryDateTo : undefined,
         search: typeof req.query.search === 'string' ? req.query.search : undefined,
       };
       const distributorId = req.user!.distributorId!;
@@ -76,6 +78,7 @@ router.get('/export',
       });
       const mapped = mapPayments(rows) as Array<{
         transactionDate?: string;
+        createdAt?: string;
         customerName?: string;
         amount?: number;
         paymentMethod?: string;
@@ -90,7 +93,11 @@ router.get('/export',
         const s = v == null ? '' : String(v);
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
       };
-      const header = ['Payment Date','Customer','Amount','Method','Reference','Invoice #','Issue Date','Allocated','Unallocated','Status','Notes'];
+      // 2026-07-17: "Entered On" column between Payment Date and Customer
+      // matches the on-screen table added the same day. Downstream ops
+      // reconciliation reads both dates side-by-side to detect drift
+      // between when the customer paid vs when the row was entered.
+      const header = ['Payment Date','Entered On','Customer','Amount','Method','Reference','Invoice #','Issue Date','Allocated','Unallocated','Status','Notes'];
       const lines = [header.map(esc).join(',')];
       for (const p of mapped) {
         const allocs = p.allocations ?? [];
@@ -102,6 +109,7 @@ router.get('/export',
           : bulk > 0 ? 'Various' : '-';
         lines.push([
           p.transactionDate ? new Date(p.transactionDate).toISOString().slice(0, 10) : '',
+          p.createdAt ? new Date(p.createdAt).toISOString().slice(0, 10) : '',
           p.customerName ?? '',
           p.amount ?? '',
           (p.paymentMethod ?? '').replace(/_/g, ' '),

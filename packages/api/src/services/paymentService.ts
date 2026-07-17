@@ -9,6 +9,12 @@ export async function listPayments(
     customerId?: string; paymentMethod?: string;
     allocationStatus?: string | string[];
     dateFrom?: string; dateTo?: string;
+    // 2026-07-17: entry-date filter operates on PaymentTransaction.createdAt
+    // (the DB insert timestamp). Stacks with dateFrom/dateTo which filter on
+    // transactionDate (the business date the customer paid). Ops uses this
+    // to reconcile "what got entered today" separately from "what payments
+    // are attributed to today's business date".
+    entryDateFrom?: string; entryDateTo?: string;
     page?: number; pageSize?: number;
     sortBy?: 'createdAt' | 'amount' | 'transactionDate';
     sortOrder?: 'asc' | 'desc';
@@ -28,6 +34,19 @@ export async function listPayments(
     where.transactionDate = {};
     if (filters.dateFrom) where.transactionDate.gte = new Date(filters.dateFrom);
     if (filters.dateTo) where.transactionDate.lte = new Date(filters.dateTo);
+  }
+  if (filters.entryDateFrom || filters.entryDateTo) {
+    where.createdAt = {};
+    if (filters.entryDateFrom) where.createdAt.gte = new Date(filters.entryDateFrom);
+    if (filters.entryDateTo) {
+      // Include the entire "To" day — same convention Payment Date uses via
+      // `lte: new Date(dateTo)` (which coerces to 00:00 of that day). For
+      // createdAt (a full timestamp, not a date column) we bump to 23:59:59
+      // so the day filter is inclusive on both edges.
+      const end = new Date(filters.entryDateTo);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt.lte = end;
+    }
   }
   const search = filters.search?.trim();
   if (search) {

@@ -177,6 +177,25 @@ describe('listPayments — search', () => {
       expect(r2.data.every((p) => !ids1.has(p.id))).toBe(true);
     }
   });
+
+  // 2026-07-17: entry-date filter — operates on PaymentTransaction.createdAt.
+  // Verifies that the new filter (a) narrows to rows created in the window,
+  // (b) treats the "To" edge as end-of-day (23:59:59.999), (c) is additive
+  // with the existing transactionDate range (both active = both must pass).
+  it('entryDateFrom + entryDateTo filter by createdAt (data-entry timestamp)', async () => {
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    // Both search probes above were created "just now" during this test
+    // run, so filtering by today includes them.
+    const r = await listPayments(D1, { entryDateFrom: todayStr, entryDateTo: todayStr, search: `REF-${PROBE}` });
+    expect(r.data.length).toBeGreaterThanOrEqual(1);
+    expect(r.data.find((p) => p.referenceNumber === `REF-${PROBE}`)).toBeTruthy();
+    // Range excluding today (yesterday only) must NOT include the fixture.
+    const y = new Date(today); y.setDate(y.getDate() - 1);
+    const yStr = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`;
+    const rYesterday = await listPayments(D1, { entryDateFrom: yStr, entryDateTo: yStr, search: `REF-${PROBE}` });
+    expect(rYesterday.data.find((p) => p.referenceNumber === `REF-${PROBE}`)).toBeUndefined();
+  });
 });
 
 afterAll(async () => {

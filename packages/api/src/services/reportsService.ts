@@ -44,6 +44,12 @@ export interface ReportResult {
 export interface ReportFilters {
   dateFrom?: string;
   dateTo?: string;
+  // 2026-07-17: Payment Collections entry-date filter — narrows to
+  // payments whose PaymentTransaction.createdAt falls in the range.
+  // Stacks with dateFrom/dateTo (which target transactionDate). Only
+  // paymentCollections consumes these today; other reports ignore.
+  entryDateFrom?: string;
+  entryDateTo?: string;
   customerId?: string;
   // Feature A (2026-07-15): optional customer-id list for the HQ
   // group portal — narrows outstandingAging to a set of customers
@@ -1484,12 +1490,20 @@ export async function paymentCollections(distributorId: string, f: ReportFilters
   // Find every invoice that had at least one allocation in range (+ optional
   // driver filter). Join to invoice + order + customer + driver + items so
   // the row assembly stays single-round-trip.
+  // 2026-07-17: entry-date filter stacks with the payment-date range.
+  // If entryDateFrom/entryDateTo are supplied, they narrow to allocations
+  // whose parent PaymentTransaction.createdAt falls in that window. If
+  // neither is supplied the clause is omitted (unchanged legacy behaviour).
+  const entryDateClause: Record<string, Date> = {};
+  if (f.entryDateFrom) entryDateClause.gte = new Date(`${f.entryDateFrom}T00:00:00.000Z`);
+  if (f.entryDateTo) entryDateClause.lte = new Date(`${f.entryDateTo}T23:59:59.999Z`);
   const inRangeAllocs = await prisma.paymentAllocation.findMany({
     where: {
       payment: {
         distributorId,
         deletedAt: null,
         transactionDate: { gte: from, lte: to },
+        ...(Object.keys(entryDateClause).length > 0 ? { createdAt: entryDateClause } : {}),
       },
       ...(f.driverId
         ? { invoice: { order: { driverId: f.driverId } } }

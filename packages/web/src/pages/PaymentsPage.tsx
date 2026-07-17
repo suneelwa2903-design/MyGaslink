@@ -42,6 +42,12 @@ export default function PaymentsPage() {
     return localDateISO(d);
   });
   const [dateTo, setDateTo] = useState(() => localTodayISO());
+  // 2026-07-17: entry-date filter — see BillingPaymentsPage PaymentsTab for
+  // the rationale. Same semantics: narrows by createdAt (data-entry
+  // timestamp) alongside Payment Date (transactionDate). Both blank by
+  // default so the initial view keeps historical behavior.
+  const [entryDateFrom, setEntryDateFrom] = useState('');
+  const [entryDateTo, setEntryDateTo] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
 
@@ -49,6 +55,8 @@ export default function PaymentsPage() {
   if (methodFilter) queryParams.paymentMethod = methodFilter;
   if (dateFrom) queryParams.dateFrom = dateFrom;
   if (dateTo) queryParams.dateTo = dateTo;
+  if (entryDateFrom) queryParams.entryDateFrom = entryDateFrom;
+  if (entryDateTo) queryParams.entryDateTo = entryDateTo;
 
   const { data, isLoading } = useQuery({
     queryKey: ['payments', queryParams],
@@ -73,11 +81,27 @@ export default function PaymentsPage() {
         </Button>
       </div>
 
-      <div className="card p-4">
+      <div className="card p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Select options={methodOptions} placeholder="All Methods" value={methodFilter} onChange={(e) => { setMethodFilter(e.target.value); setPage(1); }} />
-          <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="input py-2" />
-          <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="input py-2" />
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Payment Date From</label>
+            <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="input py-2 w-full" />
+          </div>
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Payment Date To</label>
+            <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="input py-2 w-full" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Entry Date From</label>
+            <input type="date" value={entryDateFrom} onChange={(e) => { setEntryDateFrom(e.target.value); setPage(1); }} className="input py-2 w-full" />
+          </div>
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Entry Date To</label>
+            <input type="date" value={entryDateTo} onChange={(e) => { setEntryDateTo(e.target.value); setPage(1); }} className="input py-2 w-full" />
+          </div>
         </div>
       </div>
 
@@ -96,6 +120,7 @@ export default function PaymentsPage() {
               <thead>
                 <tr>
                   <th>Payment Date</th>
+                  <th>Entered On</th>
                   <th>Customer</th>
                   <th>Amount</th>
                   <th>Method</th>
@@ -116,10 +141,18 @@ export default function PaymentsPage() {
                   return (
                   <tr key={payment.paymentId}>
                     <td>{new Date(payment.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td className="text-xs text-surface-600 dark:text-surface-400">
+                      {(payment as { createdAt?: string }).createdAt
+                        ? new Date((payment as { createdAt?: string }).createdAt!).toLocaleDateString('en-IN')
+                        : '-'}
+                    </td>
                     <td className="font-medium text-surface-900 dark:text-white">{payment.customerName}</td>
                     <td className="font-medium">{formatCurrency(payment.amount)}</td>
                     <td><Badge variant="neutral">{payment.paymentMethod.replace(/_/g, ' ')}</Badge></td>
-                    <td className="text-xs">{payment.referenceNumber || '-'}</td>
+                    {/* 2026-07-17: same wrap treatment as PaymentsTab — long
+                        UPI refs were overflowing. break-all + max-width caps
+                        the column. */}
+                    <td className="text-xs whitespace-normal break-all max-w-[14ch]">{payment.referenceNumber || '-'}</td>
                     <td className="text-xs">
                       {singleAlloc ? (
                         <button

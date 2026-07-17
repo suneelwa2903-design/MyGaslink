@@ -809,6 +809,14 @@ export const invoiceFilterSchema = paginationSchema.merge(dateRangeSchema).exten
 export const paymentFilterSchema = paginationSchema.merge(dateRangeSchema).extend({
   customerId: uuid.optional(),
   paymentMethod: z.nativeEnum(PaymentMethod).optional(),
+  // 2026-07-17: entry-date filter — stacks with dateFrom/dateTo (which are
+  // on transactionDate = business date). entryDateFrom/entryDateTo filter
+  // on PaymentTransaction.createdAt (the DB insert timestamp) so ops can
+  // reconcile "what got entered today" separately from "what payments are
+  // attributed to today's business date". Both optional; both provided
+  // stacks (AND) with the payment-date range.
+  entryDateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD').optional(),
+  entryDateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD').optional(),
   // Comma-separated for "in" semantics, e.g. ?allocationStatus=unallocated,partially_allocated
   allocationStatus: z.string().optional().transform((v) =>
     v ? v.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
