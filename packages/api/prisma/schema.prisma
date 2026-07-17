@@ -612,6 +612,10 @@ model PurchaseEntryItem {
   cylinderTypeId  String   @map("cylinder_type_id")
   fullsReceived   Int      @default(0) @map("fulls_received")
   emptiesGivenOut Int      @default(0) @map("empties_given_out")
+  /// Price paid per full received (INR, GST-inclusive). 0 = movement-only
+  /// entry (e.g. an empties swap). Total per line = fullsReceived *
+  /// unitPrice computed at query/PDF time to keep the write path simple.
+  unitPrice       Decimal  @default(0) @map("unit_price") @db.Decimal(18, 4)
   createdAt       DateTime @default(now()) @map("created_at")
 
   purchaseEntry PurchaseEntry @relation(fields: [purchaseEntryId], references: [id])

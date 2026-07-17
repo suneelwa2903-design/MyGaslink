@@ -15,7 +15,7 @@ import { validate, validateQuery } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { param } from '../utils/params.js';
 import { sendSuccess, sendCreated, sendError, sendNotFound } from '../utils/apiResponse.js';
-import { createPurchaseEntrySchema } from '@gaslink/shared';
+import { createPurchaseEntrySchema, updatePurchaseEntrySchema } from '@gaslink/shared';
 import * as purchaseEntryService from '../services/purchaseEntryService.js';
 import { generatePurchaseLedgerPdf } from '../services/pdf/purchaseLedgerPdfService.js';
 
@@ -116,6 +116,32 @@ router.get('/:id',
       if (!entry) return sendNotFound(res, 'Purchase entry');
       return sendSuccess(res, entry);
     } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// PUT /api/purchase-entries/:id — edit a submitted entry.
+// Delete-and-recreate items + reverse-and-re-emit InventoryEvent rows so
+// downstream stock calculations stay accurate. See updatePurchaseEntry.
+router.put('/:id',
+  requireRole('mini_operator_admin'),
+  validate(updatePurchaseEntrySchema),
+  auditLog('update', 'purchase_entry'),
+  async (req, res) => {
+    try {
+      const updated = await purchaseEntryService.updatePurchaseEntry(
+        req.user!.distributorId!,
+        param(req.params.id),
+        req.user!.userId,
+        req.body,
+      );
+      return sendSuccess(res, updated);
+    } catch (err) {
+      if (err instanceof purchaseEntryService.PurchaseEntryError) {
+        if (err.statusCode === 404) return sendNotFound(res, 'Purchase entry');
+        return sendError(res, err.message, err.statusCode);
+      }
       return sendError(res, (err as Error).message);
     }
   },

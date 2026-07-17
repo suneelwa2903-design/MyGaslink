@@ -900,14 +900,23 @@ export const createPurchaseEntrySchema = z.object({
         cylinderTypeId: uuid,
         fullsReceived: z.number().int().min(0),
         emptiesGivenOut: z.number().int().min(0),
+        // Money per full received (INR, GST-inclusive). 0 = movement-only
+        // entry (e.g. an empties swap where nothing was paid). Per-line
+        // total = fullsReceived * unitPrice, computed at read time.
+        unitPrice: z.number().min(0).default(0),
       }),
     )
     .min(1, 'At least one cylinder type entry is required'),
 });
 
+// Update reuses the same payload shape as create. Service delete-and-recreate
+// the items so InventoryEvent rows stay consistent — see updatePurchaseEntry.
+export const updatePurchaseEntrySchema = createPurchaseEntrySchema;
+
 export type CreateSourceDistributorInput = z.infer<typeof createSourceDistributorSchema>;
 export type UpdateSourceDistributorInput = z.infer<typeof updateSourceDistributorSchema>;
 export type CreatePurchaseEntryInput = z.infer<typeof createPurchaseEntrySchema>;
+export type UpdatePurchaseEntryInput = z.infer<typeof updatePurchaseEntrySchema>;
 
 // ─── FLOAT-001 — Vehicle Load Manifest + Driver walk-in order ────────────────
 

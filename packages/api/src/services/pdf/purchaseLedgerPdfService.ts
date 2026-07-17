@@ -13,10 +13,11 @@
  */
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
-import { formatDate } from './pdfLayoutUtils.js';
+import { formatDate, formatMoney } from './pdfLayoutUtils.js';
 import type { Prisma } from '@prisma/client';
 
-const PAGE_WIDTH = 595;
+// A4 landscape — needed once we added Unit Price + Amount + Notes columns.
+const PAGE_WIDTH = 842;
 const MARGIN = { left: 40, right: 40, top: 40, bottom: 40 };
 
 const THEME = {
@@ -34,20 +35,24 @@ interface Col {
   align: 'left' | 'right' | 'center';
 }
 
-// Portrait A4 usable width = 595 - 40 - 40 = 515pt
+// Landscape A4 usable width = 842 - 40 - 40 = 762pt (matches customer ledger).
+// Money columns need width for lakh-scale figures (₹9,99,999.00 = 15 chars).
 const COLS: Col[] = [
-  { label: 'Date', width: 66, align: 'left' },
-  { label: 'Purchase #', width: 90, align: 'left' },
+  { label: 'Date', width: 60, align: 'left' },
+  { label: 'Purchase #', width: 82, align: 'left' },
   { label: 'Source Distributor', width: 130, align: 'left' },
-  { label: 'Cylinder Type', width: 105, align: 'left' },
-  { label: 'Fulls Received', width: 62, align: 'right' },
-  { label: 'Empties Given', width: 62, align: 'right' },
+  { label: 'Cylinder Type', width: 100, align: 'left' },
+  { label: 'Fulls', width: 46, align: 'right' },
+  { label: 'Empties', width: 52, align: 'right' },
+  { label: 'Unit Price', width: 88, align: 'right' },
+  { label: 'Amount', width: 100, align: 'right' },
+  { label: 'Notes', width: 104, align: 'left' },
 ];
 
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
 const ROW_HEIGHT = 16;
 
-const COL_CHAR_CAP: number[] = [11, 16, 24, 20, 8, 8];
+const COL_CHAR_CAP: number[] = [11, 14, 24, 18, 6, 6, 14, 15, 20];
 
 function fitCell(s: string, maxChars: number): string {
   if (!s) return '';
@@ -136,12 +141,14 @@ export async function generatePurchaseLedgerPdf(
       purchaseNumber: true,
       purchaseDate: true,
       sourceDistributorName: true,
+      notes: true,
       items: {
         select: {
           id: true,
           cylinderTypeId: true,
           fullsReceived: true,
           emptiesGivenOut: true,
+          unitPrice: true,
           cylinderType: { select: { typeName: true } },
         },
       },
@@ -159,11 +166,16 @@ export async function generatePurchaseLedgerPdf(
     cylinderType: string;
     fulls: number;
     empties: number;
+    unitPrice: number;
+    amount: number;
+    notes: string;
   };
   const rows: FlatRow[] = [];
   for (const entry of entries) {
     for (const item of entry.items) {
       if (filters.cylinderTypeId && item.cylinderTypeId !== filters.cylinderTypeId) continue;
+      const unitPrice = Number(item.unitPrice ?? 0);
+      const amount = item.fullsReceived * unitPrice;
       rows.push({
         date: entry.purchaseDate,
         purchaseNumber: entry.purchaseNumber,
@@ -171,6 +183,9 @@ export async function generatePurchaseLedgerPdf(
         cylinderType: item.cylinderType?.typeName ?? '—',
         fulls: item.fullsReceived,
         empties: item.emptiesGivenOut,
+        unitPrice,
+        amount,
+        notes: entry.notes ?? '',
       });
     }
   }
@@ -179,9 +194,10 @@ export async function generatePurchaseLedgerPdf(
     (acc, r) => {
       acc.fulls += r.fulls;
       acc.empties += r.empties;
+      acc.amount += r.amount;
       return acc;
     },
-    { fulls: 0, empties: 0 },
+    { fulls: 0, empties: 0, amount: 0 },
   );
 
   // Filter label lookups (best-effort; falls back to "—" if the id was
@@ -203,7 +219,7 @@ export async function generatePurchaseLedgerPdf(
     cylinderTypeLabel = ct?.typeName ?? null;
   }
 
-  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: MARGIN.left });
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
@@ -273,6 +289,9 @@ export async function generatePurchaseLedgerPdf(
           r.cylinderType,
           String(r.fulls),
           String(r.empties),
+          r.unitPrice > 0 ? formatMoney(r.unitPrice) : '—',
+          r.amount > 0 ? formatMoney(r.amount) : '—',
+          r.notes,
         ],
         { zebra: i % 2 === 1 },
       );
@@ -291,7 +310,17 @@ export async function generatePurchaseLedgerPdf(
     drawRow(
       doc,
       y,
-      ['', '', '', 'Total', String(totals.fulls), String(totals.empties)],
+      [
+        '',
+        '',
+        '',
+        'Total',
+        String(totals.fulls),
+        String(totals.empties),
+        '',
+        formatMoney(totals.amount),
+        '',
+      ],
       { bold: true },
     );
     y += ROW_HEIGHT;

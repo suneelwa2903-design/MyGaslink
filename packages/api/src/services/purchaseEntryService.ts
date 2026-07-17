@@ -35,6 +35,7 @@ const purchaseEntryItemSelect = {
   cylinderTypeId: true,
   fullsReceived: true,
   emptiesGivenOut: true,
+  unitPrice: true,
   cylinderType: { select: { id: true, typeName: true } },
 } satisfies Prisma.PurchaseEntryItemSelect;
 
@@ -63,6 +64,9 @@ type PurchaseItemInput = {
   cylinderTypeId: string;
   fullsReceived: number;
   emptiesGivenOut: number;
+  /// Per-unit price (INR, GST-inclusive). Defaults to 0 when the client
+  /// omits it — old clients still work, existing rows keep their default.
+  unitPrice?: number;
 };
 
 export type CreatePurchaseEntryData = {
@@ -71,6 +75,8 @@ export type CreatePurchaseEntryData = {
   notes?: string;
   items: PurchaseItemInput[];
 };
+
+export type UpdatePurchaseEntryData = CreatePurchaseEntryData;
 
 /**
  * Emit the incoming_fulls / outgoing_empties inventory events for a single
@@ -225,6 +231,7 @@ export async function createPurchaseEntry(
             cylinderTypeId: i.cylinderTypeId,
             fullsReceived: Math.max(0, Math.floor(i.fullsReceived ?? 0)),
             emptiesGivenOut: Math.max(0, Math.floor(i.emptiesGivenOut ?? 0)),
+            unitPrice: Math.max(0, Number(i.unitPrice ?? 0)),
           })),
         },
       },
@@ -300,6 +307,159 @@ export async function getPurchaseEntry(
     where: { id: purchaseEntryId, distributorId, deletedAt: null },
     select: purchaseEntrySelect,
   });
+}
+
+/**
+ * Update = delete-and-recreate. The write path is:
+ *   1. Load the existing entry (tenant scoped) — 404 if missing.
+ *   2. Hard-delete every InventoryEvent that references this entry
+ *      (same rationale as the delete path — reversal events would double
+ *      the outgoingEmpties bucket because the aggregator uses Math.abs).
+ *   3. Delete every PurchaseEntryItem row (they get re-created below).
+ *   4. Update header fields (sourceDistributorId, sourceDistributorName
+ *      snapshot, purchaseDate, notes) + re-create items with the new
+ *      quantities + unit prices.
+ *   5. Re-emit incoming_fulls / outgoing_empties InventoryEvent rows
+ *      for the new items (movement magnitude driven by the new values).
+ *   6. Recompute InventorySummary for every cylinder type touched by
+ *      EITHER the old OR the new item list so cached rows self-heal.
+ *
+ * purchaseNumber is preserved (audit trail continuity) — the caller does
+ * NOT provide it.
+ */
+export async function updatePurchaseEntry(
+  distributorId: string,
+  purchaseEntryId: string,
+  createdBy: string,
+  data: UpdatePurchaseEntryData,
+) {
+  const hasMovement = data.items.some(
+    (i) => (i.fullsReceived ?? 0) > 0 || (i.emptiesGivenOut ?? 0) > 0,
+  );
+  if (!hasMovement) {
+    throw new PurchaseEntryError(
+      'Purchase entry must include at least one non-zero item movement',
+      400,
+      'EMPTY_MOVEMENT',
+    );
+  }
+
+  // Resolve source distributor + capture the name snapshot BEFORE the tx.
+  let sourceDistributorName: string | null = null;
+  if (data.sourceDistributorId) {
+    const src = await prisma.sourceDistributor.findFirst({
+      where: {
+        id: data.sourceDistributorId,
+        distributorId,
+        deletedAt: null,
+      },
+      select: { id: true, name: true },
+    });
+    if (!src) {
+      throw new PurchaseEntryError(
+        'Source distributor not found for this tenant',
+        400,
+        'SOURCE_DISTRIBUTOR_NOT_FOUND',
+      );
+    }
+    sourceDistributorName = src.name;
+  }
+
+  const cylinderTypeIds = Array.from(new Set(data.items.map((i) => i.cylinderTypeId)));
+  const validTypes = await prisma.cylinderType.findMany({
+    where: { id: { in: cylinderTypeIds }, distributorId, isActive: true },
+    select: { id: true },
+  });
+  if (validTypes.length !== cylinderTypeIds.length) {
+    throw new PurchaseEntryError(
+      'One or more cylinder types are invalid for this tenant',
+      400,
+      'INVALID_CYLINDER_TYPES',
+    );
+  }
+
+  const existing = await prisma.purchaseEntry.findFirst({
+    where: { id: purchaseEntryId, distributorId, deletedAt: null },
+    select: purchaseEntrySelect,
+  });
+  if (!existing) {
+    throw new PurchaseEntryError('Purchase entry not found', 404, 'NOT_FOUND');
+  }
+
+  const purchaseDateObj = new Date(data.purchaseDate);
+  if (Number.isNaN(purchaseDateObj.getTime())) {
+    throw new PurchaseEntryError('Invalid purchase date', 400, 'INVALID_DATE');
+  }
+  const oldPurchaseDateObj = new Date(existing.purchaseDate);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    // 1) Nuke the old InventoryEvent rows tied to this entry.
+    await tx.inventoryEvent.deleteMany({
+      where: {
+        distributorId,
+        referenceId: purchaseEntryId,
+        referenceType: 'purchase_entry',
+      },
+    });
+
+    // 2) Nuke the old items — Prisma has no cascade at model layer, we do
+    // it explicitly. FK to PurchaseEntry stays valid because we just wipe
+    // the child rows.
+    await tx.purchaseEntryItem.deleteMany({
+      where: { purchaseEntryId },
+    });
+
+    // 3) Update header + create new items.
+    const next = await tx.purchaseEntry.update({
+      where: { id: purchaseEntryId },
+      data: {
+        sourceDistributorId: data.sourceDistributorId ?? null,
+        sourceDistributorName,
+        purchaseDate: data.purchaseDate,
+        notes: data.notes?.trim() || null,
+        items: {
+          create: data.items.map((i) => ({
+            cylinderTypeId: i.cylinderTypeId,
+            fullsReceived: Math.max(0, Math.floor(i.fullsReceived ?? 0)),
+            emptiesGivenOut: Math.max(0, Math.floor(i.emptiesGivenOut ?? 0)),
+            unitPrice: Math.max(0, Number(i.unitPrice ?? 0)),
+          })),
+        },
+      },
+      select: purchaseEntrySelect,
+    });
+
+    // 4) Re-emit InventoryEvent rows for the new state.
+    for (const item of next.items) {
+      await emitInventoryEventsForItem(tx, {
+        distributorId,
+        cylinderTypeId: item.cylinderTypeId,
+        fullsChange: item.fullsReceived,
+        emptiesGivenOut: item.emptiesGivenOut,
+        eventDate: purchaseDateObj,
+        referenceId: next.id,
+        documentNumber: next.purchaseNumber,
+        createdBy,
+      });
+    }
+
+    return next;
+  });
+
+  // 5) Recompute InventorySummary for every cylinder type touched by the
+  // OLD or NEW item lists (a type could have been removed on edit — its
+  // cached summary still needs a refresh). Start from the EARLIER of the
+  // two dates so a moved-earlier entry sweeps forward correctly.
+  const affectedTypes = new Set<string>([
+    ...existing.items.map((i) => i.cylinderTypeId),
+    ...updated.items.map((i) => i.cylinderTypeId),
+  ]);
+  const sweepFrom = purchaseDateObj < oldPurchaseDateObj ? purchaseDateObj : oldPurchaseDateObj;
+  for (const cylinderTypeId of affectedTypes) {
+    await recalculateSummariesFromDate(distributorId, cylinderTypeId, sweepFrom);
+  }
+
+  return updated;
 }
 
 export async function deletePurchaseEntry(
