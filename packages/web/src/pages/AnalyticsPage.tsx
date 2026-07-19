@@ -37,8 +37,19 @@ function formatCurrency(n: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 }
 
+// The Advanced Metrics API returns rates that are ALREADY multiplied
+// by 100 (see analyticsService.ts getAdvancedMetrics — deliveryEfficiency
+// and cylinderUtilizationRate are `Math.round((num/den) * 100)`). Do
+// NOT multiply again here — that produced the "9300%" / "7200%" cards.
 function formatPercent(n: number) {
-  return `${(n * 100).toFixed(1)}%`;
+  return `${n.toFixed(1)}%`;
+}
+
+// Inventory shrinkage is a raw count of cylinders recorded as missing —
+// it is NOT a percentage. Render with a "cylinders" suffix so the card
+// no longer implies a rate.
+function formatCylinderCount(n: number) {
+  return `${Math.round(n)} cylinder${Math.round(n) === 1 ? '' : 's'}`;
 }
 
 const SEVERITY_VARIANTS: Record<string, 'danger' | 'warning' | 'info' | 'neutral'> = {
@@ -234,22 +245,19 @@ export default function AnalyticsPage() {
       ]
     : [];
 
-  const tabs = isMiniOperator
-    // Mini-Operator: hide Pending Actions entirely (per-user feedback —
-    // mini-op is a one-person shop, there's no queue to review). Keep
-    // Dashboard + Overview + Reports; the Tally section inside Reports is
-    // filtered separately at ReportsPage.
-    ? [
-        { key: 'dashboard' as const, label: 'Dashboard' },
-        { key: 'overview' as const, label: 'Overview' },
-        { key: 'reports' as const, label: 'Reports' },
-      ]
-    : [
-        { key: 'dashboard' as const, label: 'Dashboard' },
-        { key: 'overview' as const, label: 'Overview' },
-        { key: 'reports' as const, label: 'Reports' },
-        { key: 'pending-actions' as const, label: 'Pending Actions' },
-      ];
+  // 2026-07-19: Pending Actions tab hidden from Analytics across all
+  // roles for now. The dedicated /app/pending-actions page still exists;
+  // this only removes the duplicate tab on Analytics. Re-add by putting
+  // the { key: 'pending-actions', label: 'Pending Actions' } row back
+  // into the non-miniOp branch.
+  const tabs = [
+    { key: 'dashboard' as const, label: 'Dashboard' },
+    { key: 'overview' as const, label: 'Overview' },
+    { key: 'reports' as const, label: 'Reports' },
+  ];
+  // isMiniOperator retained as a signal for other tab-visibility gates;
+  // reference it so tsc doesn't flag it as unused if that becomes true.
+  void isMiniOperator;
 
   if (isSuperAdmin && !selectedDistributorId) {
     return (
@@ -677,7 +685,7 @@ export default function AnalyticsPage() {
                 { label: 'Cylinder Utilization', value: formatPercent(metrics.cylinderUtilizationRate ?? 0), icon: HiOutlineCube, color: 'text-brand-500', bg: 'bg-brand-50 dark:bg-brand-500/10', hint: 'Share of dispatched cylinders that come back as empties (collected ÷ delivered, last 30 days). Low = cylinders stuck with customers.' },
                 { label: 'Avg Turnaround', value: `${(metrics.averageTurnaroundDays ?? 0).toFixed(1)} days`, icon: HiOutlineTruck, color: 'text-flame-500', bg: 'bg-flame-50 dark:bg-flame-500/10', hint: 'Average days between a cylinder being delivered and its empty being collected. Lower is better.' },
                 { label: 'Delivery Efficiency', value: formatPercent(metrics.deliveryEfficiency ?? 0), icon: HiOutlineTruck, color: 'text-accent-500', bg: 'bg-accent-50 dark:bg-accent-500/10', hint: '% of orders successfully delivered vs total (last 30 days). Industry benchmark: >90%.' },
-                { label: 'Inventory Shrinkage', value: formatPercent(metrics.inventoryShrinkage ?? 0), icon: HiOutlineCube, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', hint: 'Cylinders recorded as missing/lost across customer balances. High = deposit leakage or loss.' },
+                { label: 'Inventory Shrinkage', value: formatCylinderCount(metrics.inventoryShrinkage ?? 0), icon: HiOutlineCube, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', hint: 'Cylinders recorded as missing/lost across customer balances. High = deposit leakage or loss.' },
               ].map((m) => (
                 <div key={m.label} className="metric-card flex items-start gap-4">
                   <div className={cn('flex items-center justify-center h-12 w-12 rounded-xl shrink-0', m.bg)}>

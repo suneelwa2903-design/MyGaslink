@@ -44,7 +44,8 @@ import {
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole } from '@/stores/authStore';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState, CustomerSearchInput } from '@/components/ui';
+import { Button, Input, Select, Modal, Badge, Loader, EmptyState, CustomerSearchInput, SortableTh } from '@/components/ui';
+import { useSortableTable } from '@/hooks/useSortableTable';
 import { LoadListDispatchModal } from '@/components/LoadListDispatchModal';
 import { cn } from '@/lib/cn';
 
@@ -148,11 +149,18 @@ export default function OrdersPage() {
     }
   }
 
+  // 2026-07-19: click-to-sort header state. Default createdAt-desc
+  // matches the backend orderService fallback so a fresh page load
+  // shows the same order as before this feature landed.
+  const { sortBy, sortDir, toggle: toggleSort } = useSortableTable('createdAt', 'desc');
+
   const queryParams: Record<string, unknown> = { page, pageSize: 25 };
   if (search) queryParams.search = search;
   if (statusFilter) queryParams.status = statusFilter;
   if (dateFrom) queryParams.dateFrom = dateFrom;
   if (dateTo) queryParams.dateTo = dateTo;
+  if (sortBy) queryParams.sortBy = sortBy;
+  queryParams.sortOrder = sortDir;
 
   const { data, isLoading } = useQuery({
     queryKey: ['orders', queryParams],
@@ -368,13 +376,13 @@ export default function OrdersPage() {
                       className="rounded border-surface-300 dark:border-surface-600"
                     />
                   </th>
-                  <th>Order #</th>
-                  <th>Customer</th>
-                  <th>Delivery Date</th>
+                  <SortableTh column="orderNumber" active={sortBy} dir={sortDir} onToggle={toggleSort}>Order #</SortableTh>
+                  <SortableTh column="customerName" active={sortBy} dir={sortDir} onToggle={toggleSort}>Customer</SortableTh>
+                  <SortableTh column="deliveryDate" active={sortBy} dir={sortDir} onToggle={toggleSort}>Delivery Date</SortableTh>
                   <th>Items</th>
-                  <th>Amount</th>
+                  <SortableTh column="totalAmount" active={sortBy} dir={sortDir} onToggle={toggleSort}>Amount</SortableTh>
                   <th>Driver</th>
-                  <th>Status</th>
+                  <SortableTh column="status" active={sortBy} dir={sortDir} onToggle={toggleSort}>Status</SortableTh>
                   <th>Actions</th>
                 </tr>
               </thead>

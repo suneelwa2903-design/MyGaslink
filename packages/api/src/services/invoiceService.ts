@@ -105,12 +105,28 @@ export async function listInvoices(
 
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 25;
+  // 2026-07-19: whitelist the sortable columns so an arbitrary client
+  // string can't reach Prisma's orderBy (a) unsafely, or (b) with a
+  // key Prisma will reject at runtime. 'customerName' maps to the
+  // nested { customer: { customerName: dir } } shape. Fallback to
+  // createdAt-desc for anything unrecognised.
+  const ALLOWED_SORT: readonly string[] = [
+    'invoiceNumber', 'issueDate', 'dueDate', 'totalAmount',
+    'outstandingAmount', 'status', 'createdAt', 'customerName',
+  ];
+  const sortBy = ALLOWED_SORT.includes(filters.sortBy ?? '')
+    ? (filters.sortBy as string)
+    : 'createdAt';
+  const sortOrder: 'asc' | 'desc' = filters.sortOrder === 'asc' ? 'asc' : 'desc';
+  const orderBy: Prisma.InvoiceOrderByWithRelationInput = sortBy === 'customerName'
+    ? { customer: { customerName: sortOrder } }
+    : ({ [sortBy]: sortOrder } as Prisma.InvoiceOrderByWithRelationInput);
 
   const [invoices, total] = await Promise.all([
     prisma.invoice.findMany({
       where,
       include: listInvoiceInclude,
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),

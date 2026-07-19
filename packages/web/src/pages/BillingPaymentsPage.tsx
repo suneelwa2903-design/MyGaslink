@@ -46,7 +46,8 @@ import {
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
 import { useAuthStore, selectDistributorId, selectRole } from '@/stores/authStore';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState, Pagination } from '@/components/ui';
+import { Button, Input, Select, Modal, Badge, Loader, EmptyState, Pagination, SortableTh } from '@/components/ui';
+import { useSortableTable } from '@/hooks/useSortableTable';
 import { CustomerSearchInput } from '@/components/ui/CustomerSearchInput';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { HiOutlineMagnifyingGlass, HiOutlineXMark } from 'react-icons/hi2';
@@ -214,12 +215,18 @@ function InvoicesTab() {
   });
   const gstEnabled = settings?.gstMode !== undefined && settings.gstMode !== GstMode.DISABLED;
 
+  // 2026-07-19: click-to-sort. Default createdAt-desc matches the
+  // backend fallback so a fresh page load is identical to before.
+  const { sortBy: invSortBy, sortDir: invSortDir, toggle: toggleInvSort } = useSortableTable('createdAt', 'desc');
+
   const queryParams: Record<string, unknown> = { page, pageSize: INVOICES_PAGE_SIZE };
   if (statusFilter) queryParams.status = statusFilter;
   if (irnFilter) queryParams.irnStatus = irnFilter;
   if (dateFrom) queryParams.dateFrom = dateFrom;
   if (dateTo) queryParams.dateTo = dateTo;
   if (search.trim()) queryParams.search = search.trim();
+  if (invSortBy) queryParams.sortBy = invSortBy;
+  queryParams.sortOrder = invSortDir;
 
   const { data, isLoading } = useQuery({
     queryKey: ['invoices', queryParams],
@@ -316,10 +323,10 @@ function InvoicesTab() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Invoice #</th>
-                  <th>Customer</th>
-                  <th>Issue Date</th>
-                  <th>Due Date</th>
+                  <SortableTh column="invoiceNumber" active={invSortBy} dir={invSortDir} onToggle={toggleInvSort}>Invoice #</SortableTh>
+                  <SortableTh column="customerName" active={invSortBy} dir={invSortDir} onToggle={toggleInvSort}>Customer</SortableTh>
+                  <SortableTh column="issueDate" active={invSortBy} dir={invSortDir} onToggle={toggleInvSort}>Issue Date</SortableTh>
+                  <SortableTh column="dueDate" active={invSortBy} dir={invSortDir} onToggle={toggleInvSort}>Due Date</SortableTh>
                   {/*
                     WI-066: invoice.totalAmount is the GST-inclusive grand
                     total for both fresh AND revised invoices now. The
@@ -330,9 +337,9 @@ function InvoicesTab() {
                     The service-layer fix in WI-066 removed the
                     discrepancy, so this column is plain 'Total' again.
                   */}
-                  <th>Total</th>
-                  <th>Outstanding</th>
-                  <th>Status</th>
+                  <SortableTh column="totalAmount" active={invSortBy} dir={invSortDir} onToggle={toggleInvSort}>Total</SortableTh>
+                  <SortableTh column="outstandingAmount" active={invSortBy} dir={invSortDir} onToggle={toggleInvSort}>Outstanding</SortableTh>
+                  <SortableTh column="status" active={invSortBy} dir={invSortDir} onToggle={toggleInvSort}>Status</SortableTh>
                   {gstEnabled && <th>GST</th>}
                   <th>Actions</th>
                 </tr>
@@ -556,6 +563,11 @@ function PaymentsTab() {
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
 
+  // 2026-07-19: click-to-sort for the Payments tab. paymentService
+  // whitelists 'createdAt' | 'amount' | 'transactionDate' — every other
+  // key falls back to the default.
+  const { sortBy: paySortBy, sortDir: paySortDir, toggle: togglePaySort } = useSortableTable('createdAt', 'desc');
+
   const queryParams: Record<string, unknown> = { page, pageSize: PAYMENTS_PAGE_SIZE };
   if (methodFilter) queryParams.paymentMethod = methodFilter;
   if (dateFrom) queryParams.dateFrom = dateFrom;
@@ -563,6 +575,8 @@ function PaymentsTab() {
   if (entryDateFrom) queryParams.entryDateFrom = entryDateFrom;
   if (entryDateTo) queryParams.entryDateTo = entryDateTo;
   if (search.trim()) queryParams.search = search.trim();
+  if (paySortBy) queryParams.sortBy = paySortBy;
+  queryParams.sortOrder = paySortDir;
 
   const { data, isLoading } = useQuery({
     queryKey: ['payments', queryParams],
@@ -642,7 +656,14 @@ function PaymentsTab() {
           )}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Select options={methodOptions} placeholder="All Methods" value={methodFilter} onChange={(e) => { setMethodFilter(e.target.value); setPage(1); }} />
+          {/* Wrap the method Select in the same label+input scaffold as
+              the date inputs so all three column tops line up. Without
+              a leading label the Select was rising ~14px above the date
+              inputs (their label pushes the input row down). */}
+          <div>
+            <label className="text-xs text-surface-500 dark:text-surface-400">Method</label>
+            <Select options={methodOptions} placeholder="All Methods" value={methodFilter} onChange={(e) => { setMethodFilter(e.target.value); setPage(1); }} />
+          </div>
           <div>
             <label className="text-xs text-surface-500 dark:text-surface-400">Payment Date From</label>
             <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="input py-2 w-full" />
@@ -681,10 +702,10 @@ function PaymentsTab() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Payment Date</th>
-                  <th>Entered On</th>
-                  <th>Customer</th>
-                  <th>Amount</th>
+                  <SortableTh column="transactionDate" active={paySortBy} dir={paySortDir} onToggle={togglePaySort}>Payment Date</SortableTh>
+                  <SortableTh column="createdAt" active={paySortBy} dir={paySortDir} onToggle={togglePaySort}>Entered On</SortableTh>
+                  <SortableTh column="customerName" active={paySortBy} dir={paySortDir} onToggle={togglePaySort}>Customer</SortableTh>
+                  <SortableTh column="amount" active={paySortBy} dir={paySortDir} onToggle={togglePaySort}>Amount</SortableTh>
                   <th>Method</th>
                   <th>Reference</th>
                   <th>Invoice #</th>

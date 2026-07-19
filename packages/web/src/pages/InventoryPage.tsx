@@ -13,6 +13,7 @@ import {
   HiOutlineArrowTrendingUp,
   HiOutlineArrowTrendingDown,
   HiOutlineArrowRight,
+  HiOutlineTruck,
 } from 'react-icons/hi2';
 import {
   type InventorySummary,
@@ -180,6 +181,8 @@ export default function InventoryPage() {
   const [adjustOpen, setAdjustOpen] = useState(false);
   // Item 7 (2026-07-09) — lightweight customer empties return.
   const [emptiesReturnOpen, setEmptiesReturnOpen] = useState(false);
+  // 2026-07-19: Vehicles-in-transit quick view (button beside Empties Return).
+  const [vehiclesInTransitOpen, setVehiclesInTransitOpen] = useState(false);
   // Mini-Operator (2026-07-16): opening-stock modal state, opened from the
   // Stock at Onboarding tab button. Available to all roles that reach the
   // Godown page — the backend still gates the write.
@@ -406,6 +409,11 @@ export default function InventoryPage() {
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setEmptiesReturnOpen(true)}>
                 <HiOutlinePlus className="h-4 w-4" />Empties Return
+              </Button>
+              {/* 2026-07-19 — Vehicles: quick view of DVAs currently on
+                  the road + those reconciled today. Read-only. */}
+              <Button variant="secondary" size="sm" onClick={() => setVehiclesInTransitOpen(true)}>
+                <HiOutlineTruck className="h-4 w-4" />Vehicles
               </Button>
             </>
           )}
@@ -979,6 +987,15 @@ export default function InventoryPage() {
           open={emptiesReturnOpen}
           onClose={() => setEmptiesReturnOpen(false)}
           cylinderTypes={cylinderTypes ?? []}
+        />
+      )}
+
+      {/* 2026-07-19 — Vehicles In Transit modal. Read-only quick view of
+          every DVA currently on the road plus those reconciled today. */}
+      {vehiclesInTransitOpen && (
+        <VehiclesInTransitModal
+          open={vehiclesInTransitOpen}
+          onClose={() => setVehiclesInTransitOpen(false)}
         />
       )}
 
@@ -2100,6 +2117,124 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
 // Pure stock movement backed by two InventoryEvent rows (see
 // packages/api/src/services/emptiesReturnService.ts). Locked inventory days
 // silently skip in the summary cascade — copy warns the operator.
+
+// ─── Vehicles In Transit Modal (2026-07-19) ─────────────────────────────────
+// Read-only quick view. Fetches GET /api/inventory/vehicles-in-transit and
+// renders one card per DVA — vehicle + driver + dispatch time + per-cyl-type
+// loaded / delivered / empties-back / remaining. Reconciled-today rows stay
+// visible but tagged with a green "Reconciled" badge and dimmed styling so
+// the operator can see final settled state alongside still-open trips.
+interface VehicleInTransitType {
+  cylinderTypeId: string;
+  typeName: string;
+  loaded: number;
+  delivered: number;
+  emptiesBack: number;
+}
+interface VehicleInTransitRow {
+  dvaId: string;
+  vehicleNumber: string;
+  driverName: string;
+  dispatchedAt: string | null;
+  returnedAt: string | null;
+  reconciledAt: string | null;
+  status: 'in_transit' | 'returned' | 'reconciled';
+  types: VehicleInTransitType[];
+}
+
+function VehiclesInTransitModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['vehicles-in-transit'],
+    queryFn: () => apiGet<{ vehicles: VehicleInTransitRow[] }>('/inventory/vehicles-in-transit'),
+    enabled: open,
+    refetchInterval: 30_000,
+  });
+  const vehicles = data?.vehicles ?? [];
+
+  const fmtTime = (iso: string | null) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+  const statusBadge = (s: VehicleInTransitRow['status']) => {
+    if (s === 'reconciled') return <Badge variant="success">✓ Reconciled</Badge>;
+    if (s === 'returned') return <Badge variant="warning">Returned</Badge>;
+    return <Badge variant="info">In Transit</Badge>;
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Vehicles In Transit" size="xl">
+      {isLoading && (
+        <div className="flex justify-center py-8"><Loader size="lg" /></div>
+      )}
+      {error && (
+        <div className="text-sm text-red-600 dark:text-red-400 py-4">
+          Failed to load vehicles: {getErrorMessage(error)}
+        </div>
+      )}
+      {!isLoading && !error && vehicles.length === 0 && (
+        <EmptyState
+          title="No vehicles in transit"
+          description="Dispatched vehicles will appear here until reconciled. Reconciled trips remain visible until the end of the day."
+        />
+      )}
+      {!isLoading && !error && vehicles.length > 0 && (
+        <div className="space-y-4">
+          {vehicles.map((v) => (
+            <div
+              key={v.dvaId}
+              className={`rounded-lg border p-4 ${
+                v.status === 'reconciled'
+                  ? 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-800/40 dark:bg-emerald-900/10'
+                  : 'border-surface-200 dark:border-surface-700'
+              }`}
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <div className="font-semibold text-surface-900 dark:text-white">
+                    Vehicle {v.vehicleNumber}
+                  </div>
+                  <div className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
+                    Driver: {v.driverName} · Dispatched {fmtTime(v.dispatchedAt)}
+                    {v.reconciledAt && ` · Reconciled ${fmtTime(v.reconciledAt)}`}
+                  </div>
+                </div>
+                {statusBadge(v.status)}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="table-simple w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="text-left">Cylinder Type</th>
+                      <th className="text-right">Loaded</th>
+                      <th className="text-right">Delivered</th>
+                      <th className="text-right">Empties Back</th>
+                      <th className="text-right">On Truck</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {v.types.map((t) => {
+                      const onTruck = t.loaded - t.delivered;
+                      return (
+                        <tr key={t.cylinderTypeId}>
+                          <td>{t.typeName || <span className="text-surface-400 italic">Untracked type</span>}</td>
+                          <td className="text-right">{t.loaded}</td>
+                          <td className="text-right">{t.delivered}</td>
+                          <td className="text-right">{t.emptiesBack}</td>
+                          <td className="text-right font-medium">{onTruck}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 function EmptiesReturnModal({
   open,

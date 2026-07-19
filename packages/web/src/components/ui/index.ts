@@ -8,3 +8,4 @@ export { Badge } from './Badge';
 export { Loader, FullPageLoader } from './Loader';
 export { EmptyState } from './EmptyState';
 export { Pagination } from './Pagination';
+export { SortableTh, type SortDir } from './SortableTh';
