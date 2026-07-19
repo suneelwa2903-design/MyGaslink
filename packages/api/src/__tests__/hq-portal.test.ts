@@ -386,6 +386,40 @@ describe('HQ Portal — Feature A', () => {
       expect(Array.isArray(d.properties)).toBe(true);
     });
 
+    /**
+     * 2026-07-19 regression guard — the pre-fix code looked up row keys
+     * '0-30 days' / 'bucket0_30' in the aging report, but the real keys
+     * emitted by reportsService.outstandingAging are b0_30 / b31_60 /
+     * b60plus. Result: every group's Dashboard Aging Summary silently
+     * showed 0/0/0 even with real outstanding balances. This test pins
+     * the reconciliation between totalOutstanding and the aging sum so
+     * a future key-rename breaks the build, not the customer's screen.
+     */
+    it('Dashboard aging buckets reconcile to totalOutstanding (regression 2026-07-19)', async () => {
+      const res = await request(app)
+        .get('/api/customer-group-portal/dashboard')
+        .set('Authorization', `Bearer ${alpha.hqToken}`);
+      expect(res.status).toBe(200);
+      const d = res.body.data as {
+        totalOutstanding: number;
+        aging: { bucket0_30: number; bucket31_60: number; bucket60plus: number };
+      };
+      const bucketSum = d.aging.bucket0_30 + d.aging.bucket31_60 + d.aging.bucket60plus;
+      if (d.totalOutstanding > 0) {
+        // Aging total must be positive when there IS outstanding.
+        // Exact-equal check would be brittle because totalOutstanding
+        // filters status IN ['issued','partially_paid','overdue'] while
+        // outstandingAging includes anything except 'cancelled' — draft
+        // invoices with outstanding land in aging but not totalOutstanding.
+        // A "aging >= 50% of totalOutstanding" heuristic proves the sum
+        // path is live without demanding perfect filter parity.
+        expect(bucketSum).toBeGreaterThan(0);
+        expect(bucketSum).toBeGreaterThanOrEqual(d.totalOutstanding * 0.5);
+      } else {
+        expect(bucketSum).toBe(0);
+      }
+    });
+
     it('orders has {orders[], meta}', async () => {
       const res = await request(app)
         .get('/api/customer-group-portal/orders')

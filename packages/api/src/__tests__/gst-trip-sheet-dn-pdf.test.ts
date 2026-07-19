@@ -361,7 +361,7 @@ describe('WI-061 — Debit Note PDF renders IRN block from gst_documents', () =>
     }
   });
 
-  it('footer wording aligned with CN PDF ("computer generated <kind> note.")', async () => {
+  it('footer wording aligned with CN PDF (self-authorising, no-signature)', async () => {
     const inv = await getValuedInvoice();
     const dn = await prisma.debitNote.create({
       data: {
@@ -380,8 +380,12 @@ describe('WI-061 — Debit Note PDF renders IRN block from gst_documents', () =>
         .get(`/api/invoices/debit-notes/${dn.id}/pdf`)
         .set(auth(sharmaAdminToken));
       expect(res.status).toBe(200);
-      expect(drawn.some((s) => /computer generated debit note/i.test(s))).toBe(true);
-      // The pre-WI-061 wording must be gone.
+      // 2026-07-19: footer switched from "computer generated debit
+      // note." to a self-authorising disclaimer ("authorised,
+      // auto-generated debit note" + "no signature or stamp required").
+      expect(drawn.some((s) => /authorised,? auto-generated debit note/i.test(s))).toBe(true);
+      expect(drawn.some((s) => /no signature or stamp is required/i.test(s))).toBe(true);
+      // The pre-WI-061 wording must still be gone.
       expect(drawn.some((s) => /does not require a signature/.test(s))).toBe(false);
     } finally {
       spy.mockRestore();
