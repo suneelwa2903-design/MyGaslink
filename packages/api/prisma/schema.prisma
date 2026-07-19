@@ -534,6 +534,7 @@ model Distributor {
   // in the standard distributor code paths reads them.
   sourceDistributors   SourceDistributor[]
   purchaseEntries      PurchaseEntry[]
+  purchasePayments     PurchasePayment[]
 
   @@map("distributors")
 }
@@ -558,8 +559,9 @@ model SourceDistributor {
   updatedAt     DateTime  @updatedAt @map("updated_at")
   deletedAt     DateTime? @map("deleted_at")
 
-  distributor     Distributor     @relation(fields: [distributorId], references: [id])
+  distributor     Distributor              @relation(fields: [distributorId], references: [id])
   purchaseEntries PurchaseEntry[]
+  purchasePayments PurchasePayment[]
 
   @@unique([distributorId, name])
   @@index([distributorId])
@@ -590,14 +592,23 @@ model PurchaseEntry {
   sourceDistributorName String?   @map("source_distributor_name")
   purchaseDate          String    @map("purchase_date")
   notes                 String?
+  /// Running sum of PurchasePaymentAllocation.amount rows against this
+  /// entry (Mini-Operator 2026-07-19). Updated INSIDE the same
+  /// prisma.$transaction that inserts/removes allocations — same pattern
+  /// as Invoice.amountPaid. Never re-derive from allocations at read
+  /// time; that would race with concurrent allocation writes. Total
+  /// owed = sum(items.unitPrice * items.fullsReceived); outstanding =
+  /// max(0, total - amountPaid).
+  amountPaid            Decimal   @default(0) @map("amount_paid") @db.Decimal(18, 4)
   createdBy             String    @map("created_by")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
   deletedAt             DateTime? @map("deleted_at")
 
-  distributor       Distributor         @relation(fields: [distributorId], references: [id])
-  sourceDistributor SourceDistributor?  @relation(fields: [sourceDistributorId], references: [id])
+  distributor       Distributor                    @relation(fields: [distributorId], references: [id])
+  sourceDistributor SourceDistributor?             @relation(fields: [sourceDistributorId], references: [id])
   items             PurchaseEntryItem[]
+  paymentAllocations PurchasePaymentAllocation[]
 
   @@index([distributorId, purchaseDate(sort: Desc)])
   @@map("purchase_entries")
@@ -623,6 +634,60 @@ model PurchaseEntryItem {
 
   @@index([purchaseEntryId])
   @@map("purchase_entry_items")
+}
+
+/// Mini-Operator 2026-07-19 — money-out event: cash the reseller paid to
+/// a source distributor. Mirrors the customer-side PaymentTransaction so
+/// the two payables surfaces (customer receivables, supplier payables)
+/// share the same allocation + reverse patterns. Every payment MUST be
+/// tenant-scoped (distributorId) and source-scoped (sourceDistributorId).
+model PurchasePayment {
+  id                  String    @id @default(uuid()) @map("purchase_payment_id")
+  distributorId       String    @map("distributor_id")
+  sourceDistributorId String    @map("source_distributor_id")
+  /// Snapshot at write time so historical rows stay readable after a
+  /// rename / soft-delete of the source distributor. Same pattern as
+  /// PurchaseEntry.sourceDistributorName + Invoice.customerNameSnapshot.
+  sourceDistributorName String? @map("source_distributor_name")
+  /// Local-TZ ISO date (yyyy-mm-dd, no time). Matches PurchaseEntry.
+  transactionDate     String    @map("transaction_date")
+  amount              Decimal   @db.Decimal(18, 4)
+  paymentMethod       PaymentMethod @default(cash) @map("payment_method")
+  referenceNumber     String?   @map("reference_number")
+  notes               String?
+  createdBy           String    @map("created_by")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  deletedAt           DateTime? @map("deleted_at")
+
+  distributor       Distributor                  @relation(fields: [distributorId], references: [id])
+  sourceDistributor SourceDistributor            @relation(fields: [sourceDistributorId], references: [id])
+  allocations       PurchasePaymentAllocation[]
+
+  @@index([distributorId, sourceDistributorId, transactionDate(sort: Desc)])
+  @@map("purchase_payments")
+}
+
+/// Per-purchase-entry allocation of a PurchasePayment. Default policy
+/// is FIFO (oldest unpaid entry first); the create-payment API accepts
+/// an optional manual override where the client supplies the specific
+/// (purchaseEntryId, amount) tuples. sum(allocations.amount) MUST equal
+/// payment.amount — enforced in the service. Reverse-payment deletes
+/// the allocations and rewinds PurchaseEntry.amountPaid inside the
+/// same transaction.
+model PurchasePaymentAllocation {
+  id              String   @id @default(uuid()) @map("purchase_payment_allocation_id")
+  paymentId       String   @map("payment_id")
+  purchaseEntryId String   @map("purchase_entry_id")
+  amount          Decimal  @db.Decimal(18, 4)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  payment       PurchasePayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  purchaseEntry PurchaseEntry   @relation(fields: [purchaseEntryId], references: [id])
+
+  @@index([paymentId])
+  @@index([purchaseEntryId])
+  @@map("purchase_payment_allocations")
 }
 
 model User {

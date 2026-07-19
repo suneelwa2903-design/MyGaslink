@@ -51,6 +51,21 @@ router.get('/summary/:date',
   }
 });
 
+// GET /api/inventory/vehicles-in-transit (2026-07-19)
+// Rollup of every DVA currently dispatched OR reconciled today, with
+// per-cylinder-type loaded / delivered / empties-back tallies. Powers the
+// Inventory page's "Vehicles" quick-view modal.
+router.get('/vehicles-in-transit',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+  try {
+    const rows = await inventoryService.getVehiclesInTransit(req.user!.distributorId!);
+    return sendSuccess(res, { vehicles: rows });
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
+
 // POST /api/inventory/incoming-fulls
 router.post('/incoming-fulls',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),

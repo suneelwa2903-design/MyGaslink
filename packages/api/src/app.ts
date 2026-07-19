@@ -53,6 +53,7 @@ import devUploadsRoutes from './routes/devUploads.js';
 // admins and other roles never see them.
 import sourceDistributorsRoutes from './routes/sourceDistributors.js';
 import purchaseEntriesRoutes from './routes/purchaseEntries.js';
+import purchasePaymentsRoutes from './routes/purchasePayments.js';
 import { LOCAL_UPLOADS_ROOT, isS3ConfiguredForUploads } from './lib/s3.js';
 
 export function createApp() {
@@ -195,6 +196,9 @@ export function createApp() {
   // req.user.distributorId population and hard-fail on missing tenant.
   app.use('/api/source-distributors', authenticate, resolveDistributor, requireDistributor, sourceDistributorsRoutes);
   app.use('/api/purchase-entries', authenticate, resolveDistributor, requireDistributor, purchaseEntriesRoutes);
+  // Mini-Operator 2026-07-19: money-out to source distributors. Same
+  // middleware chain as /purchase-entries so tenant scoping is uniform.
+  app.use('/api/purchase-payments', authenticate, resolveDistributor, requireDistributor, purchasePaymentsRoutes);
 
   // ─── Dev / test helpers (never mounted in production) ─────────────────────
   // Provides POST /test/inject-stale-token and GET /test/token-cache-state

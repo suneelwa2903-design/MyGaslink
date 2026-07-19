@@ -1231,3 +1231,155 @@ export async function getReconciliationDashboard(distributorId: string) {
 
   return { pendingReturn, onVehicle, returnedToDepot, cancelledByType };
 }
+
+/**
+ * Vehicles-in-Transit rollup (2026-07-19) — powers the Inventory page's
+ * "Vehicles" button. For each DVA that is currently in-flight or was
+ * reconciled today, returns per-cylinder-type totals:
+ *   loaded       — sum of DVALoadManifest.totalLoaded across trips
+ *   delivered    — sum of OrderItem.quantity on orders that are already
+ *                  in delivered/modified_delivered status for this DVA
+ *   emptiesBack  — sum of OrderItem.emptiesCollected on the same orders
+ *
+ * "Currently in-flight" = dispatchedAt IS NOT NULL AND reconciledAt IS
+ * NULL. Reconciled-today rows are also included so an operator can see
+ * the final settled state alongside the still-open trucks for the day.
+ * Ordered oldest-dispatched-first so long-outstanding trips bubble up.
+ */
+export interface VehicleInTransitType {
+  cylinderTypeId: string;
+  typeName: string;
+  loaded: number;
+  delivered: number;
+  emptiesBack: number;
+}
+export interface VehicleInTransitRow {
+  dvaId: string;
+  vehicleNumber: string;
+  driverName: string;
+  dispatchedAt: Date | null;
+  returnedAt: Date | null;
+  reconciledAt: Date | null;
+  status: 'in_transit' | 'returned' | 'reconciled';
+  types: VehicleInTransitType[];
+}
+
+export async function getVehiclesInTransit(distributorId: string): Promise<VehicleInTransitRow[]> {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  // Note: DVA has no direct `orders` relation — orders link by
+  // (driverId + deliveryDate == DVA.driverId + DVA.assignmentDate).
+  // We fetch DVAs + their load manifests here, then run a second
+  // targeted query per DVA to sum delivered/empties by cylinder type.
+  const dvas = await prisma.driverVehicleAssignment.findMany({
+    where: {
+      distributorId,
+      dispatchedAt: { not: null },
+      OR: [
+        { reconciledAt: null },
+        { reconciledAt: { gte: startOfToday } },
+      ],
+    },
+    select: {
+      id: true,
+      driverId: true,
+      assignmentDate: true,
+      dispatchedAt: true,
+      returnedAt: true,
+      reconciledAt: true,
+      vehicle: { select: { vehicleNumber: true } },
+      driver: { select: { driverName: true } },
+      loadManifests: {
+        select: {
+          cylinderTypeId: true,
+          totalLoaded: true,
+          cylinderType: { select: { typeName: true } },
+        },
+      },
+    },
+    orderBy: { dispatchedAt: 'asc' },
+  });
+
+  const rows: VehicleInTransitRow[] = [];
+  for (const dva of dvas) {
+    const byType = new Map<string, VehicleInTransitType>();
+
+    // Seed with load manifest — every loaded type appears in the table
+    // even before its first delivery.
+    for (const m of dva.loadManifests) {
+      const existing = byType.get(m.cylinderTypeId);
+      if (existing) {
+        existing.loaded += m.totalLoaded;
+      } else {
+        byType.set(m.cylinderTypeId, {
+          cylinderTypeId: m.cylinderTypeId,
+          typeName: m.cylinderType?.typeName ?? '',
+          loaded: m.totalLoaded,
+          delivered: 0,
+          emptiesBack: 0,
+        });
+      }
+    }
+
+    // Sum delivered + empties for orders on this DVA's (driver, date)
+    // that have crossed the delivery boundary. Pending orders don't
+    // contribute — they're implicit in (loaded - delivered).
+    const orders = await prisma.order.findMany({
+      where: {
+        distributorId,
+        driverId: dva.driverId,
+        deliveryDate: dva.assignmentDate,
+        status: { in: ['delivered', 'modified_delivered'] },
+        deletedAt: null,
+      },
+      select: {
+        items: {
+          select: {
+            cylinderTypeId: true,
+            quantity: true,
+            emptiesCollected: true,
+          },
+        },
+      },
+    });
+    for (const o of orders) {
+      for (const it of o.items) {
+        const row = byType.get(it.cylinderTypeId);
+        if (row) {
+          row.delivered += it.quantity;
+          row.emptiesBack += it.emptiesCollected ?? 0;
+        } else {
+          // Order carried a type that never appeared on the load
+          // manifest (e.g. add-to-trip). Still surface it so the
+          // reader sees a complete picture.
+          byType.set(it.cylinderTypeId, {
+            cylinderTypeId: it.cylinderTypeId,
+            typeName: '',
+            loaded: 0,
+            delivered: it.quantity,
+            emptiesBack: it.emptiesCollected ?? 0,
+          });
+        }
+      }
+    }
+
+    const status: VehicleInTransitRow['status'] = dva.reconciledAt
+      ? 'reconciled'
+      : dva.returnedAt
+        ? 'returned'
+        : 'in_transit';
+
+    rows.push({
+      dvaId: dva.id,
+      vehicleNumber: dva.vehicle?.vehicleNumber ?? '—',
+      driverName: dva.driver?.driverName ?? '—',
+      dispatchedAt: dva.dispatchedAt,
+      returnedAt: dva.returnedAt,
+      reconciledAt: dva.reconciledAt,
+      status,
+      types: Array.from(byType.values()).sort((a, b) => a.typeName.localeCompare(b.typeName)),
+    });
+  }
+  return rows;
+}

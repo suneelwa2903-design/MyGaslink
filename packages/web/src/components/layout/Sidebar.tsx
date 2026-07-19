@@ -433,6 +433,13 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
               <NavLink
                 key={item.path}
                 to={item.path}
+                // NavLink's default isActive uses prefix match, so an
+                // item at "/hq" (or any nav-root path) is matched by
+                // every descendant route — the Dashboard link was
+                // therefore staying highlighted on /hq/orders,
+                // /hq/invoices etc. `end` enables exact matching,
+                // which is what we want for any HQ / app root path.
+                end={item.path === '/hq' || item.path === '/app'}
                 onClick={() => onClose()}
                 className={({ isActive }) =>
                   cn(

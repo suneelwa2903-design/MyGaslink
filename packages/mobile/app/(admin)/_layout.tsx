@@ -4,6 +4,7 @@ import { useIsDark } from '../../src/stores/themeStore';
 import { useAuthStore } from '../../src/stores/authStore';
 import { AppHeader } from '../../src/components/AppHeader';
 import { ScrollableTabBar } from '../../src/components/ui/ScrollableTabBar';
+import { RoleGuard } from '../../src/components/RoleGuard';
 
 // STAGE-H: extended from 5 → 9 visible tabs. ScrollableTabBar gives us a
 // horizontal scroll so a 9-tab strip stays legible on narrow phones (the
@@ -38,14 +39,14 @@ const TAB_ICONS_FOCUSED: Record<string, keyof typeof Ionicons.glyphMap> = {
   purchases: 'cart',
 };
 
-export default function AdminLayout() {
+function AdminLayoutInner() {
   const dark = useIsDark();
+  const user = useAuthStore((s) => s.user);
   // Mini-Operator (2026-07-16): reduce the tab set for accountType=
   // mini_operator tenants. Purchases tab lands in Step 8 — for now the
   // visible-for-mini-op set is Dashboard / Orders / Inventory /
   // Customers / More. Hidden: finance (Billing), fleet, reports,
   // collections. Regular distributor_admin sees every tab as before.
-  const user = useAuthStore((s) => s.user);
   const isMiniOperator = user?.role === 'mini_operator_admin';
 
   const bg = dark ? '#0f172a' : '#ffffff';
@@ -250,5 +251,16 @@ export default function AdminLayout() {
           the More tab, never a primary tab. */}
       <Tabs.Screen name="pending-payments" options={{ href: null, title: 'Pending Payments', tabBarItemStyle: { display: 'none' } }} />
     </Tabs>
+  );
+}
+
+export default function AdminLayout() {
+  // 2026-07-19 SECURITY: only distributor_admin + mini_operator_admin
+  // reach the (admin) tabs. Any other role (customer_hq etc.) is
+  // redirected via the root auth-router. See RoleGuard.tsx.
+  return (
+    <RoleGuard allowed={['distributor_admin', 'mini_operator_admin']}>
+      <AdminLayoutInner />
+    </RoleGuard>
   );
 }

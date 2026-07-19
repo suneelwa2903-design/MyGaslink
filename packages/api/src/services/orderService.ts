@@ -99,14 +99,27 @@ export async function listOrders(
 
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 25;
-  const sortBy = filters.sortBy || 'createdAt';
-  const sortOrder = (filters.sortOrder || 'desc') as 'asc' | 'desc';
+  // 2026-07-19: whitelist sortable columns so a bad client string can't
+  // reach Prisma at runtime. 'customerName' is a pseudo-key that maps
+  // to the nested { customer: { customerName: dir } } orderBy shape so
+  // the frontend can pass a flat string. Fallback to createdAt-desc.
+  const ALLOWED_SORT: readonly string[] = [
+    'orderNumber', 'orderDate', 'deliveryDate', 'totalAmount',
+    'status', 'createdAt', 'customerName',
+  ];
+  const sortBy = ALLOWED_SORT.includes(filters.sortBy ?? '')
+    ? (filters.sortBy as string)
+    : 'createdAt';
+  const sortOrder: 'asc' | 'desc' = filters.sortOrder === 'asc' ? 'asc' : 'desc';
+  const orderBy: Prisma.OrderOrderByWithRelationInput = sortBy === 'customerName'
+    ? { customer: { customerName: sortOrder } }
+    : ({ [sortBy]: sortOrder } as Prisma.OrderOrderByWithRelationInput);
 
   const [orders, total] = await Promise.all([
     prisma.order.findMany({
       where,
       include: orderInclude,
-      orderBy: { [sortBy]: sortOrder },
+      orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),

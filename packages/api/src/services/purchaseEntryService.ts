@@ -47,6 +47,11 @@ const purchaseEntrySelect = {
   sourceDistributorName: true,
   purchaseDate: true,
   notes: true,
+  // Mini-Operator 2026-07-19: expose the running amountPaid so the
+  // mobile Purchases list can render a paid/owed chip per entry.
+  // Consumers compare against sum(items.unitPrice * items.fullsReceived)
+  // to compute outstanding.
+  amountPaid: true,
   createdBy: true,
   createdAt: true,
   updatedAt: true,

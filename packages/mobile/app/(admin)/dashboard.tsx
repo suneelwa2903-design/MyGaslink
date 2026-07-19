@@ -13,7 +13,7 @@ import {
   TextInput,
   FlatList,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -878,6 +878,13 @@ function CustomerLedgerModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      {/* 2026-07-19 iPhone SafeArea fix — Modal on iOS spawns a fresh
+          native view hierarchy that does NOT inherit the app-root
+          SafeAreaProvider, so SafeAreaView reads 0 insets and the
+          header overlaps the status bar / notch. Wrapping the Modal
+          contents in a scoped SafeAreaProvider restores real insets
+          so `edges={['top', ...]}` pushes the header below the notch. */}
+      <SafeAreaProvider>
       <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: theme.bg }}>
         <View style={reportsStyles.header}>
           <Text style={[reportsStyles.headerTitle, { color: theme.text }]}>Customer Ledger</Text>
@@ -973,6 +980,7 @@ function CustomerLedgerModal({
           </TouchableOpacity>
         </View>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
@@ -1031,6 +1039,13 @@ function PurchaseLedgerModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      {/* 2026-07-19 iPhone SafeArea fix — Modal on iOS spawns a fresh
+          native view hierarchy that does NOT inherit the app-root
+          SafeAreaProvider, so SafeAreaView reads 0 insets and the
+          header overlaps the status bar / notch. Wrapping the Modal
+          contents in a scoped SafeAreaProvider restores real insets
+          so `edges={['top', ...]}` pushes the header below the notch. */}
+      <SafeAreaProvider>
       <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: theme.bg }}>
         <View style={reportsStyles.header}>
           <Text style={[reportsStyles.headerTitle, { color: theme.text }]}>Purchase Ledger</Text>
@@ -1090,6 +1105,7 @@ function PurchaseLedgerModal({
           </TouchableOpacity>
         </View>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
