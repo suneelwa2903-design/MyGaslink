@@ -136,20 +136,26 @@ export function GroupsTab() {
                   </td>
                   <td>
                     {g.hasPortalAccess ? (
-                      <div className="flex flex-col gap-0.5">
+                      // items-start keeps the badge shrink-to-content
+                      // so the green pill doesn't stretch the whole
+                      // column when emails below it are longer than
+                      // the badge text.
+                      <div className="flex flex-col items-start gap-1">
                         <Badge variant="success">
                           {g.portalUserCount === 1
                             ? 'Active'
                             : `Active (${g.portalUserCount})`}
                         </Badge>
-                        {g.portalEmails.slice(0, 2).map((e) => (
-                          <span key={e} className="text-xs text-surface-500 dark:text-surface-400">{e}</span>
-                        ))}
-                        {g.portalUserCount > 2 && (
-                          <span className="text-xs text-surface-400 italic">
-                            +{g.portalUserCount - 2} more
-                          </span>
-                        )}
+                        <div className="flex flex-col gap-0.5 leading-tight">
+                          {g.portalEmails.slice(0, 2).map((e) => (
+                            <span key={e} className="text-xs text-surface-500 dark:text-surface-400">{e}</span>
+                          ))}
+                          {g.portalUserCount > 2 && (
+                            <span className="text-xs text-surface-400 italic">
+                              +{g.portalUserCount - 2} more
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <Badge variant="neutral">Not set up</Badge>

@@ -62,28 +62,52 @@ function resolveCustomerIdFilter(
   return { in: visibleCustomerIds };
 }
 
-/** Local-TZ start-of-current-month + right-now. */
-function currentMonthRange(): { start: Date; end: Date } {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-  return { start, end: now };
-}
-
 // ─── 5A — Dashboard ──────────────────────────────────────────────────────
 
+export interface GroupDashboardFilters {
+  /** Restrict the dashboard to a single group member. Empty/undefined → whole group. */
+  customerId?: string;
+  /** ISO date (yyyy-mm-dd) inclusive lower bound for activity metrics. */
+  from?: string;
+  /** ISO date (yyyy-mm-dd) inclusive upper bound for activity metrics. */
+  to?: string;
+}
+
 export interface GroupDashboardResponse {
+  // State metrics — always current (ignore date range but honour customerId)
   totalOutstanding: number;
   totalOverdue: number;
-  cylindersThisMonth: Array<{
-    cylinderTypeId: string;
-    cylinderTypeName: string;
-    quantity: number;
-  }>;
   aging: {
     bucket0_30: number;
     bucket31_60: number;
     bucket60plus: number;
   };
+  // In-range activity — filtered by date range AND customerId
+  activity: {
+    range: { from: string; to: string };
+    fullsDelivered: Array<{
+      cylinderTypeId: string;
+      cylinderTypeName: string;
+      quantity: number;
+    }>;
+    emptiesCollected: Array<{
+      cylinderTypeId: string;
+      cylinderTypeName: string;
+      quantity: number;
+    }>;
+    amountBilled: number;
+    paymentsReceived: number;
+  };
+  // Empties currently HELD by customers — state-current running balance
+  // per cylinder type. Scoped by customerId. This is the "how many empty
+  // cylinders is each hotel sitting on right now" number the HQ user
+  // asked for.
+  emptiesWithClients: Array<{
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    capacity: number;
+    quantity: number;
+  }>;
   properties: Array<{
     customerId: string;
     customerName: string;
@@ -94,31 +118,110 @@ export interface GroupDashboardResponse {
     lastInvoiceDate: string | null;
     isOverdue: boolean;
   }>;
+  // Echo the effective filter so the client can render "Viewing: X /
+  // From Y to Z" without re-computing.
+  filters: {
+    customerId: string | null;
+    from: string;
+    to: string;
+  };
+  /**
+   * @deprecated 2026-07-19 — use `activity.fullsDelivered` instead. Kept
+   * for one release so a stale cached client doesn't crash.
+   */
+  cylindersThisMonth: Array<{
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    quantity: number;
+  }>;
+}
+
+/** Parse an ISO date string, returning null when invalid/empty. */
+function parseIsoDate(s: string | undefined): Date | null {
+  if (!s) return null;
+  const d = new Date(`${s}T00:00:00`);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Local-TZ end-of-day for the given ISO date. */
+function endOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+}
+
+/** Resolve the effective date range: explicit filter → provided range;
+ *  otherwise default to the current month. */
+function resolveDashboardRange(filters?: GroupDashboardFilters): { start: Date; end: Date; fromIso: string; toIso: string } {
+  const now = new Date();
+  const fromParsed = parseIsoDate(filters?.from);
+  const toParsed = parseIsoDate(filters?.to);
+  if (fromParsed && toParsed) {
+    return {
+      start: fromParsed,
+      end: endOfDay(toParsed),
+      fromIso: filters!.from!,
+      toIso: filters!.to!,
+    };
+  }
+  // Fallback: current month → today
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { start, end: now, fromIso: iso(start), toIso: iso(now) };
 }
 
 export async function getDashboard(
   distributorId: string,
   visibleCustomerIds: string[],
+  filters?: GroupDashboardFilters,
 ): Promise<GroupDashboardResponse> {
-  if (visibleCustomerIds.length === 0) {
-    return {
-      totalOutstanding: 0,
-      totalOverdue: 0,
-      cylindersThisMonth: [],
-      aging: { bucket0_30: 0, bucket31_60: 0, bucket60plus: 0 },
-      properties: [],
-    };
-  }
+  const range = resolveDashboardRange(filters);
+  const emptyResponse: GroupDashboardResponse = {
+    totalOutstanding: 0,
+    totalOverdue: 0,
+    aging: { bucket0_30: 0, bucket31_60: 0, bucket60plus: 0 },
+    activity: {
+      range: { from: range.fromIso, to: range.toIso },
+      fullsDelivered: [],
+      emptiesCollected: [],
+      amountBilled: 0,
+      paymentsReceived: 0,
+    },
+    emptiesWithClients: [],
+    properties: [],
+    filters: {
+      customerId: filters?.customerId?.trim() || null,
+      from: range.fromIso,
+      to: range.toIso,
+    },
+    cylindersThisMonth: [],
+  };
+  if (visibleCustomerIds.length === 0) return emptyResponse;
 
-  const { start: monthStart, end: monthEnd } = currentMonthRange();
+  // Effective customer scope: if the caller requested a single property,
+  // validate it's inside the group and use only that; else the whole
+  // group's visible set. Same guard resolveCustomerIdFilter uses on
+  // orders/invoices/etc — cross-tenant leak protection.
+  const custFilter = resolveCustomerIdFilter(visibleCustomerIds, filters?.customerId);
+  const effectiveIds = typeof custFilter === 'string' ? [custFilter] : custFilter.in;
+  if (effectiveIds.length === 0) return emptyResponse;
+
+  const { start: monthStart, end: monthEnd } = range;
 
   // Fire everything that doesn't depend on customer list first. The
   // per-property FIFO overdue call cluster runs last because it fans
   // out to N calls (see HQ-PORTAL-BRAINSTORM.md §1a — call-N is the
   // recommended v1 approach; batch form is a v2 optimisation).
+  //
+  // 2026-07-19 filter refresh — the effective customerId set is
+  // `effectiveIds` (either the whole group or the single-property
+  // filter). Date range is `monthStart`/`monthEnd` (either the
+  // caller's from/to or the current-month default).
   const [
     outstandingAgg,
-    cylinderAgg,
+    fullsAgg,
+    emptiesCollectedAgg,
+    inventoryBalances,
+    amountBilledAgg,
+    paymentsAgg,
     customers,
     outstandingByCust,
     lastOrderByCust,
@@ -127,7 +230,7 @@ export async function getDashboard(
     prisma.invoice.aggregate({
       where: {
         distributorId,
-        customerId: { in: visibleCustomerIds },
+        customerId: { in: effectiveIds },
         outstandingAmount: { gt: 0 },
         status: { in: ['issued', 'partially_paid', 'overdue'] as $Enums.InvoiceStatus[] },
         deletedAt: null,
@@ -140,12 +243,59 @@ export async function getDashboard(
       where: {
         order: {
           distributorId,
-          customerId: { in: visibleCustomerIds },
+          customerId: { in: effectiveIds },
           status: { in: ['delivered', 'modified_delivered'] as $Enums.OrderStatus[] },
           deliveryDate: { gte: monthStart, lte: monthEnd },
           deletedAt: null,
         },
       },
+    }),
+    prisma.orderItem.groupBy({
+      by: ['cylinderTypeId'],
+      _sum: { emptiesCollected: true },
+      where: {
+        order: {
+          distributorId,
+          customerId: { in: effectiveIds },
+          status: { in: ['delivered', 'modified_delivered'] as $Enums.OrderStatus[] },
+          deliveryDate: { gte: monthStart, lte: monthEnd },
+          deletedAt: null,
+        },
+      },
+    }),
+    // State-current: how many empty cylinders EACH member holds RIGHT
+    // NOW. Not date-range filtered — the balance is the running total.
+    // Aggregated across the effective customer set, grouped by
+    // cylinder type at the JS layer since `distinct + groupBy` doesn't
+    // apply cleanly with the customer join.
+    prisma.customerInventoryBalance.findMany({
+      where: {
+        customerId: { in: effectiveIds },
+        customer: { distributorId, deletedAt: null },
+      },
+      select: {
+        withCustomerQty: true,
+        cylinderType: { select: { id: true, typeName: true, capacity: true } },
+      },
+    }),
+    prisma.invoice.aggregate({
+      where: {
+        distributorId,
+        customerId: { in: effectiveIds },
+        issueDate: { gte: monthStart, lte: monthEnd },
+        status: { in: ['issued', 'partially_paid', 'paid', 'overdue'] as $Enums.InvoiceStatus[] },
+        deletedAt: null,
+      },
+      _sum: { totalAmount: true },
+    }),
+    prisma.paymentTransaction.aggregate({
+      where: {
+        distributorId,
+        customerId: { in: effectiveIds },
+        transactionDate: { gte: monthStart, lte: monthEnd },
+        deletedAt: null,
+      },
+      _sum: { amount: true },
     }),
     prisma.customer.findMany({
       where: { id: { in: visibleCustomerIds }, distributorId, deletedAt: null },
@@ -155,7 +305,7 @@ export async function getDashboard(
       by: ['customerId'],
       where: {
         distributorId,
-        customerId: { in: visibleCustomerIds },
+        customerId: { in: effectiveIds },
         outstandingAmount: { gt: 0 },
         status: { in: ['issued', 'partially_paid', 'overdue'] as $Enums.InvoiceStatus[] },
         deletedAt: null,
@@ -183,8 +333,14 @@ export async function getDashboard(
     }),
   ]);
 
-  // Resolve cylinderTypeId → name in one round trip.
-  const cylinderTypeIds = cylinderAgg.map((a) => a.cylinderTypeId);
+  // Resolve cylinderTypeId → name in one round trip. Merge IDs from
+  // the delivered-fulls, empties-collected, and inventory-balance
+  // aggregations so every cylinder-type reference has a display name.
+  const cylinderTypeIds = Array.from(new Set([
+    ...fullsAgg.map((a) => a.cylinderTypeId),
+    ...emptiesCollectedAgg.map((a) => a.cylinderTypeId),
+    ...inventoryBalances.map((b) => b.cylinderType.id),
+  ]));
   const cylinderTypes = cylinderTypeIds.length === 0
     ? []
     : await prisma.cylinderType.findMany({
@@ -195,7 +351,11 @@ export async function getDashboard(
 
   // Per-property overdue: call the canonical FIFO overdue once per
   // member. 3-50 members × <10ms each on indexed columns → sub-second
-  // dashboard load per HQ-PORTAL-BRAINSTORM.md §6 sanity check.
+  // dashboard load per HQ-PORTAL-BRAINSTORM.md §6 sanity check. Runs
+  // over EVERY member of visibleCustomerIds (not effectiveIds) so the
+  // property rollup at the bottom always lists every property, even
+  // when a customerId filter is active — the filter narrows KPIs, it
+  // doesn't hide the roster.
   const overdueByCust = new Map<string, number>();
   await Promise.all(
     visibleCustomerIds.map(async (cid) => {
@@ -227,37 +387,99 @@ export async function getDashboard(
 
   // Aging via the extended outstandingAging (now accepts customerIds).
   // The report returns rows per customer with bucket columns; sum them
-  // for the group-level aging bar.
-  const agingReport = await outstandingAging(distributorId, { customerIds: visibleCustomerIds });
+  // for the group-level aging bar. Scoped by effectiveIds so a single-
+  // property filter also narrows the aging summary.
+  //
+  // 2026-07-19 BUG FIX: this used to look up row keys '0-30 days' /
+  // 'bucket0_30' etc. Neither name exists — reportsService.outstandingAging
+  // actually emits `b0_30` / `b31_60` / `b60plus` (see reportsService.ts
+  // line 254 onward). Result: every group's aging summary was silently
+  // 0/0/0 on the Dashboard while the aging TAB (which reads the correct
+  // keys) showed real data. hq-portal.test.ts now pins this so the
+  // regression can't come back. Use the `totals` row when present —
+  // it's already summed across customers by reportsService.
   let bucket0_30 = 0, bucket31_60 = 0, bucket60plus = 0;
-  for (const row of agingReport.rows) {
-    // row shape per reportsService: numeric columns keyed by header
-    // labels like '0-30 days'. Sum defensively — any variation in the
-    // header name (or if the report emits additional buckets) won't
-    // crash the dashboard; unmapped columns are ignored.
-    const values = row as Record<string, unknown>;
-    const num = (k: string) => (typeof values[k] === 'number' ? (values[k] as number) : 0);
-    bucket0_30 += num('0-30 days') + num('bucket0_30');
-    bucket31_60 += num('31-60 days') + num('bucket31_60');
-    bucket60plus += num('60+ days') + num('bucket60plus');
+  const agingReport = await outstandingAging(distributorId, { customerIds: effectiveIds });
+  if (agingReport.totals) {
+    const t = agingReport.totals as Record<string, unknown>;
+    bucket0_30 = typeof t.b0_30 === 'number' ? t.b0_30 : 0;
+    bucket31_60 = typeof t.b31_60 === 'number' ? t.b31_60 : 0;
+    bucket60plus = typeof t.b60plus === 'number' ? t.b60plus : 0;
+  } else {
+    for (const row of agingReport.rows) {
+      const r = row as Record<string, unknown>;
+      bucket0_30 += typeof r.b0_30 === 'number' ? r.b0_30 : 0;
+      bucket31_60 += typeof r.b31_60 === 'number' ? r.b31_60 : 0;
+      bucket60plus += typeof r.b60plus === 'number' ? r.b60plus : 0;
+    }
   }
 
-  const totalOverdue = Array.from(overdueByCust.values()).reduce((s, n) => s + n, 0);
+  const totalOverdue = effectiveIds.reduce((s, id) => s + (overdueByCust.get(id) ?? 0), 0);
+
+  // ── Aggregate the state-current empties balance per cylinder type
+  //    across the effective customer set. When a single customer is
+  //    filtered, the sum is that customer's balance. When "all
+  //    properties" is selected, it's the group-wide total per type.
+  const emptiesWithClientsMap = new Map<string, { typeName: string; capacity: number; qty: number }>();
+  for (const b of inventoryBalances) {
+    const key = b.cylinderType.id;
+    const cur = emptiesWithClientsMap.get(key);
+    if (cur) {
+      cur.qty += b.withCustomerQty;
+    } else {
+      emptiesWithClientsMap.set(key, {
+        typeName: b.cylinderType.typeName,
+        capacity: b.cylinderType.capacity,
+        qty: b.withCustomerQty,
+      });
+    }
+  }
+  const emptiesWithClients = Array.from(emptiesWithClientsMap.entries()).map(([id, v]) => ({
+    cylinderTypeId: id,
+    cylinderTypeName: v.typeName,
+    capacity: v.capacity,
+    quantity: v.qty,
+  })).sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName));
+
+  const fullsDelivered = fullsAgg.map((a) => ({
+    cylinderTypeId: a.cylinderTypeId,
+    cylinderTypeName: cylinderNameMap.get(a.cylinderTypeId) ?? 'Unknown',
+    quantity: a._sum.deliveredQuantity ?? 0,
+  })).sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName));
+
+  const emptiesCollected = emptiesCollectedAgg.map((a) => ({
+    cylinderTypeId: a.cylinderTypeId,
+    cylinderTypeName: cylinderNameMap.get(a.cylinderTypeId) ?? 'Unknown',
+    quantity: a._sum.emptiesCollected ?? 0,
+  })).sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName));
 
   return {
     totalOutstanding: toNum(outstandingAgg._sum.outstandingAmount),
     totalOverdue: Math.round(totalOverdue * 100) / 100,
-    cylindersThisMonth: cylinderAgg.map((a) => ({
-      cylinderTypeId: a.cylinderTypeId,
-      cylinderTypeName: cylinderNameMap.get(a.cylinderTypeId) ?? 'Unknown',
-      quantity: a._sum.deliveredQuantity ?? 0,
-    })),
     aging: {
       bucket0_30: Math.round(bucket0_30 * 100) / 100,
       bucket31_60: Math.round(bucket31_60 * 100) / 100,
       bucket60plus: Math.round(bucket60plus * 100) / 100,
     },
+    activity: {
+      range: { from: range.fromIso, to: range.toIso },
+      fullsDelivered,
+      emptiesCollected,
+      amountBilled: Math.round(toNum(amountBilledAgg._sum.totalAmount) * 100) / 100,
+      paymentsReceived: Math.round(toNum(paymentsAgg._sum.amount) * 100) / 100,
+    },
+    emptiesWithClients,
     properties,
+    filters: {
+      customerId: typeof custFilter === 'string' ? custFilter : null,
+      from: range.fromIso,
+      to: range.toIso,
+    },
+    // Deprecated alias — same shape as pre-filter cylindersThisMonth so
+    // a stale client that hasn't upgraded still renders. Both point at
+    // the same data because activity range defaults to the current
+    // month when no filter is passed.
+    cylindersThisMonth: fullsDelivered,
   };
 }
 

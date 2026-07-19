@@ -50,12 +50,22 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// GET /dashboard
+// GET /dashboard?customerId=&from=&to=
+//
+// 2026-07-19 — dashboard now accepts an optional single-property and
+// date-range filter. Absent params default to the whole group + the
+// current month (backward compatible with the old response shape).
 router.get('/dashboard', async (req, res) => {
   try {
+    const filters = {
+      customerId: req.query.customerId as string | undefined,
+      from: req.query.from as string | undefined,
+      to: req.query.to as string | undefined,
+    };
     const data = await service.getDashboard(
       req.user!.distributorId!,
       req.visibleCustomerIds!,
+      filters,
     );
     return sendSuccess(res, data);
   } catch (err: unknown) {

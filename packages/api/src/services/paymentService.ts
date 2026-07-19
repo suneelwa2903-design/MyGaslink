@@ -16,7 +16,9 @@ export async function listPayments(
     // are attributed to today's business date".
     entryDateFrom?: string; entryDateTo?: string;
     page?: number; pageSize?: number;
-    sortBy?: 'createdAt' | 'amount' | 'transactionDate';
+    // 2026-07-19: added 'customerName' — pseudo-key that translates to
+    // { customer: { customerName: dir } } nested orderBy at query time.
+    sortBy?: 'createdAt' | 'amount' | 'transactionDate' | 'customerName';
     sortOrder?: 'asc' | 'desc';
     // Free-text: customer.customerName, referenceNumber. If the search
     // token parses as a positive number, also exact-match on amount.
@@ -68,6 +70,9 @@ export async function listPayments(
   const pageSize = filters.pageSize || 25;
   const sortBy = filters.sortBy ?? 'createdAt';
   const sortOrder = filters.sortOrder ?? 'desc';
+  const orderBy: Prisma.PaymentTransactionOrderByWithRelationInput = sortBy === 'customerName'
+    ? { customer: { customerName: sortOrder } }
+    : ({ [sortBy]: sortOrder } as Prisma.PaymentTransactionOrderByWithRelationInput);
 
   const [payments, total] = await Promise.all([
     prisma.paymentTransaction.findMany({
@@ -78,7 +83,7 @@ export async function listPayments(
           include: { invoice: { select: { id: true, invoiceNumber: true, issueDate: true } } },
         },
       },
-      orderBy: { [sortBy]: sortOrder } as Prisma.PaymentTransactionOrderByWithRelationInput,
+      orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
@@ -624,6 +629,24 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
   function processEntry(entry: typeof allEntries[number], emit: boolean): void {
     const delta = toNum(entry.amountDelta);
     const inv = entry.invoiceId ? invoiceMap.get(entry.invoiceId) ?? null : null;
+
+    // 2026-07-19 defence — orphan invoice_entry rows (entry.invoiceId set
+    // but no matching row in invoices table) MUST NOT be counted in the
+    // totals. This is the shape CLAUDE.md anti-pattern #7 produces on
+    // shared dev DBs: the GST integration tests hard-delete their invoice
+    // fixtures but the customer_ledger_entries rows are keyed to the
+    // deleted invoice_ids and left behind, silently inflating every
+    // downstream reader's totalAmount / dueAmount / netOutstanding.
+    // Group HQ Dashboard vs Ledger reconcile bug (2026-07-19) — Alpha
+    // group showed ₹5,86,100 in the ledger vs ₹2,44,100 on the Dashboard;
+    // the diff was 171 orphan rows totalling ₹3,42,000. Skip such rows
+    // here so the totals stay right even if the pollution reappears. We
+    // deliberately do NOT log per-entry to avoid a flood; the ledger's
+    // consumers can compare rowCount vs entriesConsidered to detect it.
+    if (entry.entryType === 'invoice_entry' && entry.invoiceId && !inv) {
+      return;
+    }
+
     const dateStr = entry.entryDate.toISOString().split('T')[0];
 
     // Update pending-empties from any joined order items (BEFORE emit so
