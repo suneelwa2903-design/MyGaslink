@@ -198,7 +198,7 @@ export async function drawCrnDetailsBox(
   return boxH + 10;
 }
 
-function drawFooter(doc: PDFKit.PDFDocument, startY: number): number {
+function drawFooter(doc: PDFKit.PDFDocument, sellerName: string, startY: number): number {
   const T = LAYOUT.THEME;
   const F = LAYOUT.TYPO;
   const leftX = LAYOUT.MARGIN.left;
@@ -206,17 +206,14 @@ function drawFooter(doc: PDFKit.PDFDocument, startY: number): number {
   const fullWidth = rightMargin - leftX;
   let cursorY = startY;
 
-  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
-  doc.text('This is a computer generated credit note.', leftX, cursorY, { width: fullWidth });
+  // 2026-07-19: self-authorising disclaimer replaces the empty
+  // Authorized Signatory blank line. See invoicePdfService drawFooter
+  // for rationale.
+  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
+  doc.text(`This is a ${sellerName}-authorised, auto-generated credit note.`, leftX, cursorY, { width: fullWidth, align: 'center' });
+  cursorY += 12;
+  doc.text('No signature or stamp is required to validate this document.', leftX, cursorY, { width: fullWidth, align: 'center' });
   cursorY += 14;
-
-  const sigW = 150;
-  const sigX = rightMargin - sigW;
-  doc.moveTo(sigX, cursorY).lineTo(rightMargin, cursorY)
-    .strokeColor(T.BORDER).lineWidth(LAYOUT.BORDER_WIDTH).stroke();
-  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
-  doc.text('Authorized Signatory', sigX, cursorY + 4, { width: sigW, align: 'center' });
-  cursorY += 20;
 
   return cursorY - startY;
 }
@@ -332,7 +329,7 @@ export async function generateCreditNotePdf(creditNoteId: string, distributorId:
   // Footer at bottom of page
   const footerY = A4_HEIGHT - LAYOUT.MARGIN.bottom - 50;
   if (y < footerY) y = footerY;
-  drawFooter(doc, y);
+  drawFooter(doc, seller.name, y);
 
   doc.end();
 

@@ -117,19 +117,25 @@ function drawParties(
   return Math.max(billFromH, billToH);
 }
 
-function drawFooter(doc: PDFKit.PDFDocument, startY: number): void {
+function drawFooter(doc: PDFKit.PDFDocument, sellerName: string, startY: number): void {
   const T = LAYOUT.THEME;
   const F = LAYOUT.TYPO;
   const leftX = LAYOUT.MARGIN.left;
   const rightMargin = A4_WIDTH - LAYOUT.MARGIN.right;
   const fullWidth = rightMargin - leftX;
-  const boxH = 36;
+  // 2026-07-19: bumped box height to fit the two-line self-authorising
+  // disclaimer that replaced the single "computer generated debit note"
+  // line. Aligned with the CN PDF footer wording.
+  const boxH = 48;
   drawBox(doc, leftX, startY, fullWidth, boxH, T.BORDER);
-  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
-  // WI-061: footer wording aligned with the CN PDF for visual consistency.
+  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
   doc.text(
-    'This is a computer generated debit note.',
-    leftX + 10, startY + 12, { width: fullWidth - 20, align: 'center' },
+    `This is a ${sellerName}-authorised, auto-generated debit note.`,
+    leftX + 10, startY + 10, { width: fullWidth - 20, align: 'center' },
+  );
+  doc.text(
+    'No signature or stamp is required to validate this document.',
+    leftX + 10, startY + 24, { width: fullWidth - 20, align: 'center' },
   );
 }
 
@@ -218,7 +224,7 @@ export async function generateDebitNotePdf(debitNoteId: string, distributorId: s
 
   const footerY = A4_HEIGHT - LAYOUT.MARGIN.bottom - 50;
   if (y < footerY) y = footerY;
-  drawFooter(doc, y);
+  drawFooter(doc, seller.name, y);
 
   doc.end();
   return new Promise<Buffer>((resolve, reject) => {

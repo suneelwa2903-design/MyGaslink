@@ -122,6 +122,60 @@ function drawTableHeader(doc: PDFKit.PDFDocument, y: number): number {
   return ROW_HEIGHT + 2;
 }
 
+/**
+ * Period Summary block (2026-07-19) — renders a 4-tile band above the
+ * entries table so the reader gets the "one-liner" for the period
+ * without hunting through multi-page rows. Shared by BOTH the customer
+ * ledger PDF and the group ledger PDF so the two surfaces read the
+ * same way. Returns the new Y cursor.
+ *
+ * The block is a single row of 4 equal-width tiles (Debited / Received
+ * / Net Outstanding / Overdue). Net outstanding uses a distinct primary
+ * fill so the "how much do I owe now" number is visually loudest. When
+ * overdue is zero, that tile is muted rather than removed — a fixed
+ * 4-tile shape keeps the layout stable across statements.
+ */
+interface PeriodSummary {
+  debited: number;
+  received: number;
+  netOutstanding: number;
+  overdue: number;
+  tableWidth: number;
+}
+function drawPeriodSummary(
+  doc: PDFKit.PDFDocument,
+  startY: number,
+  s: PeriodSummary,
+): number {
+  const BLOCK_H = 42;
+  const GAP = 6;
+  const tileW = Math.floor((s.tableWidth - GAP * 3) / 4);
+
+  const tiles: Array<{ label: string; value: string; fill: string; textColor: string }> = [
+    { label: 'Debited (period)', value: formatMoney(s.debited), fill: THEME.ZEBRA, textColor: THEME.TEXT },
+    { label: 'Received (period)', value: formatMoney(s.received), fill: THEME.ZEBRA, textColor: THEME.TEXT },
+    { label: 'Net Outstanding', value: formatMoney(s.netOutstanding), fill: THEME.PRIMARY, textColor: '#ffffff' },
+    { label: 'Overdue', value: formatMoney(s.overdue), fill: s.overdue > 0 ? '#dc2626' : THEME.ZEBRA, textColor: s.overdue > 0 ? '#ffffff' : THEME.MUTED },
+  ];
+
+  let x = MARGIN.left;
+  for (const t of tiles) {
+    doc.rect(x, startY, tileW, BLOCK_H).fill(t.fill);
+    doc.fillColor(t.textColor).font('Helvetica').fontSize(TYPO.CAPTION);
+    doc.text(t.label.toUpperCase(), x + 8, startY + 6, { width: tileW - 16, lineBreak: false });
+    doc.font('Helvetica-Bold').fontSize(TYPO.H2);
+    doc.text(t.value, x + 8, startY + 20, {
+      width: tileW - 16,
+      align: 'left',
+      lineBreak: false,
+      ellipsis: true,
+    });
+    x += tileW + GAP;
+  }
+  doc.fillColor(THEME.TEXT);
+  return startY + BLOCK_H + 10;
+}
+
 function drawRow(
   doc: PDFKit.PDFDocument,
   y: number,
@@ -547,9 +601,13 @@ export async function generateCustomerLedgerPdf(
   y += 16;
 
   // ── Footer ──
+  // 2026-07-19: self-authorising disclaimer aligned with invoice /
+  // credit / debit PDF footers so no rubber-stamp is expected.
   y += 18;
-  doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
-  doc.text('This is a computer generated statement.', MARGIN.left, y, { width: TABLE_WIDTH });
+  doc.font('Helvetica-Oblique').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+  doc.text(`This is a ${sellerName}-authorised, auto-generated statement.`, MARGIN.left, y, { width: TABLE_WIDTH, align: 'center' });
+  y += 12;
+  doc.text('No signature or stamp is required to validate this document.', MARGIN.left, y, { width: TABLE_WIDTH, align: 'center' });
 
   doc.end();
 
@@ -561,28 +619,73 @@ export async function generateCustomerLedgerPdf(
 
 // ─── Feature A (2026-07-15): group consolidated ledger PDF ─────────────
 //
-// Chronological merged view across all group member customers with a
-// Property column, 6-column layout per Step 7E:
-//   Date | Type | Narration | Amount | Running Balance | Property
+// Chronological merged view across all group member customers.
 //
-// Narrower than the single-customer 12-column landscape table — plan
-// §7E reclaims space by dropping the empties/full-cylinder detail
-// columns (accountant view, not delivery view). Uses the same
-// pdfkit letterhead + header pattern as generateCustomerLedgerPdf.
-// The per-customer running balance already lives on each row from
-// getGroupLedger (which called processLedgerEntries per bucket) —
-// we render it as-is.
+// 2026-07-19 refresh: the original 6-column layout (Date | Type |
+// Narration | Amount | Balance | Property) diverged from the single-
+// customer PDF and made cross-referencing a specific property's row
+// against the customer's own statement painful. Customer HQ readers
+// asked for parity — same columns, same visual language, plus one
+// Property column identifying which member the row belongs to.
+//
+// Layout now mirrors the individual PDF: 13 columns totalling 762pt
+// on landscape A4. Property inserted at index 1 (right after Date) so
+// the customer identifier reads front-of-eye. The remaining 12 columns
+// keep the same order as the individual PDF; per-column widths are
+// tightened proportionally to free 86pt for Property.
+//
+//   Individual (12): Date 64 | Type 50 | Narration 108 | DelF 30 |
+//     Amount 68 | EmpC 34 | PendE 34 | EmpCost 70 | TotalAmt 84 |
+//     Received 68 | DueAmt 76 | Overdue 76  = 762pt
+//   Group (13):     Date 64 | Property 86 | Type 46 | Narration 78 |
+//     DelF 26 | Amount 62 | EmpC 30 | PendE 30 | EmpCost 62 |
+//     TotalAmt 76 | Received 62 | DueAmt 70 | Overdue 70  = 762pt
 
 const GROUP_COLS: Col[] = [
-  { label: 'Date', width: 68, align: 'left' },
-  { label: 'Type', width: 60, align: 'left' },
-  { label: 'Narration', width: 200, align: 'left' },
-  { label: 'Amount', width: 90, align: 'right' },
-  { label: 'Balance', width: 100, align: 'right' },
-  { label: 'Property', width: 244, align: 'left' },
+  { label: 'Date', width: 64, align: 'left' },
+  { label: 'Property', width: 86, align: 'left' },
+  { label: 'Type', width: 46, align: 'left' },
+  { label: 'Narration', width: 78, align: 'left' },
+  { label: 'Del F', width: 26, align: 'right' },
+  { label: 'Amount', width: 62, align: 'right' },
+  { label: 'Emp C', width: 30, align: 'right' },
+  { label: 'Pend E', width: 30, align: 'right' },
+  { label: 'Emp Cost', width: 62, align: 'right' },
+  { label: 'Total Amt', width: 76, align: 'right' },
+  { label: 'Received', width: 62, align: 'right' },
+  { label: 'Due Amt', width: 70, align: 'right' },
+  { label: 'Overdue', width: 70, align: 'right' },
 ];
 const GROUP_TABLE_WIDTH = GROUP_COLS.reduce((s, c) => s + c.width, 0);
-const GROUP_COL_CHAR_CAP = [10, 14, 46, 16, 18, 42];
+// Per-column character caps. Property (86pt) needs the widest cap —
+// hotel names like "Royal Kitchen & Caterers" (25 chars) should fit,
+// longer ones ellipsise. Amount/Received caps drop slightly from the
+// individual PDF (14→13) — the crore-scale ceiling still fits, only
+// the pathological "Rs. 99,99,999.00" (16) truncates by one char.
+const GROUP_COL_CHAR_CAP: number[] = [
+  11, // Date         — "07-Jul-2026"
+  16, // Property     — hotel/business names, ellipsised for longer
+  9,  // Type         — "Empties" (7), "Payment" (7) fit
+  14, // Narration    — tighter than individual (20) to make room for Property
+  4,  // Del F        — 0-999
+  13, // Amount       — "Rs. 9,99,999.00" (15) truncates 2 chars, most fit
+  4,  // Emp C
+  4,  // Pend E
+  12, // Emp Cost
+  14, // Total Amt    — cumulative running balance
+  12, // Received
+  13, // Due Amt
+  13, // Overdue
+];
+
+// Sanity check — 762pt landscape budget MUST be respected. If a future
+// column-width edit drifts, throw at import time rather than ship a
+// PDF with a silent overflow into the right margin.
+if (GROUP_TABLE_WIDTH !== TABLE_WIDTH) {
+  throw new Error(
+    `GROUP_TABLE_WIDTH (${GROUP_TABLE_WIDTH}) must equal individual TABLE_WIDTH (${TABLE_WIDTH})`,
+  );
+}
 
 /**
  * Chronologically-merged group ledger PDF. Layout mirrors the single-
@@ -650,24 +753,69 @@ export async function generateGroupLedgerPdf(
   doc.text(`Properties: ${memberCount}`, MARGIN.left + 250, y);
   y += 20;
 
+  // ── Overdue aggregation (2026-07-19) ──
+  // Per-customer overdue is a cumulative field on each row (see
+  // processLedgerEntries — overDueAmount grows monotonically per
+  // bucket). The group's overdue is the sum of the FINAL row's
+  // overDueAmount for each customerId, NOT the sum of every row's
+  // overDueAmount (that would multiple-count the running total). One
+  // pass through the rows keeps the last-seen value per customer.
+  const lastOverduePerCustomer = new Map<string, number>();
+  for (const r of ledger.rows) {
+    lastOverduePerCustomer.set(r.customerId, r.overDueAmount ?? 0);
+  }
+  let groupOverdue = 0;
+  for (const v of lastOverduePerCustomer.values()) groupOverdue += v;
+
+  // ── Period Summary block (2026-07-19) ──
+  // Same 4-tile band as the individual PDF. Values come from the
+  // group's own totals (already summed across every member) so the
+  // block reads "the whole group's period at a glance".
+  y = drawPeriodSummary(doc, y, {
+    debited: ledger.totals.totalDebited,
+    received: ledger.totals.totalReceived,
+    netOutstanding: ledger.totals.netOutstanding,
+    overdue: groupOverdue,
+    tableWidth: GROUP_TABLE_WIDTH,
+  });
+
+  // Indicative-cost note — matches the individual PDF so readers see
+  // consistent boilerplate above the entries table.
+  doc.font('Helvetica-Oblique').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+  doc.text(
+    'Empty cylinder costs are indicative only. Charges apply only for missing cylinders.',
+    MARGIN.left, y,
+  );
+  y += 16;
+
   // ── Table header ──
   const drawGroupHeader = (yy: number): number => {
     let x = MARGIN.left;
-    doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, 18).fillColor(THEME.PRIMARY).fill();
-    doc.font('Helvetica-Bold').fontSize(TYPO.LABEL).fillColor('#ffffff');
+    doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, ROW_HEIGHT + 2).fill(THEME.PRIMARY);
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(TYPO.CAPTION);
     for (const c of GROUP_COLS) {
-      doc.text(c.label, x + 4, yy + 5, { width: c.width - 8, align: c.align, lineBreak: false });
+      doc.text(c.label, x + 3, yy + 4, {
+        width: c.width - 6,
+        align: c.align,
+        lineBreak: false,
+        ellipsis: true,
+      });
       x += c.width;
     }
-    return yy + 18;
+    doc.fillColor(THEME.TEXT);
+    return ROW_HEIGHT + 2;
   };
 
-  const drawGroupRow = (yy: number, cells: string[], zebra: boolean): number => {
-    if (zebra) {
-      doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, ROW_HEIGHT).fillColor(THEME.ZEBRA).fill();
+  const drawGroupRow = (
+    yy: number,
+    cells: string[],
+    opts: { bold?: boolean; zebra?: boolean } = {},
+  ): number => {
+    if (opts.zebra) {
+      doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, ROW_HEIGHT).fill(THEME.ZEBRA);
     }
+    doc.fillColor(THEME.TEXT).font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(TYPO.BODY);
     let x = MARGIN.left;
-    doc.font('Helvetica').fontSize(TYPO.BODY).fillColor(THEME.TEXT);
     for (let i = 0; i < GROUP_COLS.length; i++) {
       const text = fitCell(cells[i] ?? '', GROUP_COL_CHAR_CAP[i] ?? 999);
       doc.text(text, x + 3, yy + 4, {
@@ -681,52 +829,154 @@ export async function generateGroupLedgerPdf(
     return ROW_HEIGHT;
   };
 
-  y = drawGroupHeader(y);
+  // Type/narration helpers — mirror the individual PDF so a hotel HQ
+  // reader sees the same labels ("Payment", "Empties", "19 KG") that
+  // the underlying customer statement uses.
+  function groupTypeLabel(row: typeof ledger.rows[number]): string {
+    switch (row.kind) {
+      case 'opening': return 'Opening';
+      case 'payment': return 'Payment';
+      case 'credit_note': return 'Credit';
+      case 'debit_note': return 'Debit';
+      case 'adjustment': return 'Adj';
+      case 'empties_return': return 'Empties';
+      case 'invoice': return row.cylinderType || 'Invoice';
+      default: return row.cylinderType === '' ? 'Payment' : (row.cylinderType || 'Invoice');
+    }
+  }
+  function groupShortNarration(raw: string | null, kind: string | null): string {
+    if (!raw) return '';
+    let s = raw;
+    const orderIdx = s.indexOf(' for order');
+    if (orderIdx >= 0) s = s.slice(0, orderIdx);
+    if (kind === 'invoice') return s.replace(/^Invoice\s+/i, '');
+    if (kind === 'credit_note') return s.replace(/^Credit Note\s+/i, '');
+    if (kind === 'debit_note') return s.replace(/^Debit Note\s+/i, '');
+    if (kind === 'payment') return '';
+    return s;
+  }
+
+  y += drawGroupHeader(y);
 
   // ── Rows ──
   let zebra = false;
+  let totalDelivered = 0;
+  let totalCollected = 0;
   for (const row of ledger.rows) {
-    if (y + ROW_HEIGHT > PAGE_HEIGHT - MARGIN.bottom - 40) {
+    // Page break reservation matches the individual PDF: leave room
+    // for one row plus a small footer buffer so nothing clips at the
+    // page foot.
+    const baseNeeded = row.kind === 'opening' ? ROW_HEIGHT + 12 : ROW_HEIGHT;
+    if (y + baseNeeded + ROW_HEIGHT + 4 > PAGE_HEIGHT - MARGIN.bottom - 30) {
       doc.addPage({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
       y = MARGIN.top;
-      y = drawGroupHeader(y);
+      y += drawGroupHeader(y);
       zebra = false;
     }
-    const amount = row.amount > 0
-      ? formatMoney(row.amount)
-      : row.receivedAmount > 0
-        ? `(${formatMoney(row.receivedAmount)})`
-        : '—';
-    const balance = formatMoney(row.dueAmount);
-    y += drawGroupRow(y, [
-      formatDate(new Date(row.orderDate)),
-      row.kind ?? '',
-      row.narration ?? '',
-      amount,
-      balance,
-      row.customerName,
-    ], zebra);
+
+    const property = row.customerName;
+    const type = groupTypeLabel(row);
+    const narration = groupShortNarration(row.narration, row.kind);
+    let cells: string[];
+
+    if (row.kind === 'opening') {
+      y += 4;
+      cells = [
+        formatDate(new Date(row.orderDate)),
+        property, type, narration,
+        '', '', '', '', '',
+        formatMoney(row.totalAmount),
+        '',
+        formatMoney(row.dueAmount),
+        '',
+      ];
+      y += drawGroupRow(y, cells, { bold: true });
+      doc.moveTo(MARGIN.left, y + 1)
+        .lineTo(MARGIN.left + GROUP_TABLE_WIDTH, y + 1)
+        .strokeColor(THEME.PRIMARY).lineWidth(0.5).stroke();
+      y += 6;
+      zebra = false;
+      continue;
+    } else if (row.kind === 'payment' || row.kind === 'credit_note') {
+      cells = [
+        formatDate(new Date(row.orderDate)),
+        property, type, narration,
+        '-', '', '', '', '',
+        formatMoney(row.totalAmount),
+        formatMoney(row.receivedAmount),
+        formatMoney(row.dueAmount),
+        '',
+      ];
+    } else if (row.kind === 'empties_return') {
+      cells = [
+        formatDate(new Date(row.orderDate)),
+        property, type, narration,
+        '-', '-', '-', '-', '-',
+        formatMoney(row.totalAmount),
+        '-',
+        formatMoney(row.dueAmount),
+        '-',
+      ];
+    } else {
+      // invoice / debit_note / adjustment — full detail
+      if (row.fullCylsDelivered > 0) totalDelivered += row.fullCylsDelivered;
+      if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
+      cells = [
+        formatDate(new Date(row.orderDate)),
+        property, type, narration,
+        row.fullCylsDelivered ? num(row.fullCylsDelivered) : '',
+        formatMoney(row.amount),
+        row.emptyCylsCollected ? num(row.emptyCylsCollected) : '',
+        row.pendingEmptyCyls ? num(row.pendingEmptyCyls) : '',
+        row.emptyCylsCost ? formatMoney(row.emptyCylsCost) : '',
+        formatMoney(row.totalAmount),
+        formatMoney(row.receivedAmount),
+        formatMoney(row.dueAmount),
+        formatMoney(row.overDueAmount ?? 0),
+      ];
+    }
+    y += drawGroupRow(y, cells, { zebra });
     zebra = !zebra;
   }
 
-  // ── Totals row ──
-  if (y + ROW_HEIGHT + 24 > PAGE_HEIGHT - MARGIN.bottom - 40) {
+  // ── Group totals row ──
+  if (y + ROW_HEIGHT + 4 > PAGE_HEIGHT - MARGIN.bottom - 30) {
     doc.addPage({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
     y = MARGIN.top;
-    y = drawGroupHeader(y);
+    y += drawGroupHeader(y);
   }
-  y += 6;
-  doc.rect(MARGIN.left, y, GROUP_TABLE_WIDTH, 20).fillColor(THEME.PRIMARY).fill();
-  doc.font('Helvetica-Bold').fontSize(TYPO.LABEL).fillColor('#ffffff');
-  doc.text('Group totals', MARGIN.left + 6, y + 6, { width: 200, lineBreak: false });
-  doc.text(
-    `Debited ${formatMoney(ledger.totals.totalDebited)}   |   Received ${formatMoney(ledger.totals.totalReceived)}   |   Outstanding ${formatMoney(ledger.totals.netOutstanding)}`,
-    MARGIN.left + 210, y + 6, { width: GROUP_TABLE_WIDTH - 216, align: 'right', lineBreak: false },
-  );
-  y += 30;
+  doc.moveTo(MARGIN.left, y)
+    .lineTo(MARGIN.left + GROUP_TABLE_WIDTH, y)
+    .strokeColor(THEME.PRIMARY).lineWidth(1).stroke();
+  const t = ledger.totals;
+  const totalsCells = [
+    'Total', '', '', '',
+    num(totalDelivered), formatMoney(t.totalDebited),
+    num(totalCollected), num(Math.max(0, totalDelivered - totalCollected)),
+    '', formatMoney(t.totalDebited),
+    formatMoney(t.totalReceived), formatMoney(t.netOutstanding),
+    formatMoney(groupOverdue),
+  ];
+  y += drawGroupRow(y + 1, totalsCells, { bold: true });
 
-  doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
-  doc.text('This is a computer generated group statement.', MARGIN.left, y, { width: GROUP_TABLE_WIDTH });
+  // Closing Balance line — matches the individual PDF's format.
+  y += 4;
+  doc.font('Helvetica-Bold').fontSize(TYPO.H2).fillColor(THEME.PRIMARY);
+  doc.text(
+    `Group Closing Balance: ${formatMoney(t.netOutstanding)} Dr`,
+    MARGIN.left + GROUP_TABLE_WIDTH - 300,
+    y,
+    { width: 300, align: 'right' },
+  );
+  doc.fillColor(THEME.TEXT);
+  y += 16;
+
+  // ── Footer ──
+  y += 12;
+  doc.font('Helvetica-Oblique').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+  doc.text(`This is a ${sellerName}-authorised, auto-generated group statement.`, MARGIN.left, y, { width: GROUP_TABLE_WIDTH, align: 'center' });
+  y += 12;
+  doc.text('No signature or stamp is required to validate this document.', MARGIN.left, y, { width: GROUP_TABLE_WIDTH, align: 'center' });
 
   doc.end();
 

@@ -477,9 +477,14 @@ function drawFooter(doc: PDFKit.PDFDocument, startY: number): number {
   const fullWidth = rightMargin - leftX;
   let cursorY = startY;
 
-  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
-  doc.text('This is a computer-generated invoice. No signature required.', leftX, cursorY, { width: fullWidth, align: 'center' });
+  // 2026-07-19: self-authorising disclaimer — matches the wording on
+  // the distributor's own tax-invoice / CN / DN PDFs.
+  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
+  doc.text(`This is a ${GASLINK.name}-authorised, auto-generated invoice.`, leftX, cursorY, { width: fullWidth, align: 'center' });
+  cursorY += 12;
+  doc.text('No signature or stamp is required to validate this document.', leftX, cursorY, { width: fullWidth, align: 'center' });
   cursorY += 14;
+  doc.font('Helvetica');
   doc.text(`${GASLINK.name} | ${GASLINK.email} | ${GASLINK.website}`, leftX, cursorY, { width: fullWidth, align: 'center' });
   cursorY += 14;
 

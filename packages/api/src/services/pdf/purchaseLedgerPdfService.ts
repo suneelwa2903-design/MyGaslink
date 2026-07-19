@@ -134,32 +134,75 @@ export async function generatePurchaseLedgerPdf(
     where.sourceDistributorId = filters.sourceDistributorId;
   }
 
-  const entries = await prisma.purchaseEntry.findMany({
-    where,
-    select: {
-      id: true,
-      purchaseNumber: true,
-      purchaseDate: true,
-      sourceDistributorName: true,
-      notes: true,
-      items: {
-        select: {
-          id: true,
-          cylinderTypeId: true,
-          fullsReceived: true,
-          emptiesGivenOut: true,
-          unitPrice: true,
-          cylinderType: { select: { typeName: true } },
+  // Payment filter mirrors the purchase filter (distributor + date +
+  // sourceDistributorId). Cylinder-type filter doesn't apply to payments,
+  // so payments are omitted when a cylinder-type filter is active — the
+  // resulting PDF is a stock-and-money ledger scoped to that type.
+  const paymentWhere: Prisma.PurchasePaymentWhereInput = {
+    distributorId,
+    deletedAt: null,
+  };
+  if (filters.from || filters.to) {
+    paymentWhere.transactionDate = {};
+    if (filters.from) (paymentWhere.transactionDate as { gte?: string }).gte = filters.from;
+    if (filters.to) (paymentWhere.transactionDate as { lte?: string }).lte = filters.to;
+  }
+  if (filters.sourceDistributorId) {
+    paymentWhere.sourceDistributorId = filters.sourceDistributorId;
+  }
+
+  const [entries, payments] = await Promise.all([
+    prisma.purchaseEntry.findMany({
+      where,
+      select: {
+        id: true,
+        purchaseNumber: true,
+        purchaseDate: true,
+        sourceDistributorName: true,
+        notes: true,
+        items: {
+          select: {
+            id: true,
+            cylinderTypeId: true,
+            fullsReceived: true,
+            emptiesGivenOut: true,
+            unitPrice: true,
+            cylinderType: { select: { typeName: true } },
+          },
         },
       },
-    },
-    orderBy: [{ purchaseDate: 'asc' }, { createdAt: 'asc' }],
-  });
+      orderBy: [{ purchaseDate: 'asc' }, { createdAt: 'asc' }],
+    }),
+    // Mini-Operator 2026-07-19: include supplier payments in the same
+    // ledger so a downloaded PDF for Bhargavi shows both goods received
+    // AND money paid (previously only purchases were rendered, causing
+    // "I made a payment but it's not on the ledger" confusion). Payments
+    // are skipped when a cylinder-type filter is active — payments don't
+    // have a cylinder type, so including them would clutter a filtered
+    // stock-scoped view.
+    filters.cylinderTypeId
+      ? Promise.resolve([])
+      : prisma.purchasePayment.findMany({
+          where: paymentWhere,
+          select: {
+            id: true,
+            transactionDate: true,
+            sourceDistributorName: true,
+            amount: true,
+            paymentMethod: true,
+            referenceNumber: true,
+            notes: true,
+            createdAt: true,
+          },
+          orderBy: [{ transactionDate: 'asc' }, { createdAt: 'asc' }],
+        }),
+  ]);
 
   // Flatten to (entry × item) rows, applying cylinderTypeId filter here so
   // filtering at the SQL level (which requires a `some:` clause on items)
   // wouldn't correctly hide items of OTHER types on entries that match.
   type FlatRow = {
+    kind: 'purchase' | 'payment';
     date: string;
     purchaseNumber: string;
     sourceDistributorName: string;
@@ -177,6 +220,7 @@ export async function generatePurchaseLedgerPdf(
       const unitPrice = Number(item.unitPrice ?? 0);
       const amount = item.fullsReceived * unitPrice;
       rows.push({
+        kind: 'purchase',
         date: entry.purchaseDate,
         purchaseNumber: entry.purchaseNumber,
         sourceDistributorName: entry.sourceDistributorName ?? '—',
@@ -189,16 +233,49 @@ export async function generatePurchaseLedgerPdf(
       });
     }
   }
+  // Interleave payment rows in chronological order. Kind stored so the
+  // renderer can style credits distinctly + so totals can split cleanly
+  // into purchases vs payments.
+  for (const p of payments) {
+    const method = String(p.paymentMethod).replace(/_/g, ' ');
+    const ref = p.referenceNumber ? ` · ref ${p.referenceNumber}` : '';
+    rows.push({
+      kind: 'payment',
+      date: p.transactionDate,
+      purchaseNumber: '', // payments have no purchase number
+      sourceDistributorName: p.sourceDistributorName ?? '—',
+      cylinderType: `PAYMENT (${method})`,
+      fulls: 0,
+      empties: 0,
+      unitPrice: 0,
+      amount: Number(p.amount ?? 0),
+      notes: p.notes ? `${p.notes}${ref}` : `Payment${ref}`,
+    });
+  }
+  // Global sort keeps things chronological even after the purchase +
+  // payment interleave.
+  rows.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    // Same-day: purchases before payments so the balance walks
+    // debit-then-credit.
+    if (a.kind !== b.kind) return a.kind === 'purchase' ? -1 : 1;
+    return 0;
+  });
 
   const totals = rows.reduce(
     (acc, r) => {
-      acc.fulls += r.fulls;
-      acc.empties += r.empties;
-      acc.amount += r.amount;
+      if (r.kind === 'purchase') {
+        acc.fulls += r.fulls;
+        acc.empties += r.empties;
+        acc.purchased += r.amount;
+      } else {
+        acc.paid += r.amount;
+      }
       return acc;
     },
-    { fulls: 0, empties: 0, amount: 0 },
+    { fulls: 0, empties: 0, purchased: 0, paid: 0 },
   );
+  const netOwed = totals.purchased - totals.paid;
 
   // Filter label lookups (best-effort; falls back to "—" if the id was
   // deleted between listing and the ledger call).
@@ -279,6 +356,7 @@ export async function generatePurchaseLedgerPdf(
         y += drawTableHeader(doc, y);
       }
       const r = rows[i];
+      const isPayment = r.kind === 'payment';
       y += drawRow(
         doc,
         y,
@@ -287,10 +365,14 @@ export async function generatePurchaseLedgerPdf(
           r.purchaseNumber,
           r.sourceDistributorName,
           r.cylinderType,
-          String(r.fulls),
-          String(r.empties),
-          r.unitPrice > 0 ? formatMoney(r.unitPrice) : '—',
-          r.amount > 0 ? formatMoney(r.amount) : '—',
+          isPayment ? '—' : String(r.fulls),
+          isPayment ? '—' : String(r.empties),
+          !isPayment && r.unitPrice > 0 ? formatMoney(r.unitPrice) : '—',
+          // Payment amounts get a "− " prefix so at-a-glance the
+          // downloaded ledger reads like a debit/credit statement.
+          r.amount > 0
+            ? (isPayment ? `− ${formatMoney(r.amount)}` : formatMoney(r.amount))
+            : '—',
           r.notes,
         ],
         { zebra: i % 2 === 1 },
@@ -298,15 +380,16 @@ export async function generatePurchaseLedgerPdf(
     }
   }
 
-  // ── Totals row ──
+  // ── Totals + Net Owed summary ──
   if (rows.length > 0) {
-    if (y + ROW_HEIGHT + 4 > BOTTOM) {
+    if (y + ROW_HEIGHT * 3 + 8 > BOTTOM) {
       doc.addPage();
       y = MARGIN.top;
     }
     y += 2;
     doc.moveTo(MARGIN.left, y).lineTo(MARGIN.left + TABLE_WIDTH, y).strokeColor(THEME.BORDER).lineWidth(0.5).stroke();
     y += 2;
+    // Purchase totals (fulls, empties, purchased amount).
     drawRow(
       doc,
       y,
@@ -314,23 +397,67 @@ export async function generatePurchaseLedgerPdf(
         '',
         '',
         '',
-        'Total',
+        'Total Purchased',
         String(totals.fulls),
         String(totals.empties),
         '',
-        formatMoney(totals.amount),
+        formatMoney(totals.purchased),
         '',
       ],
       { bold: true },
     );
     y += ROW_HEIGHT;
+    // Total Paid row (only rendered when there is at least one payment
+    // — otherwise the ledger is stock-only and the Net Owed row would
+    // just duplicate Total Purchased).
+    if (totals.paid > 0) {
+      drawRow(
+        doc,
+        y,
+        [
+          '',
+          '',
+          '',
+          'Total Paid',
+          '',
+          '',
+          '',
+          `− ${formatMoney(totals.paid)}`,
+          '',
+        ],
+        { bold: true, zebra: true },
+      );
+      y += ROW_HEIGHT;
+      drawRow(
+        doc,
+        y,
+        [
+          '',
+          '',
+          '',
+          'Net Owed',
+          '',
+          '',
+          '',
+          formatMoney(netOwed),
+          '',
+        ],
+        { bold: true },
+      );
+      y += ROW_HEIGHT;
+    }
   }
 
   // ── Footer ──
   y += 12;
   doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+  const purchaseCount = rows.filter((r) => r.kind === 'purchase').length;
+  const paymentCount = rows.filter((r) => r.kind === 'payment').length;
+  const lineSummary = paymentCount > 0
+    ? `${purchaseCount} purchase line${purchaseCount === 1 ? '' : 's'} · ${paymentCount} payment${paymentCount === 1 ? '' : 's'}`
+    : `${purchaseCount} line${purchaseCount === 1 ? '' : 's'}`;
   doc.text(
-    `Generated ${formatDate(new Date())} · ${rows.length} line${rows.length === 1 ? '' : 's'}`,
+    `Generated ${formatDate(new Date())} · ${lineSummary}`,
     MARGIN.left, y, { width: TABLE_WIDTH, align: 'right' },
   );
 

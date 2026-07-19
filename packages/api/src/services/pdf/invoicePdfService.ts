@@ -988,18 +988,17 @@ function drawFooter(doc: PDFKit.PDFDocument, sellerName: string, startY: number)
   const fullWidth = rightMargin - leftX;
   let cursorY = startY;
 
-  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
-  doc.text('This is a computer generated invoice.', leftX, cursorY, { width: fullWidth });
+  // 2026-07-19: replace the empty "Authorized Signatory" blank line
+  // (customers were asking for a rubber stamp / signature) with an
+  // explicit self-authorising disclaimer. sellerName is interpolated
+  // so the note carries the distributor's brand.
+  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica-Oblique');
+  const line1 = `This is a ${sellerName}-authorised, auto-generated tax invoice.`;
+  const line2 = 'No signature or stamp is required to validate this document.';
+  doc.text(line1, leftX, cursorY, { width: fullWidth, align: 'center' });
+  cursorY += 12;
+  doc.text(line2, leftX, cursorY, { width: fullWidth, align: 'center' });
   cursorY += 14;
-
-  // Authorized signatory line
-  const sigW = 150;
-  const sigX = rightMargin - sigW;
-  doc.moveTo(sigX, cursorY).lineTo(rightMargin, cursorY)
-    .strokeColor(T.BORDER).lineWidth(LAYOUT.BORDER_WIDTH).stroke();
-  doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
-  doc.text('Authorized Signatory', sigX, cursorY + 4, { width: sigW, align: 'center' });
-  cursorY += 20;
 
   return cursorY - startY;
 }
