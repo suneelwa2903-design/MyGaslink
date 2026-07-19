@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
 import { AppHeader } from '../../src/components/AppHeader';
+import { RoleGuard } from '../../src/components/RoleGuard';
 
 const TAB_CONFIG: { name: string; title: string; iconFocused: string; iconOutline: string }[] = [
   { name: 'dashboard', title: 'Analytics', iconFocused: 'analytics', iconOutline: 'analytics-outline' },
@@ -17,7 +18,7 @@ const TAB_CONFIG: { name: string; title: string; iconFocused: string; iconOutlin
 // They are accessed via the More menu or deep links.
 const HIDDEN_TABS = ['distributors', 'billing', 'users', 'fleet', 'settings', 'provider-catalog', 'health'];
 
-export default function SuperAdminLayout() {
+function SuperAdminLayoutInner() {
   const dark = useIsDark();
   const insets = useSafeAreaInsets();
   const tabBarConfig = getTabBarConfig(dark, insets);
@@ -53,5 +54,14 @@ export default function SuperAdminLayout() {
         />
       ))}
     </Tabs>
+  );
+}
+
+export default function SuperAdminLayout() {
+  // 2026-07-19 SECURITY: only 'super_admin' reaches super-admin tabs.
+  return (
+    <RoleGuard allowed={['super_admin']}>
+      <SuperAdminLayoutInner />
+    </RoleGuard>
   );
 }

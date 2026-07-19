@@ -177,13 +177,26 @@ export default function LoginScreen() {
         return;
       }
 
+      // 2026-07-19 SECURITY: customer_hq MUST be listed explicitly here.
+      // Prior to this fix the switch's default branch routed every
+      // unmatched role to '/(admin)/dashboard' — which meant an HQ
+      // login (customer_hq) fell through and was shown the entire
+      // distributor-admin tab bar (Orders / Inventory / Fleet / Billing
+      // etc). Cross-role UI leak. New default is safe: any unknown role
+      // gets bounced back to /(auth)/login rather than silently landing
+      // on an admin dashboard. Only distributor_admin + mini_operator
+      // are meant to reach /(admin)/dashboard directly.
       switch (result.user.role) {
         case 'customer': router.replace('/(customer)/dashboard'); break;
         case 'driver': router.replace('/(driver)/orders'); break;
         case 'super_admin': router.replace('/(super-admin)/dashboard'); break;
         case 'finance': router.replace('/(finance)/dashboard'); break;
         case 'inventory': router.replace('/(inventory)/analytics'); break;
-        default: router.replace('/(admin)/dashboard'); break; // distributor_admin
+        case 'customer_hq': router.replace('/(hq)'); break;
+        case 'distributor_admin':
+        case 'mini_operator_admin':
+          router.replace('/(admin)/dashboard'); break;
+        default: router.replace('/(auth)/login'); break;
       }
     } catch (error) {
       Alert.alert('Login Failed', getErrorMessage(error));

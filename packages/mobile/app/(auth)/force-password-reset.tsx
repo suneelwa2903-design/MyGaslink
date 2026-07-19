@@ -69,13 +69,21 @@ export default function ForcePasswordResetScreen() {
       if (authState.user) {
         authState.setUser({ ...authState.user, requiresPasswordReset: false });
       }
+      // 2026-07-19 SECURITY: mirror the customer_hq handling from
+      // login.tsx. Prior default was '/(admin)/dashboard' — any HQ or
+      // unknown-role user finishing the forced reset was silently
+      // landed on the distributor-admin surface.
       switch (user?.role) {
         case 'customer': router.replace('/(customer)/dashboard'); break;
         case 'driver': router.replace('/(driver)/orders'); break;
         case 'super_admin': router.replace('/(super-admin)/dashboard'); break;
         case 'finance': router.replace('/(finance)/dashboard'); break;
         case 'inventory': router.replace('/(inventory)/analytics'); break;
-        default: router.replace('/(admin)/dashboard'); break;
+        case 'customer_hq': router.replace('/(hq)'); break;
+        case 'distributor_admin':
+        case 'mini_operator_admin':
+          router.replace('/(admin)/dashboard'); break;
+        default: router.replace('/(auth)/login'); break;
       }
     } catch (err) {
       setError(getErrorMessage(err));

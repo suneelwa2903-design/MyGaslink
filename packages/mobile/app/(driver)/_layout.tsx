@@ -10,6 +10,7 @@ import { AppHeader } from '../../src/components/AppHeader';
 import { attachAutoSync, startNetworkListener, subscribePendingDeliveries } from '../../src/services/deliveryQueue';
 import { connect as sseConnect, disconnect as sseDisconnect, onEvent as sseOnEvent } from '../../src/services/sseService';
 import { tokenStorage } from '../../src/lib/api';
+import { RoleGuard } from '../../src/components/RoleGuard';
 
 function PendingBadge({ count }: { count: number }) {
   if (count === 0) return null;
@@ -26,7 +27,7 @@ function PendingBadge({ count }: { count: number }) {
   );
 }
 
-export default function DriverLayout() {
+function DriverLayoutInner() {
   const dark = useIsDark();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
@@ -131,5 +132,14 @@ export default function DriverLayout() {
       <Tabs.Screen name="submit-payment" options={{ href: null }} />
       <Tabs.Screen name="my-submissions" options={{ href: null }} />
     </Tabs>
+  );
+}
+
+export default function DriverLayout() {
+  // 2026-07-19 SECURITY: only 'driver' role reaches driver tabs.
+  return (
+    <RoleGuard allowed={['driver']}>
+      <DriverLayoutInner />
+    </RoleGuard>
   );
 }

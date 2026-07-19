@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
 import { AppHeader } from '../../src/components/AppHeader';
+import { RoleGuard } from '../../src/components/RoleGuard';
 
 const TAB_CONFIG: {
   name: string;
@@ -39,7 +40,7 @@ const TAB_CONFIG: {
   { name: 'pending-payments', title: 'Pending Payments', iconOutline: 'time-outline', iconFilled: 'time', href: null },
 ];
 
-export default function FinanceLayout() {
+function FinanceLayoutInner() {
   const dark = useIsDark();
   const insets = useSafeAreaInsets();
   const tabBarConfig = getTabBarConfig(dark, insets);
@@ -68,5 +69,14 @@ export default function FinanceLayout() {
         />
       ))}
     </Tabs>
+  );
+}
+
+export default function FinanceLayout() {
+  // 2026-07-19 SECURITY: only 'finance' role reaches finance tabs.
+  return (
+    <RoleGuard allowed={['finance']}>
+      <FinanceLayoutInner />
+    </RoleGuard>
   );
 }

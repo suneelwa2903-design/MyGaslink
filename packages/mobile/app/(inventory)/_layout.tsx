@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useIsDark } from '../../src/stores/themeStore';
 import { AppHeader } from '../../src/components/AppHeader';
 import { ScrollableTabBar } from '../../src/components/ui/ScrollableTabBar';
+import { RoleGuard } from '../../src/components/RoleGuard';
 
 const TAB_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   analytics: 'grid-outline',
@@ -39,7 +40,7 @@ const TAB_ICONS_FOCUSED: Record<string, keyof typeof Ionicons.glyphMap> = {
   more: 'menu',
 };
 
-export default function InventoryLayout() {
+function InventoryLayoutInner() {
   const dark = useIsDark();
 
   const bg = dark ? '#0f172a' : '#ffffff';
@@ -178,5 +179,14 @@ export default function InventoryLayout() {
       <Tabs.Screen name="customer-create" options={{ href: null, title: 'New Customer', tabBarItemStyle: { display: 'none' } }} />
       <Tabs.Screen name="profile" options={{ href: null, title: 'My Profile', tabBarItemStyle: { display: 'none' } }} />
     </Tabs>
+  );
+}
+
+export default function InventoryLayout() {
+  // 2026-07-19 SECURITY: only 'inventory' role reaches inventory tabs.
+  return (
+    <RoleGuard allowed={['inventory']}>
+      <InventoryLayoutInner />
+    </RoleGuard>
   );
 }

@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTabBarConfig } from '../../src/theme';
 import { useIsDark } from '../../src/stores/themeStore';
 import { AppHeader } from '../../src/components/AppHeader';
+import { RoleGuard } from '../../src/components/RoleGuard';
 
 const TAB_CONFIG: Array<{
   name: string;
@@ -18,7 +19,7 @@ const TAB_CONFIG: Array<{
   { name: 'account', title: 'Account', iconOutline: 'person-outline', iconFilled: 'person' },
 ];
 
-export default function CustomerLayout() {
+function CustomerLayoutInner() {
   const dark = useIsDark();
   const insets = useSafeAreaInsets();
 
@@ -45,5 +46,14 @@ export default function CustomerLayout() {
         />
       ))}
     </Tabs>
+  );
+}
+
+export default function CustomerLayout() {
+  // 2026-07-19 SECURITY: only 'customer' role reaches customer tabs.
+  return (
+    <RoleGuard allowed={['customer']}>
+      <CustomerLayoutInner />
+    </RoleGuard>
   );
 }
