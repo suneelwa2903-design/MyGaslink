@@ -39,7 +39,18 @@ interface LedgerRow {
 }
 interface LedgerResponse {
   rows: LedgerRow[];
-  totals: { totalDebited: number; totalReceived: number; netOutstanding: number };
+  totals: {
+    totalDebited: number;
+    totalReceived: number;
+    netOutstanding: number;
+    // 2026-07-20 — period-scoped 5-tile shape. See customerGroupPortalService
+    // getGroupLedger for the identity guarantee.
+    openingBalance: number;
+    periodDebited: number;
+    periodReceived: number;
+    closingBalance: number;
+    overdue: number;
+  };
 }
 interface ProfileMember {
   customerId: string;
@@ -145,16 +156,21 @@ export default function HqLedgerScreen() {
           />
         </Card>
 
-        {/* Totals summary */}
+        {/* 2026-07-20 — 5-tile accountant's statement.
+              Identity: Opening + Debited − Received === Closing.
+              Overdue is a subset of Closing. Tiles reconcile to
+              the visible rows even when the group has pre-range
+              entries. Rendered as 2 rows of tiles so a 4"–5"
+              phone doesn't crush each tile to unreadable width. */}
         <Card>
           <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.4, marginBottom: 12 }}>
             SUMMARY
           </Text>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
             {[
-              { label: 'Debited', value: data?.totals.totalDebited ?? 0 },
-              { label: 'Received', value: data?.totals.totalReceived ?? 0 },
-              { label: 'Net Outstanding', value: data?.totals.netOutstanding ?? 0, danger: true },
+              { label: 'Opening', value: data?.totals.openingBalance ?? 0, tint: colors.text },
+              { label: 'Debited', value: data?.totals.periodDebited ?? 0, tint: colors.text },
+              { label: 'Received', value: data?.totals.periodReceived ?? 0, tint: '#10b981' },
             ].map((s, i) => (
               <View
                 key={i}
@@ -162,18 +178,14 @@ export default function HqLedgerScreen() {
                   flex: 1,
                   backgroundColor: colors.inputBg,
                   borderRadius: 10,
-                  padding: 12,
-                  minHeight: 74,
+                  padding: 10,
+                  minHeight: 68,
                   justifyContent: 'center',
                 }}
               >
-                <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>{s.label}</Text>
+                <Text style={{ fontSize: 10, color: colors.textSecondary, marginBottom: 4 }}>{s.label}</Text>
                 <Text
-                  style={{
-                    fontSize: 15,
-                    fontWeight: '700',
-                    color: s.danger && s.value > 0 ? '#dc2626' : colors.text,
-                  }}
+                  style={{ fontSize: 13, fontWeight: '700', color: s.tint }}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   minimumFontScale={0.6}
@@ -182,6 +194,58 @@ export default function HqLedgerScreen() {
                 </Text>
               </View>
             ))}
+          </View>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: '#0f172a',
+                borderRadius: 10,
+                padding: 10,
+                minHeight: 68,
+                justifyContent: 'center',
+              }}
+            >
+              <Text style={{ fontSize: 10, color: '#cbd5e1', marginBottom: 4 }}>Closing Balance</Text>
+              <Text
+                style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+              >
+                {formatINR(data?.totals.closingBalance ?? 0)}
+              </Text>
+            </View>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: (data?.totals.overdue ?? 0) > 0 ? '#dc2626' : colors.inputBg,
+                borderRadius: 10,
+                padding: 10,
+                minHeight: 68,
+                justifyContent: 'center',
+              }}
+            >
+              <Text style={{
+                fontSize: 10,
+                color: (data?.totals.overdue ?? 0) > 0 ? 'rgba(255,255,255,0.85)' : colors.textSecondary,
+                marginBottom: 4,
+              }}>
+                Overdue
+              </Text>
+              <Text
+                style={{
+                  fontSize: 15,
+                  fontWeight: '700',
+                  color: (data?.totals.overdue ?? 0) > 0 ? '#ffffff' : colors.textMuted,
+                }}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+              >
+                {formatINR(data?.totals.overdue ?? 0)}
+              </Text>
+            </View>
           </View>
         </Card>
 

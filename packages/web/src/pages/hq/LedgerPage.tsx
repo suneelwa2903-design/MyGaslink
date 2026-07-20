@@ -40,6 +40,13 @@ interface HqLedgerResponse {
     totalDebited: number;
     totalReceived: number;
     netOutstanding: number;
+    // 2026-07-20 — period-scoped tiles. See customerGroupPortalService
+    // getGroupLedger for the identity guarantee.
+    openingBalance: number;
+    periodDebited: number;
+    periodReceived: number;
+    closingBalance: number;
+    overdue: number;
   };
 }
 
@@ -145,18 +152,36 @@ export default function HqLedgerPage() {
       ) : (
         <>
           {data?.totals && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            // 2026-07-20 — 5-tile accountant's statement layout:
+            // Opening + Debited(period) − Received(period) === Closing.
+            // Overdue is a subset of Closing. Tiles reconcile to the
+            // visible rows even when the group has pre-range entries.
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3 bg-white dark:bg-surface-900">
-                <p className="text-xs text-surface-500 dark:text-surface-400">Total Debited</p>
-                <p className="text-lg font-semibold mt-1 text-surface-900 dark:text-white">{formatCurrency(data.totals.totalDebited)}</p>
+                <p className="text-xs text-surface-500 dark:text-surface-400">Opening Balance</p>
+                <p className="text-lg font-semibold mt-1 text-surface-900 dark:text-white">{formatCurrency(data.totals.openingBalance)}</p>
               </div>
               <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3 bg-white dark:bg-surface-900">
-                <p className="text-xs text-surface-500 dark:text-surface-400">Total Received</p>
-                <p className="text-lg font-semibold mt-1 text-emerald-600 dark:text-emerald-400">{formatCurrency(data.totals.totalReceived)}</p>
+                <p className="text-xs text-surface-500 dark:text-surface-400">Debited (period)</p>
+                <p className="text-lg font-semibold mt-1 text-surface-900 dark:text-white">{formatCurrency(data.totals.periodDebited)}</p>
               </div>
               <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3 bg-white dark:bg-surface-900">
-                <p className="text-xs text-surface-500 dark:text-surface-400">Net Outstanding</p>
-                <p className="text-lg font-semibold mt-1 text-flame-600 dark:text-flame-400">{formatCurrency(data.totals.netOutstanding)}</p>
+                <p className="text-xs text-surface-500 dark:text-surface-400">Received (period)</p>
+                <p className="text-lg font-semibold mt-1 text-emerald-600 dark:text-emerald-400">{formatCurrency(data.totals.periodReceived)}</p>
+              </div>
+              <div className="rounded-lg border border-brand-500 p-3 bg-brand-500 text-white">
+                <p className="text-xs text-white/80">Closing Balance</p>
+                <p className="text-lg font-semibold mt-1">{formatCurrency(data.totals.closingBalance)}</p>
+              </div>
+              <div className={data.totals.overdue > 0
+                ? 'rounded-lg border border-flame-500 p-3 bg-flame-500 text-white'
+                : 'rounded-lg border border-surface-200 dark:border-surface-700 p-3 bg-white dark:bg-surface-900'
+              }>
+                <p className={data.totals.overdue > 0 ? 'text-xs text-white/80' : 'text-xs text-surface-500 dark:text-surface-400'}>Overdue</p>
+                <p className={data.totals.overdue > 0
+                  ? 'text-lg font-semibold mt-1'
+                  : 'text-lg font-semibold mt-1 text-surface-500 dark:text-surface-400'
+                }>{formatCurrency(data.totals.overdue)}</p>
               </div>
             </div>
           )}

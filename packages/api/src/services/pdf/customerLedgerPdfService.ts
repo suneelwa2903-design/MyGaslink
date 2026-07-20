@@ -123,17 +123,22 @@ function drawTableHeader(doc: PDFKit.PDFDocument, y: number): number {
 }
 
 /**
- * Period Summary block (2026-07-19) — renders a 4-tile band above the
- * entries table so the reader gets the "one-liner" for the period
- * without hunting through multi-page rows. Shared by BOTH the customer
- * ledger PDF and the group ledger PDF so the two surfaces read the
- * same way. Returns the new Y cursor.
+ * Period Summary block (2026-07-19 / expanded 2026-07-20) — renders
+ * a 4- or 5-tile band above the entries table so the reader gets the
+ * "one-liner" for the period without hunting through multi-page rows.
  *
- * The block is a single row of 4 equal-width tiles (Debited / Received
- * / Net Outstanding / Overdue). Net outstanding uses a distinct primary
- * fill so the "how much do I owe now" number is visually loudest. When
- * overdue is zero, that tile is muted rather than removed — a fixed
- * 4-tile shape keeps the layout stable across statements.
+ *   4-tile (customer ledger PDF): Debited · Received · Net Outstanding · Overdue
+ *   5-tile (group ledger PDF):    Opening · Debited (period) · Received (period) · Closing · Overdue
+ *
+ * The 5-tile variant reconciles to the visible rows even when the
+ * group has pre-range entries (see paymentService periodDebited /
+ * periodReceived accumulators). Identity: Opening + Debited (period)
+ * − Received (period) === Closing. Overdue is a subset of Closing.
+ *
+ * Net outstanding / Closing uses the distinct primary fill so the
+ * "how much do I owe now" number reads loudest. When overdue is
+ * zero, that tile is muted rather than removed — a fixed tile count
+ * keeps the layout stable across statements.
  */
 interface PeriodSummary {
   debited: number;
@@ -141,6 +146,10 @@ interface PeriodSummary {
   netOutstanding: number;
   overdue: number;
   tableWidth: number;
+  // 2026-07-20 — optional. When present, render 5-tile layout with
+  // Opening as the first tile and switch labels to "(period)". Absent
+  // → keeps the legacy 4-tile shape for the individual customer PDF.
+  opening?: number;
 }
 function drawPeriodSummary(
   doc: PDFKit.PDFDocument,
@@ -149,14 +158,25 @@ function drawPeriodSummary(
 ): number {
   const BLOCK_H = 42;
   const GAP = 6;
-  const tileW = Math.floor((s.tableWidth - GAP * 3) / 4);
+  const showOpening = s.opening !== undefined;
+  const tileCount = showOpening ? 5 : 4;
+  const tileW = Math.floor((s.tableWidth - GAP * (tileCount - 1)) / tileCount);
 
-  const tiles: Array<{ label: string; value: string; fill: string; textColor: string }> = [
+  const tiles: Array<{ label: string; value: string; fill: string; textColor: string }> = [];
+  if (showOpening) {
+    tiles.push({
+      label: 'Opening Balance',
+      value: formatMoney(s.opening ?? 0),
+      fill: THEME.ZEBRA,
+      textColor: THEME.TEXT,
+    });
+  }
+  tiles.push(
     { label: 'Debited (period)', value: formatMoney(s.debited), fill: THEME.ZEBRA, textColor: THEME.TEXT },
     { label: 'Received (period)', value: formatMoney(s.received), fill: THEME.ZEBRA, textColor: THEME.TEXT },
-    { label: 'Net Outstanding', value: formatMoney(s.netOutstanding), fill: THEME.PRIMARY, textColor: '#ffffff' },
+    { label: showOpening ? 'Closing Balance' : 'Net Outstanding', value: formatMoney(s.netOutstanding), fill: THEME.PRIMARY, textColor: '#ffffff' },
     { label: 'Overdue', value: formatMoney(s.overdue), fill: s.overdue > 0 ? '#dc2626' : THEME.ZEBRA, textColor: s.overdue > 0 ? '#ffffff' : THEME.MUTED },
-  ];
+  );
 
   let x = MARGIN.left;
   for (const t of tiles) {
@@ -673,7 +693,8 @@ const GROUP_COL_CHAR_CAP: number[] = [
   4,  // Pend E
   12, // Emp Cost
   14, // Total Amt    — cumulative running balance
-  12, // Received
+  14, // Received     — 2026-07-20 bumped 12→14 so "Rs. 12,852.00" (13 chars)
+      //                stops truncating to "Rs. 12,852.…" on payment rows
   13, // Due Amt
   13, // Overdue
 ];
@@ -753,29 +774,24 @@ export async function generateGroupLedgerPdf(
   doc.text(`Properties: ${memberCount}`, MARGIN.left + 250, y);
   y += 20;
 
-  // ── Overdue aggregation (2026-07-19) ──
-  // Per-customer overdue is a cumulative field on each row (see
-  // processLedgerEntries — overDueAmount grows monotonically per
-  // bucket). The group's overdue is the sum of the FINAL row's
-  // overDueAmount for each customerId, NOT the sum of every row's
-  // overDueAmount (that would multiple-count the running total). One
-  // pass through the rows keeps the last-seen value per customer.
-  const lastOverduePerCustomer = new Map<string, number>();
-  for (const r of ledger.rows) {
-    lastOverduePerCustomer.set(r.customerId, r.overDueAmount ?? 0);
-  }
-  let groupOverdue = 0;
-  for (const v of lastOverduePerCustomer.values()) groupOverdue += v;
+  // 2026-07-20 — group overdue now comes straight from
+  // ledger.totals.overdue (getGroupLedger sums summary.overdueAmount
+  // across every member's processLedgerEntries call). Removed the
+  // ad-hoc last-row-per-customer scan.
+  const groupOverdue = ledger.totals.overdue;
 
-  // ── Period Summary block (2026-07-19) ──
-  // Same 4-tile band as the individual PDF. Values come from the
-  // group's own totals (already summed across every member) so the
-  // block reads "the whole group's period at a glance".
+  // ── Period Summary block (2026-07-20) — 5 tiles ──
+  // Passes `opening` → drawPeriodSummary switches to 5-tile layout:
+  // Opening · Debited (period) · Received (period) · Closing · Overdue.
+  // Identity: opening + debited − received === closing. This
+  // reconciles to the visible rows even when the group has pre-range
+  // entries (see paymentService periodDebited / periodReceived).
   y = drawPeriodSummary(doc, y, {
-    debited: ledger.totals.totalDebited,
-    received: ledger.totals.totalReceived,
-    netOutstanding: ledger.totals.netOutstanding,
-    overdue: groupOverdue,
+    opening: ledger.totals.openingBalance,
+    debited: ledger.totals.periodDebited,
+    received: ledger.totals.periodReceived,
+    netOutstanding: ledger.totals.closingBalance,
+    overdue: ledger.totals.overdue,
     tableWidth: GROUP_TABLE_WIDTH,
   });
 
@@ -924,11 +940,14 @@ export async function generateGroupLedgerPdf(
       cells = [
         formatDate(new Date(row.orderDate)),
         property, type, narration,
-        row.fullCylsDelivered ? num(row.fullCylsDelivered) : '',
+        row.fullCylsDelivered ? num(row.fullCylsDelivered) : '0',
         formatMoney(row.amount),
-        row.emptyCylsCollected ? num(row.emptyCylsCollected) : '',
-        row.pendingEmptyCyls ? num(row.pendingEmptyCyls) : '',
-        row.emptyCylsCost ? formatMoney(row.emptyCylsCost) : '',
+        // 2026-07-20 — always show 0 for empties collected (blank was
+        // ambiguous with the "no data" case); dash for empty-cost when
+        // zero so the money column reads consistently.
+        num(row.emptyCylsCollected ?? 0),
+        num(row.pendingEmptyCyls ?? 0),
+        row.emptyCylsCost > 0 ? formatMoney(row.emptyCylsCost) : '-',
         formatMoney(row.totalAmount),
         formatMoney(row.receivedAmount),
         formatMoney(row.dueAmount),

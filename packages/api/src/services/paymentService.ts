@@ -581,20 +581,37 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
   // Mutating state shared across pre-range accumulation and in-range emission.
   let cumulativeInvoiceAmount = 0;
   let cumulativeReceivedAmount = 0;
+  // 2026-07-20 — separate period-scoped accumulators so the group
+  // ledger's Opening + Debited(period) + Received(period) + Closing
+  // tiles reconcile against the visible rows. Only incremented during
+  // Pass 2 (in-range emit). The existing cumulative variables stay
+  // cumulative-through-`to` so the customer PDF's existing 4-tile
+  // summary still reads the same (backward-compat).
+  let periodDebited = 0;
+  let periodReceived = 0;
   const pendingEmptiesPerType = new Map<string, number>();
   // Only NON-OB invoice debits enter this list — preserves overdueAmount
   // contract with computeCustomerOverdue.
   const unpaidDeliveries: { date: Date; amount: number }[] = [];
   const today = new Date();
 
-  function rebuildOverdueOnState(): number {
+  // 2026-07-20 — accepts an as-of date so per-row snapshots reflect the
+  // OVERDUE state at THAT row's moment, not at report-generation time.
+  // Previously used `today.getTime()` for every row, which made an
+  // invoice on 14-Jul (0-day credit) that was paid same-day still show
+  // overdue at its invoice row when the report was pulled on 20-Jul —
+  // confusing the HQ reader (Banjara Hills same-day scenario reported
+  // by Suneel 2026-07-20). The summary.overdueAmount at the end of
+  // the function keeps passing `today` so the CURRENT overdue reads
+  // correctly.
+  function rebuildOverdueOnState(asOfDate: Date): number {
     let overdue = 0;
     let remaining = cumulativeReceivedAmount;
     for (const ud of unpaidDeliveries) {
       if (remaining >= ud.amount) { remaining -= ud.amount; continue; }
       const unpaid = ud.amount - remaining;
       remaining = 0;
-      const days = Math.floor((today.getTime() - ud.date.getTime()) / (1000 * 60 * 60 * 24));
+      const days = Math.floor((asOfDate.getTime() - ud.date.getTime()) / (1000 * 60 * 60 * 24));
       if (days > creditDays) overdue += unpaid;
     }
     return overdue;
@@ -602,9 +619,14 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
 
   const rows: CustomerLedgerRow[] = [];
 
-  function emitRow(partial: Partial<CustomerLedgerRow> & {
-    orderDate: string; kind: CustomerLedgerRow['kind']; narration: string;
-  }): void {
+  function emitRow(
+    // 2026-07-20 — as-of date for the row's overdue snapshot. See the
+    // rebuildOverdueOnState() comment above.
+    asOfDate: Date,
+    partial: Partial<CustomerLedgerRow> & {
+      orderDate: string; kind: CustomerLedgerRow['kind']; narration: string;
+    },
+  ): void {
     const dueAmount = cumulativeInvoiceAmount - cumulativeReceivedAmount;
     rows.push({
       orderDate: partial.orderDate,
@@ -618,7 +640,7 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
       receivedAmount: Math.round((partial.receivedAmount ?? 0) * 100) / 100,
       dueAmount: Math.round(dueAmount * 100) / 100,
       creditDays,
-      overDueAmount: Math.round(rebuildOverdueOnState() * 100) / 100,
+      overDueAmount: Math.round(rebuildOverdueOnState(asOfDate) * 100) / 100,
       narration: partial.narration,
       kind: partial.kind,
     });
@@ -682,6 +704,8 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
         if (isOB) return;
 
         if (!emit) return;
+        // In-range invoice → contributes to the period debit total.
+        if (delta > 0) periodDebited += delta;
 
         // Narration: prefer the LIVE invoice number from the joined Invoice
         // row over the frozen ledger-entry text. After a reissue the entry
@@ -695,7 +719,7 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
           : (entry.narration ?? 'Invoice');
 
         if (!inv?.items?.length) {
-          emitRow({
+          emitRow(entry.entryDate, {
             orderDate: dateStr,
             cylinderType: '',
             amount: delta,
@@ -734,7 +758,7 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
         for (const [typeId, agg] of aggByType) {
           const pendingForType = pendingEmptiesPerType.get(typeId) ?? 0;
           const emptyPrice = emptyPriceMap.get(typeId) ?? 0;
-          emitRow({
+          emitRow(entry.entryDate, {
             orderDate: dateStr,
             cylinderType: agg.name,
             fullCylsDelivered: agg.delivered,
@@ -753,7 +777,9 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
         const credit = Math.abs(delta);
         cumulativeReceivedAmount += credit;
         if (!emit) return;
-        emitRow({
+        // In-range payment → contributes to the period received total.
+        periodReceived += credit;
+        emitRow(entry.entryDate, {
           orderDate: dateStr,
           receivedAmount: credit,
           narration: entry.narration ?? 'Payment received',
@@ -765,7 +791,11 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
         const credit = Math.abs(delta);
         cumulativeReceivedAmount += credit;
         if (!emit) return;
-        emitRow({
+        // Credit note reduces what's owed — treat as period received
+        // for the period-scoped tile so Opening + Debited − Received
+        // still equals Closing.
+        periodReceived += credit;
+        emitRow(entry.entryDate, {
           orderDate: dateStr,
           receivedAmount: credit,
           narration: entry.narration ?? 'Credit note',
@@ -777,7 +807,9 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
         cumulativeInvoiceAmount += delta;
         if (delta > 0) unpaidDeliveries.push({ date: entry.entryDate, amount: delta });
         if (!emit) return;
-        emitRow({
+        // Debit note adds to what's owed — counts as period debit.
+        if (delta > 0) periodDebited += delta;
+        emitRow(entry.entryDate, {
           orderDate: dateStr,
           amount: delta,
           narration: entry.narration ?? 'Debit note',
@@ -793,7 +825,11 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
           cumulativeReceivedAmount += -delta;
         }
         if (!emit) return;
-        emitRow({
+        // Positive adjustment = debit; negative = credit. Route to the
+        // matching period counter.
+        if (delta > 0) periodDebited += delta;
+        else if (delta < 0) periodReceived += -delta;
+        emitRow(entry.entryDate, {
           orderDate: dateStr,
           amount: delta >= 0 ? delta : 0,
           receivedAmount: delta < 0 ? -delta : 0,
@@ -810,7 +846,7 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
         // and no money fields — PDF + web/mobile ledger surfaces render
         // amount as "—" in a neutral colour.
         if (!emit) return;
-        emitRow({
+        emitRow(entry.entryDate, {
           orderDate: dateStr,
           amount: 0,
           receivedAmount: 0,
@@ -894,9 +930,19 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
     totalAmount: Math.round(cumulativeInvoiceAmount * 100) / 100,
     receivedAmount: Math.round(cumulativeReceivedAmount * 100) / 100,
     dueAmount: Math.round((cumulativeInvoiceAmount - cumulativeReceivedAmount) * 100) / 100,
-    overdueAmount: Math.round(rebuildOverdueOnState() * 100) / 100,
+    // Summary overdue reads AS OF TODAY — this is the current overdue
+    // for the CURRENT balance, not a historical row snapshot. Per-row
+    // overdue uses each row's own date (see rebuildOverdueOnState).
+    overdueAmount: Math.round(rebuildOverdueOnState(today) * 100) / 100,
     emptyCylsCost: Math.round(totalEmptyCylsCost * 100) / 100,
     openingBalance: showOpeningRow ? Math.round(openingBalance * 100) / 100 : 0,
+    // 2026-07-20 — period-scoped totals so the group ledger tiles
+    // (Opening + Debited + Received + Closing) reconcile to visible
+    // rows even when the customer has pre-range entries. Individual
+    // customer PDF still reads `totalAmount` / `receivedAmount` for
+    // backward compat.
+    periodDebited: Math.round(periodDebited * 100) / 100,
+    periodReceived: Math.round(periodReceived * 100) / 100,
   };
 
   return { rows, summary };

@@ -265,6 +265,10 @@ describe('G1 — getCustomerLedger reads from CustomerLedgerEntry', () => {
       overdueAmount: 0,
       emptyCylsCost: 0,
       openingBalance: 0,
+      // 2026-07-20 — period-scoped fields added for group ledger 5-tile
+      // summary. Empty-ledger case: no in-range activity → both zero.
+      periodDebited: 0,
+      periodReceived: 0,
     });
   });
 

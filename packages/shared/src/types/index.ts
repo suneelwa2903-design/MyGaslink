@@ -784,6 +784,13 @@ export interface CustomerLedgerResponse {
     // Group 1: when the caller passes range.from, this is the carry-forward
     // balance the "Opening Balance b/f" row displays.
     openingBalance?: number;
+    // 2026-07-20 — period-scoped totals so the group ledger's 5-tile
+    // summary (Opening + Debited + Received + Closing + Overdue)
+    // reconciles to the visible in-range rows. Optional for backward
+    // compat with individual customer PDF consumers that still read
+    // `totalAmount` / `receivedAmount` (cumulative-through-`to`).
+    periodDebited?: number;
+    periodReceived?: number;
   };
 }
 

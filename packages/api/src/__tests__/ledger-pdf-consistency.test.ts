@@ -52,18 +52,24 @@ describe('Ledger PDF consistency — Period Summary block', () => {
   });
 
   it('group PDF calls drawPeriodSummary with the group totals + computed overdue', () => {
+    // 2026-07-20 — group PDF switched from 4-tile
+    // (Debited/Received/NetOutstanding/Overdue) to 5-tile accountant's
+    // statement (Opening/Debited(period)/Received(period)/Closing/Overdue).
+    // All 5 fields must be passed from ledger.totals so the tiles
+    // reconcile to the visible in-range rows.
     expect(src).toMatch(
-      /drawPeriodSummary\([\s\S]{0,400}debited:\s*ledger\.totals\.totalDebited[\s\S]{0,300}netOutstanding:\s*ledger\.totals\.netOutstanding[\s\S]{0,200}overdue:\s*groupOverdue/,
+      /drawPeriodSummary\([\s\S]{0,800}opening:\s*ledger\.totals\.openingBalance[\s\S]{0,300}debited:\s*ledger\.totals\.periodDebited[\s\S]{0,200}received:\s*ledger\.totals\.periodReceived[\s\S]{0,200}netOutstanding:\s*ledger\.totals\.closingBalance[\s\S]{0,200}overdue:\s*ledger\.totals\.overdue/,
     );
   });
 
-  it('group PDF aggregates overdue as the sum of each customer\'s LAST overDueAmount, not per-row', () => {
-    // Sum-of-last-per-customer is the correct aggregation because
-    // overDueAmount is cumulative in processLedgerEntries. Summing
-    // every row would multiple-count the running total. Pin the
-    // Map-based lastOverduePerCustomer pattern in the group PDF.
-    expect(src).toContain('lastOverduePerCustomer');
-    expect(src).toMatch(/lastOverduePerCustomer\.set\(r\.customerId,\s*r\.overDueAmount/);
+  it('group PDF pulls overdue straight from ledger.totals.overdue (not row-scan)', () => {
+    // 2026-07-20 — the ad-hoc "sum of each customer's LAST
+    // overDueAmount" scan (lastOverduePerCustomer Map) was replaced
+    // by ledger.totals.overdue, which getGroupLedger populates by
+    // summing summary.overdueAmount across every member's
+    // processLedgerEntries call — same semantic, one source of truth.
+    expect(src).not.toContain('lastOverduePerCustomer');
+    expect(src).toMatch(/groupOverdue\s*=\s*ledger\.totals\.overdue/);
   });
 });
 

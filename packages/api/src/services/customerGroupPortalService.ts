@@ -765,9 +765,22 @@ export interface GroupLedgerRow {
 export interface GroupLedgerResponse {
   rows: GroupLedgerRow[];
   totals: {
+    // Legacy cumulative-through-`to` fields — kept for back-compat.
+    // 2026-07-20 confusion: these were labelled "(period)" on the PDF
+    // but actually included pre-range entries. New consumers should
+    // use openingBalance + periodDebited + periodReceived + closingBalance
+    // instead — those reconcile to the visible rows.
     totalDebited: number;
     totalReceived: number;
     netOutstanding: number;
+    // 2026-07-20 — true accountant's statement shape. Guaranteed
+    // identity: openingBalance + periodDebited − periodReceived
+    // === closingBalance. Overdue is a subset of closingBalance.
+    openingBalance: number;
+    periodDebited: number;
+    periodReceived: number;
+    closingBalance: number;
+    overdue: number;
   };
 }
 
@@ -794,7 +807,19 @@ export async function getGroupLedger(
     typeof custFilter === 'string' ? [custFilter] : custFilter.in;
 
   if (effectiveIds.length === 0) {
-    return { rows: [], totals: { totalDebited: 0, totalReceived: 0, netOutstanding: 0 } };
+    return {
+      rows: [],
+      totals: {
+        totalDebited: 0,
+        totalReceived: 0,
+        netOutstanding: 0,
+        openingBalance: 0,
+        periodDebited: 0,
+        periodReceived: 0,
+        closingBalance: 0,
+        overdue: 0,
+      },
+    };
   }
 
   // 1. All ledger entries across the effective customer set (single query).
@@ -831,6 +856,10 @@ export async function getGroupLedger(
   const mergedRows: GroupLedgerRow[] = [];
   let totalDebited = 0;
   let totalReceived = 0;
+  let openingBalance = 0;
+  let periodDebited = 0;
+  let periodReceived = 0;
+  let overdue = 0;
 
   for (const [customerId, bucketEntries] of bucketed) {
     const customer = customerMap.get(customerId);
@@ -865,6 +894,10 @@ export async function getGroupLedger(
     }
     totalDebited += summary.totalAmount;
     totalReceived += summary.receivedAmount;
+    openingBalance += summary.openingBalance ?? 0;
+    periodDebited += summary.periodDebited ?? 0;
+    periodReceived += summary.periodReceived ?? 0;
+    overdue += summary.overdueAmount ?? 0;
   }
 
   // Global chronological sort — within the same day, keep the per-
@@ -877,6 +910,15 @@ export async function getGroupLedger(
       totalDebited: Math.round(totalDebited * 100) / 100,
       totalReceived: Math.round(totalReceived * 100) / 100,
       netOutstanding: Math.round((totalDebited - totalReceived) * 100) / 100,
+      openingBalance: Math.round(openingBalance * 100) / 100,
+      periodDebited: Math.round(periodDebited * 100) / 100,
+      periodReceived: Math.round(periodReceived * 100) / 100,
+      // Closing = Opening + Period Debited − Period Received. Same as
+      // (totalDebited − totalReceived) i.e. netOutstanding — kept as
+      // an explicit field so tile-renderers don't have to reconstruct
+      // the identity themselves.
+      closingBalance: Math.round((openingBalance + periodDebited - periodReceived) * 100) / 100,
+      overdue: Math.round(overdue * 100) / 100,
     },
   };
 }
