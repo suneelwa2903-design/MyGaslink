@@ -899,6 +899,11 @@ model CustomerGroupMember {
   groupId    String   @map("group_id")
   customerId String   @map("customer_id")
   addedAt    DateTime @default(now()) @map("added_at")
+  /// Optional short alias shown in place of customer.customerName on
+  /// every HQ portal surface (ledger Property column, property picker,
+  /// payments/orders/invoices/aging/profile). Nullable — falls back to
+  /// customer.customerName. Never mutates the underlying customer.
+  displayName String? @map("display_name") @db.VarChar(80)
 
   group    CustomerGroup @relation(fields: [groupId], references: [id])
   customer Customer      @relation(fields: [customerId], references: [id])

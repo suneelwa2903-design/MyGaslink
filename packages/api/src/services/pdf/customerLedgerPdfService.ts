@@ -719,6 +719,11 @@ export async function generateGroupLedgerPdf(
   visibleCustomerIds: string[],
   groupName: string,
   range?: { from?: string; to?: string; customerId?: string },
+  // 2026-07-20: per-membership alias map. Passed through to
+  // getGroupLedger so the Property column shows the alias when set —
+  // consistent with the mobile/web ledger table and the property
+  // picker. See DisplayNameMap contract in customerGroupPortalService.
+  displayNames?: ReadonlyMap<string, string>,
 ): Promise<Buffer> {
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
@@ -729,11 +734,16 @@ export async function generateGroupLedgerPdf(
   });
   if (!distributor) throw new Error('Distributor not found');
 
-  const ledger = await getGroupLedger(distributorId, visibleCustomerIds, {
-    from: range?.from,
-    to: range?.to,
-    customerId: range?.customerId,
-  });
+  const ledger = await getGroupLedger(
+    distributorId,
+    visibleCustomerIds,
+    {
+      from: range?.from,
+      to: range?.to,
+      customerId: range?.customerId,
+    },
+    displayNames,
+  );
 
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
   const buffers: Buffer[] = [];

@@ -63,6 +63,7 @@ export interface CustomerGroupDetail {
     gstin: string | null;
     customerType: string;
     addedAt: Date;
+    displayName: string | null;
   }>;
   // Feature A follow-up (2026-07-15): a group can now hold multiple
   // active HQ logins. Previously singular `portalUser | null`.
@@ -202,6 +203,7 @@ export async function getGroup(
         gstin: m.customer.gstin,
         customerType: m.customer.customerType,
         addedAt: m.addedAt,
+        displayName: m.displayName,
       })),
     portalUsers: group.users.map((u) => ({
       id: u.id,
@@ -347,6 +349,7 @@ export async function addMember(
   distributorId: string,
   groupId: string,
   customerId: string,
+  displayName?: string | null,
 ): Promise<void> {
   const [group, customer] = await Promise.all([
     prisma.customerGroup.findFirst({
@@ -368,7 +371,40 @@ export async function addMember(
     throw new CustomerGroupError('Customer is already a member of this group', 400);
   }
   await prisma.customerGroupMember.create({
-    data: { id: randomUUID(), groupId, customerId },
+    data: {
+      id: randomUUID(),
+      groupId,
+      customerId,
+      displayName: displayName ?? null,
+    },
+  });
+}
+
+/**
+ * 2026-07-20: update per-membership displayName. Nullable value (pass
+ * null to clear the alias — readers fall back to customer.customerName).
+ * Tenant-scoped via the group; 404 if the group isn't on this tenant
+ * or the customer isn't a member of the group (no info leak).
+ */
+export async function updateMember(
+  distributorId: string,
+  groupId: string,
+  customerId: string,
+  data: { displayName: string | null },
+): Promise<void> {
+  const group = await prisma.customerGroup.findFirst({
+    where: { id: groupId, distributorId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!group) throw new CustomerGroupError('Group not found', 404);
+  const member = await prisma.customerGroupMember.findFirst({
+    where: { groupId, customerId },
+    select: { id: true },
+  });
+  if (!member) throw new CustomerGroupError('Member not found', 404);
+  await prisma.customerGroupMember.update({
+    where: { id: member.id },
+    data: { displayName: data.displayName },
   });
 }
 

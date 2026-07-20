@@ -278,6 +278,12 @@ export interface CustomerGroupMember {
   gstin: string | null;
   customerType: string;
   addedAt: string;
+  // 2026-07-20 — optional per-membership alias. HQ portal surfaces
+  // (ledger Property column, property picker, payments/orders/invoices
+  // /aging/profile) render `displayName ?? customerName`. Editable
+  // from the distributor-facing Groups tab; never mutates the
+  // underlying customer.
+  displayName: string | null;
 }
 
 export interface CustomerGroupPortalUser {

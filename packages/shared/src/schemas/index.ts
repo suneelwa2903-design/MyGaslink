@@ -200,8 +200,29 @@ export type UpdateGroupInput = z.infer<typeof updateGroupSchema>;
 
 export const addGroupMemberSchema = z.object({
   customerId: uuid,
+  // 2026-07-20 — optional short alias shown on HQ portal surfaces in
+  // place of customer.customerName. Nullable to allow clearing on
+  // update; empty string is coerced to null so the falsy fallback in
+  // readers works uniformly.
+  displayName: z
+    .string()
+    .trim()
+    .max(80, 'Display name must be 80 characters or fewer')
+    .transform((v) => (v === '' ? null : v))
+    .nullable()
+    .optional(),
 });
 export type AddGroupMemberInput = z.infer<typeof addGroupMemberSchema>;
+
+export const updateGroupMemberSchema = z.object({
+  displayName: z
+    .string()
+    .trim()
+    .max(80, 'Display name must be 80 characters or fewer')
+    .transform((v) => (v === '' ? null : v))
+    .nullable(),
+});
+export type UpdateGroupMemberInput = z.infer<typeof updateGroupMemberSchema>;
 
 export const provisionGroupPortalAccessSchema = z.object({
   email: email,

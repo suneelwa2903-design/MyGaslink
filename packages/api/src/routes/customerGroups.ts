@@ -20,6 +20,7 @@ import {
   createGroupSchema,
   updateGroupSchema,
   addGroupMemberSchema,
+  updateGroupMemberSchema,
   provisionGroupPortalAccessSchema,
 } from '@gaslink/shared';
 import * as service from '../services/customerGroupService.js';
@@ -129,8 +130,33 @@ router.post(
         req.user!.distributorId!,
         param(req.params.groupId),
         req.body.customerId,
+        req.body.displayName ?? null,
       );
       return sendCreated(res, { added: true });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  },
+);
+
+// PATCH /api/customer-groups/:groupId/members/:customerId — update alias
+// 2026-07-20: distributor-facing edit for the per-membership displayName
+// shown on HQ portal surfaces. Same role set as the add path.
+router.patch(
+  '/:groupId/members/:customerId',
+  requireRole(...ALLOWED_ROLES),
+  validate(updateGroupMemberSchema),
+  auditLog('update_member', 'customer_group'),
+  async (req, res) => {
+    try {
+      await service.updateMember(
+        req.user!.distributorId!,
+        param(req.params.groupId),
+        param(req.params.customerId),
+        { displayName: req.body.displayName },
+      );
+      return sendSuccess(res, { updated: true });
     } catch (err: unknown) {
       const e = err as ServiceError;
       return sendError(res, e.message, e.statusCode || 500);

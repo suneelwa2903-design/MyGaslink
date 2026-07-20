@@ -14,7 +14,7 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { HiOutlineTrash, HiOutlineUser } from 'react-icons/hi2';
-import { apiGet, apiPost, apiDelete, getErrorMessage } from '@/lib/api';
+import { apiGet, apiPost, apiPatch, apiDelete, getErrorMessage } from '@/lib/api';
 import { Button, Input, Modal, Badge, Loader, CustomerSearchInput } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -44,6 +44,9 @@ interface GroupDetail {
     gstin: string | null;
     customerType: string;
     addedAt: string;
+    // 2026-07-20: optional short alias shown on HQ portal surfaces in
+    // place of customerName. Null → HQ users see the real customerName.
+    displayName: string | null;
   }>;
   portalUsers: PortalUser[];
 }
@@ -112,15 +115,22 @@ export function GroupModal({ groupId, onClose }: { groupId: string; onClose: () 
 
 function MembersTab({ group, onChanged }: { group: GroupDetail; onChanged: () => void }) {
   const [pendingCustomerId, setPendingCustomerId] = useState('');
+  // 2026-07-20: optional alias at add-time — the primary UX for
+  // fitting long customer names into the group ledger Property column.
+  const [pendingDisplayName, setPendingDisplayName] = useState('');
   const [adding, setAdding] = useState(false);
 
   const handleAdd = async () => {
     if (!pendingCustomerId) return;
     setAdding(true);
     try {
-      await apiPost(`/customer-groups/${group.id}/members`, { customerId: pendingCustomerId });
+      await apiPost(`/customer-groups/${group.id}/members`, {
+        customerId: pendingCustomerId,
+        displayName: pendingDisplayName.trim() || undefined,
+      });
       toast.success('Customer added to group');
       setPendingCustomerId('');
+      setPendingDisplayName('');
       onChanged();
     } catch (err) {
       toast.error(getErrorMessage(err));
@@ -142,19 +152,27 @@ function MembersTab({ group, onChanged }: { group: GroupDetail; onChanged: () =>
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end gap-2">
-        <div className="flex-1">
-          <CustomerSearchInput
-            label="Add a property"
-            value={pendingCustomerId}
-            onChange={(id) => setPendingCustomerId(id)}
-            placeholder="Search customer to add..."
-          />
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr,240px,auto] gap-2 items-end">
+        <CustomerSearchInput
+          label="Add a property"
+          value={pendingCustomerId}
+          onChange={(id) => setPendingCustomerId(id)}
+          placeholder="Search customer to add..."
+        />
+        <Input
+          label="Display name (optional)"
+          value={pendingDisplayName}
+          onChange={(e) => setPendingDisplayName(e.target.value)}
+          placeholder="e.g. Axolotl"
+          maxLength={80}
+        />
         <Button onClick={handleAdd} loading={adding} disabled={!pendingCustomerId}>
           Add
         </Button>
       </div>
+      <p className="text-xs text-surface-500 dark:text-surface-400 -mt-2">
+        The display name appears in the HQ portal Property column (ledger, payments, orders, invoices) in place of the full customer name — the underlying customer record is untouched.
+      </p>
 
       {group.members.length === 0 ? (
         <p className="text-sm text-surface-500 dark:text-surface-400 py-4 text-center">
@@ -166,6 +184,7 @@ function MembersTab({ group, onChanged }: { group: GroupDetail; onChanged: () =>
             <thead>
               <tr>
                 <th>Property</th>
+                <th>Display name (HQ)</th>
                 <th>GSTIN</th>
                 <th>Type</th>
                 <th></th>
@@ -181,6 +200,14 @@ function MembersTab({ group, onChanged }: { group: GroupDetail; onChanged: () =>
                         <p className="text-xs text-surface-500 dark:text-surface-400">{m.businessName}</p>
                       )}
                     </div>
+                  </td>
+                  <td>
+                    <InlineDisplayNameEditor
+                      groupId={group.id}
+                      customerId={m.customerId}
+                      value={m.displayName}
+                      onSaved={onChanged}
+                    />
                   </td>
                   <td>
                     <span className="text-sm text-surface-600 dark:text-surface-400">{m.gstin ?? '—'}</span>
@@ -202,6 +229,58 @@ function MembersTab({ group, onChanged }: { group: GroupDetail; onChanged: () =>
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 2026-07-20: inline per-row editor for a member's HQ display alias.
+ * Saves on Enter / blur when dirty; clears back to fallback on empty
+ * (PATCH sends null so readers use customer.customerName again).
+ */
+function InlineDisplayNameEditor({
+  groupId,
+  customerId,
+  value,
+  onSaved,
+}: {
+  groupId: string;
+  customerId: string;
+  value: string | null;
+  onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState(value ?? '');
+  const [saving, setSaving] = useState(false);
+  const dirty = (value ?? '') !== draft.trim();
+
+  const save = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    try {
+      await apiPatch(`/customer-groups/${groupId}/members/${customerId}`, {
+        displayName: draft.trim() || null,
+      });
+      toast.success('Alias updated');
+      onSaved();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+      setDraft(value ?? '');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <input
+      type="text"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } }}
+      disabled={saving}
+      maxLength={80}
+      placeholder="—"
+      className="w-full max-w-[220px] rounded-md border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm text-surface-900 dark:text-white focus:border-brand-500 focus:outline-none disabled:opacity-50"
+    />
   );
 }
 

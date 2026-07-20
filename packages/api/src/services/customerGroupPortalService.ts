@@ -168,10 +168,36 @@ function resolveDashboardRange(filters?: GroupDashboardFilters): { start: Date; 
   return { start, end: now, fromIso: iso(start), toIso: iso(now) };
 }
 
+/**
+ * 2026-07-20: `displayNames` map (customerId → alias) is threaded into
+ * every LIST surface (Property column context — dashboard properties,
+ * ledger rows, payments/orders/invoices lists, profile picker) so the
+ * HQ user sees a consistent short label everywhere. Detail views
+ * (getGroupOrderById, getGroupInvoiceById) are intentionally EXCLUDED
+ * — an invoice/order detail is a legal document and must show the
+ * canonical customer name.
+ *
+ * Aliases originate from CustomerGroupMember.displayName and are
+ * populated by requireGroupAccess middleware. When the map is
+ * undefined or misses a customerId, callers fall back to
+ * `customer.customerName` — every reader uses `map?.get(cid) ?? name`.
+ */
+export type DisplayNameMap = ReadonlyMap<string, string> | undefined;
+
+/** Small helper — keeps the fallback identical everywhere. */
+function resolveDisplayName(
+  map: DisplayNameMap,
+  customerId: string,
+  fallback: string,
+): string {
+  return map?.get(customerId) ?? fallback;
+}
+
 export async function getDashboard(
   distributorId: string,
   visibleCustomerIds: string[],
   filters?: GroupDashboardFilters,
+  displayNames?: DisplayNameMap,
 ): Promise<GroupDashboardResponse> {
   const range = resolveDashboardRange(filters);
   const emptyResponse: GroupDashboardResponse = {
@@ -376,7 +402,7 @@ export async function getDashboard(
 
   const properties = customers.map((c) => ({
     customerId: c.id,
-    customerName: c.customerName,
+    customerName: resolveDisplayName(displayNames, c.id, c.customerName),
     businessName: c.businessName,
     gstin: c.gstin,
     outstanding: outstandingMap.get(c.id) ?? 0,
@@ -498,6 +524,7 @@ export async function getGroupOrders(
   distributorId: string,
   visibleCustomerIds: string[],
   filters: GroupOrdersFilters,
+  displayNames?: DisplayNameMap,
 ) {
   const custFilter = resolveCustomerIdFilter(visibleCustomerIds, filters.customerId);
   const where: Prisma.OrderWhereInput = {
@@ -551,7 +578,19 @@ export async function getGroupOrders(
     prisma.order.count({ where }),
   ]);
   return {
-    data: orders.map((o) => mapOrder(o)),
+    // Post-map alias: mapOrder is shared with other surfaces (customer
+    // portal, admin) — we overwrite only on the group-portal path so
+    // the underlying mapper stays unchanged.
+    data: orders.map((o) => {
+      const mapped = mapOrder(o) as Record<string, unknown> | null;
+      if (mapped && o.customerId && displayNames?.has(o.customerId)) {
+        const alias = displayNames.get(o.customerId)!;
+        mapped.customerName = alias;
+        const nested = mapped.customer as Record<string, unknown> | undefined;
+        if (nested) nested.customerName = alias;
+      }
+      return mapped;
+    }),
     meta: {
       page,
       pageSize,
@@ -565,6 +604,10 @@ export async function getGroupOrders(
  * Single-order detail for the HQ portal. Verifies the order belongs to
  * a visible customer before returning — cross-group access blocked
  * with 404 (no info leak — same shape as tenant-isolation).
+ *
+ * 2026-07-20 note: intentionally NOT aliased — an order detail is a
+ * legal-adjacent view (customer name, address, GSTIN) and must show
+ * the canonical customer record.
  */
 export async function getGroupOrderById(
   distributorId: string,
@@ -627,6 +670,7 @@ export async function getGroupInvoices(
   distributorId: string,
   visibleCustomerIds: string[],
   filters: GroupInvoicesFilters,
+  displayNames?: DisplayNameMap,
 ) {
   const custFilter = resolveCustomerIdFilter(visibleCustomerIds, filters.customerId);
   const where: Prisma.InvoiceWhereInput = {
@@ -676,7 +720,17 @@ export async function getGroupInvoices(
     prisma.invoice.count({ where }),
   ]);
   return {
-    data: invoices.map((i) => mapInvoice(i)),
+    // Post-map alias for the LIST view Property column. Detail view
+    // (getGroupInvoiceById below) keeps the legal name.
+    data: invoices.map((i) => {
+      const mapped = mapInvoice(i) as Record<string, unknown> | null;
+      if (mapped && i.customerId && displayNames?.has(i.customerId)) {
+        const alias = displayNames.get(i.customerId)!;
+        const nested = mapped.customer as Record<string, unknown> | undefined;
+        if (nested) nested.customerName = alias;
+      }
+      return mapped;
+    }),
     meta: {
       page,
       pageSize,
@@ -691,6 +745,9 @@ export async function getGroupInvoices(
  * sellerGstin (the CA reconciliation gap this feature fills). Reuses
  * the existing customerPortal mapper so the wire shape stays
  * consistent between single-customer and HQ-group callers.
+ *
+ * 2026-07-20 note: intentionally NOT aliased — an invoice is a legal
+ * document; the bill-to name must be the canonical customer record.
  */
 export async function getGroupInvoiceById(
   distributorId: string,
@@ -801,6 +858,7 @@ export async function getGroupLedger(
   distributorId: string,
   visibleCustomerIds: string[],
   filters: GroupLedgerFilters,
+  displayNames?: DisplayNameMap,
 ): Promise<GroupLedgerResponse> {
   const custFilter = resolveCustomerIdFilter(visibleCustomerIds, filters.customerId);
   const effectiveIds =
@@ -872,10 +930,11 @@ export async function getGroupLedger(
       range: { from: filters.from, to: filters.to },
     };
     const { rows, summary } = processLedgerEntries(input);
+    const effectiveName = resolveDisplayName(displayNames, customerId, customer.customerName);
     for (const r of rows) {
       mergedRows.push({
         customerId,
-        customerName: customer.customerName,
+        customerName: effectiveName,
         orderDate: r.orderDate,
         cylinderType: r.cylinderType,
         fullCylsDelivered: r.fullCylsDelivered,
@@ -937,6 +996,7 @@ export async function getGroupPayments(
   distributorId: string,
   visibleCustomerIds: string[],
   filters: GroupPaymentsFilters,
+  displayNames?: DisplayNameMap,
 ) {
   const custFilter = resolveCustomerIdFilter(visibleCustomerIds, filters.customerId);
   const where: Prisma.PaymentTransactionWhereInput = {
@@ -976,7 +1036,11 @@ export async function getGroupPayments(
     data: payments.map((p) => ({
       paymentId: p.id,
       customerId: p.customerId,
-      customerName: p.customer?.customerName ?? 'Deleted customer',
+      customerName: resolveDisplayName(
+        displayNames,
+        p.customerId ?? '',
+        p.customer?.customerName ?? 'Deleted customer',
+      ),
       businessName: p.customer?.businessName ?? null,
       amount: toNum(p.amount),
       paymentMethod: p.paymentMethod,
@@ -1047,6 +1111,9 @@ export async function getProfile(
     where: { id: groupId, distributorId, deletedAt: null },
     include: {
       members: {
+        // 2026-07-20: pull displayName so the property picker labels
+        // match the ledger Property column (single source of truth for
+        // "what the HQ user sees for this property").
         include: {
           customer: {
             select: {
@@ -1077,7 +1144,7 @@ export async function getProfile(
       .filter((m) => !m.customer.deletedAt)
       .map((m) => ({
         customerId: m.customer.id,
-        customerName: m.customer.customerName,
+        customerName: m.displayName ?? m.customer.customerName,
         businessName: m.customer.businessName,
         gstin: m.customer.gstin,
         customerType: m.customer.customerType,

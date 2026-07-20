@@ -66,6 +66,7 @@ router.get('/dashboard', async (req, res) => {
       req.user!.distributorId!,
       req.visibleCustomerIds!,
       filters,
+      req.memberDisplayNames,
     );
     return sendSuccess(res, data);
   } catch (err: unknown) {
@@ -89,6 +90,7 @@ router.get('/orders', async (req, res) => {
       req.user!.distributorId!,
       req.visibleCustomerIds!,
       filters,
+      req.memberDisplayNames,
     );
     return sendSuccess(res, { orders: result.data, meta: result.meta }, 200, result.meta);
   } catch (err: unknown) {
@@ -127,6 +129,7 @@ router.get('/invoices', async (req, res) => {
       req.user!.distributorId!,
       req.visibleCustomerIds!,
       filters,
+      req.memberDisplayNames,
     );
     return sendSuccess(res, { invoices: result.data, meta: result.meta }, 200, result.meta);
   } catch (err: unknown) {
@@ -187,6 +190,7 @@ router.get('/ledger', async (req, res) => {
         from: req.query.from as string | undefined,
         to: req.query.to as string | undefined,
       },
+      req.memberDisplayNames,
     );
     return sendSuccess(res, data);
   } catch (err: unknown) {
@@ -214,6 +218,7 @@ router.get('/ledger/pdf', async (req, res) => {
         to: req.query.to as string | undefined,
         customerId: req.query.customerId as string | undefined,
       },
+      req.memberDisplayNames,
     );
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="group-statement.pdf"`);
@@ -237,6 +242,7 @@ router.get('/payments', async (req, res) => {
         page: req.query.page ? Number(req.query.page) : undefined,
         pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
       },
+      req.memberDisplayNames,
     );
     return sendSuccess(res, { payments: result.data, meta: result.meta }, 200, result.meta);
   } catch (err: unknown) {

@@ -30,6 +30,11 @@ declare global {
       // customerId: { in: visibleCustomerIds } — never one without the
       // other (anti-pattern #13 discipline extended to groups).
       visibleCustomerIds?: string[];
+      // 2026-07-20: per-membership display-name overrides, keyed by
+      // customerId. HQ portal readers use `map.get(cid) ?? customerName`
+      // so admins can alias long property names to fit table cells
+      // without renaming the underlying customer.
+      memberDisplayNames?: Map<string, string>;
     }
   }
 }
@@ -321,8 +326,15 @@ export async function requireGroupAccess(req: Request, res: Response, next: Next
   if (!group) {
     return sendForbidden(res, 'Group not found or access denied');
   }
-  req.visibleCustomerIds = group.members
-    .filter((m) => !m.customer.deletedAt)
-    .map((m) => m.customerId);
+  const liveMembers = group.members.filter((m) => !m.customer.deletedAt);
+  req.visibleCustomerIds = liveMembers.map((m) => m.customerId);
+  // 2026-07-20: freeze the alias map alongside the id list so every
+  // portal reader has a single-source-of-truth override without an
+  // extra DB round-trip per request.
+  req.memberDisplayNames = new Map(
+    liveMembers
+      .filter((m) => m.displayName)
+      .map((m) => [m.customerId, m.displayName as string]),
+  );
   next();
 }
