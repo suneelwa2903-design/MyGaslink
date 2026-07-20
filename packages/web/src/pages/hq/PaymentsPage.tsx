@@ -5,7 +5,7 @@
  * property (member customer) and the invoices each payment was
  * allocated against.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { apiGet } from '@/lib/api';
@@ -37,6 +37,15 @@ function formatCurrency(n: number) {
   }).format(n);
 }
 
+// Human-readable label for the raw enum values coming from the API
+// (payment_method column). Same mapping the mobile UI uses.
+function methodLabel(m: string): string {
+  return m
+    .split('_')
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ''))
+    .join(' ');
+}
+
 export default function HqPaymentsPage() {
   const [page, setPage] = useState(1);
   const [customerId, setCustomerId] = useState('');
@@ -59,6 +68,29 @@ export default function HqPaymentsPage() {
       { page, pageSize: 25, customerId: customerId || undefined, from, to },
     ),
   });
+
+  // Bottom summary — total count + amount + per-method breakdown.
+  // Scoped to the CURRENT PAGE of payments (matches what the user
+  // sees on the table); the paginated total is shown separately in
+  // the page footer so the two never disagree.
+  const payments = data?.payments ?? [];
+  const summary = useMemo(() => {
+    const total = payments.reduce((s, p) => s + p.amount, 0);
+    const byMethod = new Map<string, { count: number; amount: number }>();
+    for (const p of payments) {
+      const cur = byMethod.get(p.paymentMethod) ?? { count: 0, amount: 0 };
+      cur.count += 1;
+      cur.amount += p.amount;
+      byMethod.set(p.paymentMethod, cur);
+    }
+    return {
+      total,
+      count: payments.length,
+      byMethod: Array.from(byMethod.entries())
+        .map(([method, v]) => ({ method, ...v }))
+        .sort((a, b) => b.amount - a.amount),
+    };
+  }, [payments]);
 
   return (
     <div className="space-y-4">
@@ -174,6 +206,57 @@ export default function HqPaymentsPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* 2026-07-20 — bottom summary band. Shows count + total for
+          the payments currently visible on-screen (this page) plus a
+          per-method breakdown. Kept separate from the pagination
+          footer above so the summary numbers always reflect exactly
+          what the user sees, not the full paginated set. */}
+      {!isLoading && payments.length > 0 && (
+        <div className="card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-surface-900 dark:text-white">Summary</h3>
+            <span className="text-xs text-surface-500 dark:text-surface-400">
+              {customerId ? 'Filtered by property · ' : ''}{from} to {to}
+              {data?.meta && data.meta.totalPages > 1 ? ` · page ${data.meta.page} of ${data.meta.totalPages}` : ''}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+              <p className="text-xs text-surface-500 dark:text-surface-400">Payments on this page</p>
+              <p className="text-lg font-semibold mt-1 text-surface-900 dark:text-white">{summary.count}</p>
+            </div>
+            <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+              <p className="text-xs text-surface-500 dark:text-surface-400">Total collected</p>
+              <p className="text-lg font-semibold mt-1 text-emerald-600 dark:text-emerald-400">{formatCurrency(summary.total)}</p>
+            </div>
+            <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+              <p className="text-xs text-surface-500 dark:text-surface-400">Methods used</p>
+              <p className="text-lg font-semibold mt-1 text-surface-900 dark:text-white">{summary.byMethod.length}</p>
+            </div>
+          </div>
+          {summary.byMethod.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-surface-200 dark:border-surface-700">
+              <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400 mb-2">By method</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                {summary.byMethod.map((m) => (
+                  <div key={m.method} className="flex items-center justify-between rounded-md bg-surface-50 dark:bg-surface-800/40 px-3 py-2">
+                    <span className="text-sm text-surface-700 dark:text-surface-300">
+                      {methodLabel(m.method)} <span className="text-xs text-surface-500 dark:text-surface-400">({m.count})</span>
+                    </span>
+                    <span className="text-sm font-medium text-surface-900 dark:text-white tabular-nums">
+                      {formatCurrency(m.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-surface-500 dark:text-surface-400 mt-3 italic">
+            Numbers reflect cleared payments only. Applied-to breakdown per row above shows which invoices each payment settled.
+          </p>
         </div>
       )}
     </div>

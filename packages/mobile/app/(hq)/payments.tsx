@@ -84,6 +84,24 @@ export default function HqPaymentsScreen() {
     [payments],
   );
 
+  // 2026-07-20 — per-method rollup for the bottom summary band. Same
+  // shape as the web page's Summary card so the two surfaces read
+  // identically. Scoped to the CURRENT PAGE of payments (matches
+  // what the user sees on the screen); the paginated grand total
+  // lives in the page footer.
+  const methodBreakdown = useMemo(() => {
+    const byMethod = new Map<string, { count: number; amount: number }>();
+    for (const p of payments) {
+      const cur = byMethod.get(p.paymentMethod) ?? { count: 0, amount: 0 };
+      cur.count += 1;
+      cur.amount += p.amount ?? 0;
+      byMethod.set(p.paymentMethod, cur);
+    }
+    return Array.from(byMethod.entries())
+      .map(([method, v]) => ({ method, ...v }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [payments]);
+
   if (isLoading && !data) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -203,6 +221,78 @@ export default function HqPaymentsScreen() {
               <Text style={{ color: colors.text, fontWeight: '600' }}>Next</Text>
             </TouchableOpacity>
           </View>
+        )}
+
+        {/* 2026-07-20 — bottom summary band. Total + per-method
+            breakdown for the current on-screen page. Mirrors the web
+            HQ Payments summary card so the two surfaces read the same.
+            Only rendered when there is at least one payment. */}
+        {payments.length > 0 && (
+          <Card>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>Summary</Text>
+              <Text style={{ fontSize: 10, color: colors.textMuted }}>
+                {customerFilter ? 'Filtered · ' : ''}page {page} of {totalPages}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.cardBorder }}>
+                <Text style={{ fontSize: 10, color: colors.textSecondary, letterSpacing: 0.4 }}>PAYMENTS</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 2 }}>
+                  {payments.length}
+                </Text>
+              </View>
+              <View style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.cardBorder }}>
+                <Text style={{ fontSize: 10, color: colors.textSecondary, letterSpacing: 0.4 }}>TOTAL COLLECTED</Text>
+                <Text
+                  style={{ fontSize: 16, fontWeight: '700', color: '#059669', marginTop: 2 }}
+                  adjustsFontSizeToFit
+                  numberOfLines={1}
+                  minimumFontScale={0.7}
+                >
+                  {formatINR(groupTotal)}
+                </Text>
+              </View>
+            </View>
+
+            {methodBreakdown.length > 0 && (
+              <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.divider }}>
+                <Text style={{ fontSize: 10, color: colors.textSecondary, letterSpacing: 0.4, marginBottom: 6 }}>
+                  BY METHOD
+                </Text>
+                {methodBreakdown.map((m) => (
+                  <View
+                    key={m.method}
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      paddingVertical: 6,
+                    }}
+                  >
+                    <Text style={{ color: colors.text, fontSize: 13 }}>
+                      {methodLabel(m.method)}
+                      <Text style={{ color: colors.textMuted, fontSize: 11 }}> ({m.count})</Text>
+                    </Text>
+                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
+                      {formatINR(m.amount)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            <Text
+              style={{
+                fontSize: 11,
+                color: colors.textMuted,
+                fontStyle: 'italic',
+                marginTop: 10,
+              }}
+            >
+              Numbers reflect cleared payments on this page. Applied-to per row above shows which invoices each payment settled.
+            </Text>
+          </Card>
         )}
 
         <View style={{ height: 8 }} />
