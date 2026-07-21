@@ -1253,6 +1253,11 @@ function UsersTab() {
     { value: UserRole.DISTRIBUTOR_ADMIN, label: 'Distributor Admin' },
     { value: UserRole.FINANCE, label: 'Finance' },
     { value: UserRole.INVENTORY, label: 'Inventory' },
+    // 2026-07-21: mini-operator (reseller) logins are a super-admin
+    // provisioning concern — the filter is visible for everyone (harmless
+    // to LIST them across the fleet) but the Create form only offers it
+    // when the caller is super_admin.
+    { value: UserRole.MINI_OPERATOR_ADMIN, label: 'Mini-Operator Admin' },
     // Drivers are staff and show by default; only the customer role lives
     // behind the includePortal opt-in.
     { value: UserRole.DRIVER, label: 'Driver' },
@@ -1467,6 +1472,15 @@ type ContactForPicker = { contactId: string; name: string; phone: string | null;
 function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => void; user: User | null }) {
   const queryClient = useQueryClient();
   const isEdit = !!user;
+  // 2026-07-21: gate the Mini-Operator Admin role to super-admin only.
+  // The backend forces distributor_admin's Add-User calls to use their
+  // OWN distributorId — but a mini-operator is by definition a separate
+  // (accountType='mini_operator') tenant, so a distributor_admin creating
+  // one would silently bind it to the wrong tenant. Only super-admin
+  // (who can switch tenant context via the X-Distributor-Id selector)
+  // should see this option.
+  const { user: currentUser } = useAuthStore();
+  const isSuperAdmin = currentUser?.role === UserRole.SUPER_ADMIN;
   const [createdCreds, setCreatedCreds] = useState<CreatedCreds | null>(null);
   // Group B Part 3 — track the picked driver/customer ID locally so we can
   // (a) push it back into the mutation payload as `driverId` / `customerId`
@@ -1641,6 +1655,11 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
 
   // Role dropdown — empty default forces the admin to pick before the rest
   // of the form shows. The driver/customer pickers gate on this value.
+  // 2026-07-21: Mini-Operator Admin (reseller) surfaces for super-admin
+  // only (see isSuperAdmin comment above). Requires super-admin to have
+  // switched X-Distributor-Id to the mini-operator tenant first — the
+  // API will otherwise attach the user to the currently-selected
+  // distributor's context.
   const roleOptions = [
     { value: '', label: 'Select role…' },
     { value: UserRole.DISTRIBUTOR_ADMIN, label: 'Distributor Admin' },
@@ -1648,6 +1667,7 @@ function UserFormModal({ open, onClose, user }: { open: boolean; onClose: () => 
     { value: UserRole.INVENTORY, label: 'Inventory' },
     { value: UserRole.DRIVER, label: 'Driver' },
     { value: UserRole.CUSTOMER, label: 'Customer' },
+    ...(isSuperAdmin ? [{ value: UserRole.MINI_OPERATOR_ADMIN, label: 'Mini-Operator Admin (Reseller)' }] : []),
   ];
 
   // Credentials handoff view — replaces the form on successful create.
