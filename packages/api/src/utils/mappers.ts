@@ -95,6 +95,10 @@ interface CustomerInput extends HasId {
   contacts?: HasId[];
   cylinderDiscounts?: ChildWithCylinderType[];
   inventoryBalances?: ChildWithCylinderType[];
+  // 2026-07-21 Mini-Operator opening state: per-customer cylinder-type
+  // allowlist. Order form / delivery picker filters to these ids when
+  // the array is non-empty.
+  allowedCylinderTypes?: Array<{ cylinderTypeId: string; cylinderType?: { typeName: string } | null }>;
 }
 
 export function mapCustomer(c: CustomerInput | null | undefined): MappedRecord | null | undefined {
@@ -119,6 +123,16 @@ export function mapCustomer(c: CustomerInput | null | undefined): MappedRecord |
       if (b.cylinderType) m.cylinderTypeName = b.cylinderType.typeName;
       return m;
     });
+  }
+  // 2026-07-21: flatten allowedCylinderTypes → allowedCylinderTypeIds so
+  // the web/mobile order form can filter without walking the array.
+  // Consumers that need the human-readable typeName can still read the
+  // full array under `allowedCylinderTypes` (kept alongside).
+  if (Array.isArray(mapped.allowedCylinderTypes)) {
+    mapped.allowedCylinderTypeIds = (mapped.allowedCylinderTypes as Array<{ cylinderTypeId: string }>)
+      .map((a) => a.cylinderTypeId);
+  } else {
+    mapped.allowedCylinderTypeIds = [];
   }
   return mapped;
 }

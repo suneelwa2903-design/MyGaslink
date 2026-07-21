@@ -423,6 +423,19 @@ function CustomerFormModal({
     role === UserRole.DISTRIBUTOR_ADMIN ||
     role === UserRole.SUPER_ADMIN ||
     role === UserRole.FINANCE;
+  // 2026-07-21 Mini-Operator opening state seed: only render the
+  // Opening Setup section on New Customer (never on Edit) for mini-op
+  // admins. Backend gates independently (distributor.accountType).
+  const isMiniOpAdmin = role === UserRole.MINI_OPERATOR_ADMIN;
+  const showOpeningSetup = isMiniOpAdmin && !isEdit;
+  const [openingAllowedIds, setOpeningAllowedIds] = useState<Set<string>>(new Set());
+  const [openingEmpties, setOpeningEmpties] = useState<Record<string, number>>({});
+  const [openingBalanceAmount, setOpeningBalanceAmount] = useState<string>('');
+  const [openingBalanceAsOfDate, setOpeningBalanceAsOfDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [openingBalanceNotes, setOpeningBalanceNotes] = useState<string>('');
 
   // Account status is edit-only. The PUT /customers/:id endpoint accepts it
   // (see updateCustomerSchema in @gaslink/shared). We hold it outside RHF
@@ -598,7 +611,35 @@ function CustomerFormModal({
             // status guard.
             ...(canEditStatus && accountStatus !== customer.status ? { status: accountStatus } : {}),
           })
-        : apiPost<{ warnings?: string[] }>('/customers', data),
+        : apiPost<{ warnings?: string[]; seeded?: { openingInvoiceId: string | null } }>('/customers', {
+            ...data,
+            // 2026-07-21 Mini-Operator opening state seed: only attach
+            // when we're actually a mini-op admin AND the operator
+            // filled at least one axis (allowlist / empties / OB
+            // amount). Absent means "no seed" — backend fast-paths to
+            // the same createCustomer path as before.
+            ...(showOpeningSetup && (
+              openingAllowedIds.size > 0
+              || Object.values(openingEmpties).some((n) => n > 0)
+              || (Number(openingBalanceAmount) > 0)
+            )
+              ? {
+                  openingState: {
+                    allowedCylinderTypeIds: Array.from(openingAllowedIds),
+                    empties: Object.entries(openingEmpties)
+                      .filter(([, qty]) => qty > 0)
+                      .map(([cylinderTypeId, qty]) => ({ cylinderTypeId, qty })),
+                    openingBalance: Number(openingBalanceAmount) > 0 && openingBalanceAsOfDate
+                      ? {
+                          amount: Number(openingBalanceAmount),
+                          asOfDate: openingBalanceAsOfDate,
+                          notes: openingBalanceNotes.trim() || undefined,
+                        }
+                      : undefined,
+                  },
+                }
+              : {}),
+          }),
     onSuccess: (response) => {
       const warnings = response?.warnings ?? [];
       toast.success(isEdit ? 'Customer updated' : 'Customer created');
@@ -945,6 +986,116 @@ function CustomerFormModal({
             </div>
           ))}
         </div>
+
+        {/* 2026-07-21 Opening Setup (Mini-Operator only, New Customer only) */}
+        {showOpeningSetup && (
+          <div className="rounded-lg border border-brand-200 dark:border-brand-500/40 bg-brand-50/40 dark:bg-brand-500/5 p-4">
+            <h3 className="text-sm font-semibold text-brand-700 dark:text-brand-300 mb-1">Opening Setup (Reseller)</h3>
+            <p className="text-xs text-surface-500 dark:text-surface-400 mb-3">
+              Seed this customer's starting state so the ledger reconciles from day one. Every axis is optional — fill only what applies.
+            </p>
+
+            {/* 1. Allowed cylinder types (allowlist) */}
+            <div className="mb-4">
+              <p className="text-xs font-medium text-surface-700 dark:text-surface-300 mb-2">Cylinder types this customer buys</p>
+              {cylinderTypes.length === 0 ? (
+                <p className="text-xs text-surface-500 italic">Add cylinder types in Settings first.</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {cylinderTypes.map((ct) => (
+                    <label key={ct.cylinderTypeId} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-surface-300"
+                        checked={openingAllowedIds.has(ct.cylinderTypeId)}
+                        onChange={(e) => setOpeningAllowedIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(ct.cylinderTypeId);
+                          else next.delete(ct.cylinderTypeId);
+                          return next;
+                        })}
+                      />
+                      <span>{ct.typeName}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-surface-500 mt-1">
+                Order form will only show these types for this customer. Leave all unchecked to allow every type.
+              </p>
+            </div>
+
+            {/* 2. Empties currently held */}
+            {openingAllowedIds.size > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-medium text-surface-700 dark:text-surface-300 mb-2">Empty cylinders currently held by this customer</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {Array.from(openingAllowedIds).map((typeId) => {
+                    const ct = cylinderTypes.find((c) => c.cylinderTypeId === typeId);
+                    if (!ct) return null;
+                    return (
+                      <div key={typeId} className="flex items-center gap-2">
+                        <label className="text-sm text-surface-700 dark:text-surface-300 min-w-[100px]">{ct.typeName}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100000}
+                          value={openingEmpties[typeId] ?? 0}
+                          onChange={(e) => setOpeningEmpties((prev) => ({
+                            ...prev,
+                            [typeId]: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                          }))}
+                          className="w-24 rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 3. Opening balance (₹) */}
+            <div>
+              <p className="text-xs font-medium text-surface-700 dark:text-surface-300 mb-2">Opening balance (₹ they already owe)</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs text-surface-500">Amount</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="e.g. 8500"
+                    value={openingBalanceAmount}
+                    onChange={(e) => setOpeningBalanceAmount(e.target.value)}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-surface-500">As of date</label>
+                  <input
+                    type="date"
+                    value={openingBalanceAsOfDate}
+                    onChange={(e) => setOpeningBalanceAsOfDate(e.target.value)}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-surface-500">Notes (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. from paper ledger"
+                    value={openingBalanceNotes}
+                    onChange={(e) => setOpeningBalanceNotes(e.target.value)}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-surface-500 mt-1">
+                Ledger will show &quot;Opening Balance b/f&quot; as the first row. Overdue is calculated from the credit-period rule.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Cylinder Discounts */}
         <div>

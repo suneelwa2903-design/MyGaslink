@@ -143,6 +143,32 @@ const cylinderDiscountSchema = z.object({
   discountPerUnit: nonNegativeNumber,
 });
 
+// 2026-07-21 — Mini-Operator "opening state" seed. Bundled with
+// createCustomer so the whole customer (record + allowed types +
+// empties balance + opening ₹ balance) lands in one atomic
+// transaction. Backend rejects this field with 400 when the
+// distributor's accountType != 'mini_operator' (regular distributors
+// use the CSV importer at Settings → Onboarding). Every sub-field
+// optional so a mini-op admin who only needs one axis (say, empties
+// but no ₹) can send just that.
+const openingEmptiesRowSchema = z.object({
+  cylinderTypeId: uuid,
+  qty: z.number().int().min(0).max(100000),
+});
+
+const openingBalanceSchema = z.object({
+  amount: z.number().positive('Opening balance must be > 0').max(1_00_00_00_000),
+  asOfDate: dateString,
+  notes: z.string().max(500).optional(),
+});
+
+export const openingStateSchema = z.object({
+  allowedCylinderTypeIds: z.array(uuid).max(50).optional(),
+  empties: z.array(openingEmptiesRowSchema).max(50).optional(),
+  openingBalance: openingBalanceSchema.optional(),
+});
+export type OpeningStateInput = z.infer<typeof openingStateSchema>;
+
 export const createCustomerSchema = z.object({
   customerName: z.string().min(1, 'Customer name is required').max(200),
   businessName: z.string().max(200).optional(),
@@ -175,6 +201,9 @@ export const createCustomerSchema = z.object({
   requireDeliveryVerification: z.boolean().optional(),
   contacts: z.array(customerContactSchema).optional(),
   cylinderDiscounts: z.array(cylinderDiscountSchema).optional(),
+  // 2026-07-21 — Mini-Operator onboarding seed. See openingStateSchema
+  // comment above. Rejected with 400 when tenant is not a mini-operator.
+  openingState: openingStateSchema.optional(),
 });
 
 export const updateCustomerSchema = createCustomerSchema.partial().extend({

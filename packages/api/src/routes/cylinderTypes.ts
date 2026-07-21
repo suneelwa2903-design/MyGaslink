@@ -36,7 +36,29 @@ const emptyPriceSchema = z.object({
 router.get('/', async (req, res) => {
   try {
     const types = await cylinderTypeService.listCylinderTypes(req.user!.distributorId!);
-    return sendSuccess(res, { cylinderTypes: mapCylinderTypes(types) });
+    let filtered = types;
+    // 2026-07-21 Mini-Operator opening state: when the caller passes
+    // ?customerId=..., filter to the customer's allowlist. Empty
+    // allowlist (no rows) = no restriction (backward-compat with
+    // pre-feature customers). Bad customerId (not on this tenant) is
+    // silently ignored — we don't want to leak "does this id exist?".
+    const customerId = typeof req.query.customerId === 'string' ? req.query.customerId : '';
+    if (customerId) {
+      const allowed = await import('../lib/prisma.js').then((m) =>
+        m.prisma.customerAllowedCylinderType.findMany({
+          where: {
+            customerId,
+            customer: { distributorId: req.user!.distributorId!, deletedAt: null },
+          },
+          select: { cylinderTypeId: true },
+        }),
+      );
+      if (allowed.length > 0) {
+        const allowSet = new Set(allowed.map((a) => a.cylinderTypeId));
+        filtered = types.filter((t) => allowSet.has(t.id));
+      }
+    }
+    return sendSuccess(res, { cylinderTypes: mapCylinderTypes(filtered) });
   } catch (err) {
     return sendError(res, (err as Error).message);
   }

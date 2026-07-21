@@ -56,6 +56,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { apiGet, getErrorMessage } from '../lib/api';
 import { useApiQuery } from '../hooks/useApi';
+import { useAuthStore } from '../stores/authStore';
 import { useTheme, type ThemeColors } from '../theme';
 import { SelectField } from '../components/ui';
 import type { CylinderType, Customer as SharedCustomer } from '@gaslink/shared';
@@ -147,6 +148,19 @@ export interface CustomerFormSubmit {
   // Sent as a number; null when caller passes 18 to keep the platform
   // default semantics (caller code at api layer normalises).
   gstRateOverride: 5 | 18;
+  // 2026-07-21 Mini-Operator opening state seed — attached ONLY when
+  // the operator filled at least one axis on the New Customer form
+  // AND the caller is a mini_operator_admin. Backend gates independently
+  // on distributor.accountType.
+  openingState?: {
+    allowedCylinderTypeIds?: string[];
+    empties?: { cylinderTypeId: string; qty: number }[];
+    openingBalance?: {
+      amount: number;
+      asOfDate: string;
+      notes?: string;
+    };
+  };
 }
 
 export type CustomerFormInitial = Partial<CustomerFormState>;
@@ -285,6 +299,20 @@ export function CustomerForm({
   const [gstinLookupStatus, setGstinLookupStatus] = useState<string | null>(null);
   const [gstinLookupError, setGstinLookupError] = useState<string | null>(null);
   const [gstinLookupLoading, setGstinLookupLoading] = useState(false);
+
+  // 2026-07-21 Mini-Operator opening state seed — only surfaced on the
+  // New Customer path for mini_operator_admin. Backend gates on
+  // distributor.accountType so a leaked field on Edit is rejected.
+  const role = useAuthStore((s) => s.user?.role);
+  const showOpeningSetup = mode === 'create' && role === 'mini_operator_admin';
+  const [openingAllowedIds, setOpeningAllowedIds] = useState<Set<string>>(new Set());
+  const [openingEmpties, setOpeningEmpties] = useState<Record<string, string>>({});
+  const [openingBalanceAmount, setOpeningBalanceAmount] = useState<string>('');
+  const [openingBalanceAsOfDate, setOpeningBalanceAsOfDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [openingBalanceNotes, setOpeningBalanceNotes] = useState<string>('');
 
   // ─── Cylinder Types for discount picker ──────────────────────────────────
   // Same endpoint web uses (CustomersPage.tsx:63-67).
@@ -528,6 +556,31 @@ export function CustomerForm({
           }))
         : undefined,
     };
+
+    // 2026-07-21 Mini-Operator opening state: attach when the operator
+    // filled at least one axis. Absent → backend fast-paths to plain
+    // createCustomer (same as regular tenants). Amount uses Number()
+    // early so an invalid/empty string doesn't leak into the payload.
+    if (showOpeningSetup) {
+      const emptiesPayload = Object.entries(openingEmpties)
+        .map(([cylinderTypeId, qtyStr]) => ({ cylinderTypeId, qty: parseInt(qtyStr, 10) }))
+        .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+      const obAmount = Number(openingBalanceAmount);
+      const hasOb = Number.isFinite(obAmount) && obAmount > 0 && !!openingBalanceAsOfDate;
+      if (openingAllowedIds.size > 0 || emptiesPayload.length > 0 || hasOb) {
+        payload.openingState = {
+          allowedCylinderTypeIds: Array.from(openingAllowedIds),
+          empties: emptiesPayload,
+          openingBalance: hasOb
+            ? {
+                amount: obAmount,
+                asOfDate: openingBalanceAsOfDate,
+                notes: openingBalanceNotes.trim() || undefined,
+              }
+            : undefined,
+        };
+      }
+    }
 
     await onSubmit(payload);
   };
@@ -889,6 +942,155 @@ export function CustomerForm({
               </View>
             </View>
           ))}
+
+          {/* 2026-07-21 Opening Setup (Mini-Operator only, New Customer only) */}
+          {showOpeningSetup && (
+            <View
+              style={{
+                marginTop: 20,
+                marginBottom: 12,
+                padding: 14,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: ACCENT + '40',
+                backgroundColor: ACCENT + '08',
+                gap: 12,
+              }}
+            >
+              <View>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: ACCENT }}>
+                  Opening Setup (Reseller)
+                </Text>
+                <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 3 }}>
+                  Seed this customer&apos;s starting state so the ledger reconciles from day one. Every axis is optional.
+                </Text>
+              </View>
+
+              {/* 1. Allowed cylinder types */}
+              <View>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text, marginBottom: 6 }}>
+                  Cylinder types this customer buys
+                </Text>
+                {cylinderTypes.length === 0 ? (
+                  <Text style={{ fontSize: 11, color: colors.textMuted, fontStyle: 'italic' }}>
+                    Add cylinder types in Settings first.
+                  </Text>
+                ) : (
+                  <View style={{ gap: 6 }}>
+                    {cylinderTypes.map((ct) => {
+                      const checked = openingAllowedIds.has(ct.cylinderTypeId);
+                      return (
+                        <TouchableOpacity
+                          key={ct.cylinderTypeId}
+                          onPress={() => {
+                            setOpeningAllowedIds((prev) => {
+                              const next = new Set(prev);
+                              if (checked) next.delete(ct.cylinderTypeId);
+                              else next.add(ct.cylinderTypeId);
+                              return next;
+                            });
+                          }}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 8,
+                            paddingVertical: 6,
+                          }}
+                        >
+                          <View
+                            style={{
+                              width: 18,
+                              height: 18,
+                              borderRadius: 4,
+                              borderWidth: 1.5,
+                              borderColor: checked ? ACCENT : colors.cardBorder,
+                              backgroundColor: checked ? ACCENT : 'transparent',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {checked && <Ionicons name="checkmark" size={12} color="#fff" />}
+                          </View>
+                          <Text style={{ fontSize: 13, color: colors.text }}>{ct.typeName}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+                <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
+                  Order form will show only these types for this customer. Leave all unchecked to allow every type.
+                </Text>
+              </View>
+
+              {/* 2. Empties currently held */}
+              {openingAllowedIds.size > 0 && (
+                <View>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text, marginBottom: 6 }}>
+                    Empty cylinders currently held
+                  </Text>
+                  <View style={{ gap: 8 }}>
+                    {Array.from(openingAllowedIds).map((typeId) => {
+                      const ct = cylinderTypes.find((c) => c.cylinderTypeId === typeId);
+                      if (!ct) return null;
+                      return (
+                        <View
+                          key={typeId}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 10,
+                          }}
+                        >
+                          <Text style={{ fontSize: 13, color: colors.text, flex: 1 }}>{ct.typeName}</Text>
+                          <View style={{ width: 90 }}>
+                            <Field
+                              value={openingEmpties[typeId] ?? ''}
+                              onChangeText={(t) => setOpeningEmpties((prev) => ({ ...prev, [typeId]: t }))}
+                              placeholder="0"
+                              keyboardType="numeric"
+                              colors={colors}
+                            />
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* 3. Opening balance (₹) */}
+              <View>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text, marginBottom: 6 }}>
+                  Opening balance (₹ already owed)
+                </Text>
+                <FieldLabel label="Amount (₹)" colors={colors} />
+                <Field
+                  value={openingBalanceAmount}
+                  onChangeText={setOpeningBalanceAmount}
+                  placeholder="e.g. 8500"
+                  keyboardType="numeric"
+                  colors={colors}
+                />
+                <FieldLabel label="As of date (YYYY-MM-DD)" colors={colors} />
+                <Field
+                  value={openingBalanceAsOfDate}
+                  onChangeText={setOpeningBalanceAsOfDate}
+                  placeholder="2026-07-21"
+                  colors={colors}
+                />
+                <FieldLabel label="Notes (optional)" colors={colors} />
+                <Field
+                  value={openingBalanceNotes}
+                  onChangeText={setOpeningBalanceNotes}
+                  placeholder="e.g. from paper ledger"
+                  colors={colors}
+                />
+                <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
+                  Ledger will show &quot;Opening Balance b/f&quot; as the first row.
+                </Text>
+              </View>
+            </View>
+          )}
 
           {/* Section 6: Cylinder Discounts */}
           <View
