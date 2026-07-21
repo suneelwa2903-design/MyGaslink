@@ -891,15 +891,36 @@ export async function getGroupLedger(
 
   // 2. Invoice-detail map + empty-price map — both reused from
   // paymentService so the processing behaviour stays identical.
-  const [invoiceMap, emptyPriceMap, customers] = await Promise.all([
+  // 2026-07-21: also fetch the OB empties snapshots per customer in
+  // one query so each per-customer processLedgerEntries call gets its
+  // seeded baseline. Skip openingSeedQty=0 rows to keep the map lean.
+  const [invoiceMap, emptyPriceMap, customers, seedRows] = await Promise.all([
     loadInvoicesForLedger(allEntries),
     loadEmptyPricesForLedger(distributorId),
     prisma.customer.findMany({
       where: { id: { in: effectiveIds } },
       select: { id: true, customerName: true, creditPeriodDays: true },
     }),
+    prisma.customerInventoryBalance.findMany({
+      where: { customerId: { in: effectiveIds }, openingSeedQty: { gt: 0 } },
+      select: {
+        customerId: true,
+        cylinderTypeId: true,
+        openingSeedQty: true,
+        cylinderType: { select: { typeName: true } },
+      },
+    }),
   ]);
   const customerMap = new Map(customers.map((c) => [c.id, c]));
+  const openingEmptiesByCustomer = new Map<string, Map<string, { typeName: string; qty: number }>>();
+  for (const r of seedRows) {
+    const inner = openingEmptiesByCustomer.get(r.customerId) ?? new Map<string, { typeName: string; qty: number }>();
+    inner.set(r.cylinderTypeId, {
+      typeName: r.cylinderType?.typeName ?? '',
+      qty: r.openingSeedQty,
+    });
+    openingEmptiesByCustomer.set(r.customerId, inner);
+  }
 
   // 3. Bucket entries by customerId, then run processLedgerEntries
   // once per bucket. Each customer's running balance / FIFO / opening-
@@ -928,6 +949,7 @@ export async function getGroupLedger(
       emptyPriceMap,
       creditPeriodDays: customer.creditPeriodDays,
       range: { from: filters.from, to: filters.to },
+      openingEmptiesByType: openingEmptiesByCustomer.get(customerId),
     };
     const { rows, summary } = processLedgerEntries(input);
     const effectiveName = resolveDisplayName(displayNames, customerId, customer.customerName);

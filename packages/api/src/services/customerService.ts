@@ -43,6 +43,21 @@ const customerInclude = {
   },
 } satisfies Prisma.CustomerInclude;
 
+// 2026-07-21 opening-state seed: heavier include used ONLY on the
+// customer-detail path (`getCustomerById`). Avoided on `listCustomers`
+// so the customers table load stays cheap; the flat wire field
+// `preferredCylinderTypeIds` just returns [] when the join wasn't
+// fetched (mapper defensive path).
+const customerDetailInclude = {
+  ...customerInclude,
+  allowedCylinderTypes: {
+    include: { cylinderType: { select: { typeName: true } } },
+  },
+  inventoryBalances: {
+    include: { cylinderType: { select: { typeName: true } } },
+  },
+} satisfies Prisma.CustomerInclude;
+
 export async function listCustomers(
   distributorId: string,
   filters: { status?: string; customerType?: string; search?: string; page?: number; pageSize?: number; unlinked?: string }
@@ -88,15 +103,21 @@ export async function listCustomers(
 }
 
 export async function getCustomerById(id: string, distributorId: string) {
-  return prisma.customer.findFirst({
+  const customer = await prisma.customer.findFirst({
     where: { id, distributorId, deletedAt: null },
-    include: {
-      ...customerInclude,
-      inventoryBalances: {
-        include: { cylinderType: { select: { typeName: true } } },
-      },
-    },
+    include: customerDetailInclude,
   });
+  if (!customer) return null;
+  // 2026-07-21 opening-state seed: also fetch the linked OB invoice so
+  // the Edit-Customer form can prefill the ₹ amount + notes. Only one
+  // OB invoice per customer at a time (guaranteed by the seed flow).
+  const openingInvoice = customer.openingStateSeededAt
+    ? await prisma.invoice.findFirst({
+        where: { distributorId, customerId: id, isOpeningBalance: true, deletedAt: null },
+        select: { id: true, totalAmount: true, amountPaid: true, notes: true, issueDate: true },
+      })
+    : null;
+  return { ...customer, openingInvoice };
 }
 
 export async function createCustomer(
@@ -191,6 +212,551 @@ export async function createCustomer(
     include: customerInclude,
   });
   return { customer, warnings };
+}
+
+// ─── Opening-state seed (2026-07-21) ──────────────────────────────────────
+//
+// Universal customer-onboarding seed — one atomic transaction that
+// writes the customer's starting ledger anchor: preferred cylinder-
+// type list + empties held + ₹ opening balance. Available to ANY
+// tenant (regular distributor OR mini-operator) via three paths:
+//
+//   1. Nested `openingState` on POST /api/customers          (this file)
+//   2. POST /api/customers/:id/seed-opening-state             (Edit path)
+//   3. CSV row on POST /api/customers/import-opening-balances (bulk)
+//
+// All three flow through `applySeedInTx()` — one implementation, one
+// invariant set, one ledger contract. Idempotent: refuses to run a
+// second time on a customer whose `opening_state_seeded_at` is set.
+//
+// Ledger contract (matches processLedgerEntries + PDF renderer):
+//   - Opening balance ₹  → Invoice(isOpeningBalance=true, status=overdue)
+//                           + CustomerLedgerEntry(entry_type='invoice')
+//   - Seeded empties     → CustomerInventoryBalance.with_customer_qty
+//                           per (customer, cylinder_type)
+//                          + The ledger's OB row surfaces "b/f" empties
+//                            via the linked balance rows (see
+//                            processLedgerEntries opening-empties init).
+//   - Preferred types    → CustomerAllowedCylinderType rows; order-form
+//                           picker floats these to the top with a
+//                           "usual" tag. NOT a hard filter.
+//   - Audit anchor       → customers.opening_state_seeded_at = NOW()
+export interface OpeningStateSeed {
+  preferredCylinderTypeIds?: string[];
+  empties?: Array<{ cylinderTypeId: string; qty: number }>;
+  openingBalance?: {
+    amount: number;
+    asOfDate: string;
+    notes?: string;
+  };
+}
+
+export interface OpeningStateSeedResult {
+  seededAt: string;
+  preferredCylinderTypeCount: number;
+  emptiesRowCount: number;
+  openingInvoiceId: string | null;
+}
+
+// Internal helper — runs INSIDE an existing prisma.$transaction. All
+// three entry points share this so the ledger anchor writes are
+// identical across create / seed-later / CSV import.
+async function applySeedInTx(
+  tx: Prisma.TransactionClient,
+  distributorId: string,
+  userId: string,
+  customerId: string,
+  seed: OpeningStateSeed,
+): Promise<OpeningStateSeedResult> {
+  // Preferred cylinder types (sort hints on order form).
+  const preferredIds = Array.from(new Set(seed.preferredCylinderTypeIds ?? []));
+  if (preferredIds.length > 0) {
+    await tx.customerAllowedCylinderType.createMany({
+      data: preferredIds.map((cylinderTypeId) => ({
+        customerId,
+        cylinderTypeId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  // Seeded empties held (state-current dashboard, and OB-row b/f in
+  // ledger). Skip qty=0 rows to keep the table lean. Uses upsert
+  // because a fresh customer has no balance row yet, but the CSV/
+  // Edit path may run against a customer that already had zero rows.
+  const emptiesRows = (seed.empties ?? []).filter((e) => e.qty > 0);
+  for (const e of emptiesRows) {
+    await tx.customerInventoryBalance.upsert({
+      where: {
+        customerId_cylinderTypeId: {
+          customerId,
+          cylinderTypeId: e.cylinderTypeId,
+        },
+      },
+      create: {
+        customerId,
+        cylinderTypeId: e.cylinderTypeId,
+        withCustomerQty: e.qty,
+        openingSeedQty: e.qty,
+      },
+      // Ledger OB row reads openingSeedQty to render the "b/f" empties
+      // count. Preserved immutably after the first seed — if the
+      // caller reruns (only possible via the CSV bulk path today), we
+      // only advance withCustomerQty; openingSeedQty stays.
+      update: {
+        withCustomerQty: e.qty,
+        openingSeedQty: e.qty,
+      },
+    });
+  }
+
+  // Opening balance ₹ — synthetic Invoice + item + ledger entry.
+  // Mirrors importOpeningBalances line-by-line so the reader path
+  // stays identical.
+  let openingInvoiceId: string | null = null;
+  if (seed.openingBalance && seed.openingBalance.amount > 0) {
+    const ob = seed.openingBalance;
+    const asOfDate = /^\d{4}-\d{2}-\d{2}$/.test(ob.asOfDate)
+      ? new Date(ob.asOfDate)
+      : new Date();
+    const invoiceNumber = `OB-${customerId.slice(0, 8)}-${asOfDate.toISOString().split('T')[0]}-${Math.random().toString(36).slice(2, 6)}`;
+    const invoice = await tx.invoice.create({
+      data: {
+        invoiceNumber,
+        distributorId,
+        customerId,
+        issueDate: asOfDate,
+        dueDate: asOfDate,
+        totalAmount: ob.amount,
+        outstandingAmount: ob.amount,
+        amountPaid: 0,
+        status: 'overdue',
+        isOpeningBalance: true,
+        notes: ob.notes?.trim() || 'Opening balance seeded via customer setup',
+        issuedBy: userId,
+      },
+    });
+    openingInvoiceId = invoice.id;
+    await tx.customerLedgerEntry.create({
+      data: {
+        distributorId,
+        customerId,
+        entryType: 'invoice_entry',
+        referenceId: invoice.id,
+        invoiceId: invoice.id,
+        amountDelta: ob.amount,
+        narration: ob.notes?.trim()
+          ? `Opening Balance b/f — ${ob.notes.trim()}`
+          : 'Opening Balance b/f',
+        entryDate: asOfDate,
+        createdBy: userId,
+      },
+    });
+  }
+
+  const seededAt = new Date();
+  await tx.customer.update({
+    where: { id: customerId },
+    data: { openingStateSeededAt: seededAt },
+  });
+
+  return {
+    seededAt: seededAt.toISOString(),
+    preferredCylinderTypeCount: preferredIds.length,
+    emptiesRowCount: emptiesRows.length,
+    openingInvoiceId,
+  };
+}
+
+// Validate every referenced cylinderTypeId belongs to THIS distributor
+// and is active + not deleted. Runs OUTSIDE the tx so the tx body
+// stays small. Returns 400-shaped CustomerError with all missing ids.
+async function validateSeedCylinderTypes(
+  distributorId: string,
+  seed: OpeningStateSeed,
+): Promise<void> {
+  const referencedTypeIds = Array.from(new Set([
+    ...(seed.preferredCylinderTypeIds ?? []),
+    ...(seed.empties ?? []).map((e) => e.cylinderTypeId),
+  ]));
+  if (referencedTypeIds.length === 0) return;
+  const found = await prisma.cylinderType.findMany({
+    where: {
+      id: { in: referencedTypeIds },
+      distributorId,
+      isActive: true,
+    },
+    select: { id: true },
+  });
+  const foundSet = new Set(found.map((f) => f.id));
+  const missing = referencedTypeIds.filter((id) => !foundSet.has(id));
+  if (missing.length > 0) {
+    throw new CustomerError(
+      `Cylinder type(s) not found in your catalog or inactive: ${missing.join(', ')}`,
+      400,
+    );
+  }
+}
+
+// Path 1: POST /api/customers — customer create + optional seed in
+// one atomic tx. If no `openingState`, delegates to the existing
+// createCustomer (zero extra DB work, no tx wrap).
+export async function createCustomerWithOpeningState(
+  distributorId: string,
+  userId: string,
+  data: Parameters<typeof createCustomer>[1] & { openingState?: OpeningStateSeed },
+): Promise<{
+  customer: Awaited<ReturnType<typeof createCustomer>>['customer'];
+  warnings: string[];
+  seeded: OpeningStateSeedResult | null;
+}> {
+  const { openingState, ...baseData } = data;
+  if (!openingState) {
+    const { customer, warnings } = await createCustomer(distributorId, baseData);
+    return { customer, warnings, seeded: null };
+  }
+
+  // 2026-07-21 mini-op-only gate: opening-state seed is a reseller
+  // onboarding tool. Regular distributors already have the CSV
+  // importer at Settings → Onboarding → Import opening balances;
+  // exposing this second path would duplicate/conflict with that.
+  const dist = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { accountType: true },
+  });
+  if (!dist) throw new CustomerError('Distributor not found', 404);
+  if (dist.accountType !== 'mini_operator') {
+    throw new CustomerError(
+      'Opening state seed is a mini-operator feature. Regular distributors should use Settings → Onboarding → Import opening balances.',
+      400,
+    );
+  }
+
+  await validateSeedCylinderTypes(distributorId, openingState);
+
+  // GSTIN soft-warning (mirrors createCustomer; inlined so the whole
+  // create+seed lands in one tx).
+  const warnings: string[] = [];
+  if (baseData.gstin && baseData.gstin.length > 0) {
+    if (!GSTIN_REGEX.test(baseData.gstin)) {
+      throw new CustomerError('Invalid GSTIN format', 400);
+    }
+    const existing = await prisma.customer.findFirst({
+      where: { distributorId, gstin: baseData.gstin, deletedAt: null },
+      select: { customerName: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (existing) {
+      warnings.push(
+        `This GSTIN is already used by "${existing.customerName}". This customer will be treated as a separate branch.`,
+      );
+    }
+  }
+  const customerType = baseData.gstin && baseData.gstin.length > 0 ? 'B2B' : 'B2C';
+
+  const result = await prisma.$transaction(async (tx) => {
+    const customer = await tx.customer.create({
+      data: {
+        distributorId,
+        customerName: baseData.customerName,
+        businessName: baseData.businessName || null,
+        gstin: baseData.gstin || null,
+        customerType,
+        phone: baseData.phone,
+        email: baseData.email || null,
+        billingAddressLine1: baseData.billingAddressLine1 || null,
+        billingAddressLine2: baseData.billingAddressLine2 || null,
+        billingCity: baseData.billingCity || null,
+        billingState: baseData.billingState || null,
+        billingPincode: baseData.billingPincode || null,
+        shippingAddressLine1: baseData.shippingAddressLine1 || null,
+        shippingAddressLine2: baseData.shippingAddressLine2 || null,
+        shippingCity: baseData.shippingCity || null,
+        shippingState: baseData.shippingState || null,
+        shippingPincode: baseData.shippingPincode || null,
+        creditPeriodDays: baseData.creditPeriodDays ?? 30,
+        transportChargePerCylinder: baseData.transportChargePerCylinder ?? 0,
+        gstRateOverride: baseData.gstRateOverride ?? null,
+        requireDeliveryVerification: baseData.requireDeliveryVerification ?? false,
+        contacts: baseData.contacts && baseData.contacts.length > 0
+          ? { create: baseData.contacts.map((c) => ({
+              name: c.name, phone: c.phone || '', email: c.email || null, isPrimary: c.isPrimary ?? false,
+            })) }
+          : undefined,
+        cylinderDiscounts: baseData.cylinderDiscounts && baseData.cylinderDiscounts.length > 0
+          ? { create: baseData.cylinderDiscounts.map((d) => ({
+              cylinderTypeId: d.cylinderTypeId, discountPerUnit: d.discountPerUnit,
+            })) }
+          : undefined,
+      },
+      include: customerInclude,
+    });
+    const seeded = await applySeedInTx(tx, distributorId, userId, customer.id, openingState);
+    return { customer, seeded };
+  });
+  return { customer: result.customer, warnings, seeded: result.seeded };
+}
+
+// Path 2: POST /api/customers/:id/seed-opening-state — Edit-Customer
+// "seed later" flow. Universal. Guarded by opening_state_seeded_at IS
+// NULL so a second call throws 400 (the ledger cannot be re-anchored
+// safely).
+export async function seedOpeningStateOnCustomer(
+  distributorId: string,
+  userId: string,
+  customerId: string,
+  seed: OpeningStateSeed,
+): Promise<OpeningStateSeedResult> {
+  // 2026-07-21 mini-op-only gate (same rationale as
+  // createCustomerWithOpeningState above).
+  const dist = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { accountType: true },
+  });
+  if (!dist) throw new CustomerError('Distributor not found', 404);
+  if (dist.accountType !== 'mini_operator') {
+    throw new CustomerError(
+      'Opening state seed is a mini-operator feature. Regular distributors should use Settings → Onboarding → Import opening balances.',
+      400,
+    );
+  }
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, distributorId, deletedAt: null },
+    select: { id: true, openingStateSeededAt: true },
+  });
+  if (!customer) throw new CustomerError('Customer not found', 404);
+  if (customer.openingStateSeededAt) {
+    throw new CustomerError(
+      'This customer has already been seeded. Use credit / debit note flows to adjust the balance.',
+      400,
+    );
+  }
+  await validateSeedCylinderTypes(distributorId, seed);
+  return prisma.$transaction(async (tx) => applySeedInTx(tx, distributorId, userId, customerId, seed));
+}
+
+// Path 3: PUT /api/customers/:id/opening-state — edit an already-seeded
+// customer's opening state. Mini-op only. Refuses when the customer was
+// never seeded (POST /:id/seed-opening-state handles first-time seed).
+//
+// Semantics per axis:
+//   • preferredCylinderTypeIds — full replace (deleteMany + createMany).
+//   • empties[]                 — full replace snapshot. opening_seed_qty
+//                                 becomes the new value; with_customer_qty
+//                                 is adjusted by the DELTA so the physical
+//                                 stock reading stays consistent with
+//                                 activity since the last seed.
+//   • openingBalance            — mutate the linked OB invoice + ledger
+//                                 entry in place. Payments already applied
+//                                 to the OB are preserved: outstanding =
+//                                 new_total − amountPaid. Refuses to
+//                                 lower total below amountPaid. Absent /
+//                                 amount=0 → delete the OB (refuses if any
+//                                 payments were applied).
+export async function updateOpeningStateOnCustomer(
+  distributorId: string,
+  userId: string,
+  customerId: string,
+  seed: OpeningStateSeed,
+): Promise<OpeningStateSeedResult> {
+  const dist = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { accountType: true },
+  });
+  if (!dist) throw new CustomerError('Distributor not found', 404);
+  if (dist.accountType !== 'mini_operator') {
+    throw new CustomerError(
+      'Opening state edit is a mini-operator feature. Regular distributors should use credit / debit note flows.',
+      400,
+    );
+  }
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, distributorId, deletedAt: null },
+    select: { id: true, openingStateSeededAt: true },
+  });
+  if (!customer) throw new CustomerError('Customer not found', 404);
+  if (!customer.openingStateSeededAt) {
+    throw new CustomerError(
+      'This customer has never been seeded. Use POST /customers/:id/seed-opening-state to seed it first.',
+      400,
+    );
+  }
+  await validateSeedCylinderTypes(distributorId, seed);
+
+  // Snapshot current OB invoice + amountPaid BEFORE opening the tx so
+  // the guard messages are readable and we can decide delete-vs-update
+  // deterministically.
+  const existingOb = await prisma.invoice.findFirst({
+    where: { distributorId, customerId, isOpeningBalance: true, deletedAt: null },
+    select: { id: true, totalAmount: true, amountPaid: true },
+  });
+  const wantAmount = seed.openingBalance?.amount ?? 0;
+  const paid = existingOb ? Number(existingOb.amountPaid) : 0;
+  if (existingOb && wantAmount > 0 && wantAmount < paid) {
+    throw new CustomerError(
+      `Cannot reduce opening balance below payments already applied (₹${paid.toFixed(2)}). Reverse the payments first.`,
+      400,
+    );
+  }
+  if (existingOb && wantAmount === 0 && paid > 0) {
+    throw new CustomerError(
+      `Cannot delete the opening balance while payments are applied to it (₹${paid.toFixed(2)}). Reverse the payments first.`,
+      400,
+    );
+  }
+
+  const asOf = seed.openingBalance?.asOfDate;
+  const asOfDate = asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? new Date(asOf) : new Date();
+
+  return prisma.$transaction(async (tx) => {
+    // 1. Preferred cylinder types — full replace.
+    const preferredIds = Array.from(new Set(seed.preferredCylinderTypeIds ?? []));
+    await tx.customerAllowedCylinderType.deleteMany({ where: { customerId } });
+    if (preferredIds.length > 0) {
+      await tx.customerAllowedCylinderType.createMany({
+        data: preferredIds.map((cylinderTypeId) => ({ customerId, cylinderTypeId })),
+      });
+    }
+
+    // 2. Empties — delta-apply per cylinder type. Pull current snapshot,
+    // compute per-type delta = newQty - oldSeedQty, then advance
+    // with_customer_qty by that delta. Types absent from the new list
+    // fall to opening_seed_qty=0 (physical stock also decremented by
+    // the old snapshot).
+    const currentBalances = await tx.customerInventoryBalance.findMany({
+      where: { customerId },
+      select: { id: true, cylinderTypeId: true, withCustomerQty: true, openingSeedQty: true },
+    });
+    const currentByType = new Map(currentBalances.map((b) => [b.cylinderTypeId, b]));
+    const newEmpties = new Map(
+      (seed.empties ?? [])
+        .filter((e) => e.qty > 0)
+        .map((e) => [e.cylinderTypeId, e.qty]),
+    );
+
+    // Types that were in the old snapshot but not in the new → clear.
+    for (const [typeId, cur] of currentByType) {
+      if (!newEmpties.has(typeId) && cur.openingSeedQty > 0) {
+        const delta = -cur.openingSeedQty;
+        await tx.customerInventoryBalance.update({
+          where: { id: cur.id },
+          data: {
+            openingSeedQty: 0,
+            withCustomerQty: Math.max(0, cur.withCustomerQty + delta),
+          },
+        });
+      }
+    }
+    // Types in the new snapshot — upsert with delta.
+    for (const [typeId, newQty] of newEmpties) {
+      const cur = currentByType.get(typeId);
+      if (cur) {
+        const delta = newQty - cur.openingSeedQty;
+        await tx.customerInventoryBalance.update({
+          where: { id: cur.id },
+          data: {
+            openingSeedQty: newQty,
+            withCustomerQty: Math.max(0, cur.withCustomerQty + delta),
+          },
+        });
+      } else {
+        // First time seeing this type — treat as a fresh seed.
+        await tx.customerInventoryBalance.create({
+          data: {
+            customerId,
+            cylinderTypeId: typeId,
+            withCustomerQty: newQty,
+            openingSeedQty: newQty,
+          },
+        });
+      }
+    }
+
+    // 3. Opening balance — update-in-place, create fresh, or delete.
+    let openingInvoiceId: string | null = existingOb?.id ?? null;
+    if (existingOb && wantAmount === 0) {
+      // Delete path — guard already confirmed no payments applied.
+      await tx.customerLedgerEntry.deleteMany({
+        where: { invoiceId: existingOb.id, entryType: 'invoice_entry' },
+      });
+      await tx.invoice.delete({ where: { id: existingOb.id } });
+      openingInvoiceId = null;
+    } else if (existingOb && wantAmount > 0) {
+      // Update in place. Preserve amountPaid; outstanding = new - paid.
+      const ob = seed.openingBalance!;
+      await tx.invoice.update({
+        where: { id: existingOb.id },
+        data: {
+          totalAmount: ob.amount,
+          outstandingAmount: ob.amount - paid,
+          issueDate: asOfDate,
+          dueDate: asOfDate,
+          notes: ob.notes?.trim() || 'Opening balance edited via customer setup',
+          status: ob.amount - paid > 0 ? 'overdue' : 'paid',
+        },
+      });
+      await tx.customerLedgerEntry.updateMany({
+        where: { invoiceId: existingOb.id, entryType: 'invoice_entry' },
+        data: {
+          amountDelta: ob.amount,
+          narration: ob.notes?.trim()
+            ? `Opening Balance b/f — ${ob.notes.trim()}`
+            : 'Opening Balance b/f',
+          entryDate: asOfDate,
+        },
+      });
+    } else if (!existingOb && wantAmount > 0) {
+      // No prior OB but they want one now — create fresh.
+      const ob = seed.openingBalance!;
+      const invoiceNumber = `OB-${customerId.slice(0, 8)}-${asOfDate.toISOString().split('T')[0]}-${Math.random().toString(36).slice(2, 6)}`;
+      const invoice = await tx.invoice.create({
+        data: {
+          invoiceNumber,
+          distributorId,
+          customerId,
+          issueDate: asOfDate,
+          dueDate: asOfDate,
+          totalAmount: ob.amount,
+          outstandingAmount: ob.amount,
+          amountPaid: 0,
+          status: 'overdue',
+          isOpeningBalance: true,
+          notes: ob.notes?.trim() || 'Opening balance added via customer edit',
+          issuedBy: userId,
+        },
+      });
+      openingInvoiceId = invoice.id;
+      await tx.customerLedgerEntry.create({
+        data: {
+          distributorId,
+          customerId,
+          entryType: 'invoice_entry',
+          referenceId: invoice.id,
+          invoiceId: invoice.id,
+          amountDelta: ob.amount,
+          narration: ob.notes?.trim()
+            ? `Opening Balance b/f — ${ob.notes.trim()}`
+            : 'Opening Balance b/f',
+          entryDate: asOfDate,
+          createdBy: userId,
+        },
+      });
+    }
+
+    // 4. Bump opening_state_seeded_at so callers can see it was
+    // touched. Keep the marker set (never nulls out).
+    await tx.customer.update({
+      where: { id: customerId },
+      data: { openingStateSeededAt: new Date() },
+    });
+
+    return {
+      seededAt: new Date().toISOString(),
+      preferredCylinderTypeCount: preferredIds.length,
+      emptiesRowCount: newEmpties.size,
+      openingInvoiceId,
+    };
+  });
 }
 
 export async function updateCustomer(

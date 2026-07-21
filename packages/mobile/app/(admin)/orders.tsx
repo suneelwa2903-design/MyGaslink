@@ -1147,6 +1147,25 @@ function CreateOrderModal({
 
   const selectedCustomer = pickedCustomer;
   const customerId = pickedCustomer?.customerId ?? '';
+
+  // 2026-07-21 opening-state seed: fetch cylinder-types sorted with
+  // this customer's preferences first (each row carries an
+  // `isPreferred` flag). Nothing is filtered — the customer's mix can
+  // change over time, so the picker always shows every type.
+  const { data: customerTypesData } = useApiQuery<{ cylinderTypes: (CylinderType & { isPreferred?: boolean })[] }>(
+    ['cylinder-types', 'for-customer', customerId],
+    '/cylinder-types',
+    { customerId },
+    { enabled: !!customerId, staleTime: 60_000 },
+  );
+  const effectiveCylinderTypes = customerId && customerTypesData?.cylinderTypes
+    ? customerTypesData.cylinderTypes
+    : cylinderTypes;
+  const hasPreferredTypes =
+    !!customerId
+    && !!customerTypesData?.cylinderTypes
+    && customerTypesData.cylinderTypes.some((ct) => (ct as { isPreferred?: boolean }).isPreferred === true);
+
   // PO number is B2B-only; the input hides for B2C customers. Matches the
   // IRN payload emit gate in payloadBuilders so the wire shape and the UI
   // affordance stay in lock-step.
@@ -1427,6 +1446,11 @@ function CreateOrderModal({
                 <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600' }}>Add Item</Text>
               </TouchableOpacity>
             </View>
+            {hasPreferredTypes && (
+              <Text style={{ fontSize: 11, color: ACCENT, marginBottom: 6 }}>
+                Usual types appear first. All catalog types remain available.
+              </Text>
+            )}
 
             {items.map((item, index) => (
               <View key={index} style={[styles.itemRow, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
@@ -1438,7 +1462,7 @@ function CreateOrderModal({
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={{ gap: 6, paddingVertical: 4 }}
                   >
-                    {cylinderTypes.map((ct) => (
+                    {effectiveCylinderTypes.map((ct) => (
                       <TouchableOpacity
                         key={ct.cylinderTypeId}
                         style={[

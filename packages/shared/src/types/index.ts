@@ -233,6 +233,16 @@ export interface Customer {
   preferredDriverId: string | null;
   contacts: CustomerContact[];
   cylinderDiscounts: CustomerCylinderDiscount[];
+  // 2026-07-21 opening-state seed: timestamp when the seed step ran.
+  // Null = never seeded (backward compat + Edit-Customer "seed later"
+  // flow is enabled). Once set, the Edit form's Opening Setup panel
+  // hides — the ledger is anchored to this row and cannot be re-seeded.
+  openingStateSeededAt: string | null;
+  // 2026-07-21 — the customer's *preferred* cylinder types (SORT hint
+  // for the order form picker; NOT a hard filter). Empty array = no
+  // preference, order form shows all types in the distributor's
+  // catalog order.
+  preferredCylinderTypeIds: string[];
   createdAt: string;
   updatedAt: string;
 }

@@ -423,6 +423,102 @@ function CustomerFormModal({
     role === UserRole.DISTRIBUTOR_ADMIN ||
     role === UserRole.SUPER_ADMIN ||
     role === UserRole.FINANCE;
+  // 2026-07-21 opening-state seed: MINI-OPERATOR ONLY. Panel visible
+  // on both New Customer (seed) AND Edit (either seed-later OR edit-
+  // existing). Backend enforces the same gate; UI just decides which
+  // API to call based on `openingStateSeededAt`.
+  const isMiniOpAdmin = role === UserRole.MINI_OPERATOR_ADMIN;
+  // 2026-07-21 — the `customer` prop is the LIST-shape summary from
+  // GET /customers, which does NOT include the openingState detail we
+  // need to prefill the panel. Fetch the full detail via GET /customers/:id
+  // when editing so the Edit-Opening-State panel can show the seeded
+  // amounts/empties/preferred types.
+  type CustomerDetail = Customer & {
+    openingStateSeededAt?: string | null;
+    openingState?: {
+      seededAt: string;
+      preferredCylinderTypeIds: string[];
+      empties: Array<{ cylinderTypeId: string; typeName: string; qty: number }>;
+      openingBalance: { invoiceId: string; amount: number; amountPaid: number; notes: string | null } | null;
+    } | null;
+  };
+  const { data: customerDetail } = useQuery({
+    queryKey: ['customer-detail', customer?.customerId],
+    queryFn: () => apiGet<CustomerDetail>(`/customers/${customer!.customerId}`),
+    enabled: !!customer?.customerId && isMiniOpAdmin,
+    staleTime: 30_000,
+  });
+  // 2026-07-21 — DO NOT fall back to the list-shape prop for the
+  // opening-state nested data. The LIST endpoint returns `openingState`
+  // with the `seededAt` timestamp populated but every INNER field empty
+  // (preferredCylinderTypeIds: [], empties: [], openingBalance: null) —
+  // its Prisma include doesn't fetch the allowedCylinderTypes /
+  // inventoryBalances / openingInvoice relations. If we used the list-
+  // shape as a fallback, our render-time sync block would fire on first
+  // render with an EMPTY payload, stamp `lastSyncedKey = seededAt`, then
+  // never re-fire when the detail resolves (same seededAt → equality).
+  // Consume ONLY the detail; use the list prop for stable customerId /
+  // title flag.
+  const customerWithOpening = customerDetail as CustomerDetail | undefined;
+  const showOpeningSetup = isMiniOpAdmin;
+  // seededAt flag comes off EITHER shape (both list + detail return the
+  // scalar). Use detail when available, list-shape otherwise, so the
+  // title + POST/PUT routing (isEditingSeededOpening) is correct even
+  // before the detail query resolves.
+  const isEditingSeededOpening = isEdit && !!(
+    customerWithOpening?.openingStateSeededAt
+    ?? (customer as (Customer & { openingStateSeededAt?: string | null }))?.openingStateSeededAt
+  );
+  const [openingPreferredIds, setOpeningPreferredIds] = useState<Set<string>>(
+    () => new Set(customerWithOpening?.openingState?.preferredCylinderTypeIds ?? []),
+  );
+  const [openingEmpties, setOpeningEmpties] = useState<Record<string, number>>(
+    () => Object.fromEntries(
+      (customerWithOpening?.openingState?.empties ?? []).map((e) => [e.cylinderTypeId, e.qty]),
+    ),
+  );
+  const [openingBalanceAmount, setOpeningBalanceAmount] = useState<string>(
+    () => customerWithOpening?.openingState?.openingBalance
+      ? String(customerWithOpening.openingState.openingBalance.amount)
+      : '',
+  );
+  const [openingBalanceAsOfDate, setOpeningBalanceAsOfDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [openingBalanceNotes, setOpeningBalanceNotes] = useState<string>(
+    () => customerWithOpening?.openingState?.openingBalance?.notes ?? '',
+  );
+  // 2026-07-21 CRITICAL — the useState initializers above run ONCE on mount.
+  // When the customer detail query resolves AFTER first render, the state
+  // stays stuck at empty and (a) the modal shows blank fields, (b) if the
+  // operator saves an unrelated field like address, the empty panel
+  // payload nukes the seeded state (empties: [], preferredIds: [],
+  // openingBalance: undefined). This effect syncs state from the query
+  // result whenever the customer's opening state changes.
+  //
+  // `openingStateDirty` guards the mutation itself: the panel only gets
+  // submitted when the operator actually touched it. Toggling this on
+  // any panel edit means saving a customer without touching the panel
+  // is now a pure customer update — the seeded state is preserved.
+  const [openingStateDirty, setOpeningStateDirty] = useState(false);
+  const opStateSyncKey = customerWithOpening?.openingState?.seededAt ?? null;
+  const [lastSyncedKey, setLastSyncedKey] = useState<string | null>(null);
+  // Sync from server state during render (React's "derive state from
+  // props" pattern) when the customer detail query resolves. Gated on
+  // opStateSyncKey change so it runs once per unique sync, not every
+  // render. Avoids the useEffect + setState cascading-render anti-pattern.
+  if (isEdit && opStateSyncKey !== lastSyncedKey) {
+    setLastSyncedKey(opStateSyncKey);
+    const os = customerWithOpening?.openingState;
+    setOpeningPreferredIds(new Set(os?.preferredCylinderTypeIds ?? []));
+    setOpeningEmpties(
+      Object.fromEntries((os?.empties ?? []).map((e) => [e.cylinderTypeId, e.qty])),
+    );
+    setOpeningBalanceAmount(os?.openingBalance ? String(os.openingBalance.amount) : '');
+    setOpeningBalanceNotes(os?.openingBalance?.notes ?? '');
+    setOpeningStateDirty(false);
+  }
 
   // Account status is edit-only. The PUT /customers/:id endpoint accepts it
   // (see updateCustomerSchema in @gaslink/shared). We hold it outside RHF
@@ -587,18 +683,70 @@ function CustomerFormModal({
   // When the API returns { ..., warnings: string[] }, we close the modal
   // (the save succeeded) but show an amber toast for each warning so the
   // operator sees that another customer already uses this GSTIN.
+  // 2026-07-21 — reused for both the create-path (nested `openingState`
+  // on the customer create body) and the edit-path (separate call to
+  // POST /customers/:id/seed-opening-state after the PUT). Only
+  // attached when the operator filled at least one axis.
+  const buildOpeningStatePayload = () => {
+    const hasAny =
+      openingPreferredIds.size > 0
+      || Object.values(openingEmpties).some((n) => n > 0)
+      || Number(openingBalanceAmount) > 0;
+    if (!hasAny) return null;
+    return {
+      preferredCylinderTypeIds: Array.from(openingPreferredIds),
+      empties: Object.entries(openingEmpties)
+        .filter(([, qty]) => qty > 0)
+        .map(([cylinderTypeId, qty]) => ({ cylinderTypeId, qty })),
+      openingBalance: Number(openingBalanceAmount) > 0 && openingBalanceAsOfDate
+        ? {
+            amount: Number(openingBalanceAmount),
+            asOfDate: openingBalanceAsOfDate,
+            notes: openingBalanceNotes.trim() || undefined,
+          }
+        : undefined,
+    };
+  };
+
   const mutation = useMutation({
-    mutationFn: (data: CreateCustomerInput) =>
-      isEdit
-        ? apiPut<{ warnings?: string[] }>(`/customers/${customer.customerId}`, {
-            ...data,
-            // Only attach status when the operator has permission AND it
-            // actually changed — keeps non-finance / non-admin role payloads
-            // untouched, so existing inventory edits don't trip the route's
-            // status guard.
-            ...(canEditStatus && accountStatus !== customer.status ? { status: accountStatus } : {}),
-          })
-        : apiPost<{ warnings?: string[] }>('/customers', data),
+    mutationFn: async (data: CreateCustomerInput) => {
+      // 2026-07-21 CRITICAL — only submit the opening-state payload when
+      // the operator actually TOUCHED the panel (openingStateDirty). Prior
+      // behaviour submitted every save unconditionally, which meant an
+      // untouched-but-blank panel (post-mount, pre-query-resolve) was
+      // interpreted as "clear the seeded state" and deleted the OB
+      // invoice. On create, we still submit if there's any input.
+      const openingState =
+        showOpeningSetup && (isEdit ? openingStateDirty : true)
+          ? buildOpeningStatePayload()
+          : null;
+      if (isEdit) {
+        // Edit path: standard PUT for the row, then (if the panel was
+        // dirty AND had any input) a separate seed-later / edit call.
+        // Untouched panel → single PUT, seeded state untouched.
+        const result = await apiPut<{ warnings?: string[] }>(`/customers/${customer.customerId}`, {
+          ...data,
+          ...(canEditStatus && accountStatus !== customer.status ? { status: accountStatus } : {}),
+        });
+        if (openingState) {
+          if (isEditingSeededOpening) {
+            // Already seeded — PUT to edit-in-place.
+            await apiPut(`/customers/${customer.customerId}/opening-state`, openingState);
+          } else {
+            // Never seeded — one-shot seed.
+            await apiPost(`/customers/${customer.customerId}/seed-opening-state`, openingState);
+          }
+        }
+        return result;
+      }
+      // Create path: nested `openingState` on the create body (atomic tx
+      // server-side — customer + preferred types + empties + OB all
+      // roll back together on any failure).
+      return apiPost<{ warnings?: string[] }>('/customers', {
+        ...data,
+        ...(openingState ? { openingState } : {}),
+      });
+    },
     onSuccess: (response) => {
       const warnings = response?.warnings ?? [];
       toast.success(isEdit ? 'Customer updated' : 'Customer created');
@@ -945,6 +1093,133 @@ function CustomerFormModal({
             </div>
           ))}
         </div>
+
+        {/* 2026-07-21 Opening Setup — mini-op only. On Edit: prefilled
+              from currentOpeningState when already seeded; the mutation
+              routes to PUT /opening-state (edit-in-place) vs POST
+              /seed-opening-state (first seed) based on isEditingSeededOpening. */}
+        {showOpeningSetup && (
+          <div className="rounded-lg border border-brand-200 dark:border-brand-500/40 bg-brand-50/40 dark:bg-brand-500/5 p-4">
+            <h3 className="text-sm font-semibold text-brand-700 dark:text-brand-300 mb-1">
+              {isEditingSeededOpening
+                ? 'Edit Opening State'
+                : isEdit
+                ? 'Set Opening State (one-time)'
+                : 'Opening Setup'}
+            </h3>
+            <p className="text-xs text-surface-500 dark:text-surface-400 mb-3">
+              {isEditingSeededOpening
+                ? 'Edit the seeded opening state. Cleared amounts are only allowed when no payments have been recorded against the opening invoice.'
+                : 'Seed this customer’s starting state so the ledger reconciles from day one. Every axis is optional — fill only what applies.'}
+            </p>
+
+            {/* 1. Preferred cylinder types */}
+            <div className="mb-4">
+              <p className="text-xs font-medium text-surface-700 dark:text-surface-300 mb-2">Cylinder types this customer usually buys</p>
+              {cylinderTypes.length === 0 ? (
+                <p className="text-xs text-surface-500 italic">Add cylinder types in Settings first.</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {cylinderTypes.map((ct) => (
+                    <label key={ct.cylinderTypeId} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-surface-300"
+                        checked={openingPreferredIds.has(ct.cylinderTypeId)}
+                        onChange={(e) => {
+                          setOpeningStateDirty(true);
+                          setOpeningPreferredIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(ct.cylinderTypeId);
+                            else next.delete(ct.cylinderTypeId);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span>{ct.typeName}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-surface-500 mt-1">
+                Preferred types float to the top of the order form with a &quot;usual&quot; tag. Nothing is blocked — customers can still order any cylinder type from your catalog.
+              </p>
+            </div>
+
+            {/* 2. Empties currently held */}
+            {openingPreferredIds.size > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-medium text-surface-700 dark:text-surface-300 mb-2">Empty cylinders currently held by this customer</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {Array.from(openingPreferredIds).map((typeId) => {
+                    const ct = cylinderTypes.find((c) => c.cylinderTypeId === typeId);
+                    if (!ct) return null;
+                    return (
+                      <div key={typeId} className="flex items-center gap-2">
+                        <label className="text-sm text-surface-700 dark:text-surface-300 min-w-[100px]">{ct.typeName}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100000}
+                          value={openingEmpties[typeId] ?? 0}
+                          onChange={(e) => {
+                            setOpeningStateDirty(true);
+                            setOpeningEmpties((prev) => ({
+                              ...prev,
+                              [typeId]: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                            }));
+                          }}
+                          className="w-24 rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 3. Opening balance (₹) */}
+            <div>
+              <p className="text-xs font-medium text-surface-700 dark:text-surface-300 mb-2">Opening balance (₹ they already owe)</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs text-surface-500">Amount</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="e.g. 8500"
+                    value={openingBalanceAmount}
+                    onChange={(e) => { setOpeningStateDirty(true); setOpeningBalanceAmount(e.target.value); }}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-surface-500">As of date</label>
+                  <input
+                    type="date"
+                    value={openingBalanceAsOfDate}
+                    onChange={(e) => { setOpeningStateDirty(true); setOpeningBalanceAsOfDate(e.target.value); }}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-surface-500">Notes (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. from paper ledger"
+                    value={openingBalanceNotes}
+                    onChange={(e) => { setOpeningStateDirty(true); setOpeningBalanceNotes(e.target.value); }}
+                    className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-2 py-1 text-sm"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-surface-500 mt-1">
+                Ledger will show &quot;Opening Balance b/f&quot; as row 0 with the seeded empties count. Overdue counts this if past the credit-period window.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Cylinder Discounts */}
         <div>

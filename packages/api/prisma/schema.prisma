@@ -833,6 +833,14 @@ model Customer {
   // upsert route, and invoice PDF drawProofSection.
   requireDeliveryVerification Boolean       @default(false) @map("require_delivery_verification")
   preferredDriverId          String?        @map("preferred_driver_id")
+  /// 2026-07-21 opening-state seed: timestamp of when this customer's
+  /// starting ledger state was seeded (allowed cylinder types +
+  /// opening empties + ₹ opening balance). Nullable — never seeded
+  /// means legacy customer OR a customer created before the operator
+  /// ran the seed step. Set atomically inside the seed transaction;
+  /// used as a one-way idempotency guard on the Edit-Customer "seed
+  /// opening state" path so double-seeding is impossible.
+  openingStateSeededAt       DateTime?      @map("opening_state_seeded_at")
   createdAt                  DateTime       @default(now()) @map("created_at")
   updatedAt                  DateTime       @updatedAt @map("updated_at")
   deletedAt                  DateTime?      @map("deleted_at")
@@ -842,6 +850,15 @@ model Customer {
   users                User[]
   contacts             CustomerContact[]
   cylinderDiscounts    CustomerCylinderDiscount[]
+  /// 2026-07-21 opening-state seed: the customer's *preferred*
+  /// cylinder-type list. Semantics finalised 2026-07-21 evening —
+  /// SORT hint on the order-form picker (preferred types appear
+  /// first with a "usual" tag), NOT a hard filter. A customer whose
+  /// mix changes over time can still pick any type; readers just
+  /// bubble the preferred ones to the top. Table name kept as
+  /// `customer_allowed_cylinder_types` for physical stability with
+  /// data seeded during the initial rollout.
+  allowedCylinderTypes CustomerAllowedCylinderType[]
   orders               Order[]
   invoices             Invoice[]
   payments             PaymentTransaction[]
@@ -944,6 +961,31 @@ model CustomerCylinderDiscount {
   @@map("customer_cylinder_discounts")
 }
 
+/// 2026-07-21 opening-state seed — per-customer cylinder-type
+/// preference list. A row means "this customer usually buys this
+/// type". Order/delivery form uses it as a SORT hint (preferred types
+/// first + a "usual" tag), NOT a filter — a customer can still pick
+/// any type the distributor sells. Semantic settled 2026-07-21
+/// evening; physical table name kept for stability with data already
+/// seeded during the initial rollout.
+///
+/// Cascade on customer delete because the preference is meaningless
+/// without the customer. Restrict on cylinder-type delete so an
+/// accidental type deletion surfaces which customers use it.
+model CustomerAllowedCylinderType {
+  id             String   @id @default(uuid()) @map("customer_allowed_cylinder_type_id")
+  customerId     String   @map("customer_id")
+  cylinderTypeId String   @map("cylinder_type_id")
+  addedAt        DateTime @default(now()) @map("added_at")
+
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
+
+  @@unique([customerId, cylinderTypeId])
+  @@index([cylinderTypeId])
+  @@map("customer_allowed_cylinder_types")
+}
+
 model CustomerInventoryBalance {
   id              String   @id @default(uuid()) @map("balance_id")
   customerId      String   @map("customer_id")
@@ -951,6 +993,12 @@ model CustomerInventoryBalance {
   withCustomerQty Int      @default(0) @map("with_customer_qty")
   pendingReturns  Int      @default(0) @map("pending_returns")
   missingQty      Int      @default(0) @map("missing_qty")
+  /// 2026-07-21 opening-state seed: snapshot of the empties count at
+  /// seed-time. Immutable after the seed transaction. Used by the
+  /// ledger's Opening Balance b/f row (Pend E column) so subsequent
+  /// delivery rows can carry-forward from the correct baseline. Zero
+  /// for legacy customers who were never seeded.
+  openingSeedQty  Int      @default(0) @map("opening_seed_qty")
   lastUpdated     DateTime @default(now()) @updatedAt @map("last_updated")
 
   customer     Customer     @relation(fields: [customerId], references: [id])
@@ -1051,6 +1099,10 @@ model CylinderType {
   dvaLoadManifests     DVALoadManifest[]
   // Mini-Operator (2026-07-16): purchase-entry line items by cylinder type.
   purchaseEntryItems   PurchaseEntryItem[]
+  /// 2026-07-21 opening-state seed: reverse of the per-customer
+  /// preference table. Reads at RESTRICT delete-cylinder-type surface
+  /// which customers are actively using this type.
+  allowedForCustomers  CustomerAllowedCylinderType[]
 
   @@unique([distributorId, typeName])
   @@index([providerCatalogId])

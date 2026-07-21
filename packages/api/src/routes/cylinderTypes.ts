@@ -36,7 +36,35 @@ const emptyPriceSchema = z.object({
 router.get('/', async (req, res) => {
   try {
     const types = await cylinderTypeService.listCylinderTypes(req.user!.distributorId!);
-    return sendSuccess(res, { cylinderTypes: mapCylinderTypes(types) });
+    // 2026-07-21 opening-state seed: when ?customerId= is passed and
+    // that customer has preferred cylinder types, return the FULL list
+    // but sorted so preferred types come first, each row tagged with
+    // `isPreferred: boolean`. NEVER filter — a customer's mix can
+    // change over time, so the order form must always show every
+    // type in the distributor's catalog.
+    const customerId = typeof req.query.customerId === 'string' ? req.query.customerId : '';
+    let preferredSet = new Set<string>();
+    if (customerId) {
+      const prisma = await import('../lib/prisma.js').then((m) => m.prisma);
+      const preferred = await prisma.customerAllowedCylinderType.findMany({
+        where: {
+          customerId,
+          customer: { distributorId: req.user!.distributorId!, deletedAt: null },
+        },
+        select: { cylinderTypeId: true },
+      });
+      preferredSet = new Set(preferred.map((p) => p.cylinderTypeId));
+    }
+    const mapped = mapCylinderTypes(types);
+    // Attach isPreferred flag + stable sort (preferred first, then
+    // original order). Original order preserved via Array.prototype
+    // .sort() being stable in modern V8.
+    const enriched = (mapped as Array<Record<string, unknown> & { cylinderTypeId?: string }>).map((row) => ({
+      ...row,
+      isPreferred: !!row.cylinderTypeId && preferredSet.has(row.cylinderTypeId),
+    }));
+    enriched.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0));
+    return sendSuccess(res, { cylinderTypes: enriched });
   } catch (err) {
     return sendError(res, (err as Error).message);
   }

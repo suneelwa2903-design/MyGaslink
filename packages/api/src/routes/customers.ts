@@ -7,7 +7,7 @@ import { sendSuccess, sendError, sendCreated, sendNotFound, sendForbidden } from
 import { generateCustomerLedgerPdf } from '../services/pdf/customerLedgerPdfService.js';
 import {
   createCustomerSchema, updateCustomerSchema, customerFilterSchema,
-  customerBalanceSetupSchema,
+  customerBalanceSetupSchema, seedOpeningStateSchema,
 } from '@gaslink/shared';
 import * as customerService from '../services/customerService.js';
 import { mapCustomer, mapCustomers, mapUser } from '../utils/mappers.js';
@@ -252,16 +252,82 @@ router.post('/',
   auditLog('create', 'customer'),
   async (req, res) => {
     try {
-      const result = await customerService.createCustomer(req.user!.distributorId!, req.body);
+      // 2026-07-21 opening-state seed: universal (any tenant). When
+      // req.body.openingState is present, the whole customer + seed
+      // lands in one atomic tx (see createCustomerWithOpeningState).
+      // Absent → fast-path to plain createCustomer, zero extra DB work.
+      const result = await customerService.createCustomerWithOpeningState(
+        req.user!.distributorId!,
+        req.user!.userId,
+        req.body,
+      );
       // Group E1 (2026-06-11): envelope now ships an optional `warnings`
       // array alongside the Customer fields. Front-end shows them as an
       // amber banner (soft signal that the row saved but something is
       // worth reviewing — currently: duplicate-GSTIN multi-branch).
-      return sendCreated(res, { ...mapCustomer(result.customer), warnings: result.warnings });
+      // 2026-07-21: also ships `seeded` metadata (null when no
+      // openingState was sent) — seededAt, preferredCylinderTypeCount,
+      // emptiesRowCount, openingInvoiceId.
+      return sendCreated(res, {
+        ...mapCustomer(result.customer),
+        warnings: result.warnings,
+        seeded: result.seeded,
+      });
     } catch (err: unknown) {
       const e = err as ServiceError;
       const status = e.statusCode || 500;
       return sendError(res, e.message, status);
+    }
+  }
+);
+
+// POST /api/customers/:id/seed-opening-state
+// 2026-07-21 — Mini-op Edit-Customer "seed later" flow. Refuses when
+// opening_state_seeded_at is already set (ledger already anchored —
+// use PUT /opening-state to edit). Same atomic-tx contract as the
+// create path, same shape.
+router.post('/:id/seed-opening-state',
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'mini_operator_admin'),
+  validate(seedOpeningStateSchema),
+  auditLog('seed_opening_state', 'customer'),
+  async (req, res) => {
+    try {
+      const seeded = await customerService.seedOpeningStateOnCustomer(
+        req.user!.distributorId!,
+        req.user!.userId,
+        param(req.params.id),
+        req.body,
+      );
+      return sendSuccess(res, { seeded });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  }
+);
+
+// PUT /api/customers/:id/opening-state
+// 2026-07-21 — Mini-op EDIT of an already-seeded opening state.
+// Full-replace semantics per axis (preferred types / empties / ₹ OB).
+// Guardrails: cannot lower ₹ OB below amountPaid; cannot delete an OB
+// with any payments applied; empties delta-adjusts with_customer_qty
+// so the physical stock reading stays consistent.
+router.put('/:id/opening-state',
+  requireRole('super_admin', 'distributor_admin', 'inventory', 'mini_operator_admin'),
+  validate(seedOpeningStateSchema),
+  auditLog('update_opening_state', 'customer'),
+  async (req, res) => {
+    try {
+      const seeded = await customerService.updateOpeningStateOnCustomer(
+        req.user!.distributorId!,
+        req.user!.userId,
+        param(req.params.id),
+        req.body,
+      );
+      return sendSuccess(res, { seeded });
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
     }
   }
 );

@@ -368,6 +368,15 @@ export async function generateCustomerLedgerPdf(
 
   let totalDelivered = 0;
   let totalCollected = 0;
+  // 2026-07-21 — cumulative closing empties held by customer at end of
+  // period = (opening seeded empties) + (fulls delivered in period)
+  //          − (empties collected in period). We accumulate OB rows'
+  // pendingEmptyCyls into totalOpeningPending during the render loop
+  // and combine into the Total row's Pend E column. Previously that
+  // cell showed (delivered − collected) = period net, which surfaced
+  // as "1" even when the customer physically held ~13 empties — the
+  // period net is not what a mini-op reseller reasons about.
+  let totalOpeningPending = 0;
   let zebra = false;
 
   // Per-page subtotal state. Resets after each page break; emitted as a
@@ -426,7 +435,12 @@ export async function generateCustomerLedgerPdf(
   // customers are already used to.
   function typeLabel(row: typeof ledger.rows[number]): string {
     switch (row.kind) {
-      case 'opening': return 'Opening Balance';
+      // 2026-07-21 opening-state seed: OB rows now carry the cylinder
+      // type name in `cylinderType` when the customer had seeded
+      // empties (one OB row per seeded type). Fall back to blank
+      // when there are no empties (money-only OB) — Narration
+      // column still shows "Opening Balance b/f" so context is clear.
+      case 'opening': return row.cylinderType || '';
       case 'payment': return 'Payment';
       case 'credit_note': return 'Credit Note';
       case 'debit_note': return 'Debit Note';
@@ -490,12 +504,25 @@ export async function generateCustomerLedgerPdf(
       // bold the b/f row, draw it with 4px breathing room above,
       // and finish with a thin divider + 4px gap below to mark the
       // carry-forward break.
+      //
+      // 2026-07-21 opening-state seed: Pend E cell renders the
+      // seeded empties count (just the number — the OB context is
+      // clear from the Narration column's "Opening Balance b/f").
       y += 4; // gap above
+      totalOpeningPending += row.pendingEmptyCyls || 0;
+      const pendE = row.pendingEmptyCyls > 0 ? String(row.pendingEmptyCyls) : '';
+      // 2026-07-21 — surface the OB empties liability (qty × empty
+      // cylinder price) so the reseller reads the ₹ value they're
+      // carrying alongside the empties count. Blank when 0 (money-only
+      // OB row or unpriced type).
+      const empCost = (row.emptyCylsCost || 0) > 0 ? formatMoney(row.emptyCylsCost) : '';
       cells = [
         formatDate(row.orderDate),
         typeLabel(row),
         narration,
-        '', '', '', '', '',
+        '', '', '',
+        pendE,
+        empCost,
         formatMoney(row.totalAmount),
         '',
         formatMoney(row.dueAmount),
@@ -601,7 +628,7 @@ export async function generateCustomerLedgerPdf(
   const summaryCells = [
     'Total', '', '',
     num(totalDelivered), formatMoney(s.totalAmount),
-    num(totalCollected), num(Math.max(0, totalDelivered - totalCollected)),
+    num(totalCollected), num(Math.max(0, totalOpeningPending + totalDelivered - totalCollected)),
     formatMoney(s.emptyCylsCost), formatMoney(s.totalAmount),
     formatMoney(s.receivedAmount), formatMoney(s.dueAmount), formatMoney(s.overdueAmount),
   ];
@@ -860,7 +887,10 @@ export async function generateGroupLedgerPdf(
   // the underlying customer statement uses.
   function groupTypeLabel(row: typeof ledger.rows[number]): string {
     switch (row.kind) {
-      case 'opening': return 'Opening';
+      // 2026-07-21: group PDF surfaces cylinder type name on OB rows
+      // when the customer had seeded empties (per-type emit). Blank
+      // fallback when it's a money-only OB row.
+      case 'opening': return row.cylinderType || '';
       case 'payment': return 'Payment';
       case 'credit_note': return 'Credit';
       case 'debit_note': return 'Debit';
@@ -888,6 +918,11 @@ export async function generateGroupLedgerPdf(
   let zebra = false;
   let totalDelivered = 0;
   let totalCollected = 0;
+  // 2026-07-21 — group PDF mirrors the individual PDF: Total row Pend E
+  // = OB seeded + delivered − collected (cumulative closing pending),
+  // not (delivered − collected). Reason enumerated at the individual
+  // PDF's totalOpeningPending declaration above.
+  let totalOpeningPending = 0;
   for (const row of ledger.rows) {
     // Page break reservation matches the individual PDF: leave room
     // for one row plus a small footer buffer so nothing clips at the
@@ -907,10 +942,20 @@ export async function generateGroupLedgerPdf(
 
     if (row.kind === 'opening') {
       y += 4;
+      // 2026-07-21 opening-state seed: group PDF surfaces the seeded
+      // empties in Pend E column just like the individual PDF. Just
+      // the number — no "b/f" suffix (context is clear from Narration).
+      totalOpeningPending += row.pendingEmptyCyls || 0;
+      const pendE = row.pendingEmptyCyls > 0 ? String(row.pendingEmptyCyls) : '';
+      // 2026-07-21 — Emp Cost carries per-type OB empty liability; see
+      // the identical block on the individual PDF above.
+      const empCost = (row.emptyCylsCost || 0) > 0 ? formatMoney(row.emptyCylsCost) : '';
       cells = [
         formatDate(new Date(row.orderDate)),
         property, type, narration,
-        '', '', '', '', '',
+        '', '', '',
+        pendE,
+        empCost,
         formatMoney(row.totalAmount),
         '',
         formatMoney(row.dueAmount),
@@ -981,7 +1026,7 @@ export async function generateGroupLedgerPdf(
   const totalsCells = [
     'Total', '', '', '',
     num(totalDelivered), formatMoney(t.totalDebited),
-    num(totalCollected), num(Math.max(0, totalDelivered - totalCollected)),
+    num(totalCollected), num(Math.max(0, totalOpeningPending + totalDelivered - totalCollected)),
     '', formatMoney(t.totalDebited),
     formatMoney(t.totalReceived), formatMoney(t.netOutstanding),
     formatMoney(groupOverdue),

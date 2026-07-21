@@ -187,15 +187,28 @@ function EditCustomerModal({
         ['customers'],
         ['customer-detail', customer?.customerId ?? ''],
       ],
-      successMessage: 'Customer updated',
+      // 2026-07-21: successMessage removed here — the parent onSubmit
+      // may issue a follow-up PUT /opening-state / POST /seed-opening-state
+      // after this mutation resolves, so the "Customer updated" toast
+      // would fire before the second call. Parent shows its own toast.
       onSuccess: () => {
-        onSaved();
-        onClose();
+        // Refetch handled by invalidateKeys.
       },
     },
   );
 
   const initial = customer ? customerToFormInitial(customer) : undefined;
+  // 2026-07-21 — customer.openingState is set by the GET /customers/:id
+  // mapper (mappers.ts > mapCustomer). Present only when the customer has
+  // been seeded before, or the panel starts blank (never-seeded).
+  const initialOpeningState = (customer as Customer & {
+    openingState?: {
+      seededAt: string;
+      preferredCylinderTypeIds: string[];
+      empties: Array<{ cylinderTypeId: string; typeName: string; qty: number }>;
+      openingBalance: { invoiceId: string; amount: number; amountPaid: number; notes: string | null } | null;
+    } | null;
+  } | null)?.openingState ?? undefined;
 
   return (
     <CustomerFormModal
@@ -206,14 +219,30 @@ function EditCustomerModal({
       canEditTransport={canEditTransport}
       key={customer ? `edit-${customer.customerId}` : 'edit-empty'}
       initial={initial}
+      initialOpeningState={initialOpeningState ?? undefined}
       submitting={updateMutation.isPending}
       onClose={onClose}
       onSubmit={async (data) => {
         if (!customer) return;
         try {
-          await updateMutation.mutateAsync(data);
-        } catch {
-          // handled by hook
+          // 2026-07-21 opening-state routing: pull openingState out of
+          // the main PUT payload (PUT /customers/:id doesn't accept it)
+          // and route it to POST /seed-opening-state (never seeded) or
+          // PUT /opening-state (edit-in-place) after the main PUT.
+          const { openingState, ...customerPayload } = data;
+          await updateMutation.mutateAsync(customerPayload);
+          if (openingState) {
+            const alreadySeeded = !!initialOpeningState?.seededAt;
+            if (alreadySeeded) {
+              await api.put(`/customers/${customer.customerId}/opening-state`, openingState);
+            } else {
+              await api.post(`/customers/${customer.customerId}/seed-opening-state`, openingState);
+            }
+          }
+          onSaved();
+          onClose();
+        } catch (err) {
+          Alert.alert('Update failed', getErrorMessage(err));
         }
       }}
     />

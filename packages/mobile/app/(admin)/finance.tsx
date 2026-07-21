@@ -2471,88 +2471,17 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
                 <Ionicons name="chevron-down" size={18} color={C.textSecondary} />
               </TouchableOpacity>
 
-              {showCustomerPicker && (
-                <View
-                  style={{
-                    backgroundColor: C.card,
-                    borderWidth: 1,
-                    borderColor: C.cardBorder,
-                    borderRadius: 10,
-                    marginTop: 4,
-                    maxHeight: 250,
-                  }}
-                >
-                  {/* Search input */}
-                  <View
-                    style={{
-                      paddingHorizontal: 12,
-                      paddingVertical: 8,
-                      borderBottomWidth: 1,
-                      borderBottomColor: C.divider,
-                    }}
-                  >
-                    <TextInput
-                      style={{
-                        backgroundColor: C.inputBg,
-                        borderWidth: 1,
-                        borderColor: C.inputBorder,
-                        borderRadius: 8,
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        fontSize: 14,
-                        color: C.text,
-                      }}
-                      placeholder="Search customer..."
-                      placeholderTextColor={C.textMuted}
-                      value={customerSearch}
-                      onChangeText={setCustomerSearch}
-                      autoFocus
-                    />
-                  </View>
-
-                  {/* Avoid VirtualizedList-nested-in-ScrollView warning
-                      by mapping inline. Customer list is bounded by the
-                      distributor (typically <500 customers, search-filtered). */}
-                  <View style={{ maxHeight: 190 }}>
-                    {filteredCustomers.length === 0 ? (
-                      <View style={{ padding: 20, alignItems: 'center' }}>
-                        <Text style={{ color: C.textMuted, fontSize: 13 }}>No customers found</Text>
-                      </View>
-                    ) : (
-                      filteredCustomers.map((cust) => (
-                        <TouchableOpacity
-                          key={cust.customerId}
-                          onPress={() => {
-                            setSelectedCustomer(cust);
-                            setShowCustomerPicker(false);
-                            setCustomerSearch('');
-                          }}
-                          style={{
-                            paddingHorizontal: 14,
-                            paddingVertical: 12,
-                            borderBottomWidth: 1,
-                            borderBottomColor: C.divider,
-                            backgroundColor:
-                              selectedCustomer?.customerId === cust.customerId
-                                ? (dark ? '#334155' : '#f1f5f9')
-                                : 'transparent',
-                          }}
-                        >
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
-                            {cust.customerName}
-                          </Text>
-                          {cust.phone && (
-                            <Text style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
-                              {cust.phone}
-                            </Text>
-                          )}
-                        </TouchableOpacity>
-                      ))
-                    )}
-                  </View>
-                </View>
-              )}
             </View>
+            {/* 2026-07-21 — customer picker moved OUT of the outer ScrollView
+                and into its own full-screen Modal below. Previously the
+                picker rendered inline as `View { maxHeight: 190 }` mapping
+                filteredCustomers.map(...) which:
+                  (a) had no scroll — items past ~4 were clipped and
+                      unreachable on distributors with >4 customers;
+                  (b) sat over the Amount/Method/etc. fields (transparent
+                      overlap); (c) fought the outer ScrollView on Android.
+                A dedicated Modal fixes all three at once — proper FlatList
+                scrolling, no overlap, and the outer form isn't blocked. */}
 
             {/* Amount */}
             <View style={{ marginBottom: 16 }}>
@@ -2682,6 +2611,107 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
         </KeyboardAvoidingView>
       </SafeAreaView>
       </SafeAreaProvider>
+
+      {/* 2026-07-21 — Full-screen customer picker. Uses FlatList (native
+          scroll) and lives OUTSIDE the outer ScrollView, so scroll works
+          on both platforms even when the underlying distributor has
+          hundreds of customers. Reachable via the "Select customer"
+          chip on the form. */}
+      <Modal
+        visible={showCustomerPicker}
+        animationType="slide"
+        onRequestClose={() => setShowCustomerPicker(false)}
+        transparent={false}
+      >
+        <SafeAreaProvider>
+          <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: C.bg }}>
+            {/* Header */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingHorizontal: 20,
+                paddingVertical: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: C.divider,
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => setShowCustomerPicker(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={24} color={C.textSecondary} />
+              </TouchableOpacity>
+              <Text style={{ fontSize: 18, fontWeight: '800', color: C.text }}>Select Customer</Text>
+              <View style={{ width: 24 }} />
+            </View>
+
+            {/* Search */}
+            <View style={{ paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.divider }}>
+              <TextInput
+                style={{
+                  backgroundColor: C.inputBg,
+                  borderWidth: 1,
+                  borderColor: C.inputBorder,
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 15,
+                  color: C.text,
+                }}
+                placeholder="Search by name or phone..."
+                placeholderTextColor={C.textMuted}
+                value={customerSearch}
+                onChangeText={setCustomerSearch}
+                autoFocus
+              />
+            </View>
+
+            {/* List — FlatList so it scrolls natively regardless of
+                distributor size. keyExtractor on customerId. */}
+            <FlatList
+              data={filteredCustomers}
+              keyExtractor={(c) => c.customerId}
+              contentContainerStyle={filteredCustomers.length === 0
+                ? { flexGrow: 1, justifyContent: 'center', alignItems: 'center' }
+                : { paddingBottom: 24 }
+              }
+              ListEmptyComponent={
+                <Text style={{ color: C.textMuted, fontSize: 14 }}>No customers found</Text>
+              }
+              renderItem={({ item: cust }) => (
+                <TouchableOpacity
+                  onPress={() => {
+                    setSelectedCustomer(cust);
+                    setShowCustomerPicker(false);
+                    setCustomerSearch('');
+                  }}
+                  style={{
+                    paddingHorizontal: 20,
+                    paddingVertical: 14,
+                    borderBottomWidth: 1,
+                    borderBottomColor: C.divider,
+                    backgroundColor:
+                      selectedCustomer?.customerId === cust.customerId
+                        ? (dark ? '#334155' : '#f1f5f9')
+                        : C.bg,
+                  }}
+                >
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>
+                    {cust.customerName}
+                  </Text>
+                  {cust.phone && (
+                    <Text style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
+                      {cust.phone}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </SafeAreaView>
+        </SafeAreaProvider>
+      </Modal>
     </Modal>
   );
 }

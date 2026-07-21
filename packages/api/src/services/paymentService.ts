@@ -445,12 +445,31 @@ export async function getCustomerLedger(
   // preserved exactly here: same DB reads, same output.
   const invoiceMap = await loadInvoicesForLedger(allEntries);
   const emptyPriceMap = await loadEmptyPricesForLedger(distributorId);
+  // 2026-07-21 opening-state seed: load the OB empties snapshot with
+  // cylinder type NAMES so the Ledger can emit one OB row per seeded
+  // cylinder type. `openingSeedQty=0` rows are skipped (map stays
+  // lean for legacy customers).
+  const seedRows = await prisma.customerInventoryBalance.findMany({
+    where: { customerId, openingSeedQty: { gt: 0 } },
+    select: {
+      cylinderTypeId: true,
+      openingSeedQty: true,
+      cylinderType: { select: { typeName: true } },
+    },
+  });
+  const openingEmptiesByType = new Map<string, { typeName: string; qty: number }>(
+    seedRows.map((r) => [r.cylinderTypeId, {
+      typeName: r.cylinderType?.typeName ?? '',
+      qty: r.openingSeedQty,
+    }]),
+  );
   return processLedgerEntries({
     entries: allEntries,
     invoiceMap,
     emptyPriceMap,
     creditPeriodDays: customer.creditPeriodDays,
     range,
+    openingEmptiesByType,
   });
 }
 
@@ -550,6 +569,16 @@ export interface LedgerProcessingInput {
   emptyPriceMap: Map<string, number>;
   creditPeriodDays: number;
   range?: { from?: string; to?: string };
+  // 2026-07-21 opening-state seed: per-cylinder-type OB empties
+  // count + type-name (customer_inventory_balances.opening_seed_qty
+  // joined to cylinder_types.type_name). When non-empty the
+  // synthesised OB block emits ONE row per cylinder type, each row
+  // showing the type name in the Type column + qty in Pend E.
+  // The running empties counter is ALSO initialized from these
+  // values so subsequent delivery rows carry-forward correctly.
+  // Legacy customers (never seeded) → undefined → single aggregate
+  // OB row with blank Type + Pend E blank (previous behaviour).
+  openingEmptiesByType?: Map<string, { typeName: string; qty: number }>;
 }
 
 /**
@@ -573,7 +602,7 @@ export interface LedgerProcessingInput {
  * strictly separated.
  */
 export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedgerResponse {
-  const { entries: allEntries, invoiceMap, emptyPriceMap, creditPeriodDays: creditDays, range } = input;
+  const { entries: allEntries, invoiceMap, emptyPriceMap, creditPeriodDays: creditDays, range, openingEmptiesByType } = input;
 
   const fromDate = range?.from ? new Date(range.from) : null;
   const toDate = range?.to ? new Date(range.to) : null;
@@ -589,7 +618,19 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
   // summary still reads the same (backward-compat).
   let periodDebited = 0;
   let periodReceived = 0;
+  // 2026-07-21 opening-state seed: initialize the running-empties
+  // counter from the OB snapshot so the "Pend E" column starts at the
+  // seeded baseline (not zero) on subsequent delivery rows. Legacy
+  // customers (no seed) → empty map → zero baseline preserved.
   const pendingEmptiesPerType = new Map<string, number>();
+  if (openingEmptiesByType) {
+    for (const [typeId, { qty }] of openingEmptiesByType) {
+      if (qty > 0) pendingEmptiesPerType.set(typeId, qty);
+    }
+  }
+  const openingEmptySeedEntries = openingEmptiesByType
+    ? [...openingEmptiesByType.entries()].filter(([, v]) => v.qty > 0)
+    : [];
   // Only NON-OB invoice debits enter this list — preserves overdueAmount
   // contract with computeCustomerOverdue.
   const unpaidDeliveries: { date: Date; amount: number }[] = [];
@@ -870,17 +911,32 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
   }
 
   const openingBalance = cumulativeInvoiceAmount - cumulativeReceivedAmount;
-  const showOpeningRow = Math.abs(openingBalance) > 0.005;
+  // 2026-07-21 — surface the OB row also when the customer has NO ₹
+  // opening balance but DOES have seeded empties, so mini-op customers
+  // seeded with only empties (or edited to clear the ₹) still show a
+  // visible "Opening Balance b/f" row on the ledger. Previously the row
+  // only appeared when |openingBalance| > 0.005 which hid empties-only
+  // seeds and gave the impression the seed had been lost.
+  const showOpeningRow =
+    Math.abs(openingBalance) > 0.005 || openingEmptySeedEntries.length > 0;
 
   if (showOpeningRow) {
-    // Carry-forward row — sits at the top of the period before any
-    // in-range transaction. dueAmount equals the opening balance; no
-    // debit/credit split, no per-row overdue contribution.
+    // Carry-forward block — sits at the top of the period before any
+    // in-range transaction. Emits up to TWO kinds of rows:
+    //   (a) ONE ₹ money row when the customer has a non-zero opening
+    //       balance — narration "Opening Balance b/f", all cylinder
+    //       columns blank, money columns filled. This is the row a
+    //       collections agent looks at to understand the outstanding.
+    //   (b) N empties rows — ONE per seeded cylinder type — narration
+    //       "Opening empties held", Type column = typeName, Pend E =
+    //       qty. Money columns blank on empties rows (the ₹ figure
+    //       lives on the money row above; putting the money on the
+    //       first empties row conflated two concepts and made the
+    //       second-row zeros look like a bug).
     //
     // Date convention: report-start − 1 day so the reader sees it's
-    // carried forward from BEFORE the period, not created on the start
-    // date. If no range was supplied, fall back to (earliest in-range
-    // entry − 1 day) or today − 1 day if there are none.
+    // carried forward from BEFORE the period. If no range was supplied,
+    // fall back to (earliest in-range entry − 1 day) or today − 1 day.
     const firstInRange = allEntries.find((e) => {
       const inRange = (!fromDate || e.entryDate >= fromDate) && (!toDate || e.entryDate <= toDate);
       const isOB = e.entryType === 'invoice_entry' && !!(e.invoiceId && invoiceMap.get(e.invoiceId)?.isOpeningBalance);
@@ -890,21 +946,57 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
     const bfDate = new Date(bfAnchor);
     bfDate.setDate(bfDate.getDate() - 1);
 
-    rows.push({
-      orderDate: bfDate.toISOString().split('T')[0],
-      cylinderType: 'Opening Balance b/f',
-      fullCylsDelivered: 0,
-      amount: 0,
-      emptyCylsCollected: 0,
-      pendingEmptyCyls: 0,
-      emptyCylsCost: 0,
-      totalAmount: Math.round(cumulativeInvoiceAmount * 100) / 100,
-      receivedAmount: Math.round(cumulativeReceivedAmount * 100) / 100,
-      dueAmount: Math.round(openingBalance * 100) / 100,
-      creditDays,
-      overDueAmount: 0,
-      narration: 'Opening Balance b/f',
-      kind: 'opening',
+    const bfDateStr = bfDate.toISOString().split('T')[0];
+    const roundedOpeningBalance = Math.round(openingBalance * 100) / 100;
+    const hasMoney = Math.abs(roundedOpeningBalance) > 0.005;
+    // (a) Emit the money row FIRST when there's a ₹ opening balance.
+    if (hasMoney) {
+      rows.push({
+        orderDate: bfDateStr,
+        cylinderType: '',
+        fullCylsDelivered: 0,
+        amount: 0,
+        emptyCylsCollected: 0,
+        pendingEmptyCyls: 0,
+        emptyCylsCost: 0,
+        totalAmount: Math.round(cumulativeInvoiceAmount * 100) / 100,
+        receivedAmount: Math.round(cumulativeReceivedAmount * 100) / 100,
+        dueAmount: roundedOpeningBalance,
+        creditDays,
+        overDueAmount: 0,
+        narration: 'Opening Balance b/f',
+        kind: 'opening',
+      });
+    }
+    // (b) Then emit one empties row per seeded cylinder type. Money
+    // columns are blank on these — they belong to the money row above.
+    // Emp Cost column carries the per-type liability (qty × empty
+    // cylinder price) so a mini-op reseller sees the value of empties
+    // they’re carrying for the customer. If there are seeded empties
+    // BUT no ₹, the empties rows still carry the running-balance
+    // snapshot (0) so the reader sees the opening cash position was zero.
+    openingEmptySeedEntries.forEach(([typeId, { typeName, qty }], idx) => {
+      const isFirstEmptyRow = !hasMoney && idx === 0;
+      const perTypePrice = emptyPriceMap.get(typeId) ?? 0;
+      rows.push({
+        orderDate: bfDateStr,
+        cylinderType: typeName,
+        fullCylsDelivered: 0,
+        amount: 0,
+        emptyCylsCollected: 0,
+        pendingEmptyCyls: qty,
+        emptyCylsCost: Math.round(qty * perTypePrice * 100) / 100,
+        // When there is no money row, snapshot the running balance (0)
+        // on the very first empties row so a reader still sees the
+        // Total Amt / Due Amt columns start at 0 rather than blank.
+        totalAmount: isFirstEmptyRow ? Math.round(cumulativeInvoiceAmount * 100) / 100 : 0,
+        receivedAmount: isFirstEmptyRow ? Math.round(cumulativeReceivedAmount * 100) / 100 : 0,
+        dueAmount: isFirstEmptyRow ? roundedOpeningBalance : 0,
+        creditDays,
+        overDueAmount: 0,
+        narration: hasMoney ? 'Opening empties held' : (idx === 0 ? 'Opening Balance b/f' : 'Opening empties held'),
+        kind: 'opening',
+      });
     });
   }
 

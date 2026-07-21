@@ -143,6 +143,45 @@ const cylinderDiscountSchema = z.object({
   discountPerUnit: nonNegativeNumber,
 });
 
+// 2026-07-21 — "Opening state" seed. Bundled with createCustomer so
+// the customer record + preferred cylinder-type list + empties
+// balance + ₹ opening balance land in one atomic transaction. Also
+// consumed by POST /api/customers/:id/seed-opening-state on the
+// Edit-Customer path. Universal — every tenant (regular distributor
+// AND mini-operator) can use it. The `preferredCylinderTypeIds`
+// field is a SORT hint on the order-form picker (preferred types
+// float to the top with a "usual" tag), NOT a hard filter — a
+// customer whose mix changes over time can still pick any type.
+const openingEmptiesRowSchema = z.object({
+  cylinderTypeId: uuid,
+  qty: z.number().int().min(0).max(100000),
+});
+
+const openingBalanceSchema = z.object({
+  amount: z.number().positive('Opening balance must be > 0').max(1_00_00_00_000),
+  asOfDate: dateString,
+  notes: z.string().max(500).optional(),
+});
+
+export const openingStateSchema = z.object({
+  preferredCylinderTypeIds: z.array(uuid).max(50).optional(),
+  empties: z.array(openingEmptiesRowSchema).max(50).optional(),
+  openingBalance: openingBalanceSchema.optional(),
+});
+export type OpeningStateInput = z.infer<typeof openingStateSchema>;
+
+// Same shape but standalone — used by the Edit-Customer "seed later"
+// endpoint POST /api/customers/:id/seed-opening-state.
+export const seedOpeningStateSchema = openingStateSchema.refine(
+  (v) => Boolean(
+    (v.preferredCylinderTypeIds && v.preferredCylinderTypeIds.length > 0)
+    || (v.empties && v.empties.length > 0)
+    || v.openingBalance
+  ),
+  { message: 'At least one axis (preferred types / empties / opening balance) must be provided.' },
+);
+export type SeedOpeningStateInput = z.infer<typeof seedOpeningStateSchema>;
+
 export const createCustomerSchema = z.object({
   customerName: z.string().min(1, 'Customer name is required').max(200),
   businessName: z.string().max(200).optional(),
@@ -175,6 +214,11 @@ export const createCustomerSchema = z.object({
   requireDeliveryVerification: z.boolean().optional(),
   contacts: z.array(customerContactSchema).optional(),
   cylinderDiscounts: z.array(cylinderDiscountSchema).optional(),
+  // 2026-07-21 — opening-state seed. Universal (any tenant). See
+  // openingStateSchema above. Rejected with 400 by the seed endpoint
+  // when the customer was already seeded (opening_state_seeded_at IS
+  // NOT NULL) — one-way idempotency guard on the Edit path.
+  openingState: openingStateSchema.optional(),
 });
 
 export const updateCustomerSchema = createCustomerSchema.partial().extend({

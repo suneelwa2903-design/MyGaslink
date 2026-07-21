@@ -95,6 +95,22 @@ interface CustomerInput extends HasId {
   contacts?: HasId[];
   cylinderDiscounts?: ChildWithCylinderType[];
   inventoryBalances?: ChildWithCylinderType[];
+  // 2026-07-21 opening-state seed: the customer's *preferred* cylinder
+  // types. Order form uses this as a SORT hint (preferred first with
+  // a "usual" tag). Flattened to `preferredCylinderTypeIds` on the
+  // wire; the joined typeName is available under `allowedCylinderTypes`
+  // for the Customer detail modal display.
+  allowedCylinderTypes?: Array<{ cylinderTypeId: string; cylinderType?: { typeName: string } | null }>;
+  // 2026-07-21 opening-state edit: linked OB invoice + seededAt so the
+  // Edit-Customer form can prefill the ₹ amount + notes.
+  openingInvoice?: {
+    id: string;
+    totalAmount: unknown;
+    amountPaid: unknown;
+    notes: string | null;
+    issueDate: Date | string;
+  } | null;
+  openingStateSeededAt?: Date | string | null;
 }
 
 export function mapCustomer(c: CustomerInput | null | undefined): MappedRecord | null | undefined {
@@ -119,6 +135,47 @@ export function mapCustomer(c: CustomerInput | null | undefined): MappedRecord |
       if (b.cylinderType) m.cylinderTypeName = b.cylinderType.typeName;
       return m;
     });
+  }
+  // 2026-07-21 — flatten the preference table to `preferredCylinderTypeIds`.
+  // Always emits [] when the join wasn't fetched, so callers can rely on
+  // the field's presence.
+  if (Array.isArray(mapped.allowedCylinderTypes)) {
+    mapped.preferredCylinderTypeIds = (mapped.allowedCylinderTypes as Array<{ cylinderTypeId: string }>)
+      .map((a) => a.cylinderTypeId);
+  } else {
+    mapped.preferredCylinderTypeIds = [];
+  }
+  // 2026-07-21 — surface the current opening-state values on the
+  // customer detail response so the Edit-Customer form can prefill
+  // the panel. Only present when opening_state_seeded_at is set.
+  if (mapped.openingStateSeededAt) {
+    const openingInvoice = mapped.openingInvoice as {
+      id: string; totalAmount: unknown; amountPaid: unknown; notes: string | null;
+    } | null | undefined;
+    const balances = Array.isArray(mapped.inventoryBalances)
+      ? (mapped.inventoryBalances as Array<{ cylinderTypeId: string; openingSeedQty?: number; cylinderType?: { typeName: string } }>)
+      : [];
+    mapped.openingState = {
+      seededAt: mapped.openingStateSeededAt,
+      preferredCylinderTypeIds: mapped.preferredCylinderTypeIds,
+      empties: balances
+        .filter((b) => (b.openingSeedQty ?? 0) > 0)
+        .map((b) => ({
+          cylinderTypeId: b.cylinderTypeId,
+          typeName: b.cylinderType?.typeName ?? '',
+          qty: b.openingSeedQty ?? 0,
+        })),
+      openingBalance: openingInvoice
+        ? {
+            invoiceId: openingInvoice.id,
+            amount: Number(openingInvoice.totalAmount),
+            amountPaid: Number(openingInvoice.amountPaid),
+            notes: openingInvoice.notes,
+          }
+        : null,
+    };
+  } else {
+    mapped.openingState = null;
   }
   return mapped;
 }

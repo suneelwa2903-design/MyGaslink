@@ -56,6 +56,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { apiGet, getErrorMessage } from '../lib/api';
 import { useApiQuery } from '../hooks/useApi';
+import { useAuthStore } from '../stores/authStore';
 import { useTheme, type ThemeColors } from '../theme';
 import { SelectField } from '../components/ui';
 import type { CylinderType, Customer as SharedCustomer } from '@gaslink/shared';
@@ -147,6 +148,19 @@ export interface CustomerFormSubmit {
   // Sent as a number; null when caller passes 18 to keep the platform
   // default semantics (caller code at api layer normalises).
   gstRateOverride: 5 | 18;
+  // 2026-07-21 opening-state seed. Universal. Nested on POST /customers
+  // for the create path; caller extracts and POSTs to
+  // /customers/:id/seed-opening-state separately on the edit path.
+  // Absent unless the operator filled at least one axis.
+  openingState?: {
+    preferredCylinderTypeIds?: string[];
+    empties?: { cylinderTypeId: string; qty: number }[];
+    openingBalance?: {
+      amount: number;
+      asOfDate: string;
+      notes?: string;
+    };
+  };
 }
 
 export type CustomerFormInitial = Partial<CustomerFormState>;
@@ -264,6 +278,25 @@ export interface CustomerFormProps {
   canEditTransport: boolean;
   accent?: string;
   title?: string;
+  // 2026-07-21 opening-state seed: legacy flag kept for backward
+  // compatibility with any caller that still passes it. Prefer
+  // `initialOpeningState` — when it carries a truthy `seededAt`,
+  // the form knows this is an edit-existing-state flow.
+  alreadySeeded?: boolean;
+  // 2026-07-21 opening-state EDIT: prefill values from the customer's
+  // currentOpeningState (from GET /customers/:id). When `seededAt` is
+  // set, the panel shows "Edit Opening State" and the parent submits
+  // to PUT /opening-state instead of POST /seed-opening-state.
+  initialOpeningState?: {
+    seededAt?: string | null;
+    preferredCylinderTypeIds?: string[];
+    empties?: Array<{ cylinderTypeId: string; qty: number }>;
+    openingBalance?: {
+      amount: number;
+      amountPaid?: number;
+      notes?: string | null;
+    } | null;
+  };
 }
 
 // ─── Main component ─────────────────────────────────────────────────────────
@@ -277,6 +310,8 @@ export function CustomerForm({
   canEditTransport,
   accent,
   title,
+  alreadySeeded,
+  initialOpeningState,
 }: CustomerFormProps) {
   const { colors } = useTheme();
   const ACCENT = accent ?? DEFAULT_ACCENT;
@@ -285,6 +320,57 @@ export function CustomerForm({
   const [gstinLookupStatus, setGstinLookupStatus] = useState<string | null>(null);
   const [gstinLookupError, setGstinLookupError] = useState<string | null>(null);
   const [gstinLookupLoading, setGstinLookupLoading] = useState(false);
+
+  // 2026-07-21 opening-state seed — MINI-OPERATOR ONLY. Panel visible
+  // on Create AND Edit (edit-in-place when already seeded, seed-later
+  // when not). Parent handles POST vs PUT routing based on
+  // initialOpeningState.seededAt.
+  const role = useAuthStore((s) => s.user?.role);
+  const isMiniOpAdmin = role === 'mini_operator_admin';
+  const showOpeningSetup = isMiniOpAdmin && (mode === 'create' || alreadySeeded !== true);
+  const isEditingSeededOpening = !!initialOpeningState?.seededAt;
+  const [openingPreferredIds, setOpeningPreferredIds] = useState<Set<string>>(
+    () => new Set(initialOpeningState?.preferredCylinderTypeIds ?? []),
+  );
+  const [openingEmpties, setOpeningEmpties] = useState<Record<string, string>>(
+    () => Object.fromEntries(
+      (initialOpeningState?.empties ?? []).map((e) => [e.cylinderTypeId, String(e.qty)]),
+    ),
+  );
+  const [openingBalanceAmount, setOpeningBalanceAmount] = useState<string>(
+    () => initialOpeningState?.openingBalance ? String(initialOpeningState.openingBalance.amount) : '',
+  );
+  const [openingBalanceAsOfDate, setOpeningBalanceAsOfDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [openingBalanceNotes, setOpeningBalanceNotes] = useState<string>(
+    () => initialOpeningState?.openingBalance?.notes ?? '',
+  );
+  // 2026-07-21 CRITICAL — the initializers above run ONCE on mount. If the
+  // customer detail query resolves after CustomerForm has mounted, the
+  // panel stays blank AND an unrelated save (e.g. address change) submits
+  // an empty openingState payload, which the service reads as "clear the
+  // seeded state" and deletes the OB invoice. openingStateDirty gates the
+  // submission — parent only pulls openingState off the payload when the
+  // operator actually touched the panel.
+  const [openingStateDirty, setOpeningStateDirty] = useState(false);
+  const opStateSyncKey = initialOpeningState?.seededAt ?? null;
+  const [lastSyncedKey, setLastSyncedKey] = useState<string | null>(null);
+  // Sync from initialOpeningState during render (React's "derive state
+  // from props" pattern) when the parent's customer detail query
+  // resolves. Gated so it fires once per unique sync key.
+  if (mode === 'edit' && opStateSyncKey !== lastSyncedKey) {
+    setLastSyncedKey(opStateSyncKey);
+    const os = initialOpeningState;
+    setOpeningPreferredIds(new Set(os?.preferredCylinderTypeIds ?? []));
+    setOpeningEmpties(
+      Object.fromEntries((os?.empties ?? []).map((e) => [e.cylinderTypeId, String(e.qty)])),
+    );
+    setOpeningBalanceAmount(os?.openingBalance ? String(os.openingBalance.amount) : '');
+    setOpeningBalanceNotes(os?.openingBalance?.notes ?? '');
+    setOpeningStateDirty(false);
+  }
 
   // ─── Cylinder Types for discount picker ──────────────────────────────────
   // Same endpoint web uses (CustomersPage.tsx:63-67).
@@ -528,6 +614,34 @@ export function CustomerForm({
           }))
         : undefined,
     };
+
+    // 2026-07-21: opening state — attach when panel is visible AND (on
+    // edit) the operator actually touched the panel. This guards against
+    // the "empty modal → save address → nuked OB" regression on edit
+    // where the initial useState fired before the customer detail query
+    // resolved. On create, no dirty gate — any input counts.
+    const shouldAttachOpeningState =
+      showOpeningSetup && (mode === 'edit' ? openingStateDirty : true);
+    if (shouldAttachOpeningState) {
+      const emptiesPayload = Object.entries(openingEmpties)
+        .map(([cylinderTypeId, qtyStr]) => ({ cylinderTypeId, qty: parseInt(qtyStr, 10) }))
+        .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+      const obAmount = Number(openingBalanceAmount);
+      const hasOb = Number.isFinite(obAmount) && obAmount > 0 && !!openingBalanceAsOfDate;
+      if (openingPreferredIds.size > 0 || emptiesPayload.length > 0 || hasOb) {
+        payload.openingState = {
+          preferredCylinderTypeIds: Array.from(openingPreferredIds),
+          empties: emptiesPayload,
+          openingBalance: hasOb
+            ? {
+                amount: obAmount,
+                asOfDate: openingBalanceAsOfDate,
+                notes: openingBalanceNotes.trim() || undefined,
+              }
+            : undefined,
+        };
+      }
+    }
 
     await onSubmit(payload);
   };
@@ -889,6 +1003,148 @@ export function CustomerForm({
               </View>
             </View>
           ))}
+
+          {/* 2026-07-21 Opening Setup — universal. Hidden on Edit
+                when the customer was already seeded (ledger anchored). */}
+          {showOpeningSetup && (
+            <View
+              style={{
+                marginTop: 20,
+                marginBottom: 12,
+                padding: 14,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: ACCENT + '40',
+                backgroundColor: ACCENT + '08',
+                gap: 12,
+              }}
+            >
+              <View>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: ACCENT }}>
+                  {isEditingSeededOpening
+                    ? 'Edit Opening State'
+                    : mode === 'edit'
+                    ? 'Set Opening State (one-time)'
+                    : 'Opening Setup'}
+                </Text>
+                <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 3 }}>
+                  {isEditingSeededOpening
+                    ? 'Edit the seeded opening state. Cleared amounts are only allowed when no payments have been recorded.'
+                    : 'Seed this customer’s starting state so the ledger reconciles from day one. Every axis is optional.'}
+                </Text>
+              </View>
+
+              {/* 1. Preferred cylinder types */}
+              <View>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text, marginBottom: 6 }}>
+                  Cylinder types this customer usually buys
+                </Text>
+                {cylinderTypes.length === 0 ? (
+                  <Text style={{ fontSize: 11, color: colors.textMuted, fontStyle: 'italic' }}>
+                    Add cylinder types in Settings first.
+                  </Text>
+                ) : (
+                  <View style={{ gap: 6 }}>
+                    {cylinderTypes.map((ct) => {
+                      const checked = openingPreferredIds.has(ct.cylinderTypeId);
+                      return (
+                        <TouchableOpacity
+                          key={ct.cylinderTypeId}
+                          onPress={() => {
+                            setOpeningStateDirty(true);
+                            setOpeningPreferredIds((prev) => {
+                              const next = new Set(prev);
+                              if (checked) next.delete(ct.cylinderTypeId);
+                              else next.add(ct.cylinderTypeId);
+                              return next;
+                            });
+                          }}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}
+                        >
+                          <View
+                            style={{
+                              width: 18, height: 18, borderRadius: 4,
+                              borderWidth: 1.5,
+                              borderColor: checked ? ACCENT : colors.cardBorder,
+                              backgroundColor: checked ? ACCENT : 'transparent',
+                              alignItems: 'center', justifyContent: 'center',
+                            }}
+                          >
+                            {checked && <Ionicons name="checkmark" size={12} color="#fff" />}
+                          </View>
+                          <Text style={{ fontSize: 13, color: colors.text }}>{ct.typeName}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+                <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
+                  Preferred types float to the top of the order form with a &quot;usual&quot; tag. Nothing is blocked.
+                </Text>
+              </View>
+
+              {/* 2. Empties currently held */}
+              {openingPreferredIds.size > 0 && (
+                <View>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text, marginBottom: 6 }}>
+                    Empty cylinders currently held
+                  </Text>
+                  <View style={{ gap: 8 }}>
+                    {Array.from(openingPreferredIds).map((typeId) => {
+                      const ct = cylinderTypes.find((c) => c.cylinderTypeId === typeId);
+                      if (!ct) return null;
+                      return (
+                        <View key={typeId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                          <Text style={{ fontSize: 13, color: colors.text, flex: 1 }}>{ct.typeName}</Text>
+                          <View style={{ width: 90 }}>
+                            <Field
+                              value={openingEmpties[typeId] ?? ''}
+                              onChangeText={(t) => { setOpeningStateDirty(true); setOpeningEmpties((prev) => ({ ...prev, [typeId]: t })); }}
+                              placeholder="0"
+                              keyboardType="numeric"
+                              colors={colors}
+                            />
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* 3. Opening balance (₹) */}
+              <View>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text, marginBottom: 6 }}>
+                  Opening balance (₹ already owed)
+                </Text>
+                <FieldLabel label="Amount (₹)" colors={colors} />
+                <Field
+                  value={openingBalanceAmount}
+                  onChangeText={(t) => { setOpeningStateDirty(true); setOpeningBalanceAmount(t); }}
+                  placeholder="e.g. 8500"
+                  keyboardType="numeric"
+                  colors={colors}
+                />
+                <FieldLabel label="As of date (YYYY-MM-DD)" colors={colors} />
+                <Field
+                  value={openingBalanceAsOfDate}
+                  onChangeText={(t) => { setOpeningStateDirty(true); setOpeningBalanceAsOfDate(t); }}
+                  placeholder="2026-07-21"
+                  colors={colors}
+                />
+                <FieldLabel label="Notes (optional)" colors={colors} />
+                <Field
+                  value={openingBalanceNotes}
+                  onChangeText={(t) => { setOpeningStateDirty(true); setOpeningBalanceNotes(t); }}
+                  placeholder="e.g. from paper ledger"
+                  colors={colors}
+                />
+                <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
+                  Ledger will show &quot;Opening Balance b/f&quot; as row 0 with the seeded empties count.
+                </Text>
+              </View>
+            </View>
+          )}
 
           {/* Section 6: Cylinder Discounts */}
           <View
