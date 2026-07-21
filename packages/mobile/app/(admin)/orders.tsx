@@ -1147,25 +1147,6 @@ function CreateOrderModal({
 
   const selectedCustomer = pickedCustomer;
   const customerId = pickedCustomer?.customerId ?? '';
-
-  // 2026-07-21 Mini-Operator opening state: when a customer is picked,
-  // fetch cylinder-types filtered to that customer's allowlist. Backend
-  // returns the full list when the customer has no allowlist rows, so
-  // this is safe for every customer.
-  const { data: customerTypesData } = useApiQuery<{ cylinderTypes: CylinderType[] }>(
-    ['cylinder-types', 'for-customer', customerId],
-    '/cylinder-types',
-    { customerId },
-    { enabled: !!customerId, staleTime: 60_000 },
-  );
-  const effectiveCylinderTypes = customerId && customerTypesData?.cylinderTypes
-    ? customerTypesData.cylinderTypes
-    : cylinderTypes;
-  const cylinderTypesRestricted =
-    !!customerId &&
-    !!customerTypesData?.cylinderTypes &&
-    customerTypesData.cylinderTypes.length < cylinderTypes.length;
-
   // PO number is B2B-only; the input hides for B2C customers. Matches the
   // IRN payload emit gate in payloadBuilders so the wire shape and the UI
   // affordance stay in lock-step.
@@ -1446,11 +1427,6 @@ function CreateOrderModal({
                 <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600' }}>Add Item</Text>
               </TouchableOpacity>
             </View>
-            {cylinderTypesRestricted && (
-              <Text style={{ fontSize: 11, color: ACCENT, marginBottom: 6 }}>
-                Cylinder list is filtered to this customer&apos;s configured types.
-              </Text>
-            )}
 
             {items.map((item, index) => (
               <View key={index} style={[styles.itemRow, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
@@ -1462,7 +1438,7 @@ function CreateOrderModal({
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={{ gap: 6, paddingVertical: 4 }}
                   >
-                    {effectiveCylinderTypes.map((ct) => (
+                    {cylinderTypes.map((ct) => (
                       <TouchableOpacity
                         key={ct.cylinderTypeId}
                         style={[

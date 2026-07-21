@@ -233,14 +233,6 @@ export interface Customer {
   preferredDriverId: string | null;
   contacts: CustomerContact[];
   cylinderDiscounts: CustomerCylinderDiscount[];
-  // 2026-07-21 (Mini-Operator opening state): timestamp of when the
-  // reseller opening-setup flow ran on this customer. null = never
-  // seeded (backward compat + non-mini-op tenants).
-  openingStateSeededAt: string | null;
-  // 2026-07-21 — cylinder types this customer is allowed to buy.
-  // Empty array = no restriction. Order form filters its picker to
-  // these ids when the array is non-empty.
-  allowedCylinderTypeIds: string[];
   createdAt: string;
   updatedAt: string;
 }

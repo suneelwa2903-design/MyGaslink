@@ -679,26 +679,12 @@ function CreateOrderModal({
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: `${ct.typeName} (${ct.capacity}${ct.unit})` }));
   // useWatch (not watch()) — react-hook-form's watch() function returns a
   // non-stable subscription callable that React Compiler can't safely
   // memoize (rule: react-hooks/incompatible-library). useWatch returns
   // the subscribed value directly with a stable subscription identity.
   const customerId = useWatch({ control, name: 'customerId' });
-
-  // 2026-07-21 Mini-Operator opening state: when a customer is picked,
-  // fetch the cylinder-type list filtered to that customer's allowlist.
-  // Backend returns the full list when the customer has no allowlist
-  // (backward-compat), so this is safe for every customer.
-  const { data: customerCylinderTypes } = useQuery({
-    queryKey: ['cylinder-types', 'for-customer', customerId],
-    queryFn: () => apiGet<{ cylinderTypes: CylinderType[] }>('/cylinder-types', { customerId }),
-    select: (data) => data.cylinderTypes,
-    enabled: !!customerId,
-    staleTime: 60 * 1000,
-  });
-  const effectiveCylinderTypes = customerId && customerCylinderTypes ? customerCylinderTypes : cylinderTypes;
-  const cylinderOptions = effectiveCylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: `${ct.typeName} (${ct.capacity}${ct.unit})` }));
-  const cylinderTypesRestricted = !!customerId && !!customerCylinderTypes && customerCylinderTypes.length < cylinderTypes.length;
 
   return (
     <Modal open={open} onClose={onClose} title="Create Order" size="lg">
@@ -765,11 +751,6 @@ function CreateOrderModal({
 
         <div>
           <label className="label">Order Items</label>
-          {cylinderTypesRestricted && (
-            <p className="mb-2 text-xs text-brand-600 dark:text-brand-400">
-              Cylinder list is filtered to this customer&apos;s configured types.
-            </p>
-          )}
           <div className="space-y-3">
             {fields.map((field, index) => (
               <div key={field.id} className="flex items-start gap-2">

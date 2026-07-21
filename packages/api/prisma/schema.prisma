@@ -833,17 +833,6 @@ model Customer {
   // upsert route, and invoice PDF drawProofSection.
   requireDeliveryVerification Boolean       @default(false) @map("require_delivery_verification")
   preferredDriverId          String?        @map("preferred_driver_id")
-  /// 2026-07-21 (Mini-Operator opening state): timestamp of when a
-  /// customer was onboarded via the reseller "opening setup" flow —
-  /// which seeds allowed cylinder types + empties balance + ₹ opening
-  /// balance in one atomic transaction. NULL for every customer
-  /// created before the feature (backward-compat), and for regular
-  /// distributor tenants who use the CSV onboarding importer instead.
-  /// Used as the audit marker "did we run the seed step?" — separate
-  /// from `opening_balance_amount` / `opening_state_data` which are
-  /// derivable from Invoice.isOpeningBalance and the three linked
-  /// tables.
-  openingStateSeededAt       DateTime?      @map("opening_state_seeded_at")
   createdAt                  DateTime       @default(now()) @map("created_at")
   updatedAt                  DateTime       @updatedAt @map("updated_at")
   deletedAt                  DateTime?      @map("deleted_at")
@@ -853,12 +842,6 @@ model Customer {
   users                User[]
   contacts             CustomerContact[]
   cylinderDiscounts    CustomerCylinderDiscount[]
-  /// 2026-07-21 (Mini-Operator opening state): per-customer allowlist
-  /// of cylinder types this customer buys. Order/delivery form pickers
-  /// filter to these types when the list is non-empty. Empty list =
-  /// no restriction (backward-compat for pre-feature customers and
-  /// non-mini-op tenants who don't use the seed flow).
-  allowedCylinderTypes CustomerAllowedCylinderType[]
   orders               Order[]
   invoices             Invoice[]
   payments             PaymentTransaction[]
@@ -959,31 +942,6 @@ model CustomerCylinderDiscount {
 
   @@unique([customerId, cylinderTypeId])
   @@map("customer_cylinder_discounts")
-}
-
-/// 2026-07-21 (Mini-Operator opening state): per-customer allowlist of
-/// cylinder types. A row means "this customer buys this type". Order
-/// form / delivery picker filters to these types when at least one row
-/// exists. Empty allowlist (no rows for a customer) = no restriction
-/// (backward-compat with every customer created before this feature).
-///
-/// Composite unique prevents duplicate rows. Cascade on customer
-/// delete because the allowlist is meaningless without the customer;
-/// restrict on cylinder-type delete so an accidental type deletion
-/// surfaces the affected customers instead of silently pruning their
-/// setup.
-model CustomerAllowedCylinderType {
-  id             String   @id @default(uuid()) @map("customer_allowed_cylinder_type_id")
-  customerId     String   @map("customer_id")
-  cylinderTypeId String   @map("cylinder_type_id")
-  addedAt        DateTime @default(now()) @map("added_at")
-
-  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
-
-  @@unique([customerId, cylinderTypeId])
-  @@index([cylinderTypeId])
-  @@map("customer_allowed_cylinder_types")
 }
 
 model CustomerInventoryBalance {
@@ -1093,11 +1051,6 @@ model CylinderType {
   dvaLoadManifests     DVALoadManifest[]
   // Mini-Operator (2026-07-16): purchase-entry line items by cylinder type.
   purchaseEntryItems   PurchaseEntryItem[]
-  /// 2026-07-21 (Mini-Operator opening state): reverse of the per-
-  /// customer allowlist rows. Used when validating an allowlist submit
-  /// AND when a super-admin deletes a cylinder type (RESTRICT surfaces
-  /// affected customers).
-  allowedForCustomers  CustomerAllowedCylinderType[]
 
   @@unique([distributorId, typeName])
   @@index([providerCatalogId])

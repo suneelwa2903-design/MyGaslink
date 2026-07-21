@@ -252,29 +252,12 @@ router.post('/',
   auditLog('create', 'customer'),
   async (req, res) => {
     try {
-      // 2026-07-21 Mini-Operator opening state seed: when the request
-      // carries `openingState`, delegate to the atomic wrapper. It
-      // gates on distributor.accountType='mini_operator' and rolls
-      // back the whole customer if any seed sub-step fails. Regular
-      // create path (no openingState) delegates through the wrapper
-      // too — it fast-paths back to createCustomer with zero extra
-      // DB work.
-      const result = await customerService.createCustomerWithOpeningState(
-        req.user!.distributorId!,
-        req.user!.userId,
-        req.body,
-      );
+      const result = await customerService.createCustomer(req.user!.distributorId!, req.body);
       // Group E1 (2026-06-11): envelope now ships an optional `warnings`
       // array alongside the Customer fields. Front-end shows them as an
       // amber banner (soft signal that the row saved but something is
       // worth reviewing — currently: duplicate-GSTIN multi-branch).
-      // 2026-07-21: also ships `seeded` metadata when opening state ran
-      // (allowedCylinderTypeCount, emptiesRowCount, openingInvoiceId).
-      return sendCreated(res, {
-        ...mapCustomer(result.customer),
-        warnings: result.warnings,
-        seeded: result.seeded,
-      });
+      return sendCreated(res, { ...mapCustomer(result.customer), warnings: result.warnings });
     } catch (err: unknown) {
       const e = err as ServiceError;
       const status = e.statusCode || 500;
