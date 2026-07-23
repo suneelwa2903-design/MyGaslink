@@ -23,7 +23,7 @@ import { useMemo, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, Modal, StyleSheet, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { Card, EmptyState, DateInput, todayLocalIso, SelectField, type SelectOption } from '../../src/components/ui';
@@ -624,6 +624,9 @@ function NewPurchaseModal({
   const [sourceDistributorId, setSourceDistributorId] = useState<string>(
     () => editEntry?.sourceDistributorId ?? '',
   );
+  // 2026-07-23 — inline "+ Add Supplier" toggle. Renders the
+  // AddSupplierModal that mirrors the web SupplierModal.
+  const [showAddSupplier, setShowAddSupplier] = useState(false);
   const [cylinderTypeId, setCylinderTypeId] = useState<string>(
     () => editItem?.cylinderTypeId ?? '',
   );
@@ -786,12 +789,31 @@ function NewPurchaseModal({
           )}
           <DateInput label="Purchase Date" value={purchaseDate} onChange={setPurchaseDate} />
 
-          <SelectField
-            label="Source Distributor"
-            value={sourceDistributorId}
-            onChange={setSourceDistributorId}
-            options={sourceOptions}
-          />
+          {/* 2026-07-23 — Supplier row with inline "+ Add" so the operator
+              can register a new source distributor without leaving the
+              purchase-entry modal. Mirrors web PurchasesPage exactly:
+              same POST /source-distributors + same shared schema (name-only).
+              The + Add button opens AddSupplierModal below; on success
+              the new row is selected automatically and the picker
+              refreshes via TanStack invalidation of ['source-distributors']. */}
+          <View style={{ gap: 6 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: text }}>Source Distributor</Text>
+              <TouchableOpacity
+                onPress={() => setShowAddSupplier(true)}
+                accessibilityLabel="Add new supplier"
+                style={{ paddingVertical: 4, paddingHorizontal: 8 }}
+              >
+                <Text style={{ fontSize: 13, color: '#dc2626', fontWeight: '600' }}>+ Add</Text>
+              </TouchableOpacity>
+            </View>
+            <SelectField
+              label=""
+              value={sourceDistributorId}
+              onChange={setSourceDistributorId}
+              options={sourceOptions}
+            />
+          </View>
 
           <SelectField
             label="Cylinder Type"
@@ -903,6 +925,143 @@ function NewPurchaseModal({
           </View>
         </ScrollView>
       </SafeAreaView>
+
+      {/* 2026-07-23 — nested full-screen supplier-add modal. Rendered
+          on top of the parent purchase-entry modal so tapping "+ Add"
+          doesn't discard entry-form state. On success the newly-created
+          supplier is auto-selected and TanStack invalidation refreshes
+          the picker options. */}
+      {showAddSupplier && (
+        <AddSupplierModal
+          onClose={() => setShowAddSupplier(false)}
+          onCreated={(id) => {
+            setSourceDistributorId(id);
+            setShowAddSupplier(false);
+          }}
+        />
+      )}
+    </Modal>
+  );
+}
+
+// 2026-07-23 — full-screen modal for creating a source distributor
+// from within the purchase-entry form. Mirrors web SupplierModal:
+// name-only (createSourceDistributorSchema in @gaslink/shared). Uses
+// the existing POST /source-distributors + invalidates
+// ['source-distributors'] so both the create-form and the Suppliers
+// panel refresh. Full-screen shape keeps the mobile UI scrollable
+// and non-blocking — no clipped-height dropdown that hides keyboard
+// or crowds neighbouring fields (see previous CreatePaymentModal fix).
+function AddSupplierModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (sourceDistributorId: string) => void;
+}) {
+  const dark = useIsDark();
+  const bg = dark ? '#0f172a' : '#ffffff';
+  const text = dark ? '#f1f5f9' : '#0f172a';
+  const border = dark ? '#334155' : '#e2e8f0';
+  const muted = dark ? '#94a3b8' : '#64748b';
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const createMut = useApiMutation<SourceDistributor, { name: string }>(
+    'post',
+    '/source-distributors',
+    {
+      // Invalidate broadly so every consumer refreshes: entry-form
+      // picker, Suppliers panel, filter dropdown on the list tab.
+      invalidateKeys: [['source-distributors'], ['supplier-balances']],
+      successMessage: 'Supplier added',
+      onSuccess: (res) => {
+        // Use the freshly-created id to auto-select in the parent
+        // picker.
+        if (res?.id) onCreated(res.id);
+      },
+      onError: (err) => {
+        // Duplicate-name 409 comes back as a route error; surface
+        // inline instead of a toast so the user can retry with a
+        // different name without losing context.
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg || 'Failed to add supplier');
+      },
+    },
+  );
+  const canSave = name.trim().length > 0 && !createMut.isPending;
+  return (
+    <Modal visible transparent={false} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaProvider>
+        <SafeAreaView edges={['top','bottom','left','right']} style={{ flex: 1, backgroundColor: bg }}>
+          {/* Header */}
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingHorizontal: 20,
+            paddingVertical: 16,
+            borderBottomWidth: 1,
+            borderBottomColor: border,
+          }}>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={24} color={muted} />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: text }}>New Supplier</Text>
+            <TouchableOpacity
+              onPress={() => { setError(null); createMut.mutate({ name: name.trim() }); }}
+              disabled={!canSave}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={{
+                fontSize: 16,
+                color: canSave ? '#dc2626' : muted,
+                fontWeight: '600',
+              }}>
+                {createMut.isPending ? '…' : 'Save'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Body — the name input autofocuses so the keyboard opens
+              immediately, matching the fast-entry flow the reseller
+              expects when they're mid-purchase and need to add a
+              supplier "on the go". */}
+          <ScrollView
+            contentContainerStyle={{ padding: 20, gap: 16 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={{ gap: 6 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: text }}>
+                Supplier name <Text style={{ color: '#dc2626' }}>*</Text>
+              </Text>
+              <TextInput
+                value={name}
+                onChangeText={(v) => { setName(v); setError(null); }}
+                autoFocus
+                placeholder="e.g. HPCL Kompally"
+                placeholderTextColor={muted}
+                style={{
+                  borderWidth: 1,
+                  borderColor: error ? '#dc2626' : border,
+                  borderRadius: 8,
+                  padding: 12,
+                  fontSize: 16,
+                  color: text,
+                  backgroundColor: bg,
+                }}
+                maxLength={100}
+              />
+              {error && (
+                <Text style={{ fontSize: 12, color: '#dc2626' }}>{error}</Text>
+              )}
+              <Text style={{ fontSize: 12, color: muted }}>
+                Max 100 characters. Unique per your tenant. Add more details
+                later from the web app if needed.
+              </Text>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
