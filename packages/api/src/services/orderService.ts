@@ -1096,10 +1096,21 @@ export async function confirmDelivery(
     // Recalculate total based on delivered quantities + transport fee
     // (same basis the invoice line uses at delivery time, so post-delivery
     // order.totalAmount stays apples-to-apples with invoice.totalAmount).
+    // Mini-op #2 (2026-07-23) — precedence matches the create-order
+    // service: effectivePrice = unitPriceOverride ?? (unitPrice − discount).
+    // Prior to this, delivery would clobber order.totalAmount with the
+    // catalog-based figure and drop the operator's Rate ₹ override —
+    // symptom was the Order UI showing ₹3,211 while the invoice PDF
+    // (which reads override) correctly showed ₹3,600.
     const deliveredLines = data.items.map((item) => {
       const orderItem = order.items.find(i => i.cylinderTypeId === item.cylinderTypeId);
+      const override = orderItem && (orderItem as { unitPriceOverride?: unknown }).unitPriceOverride != null
+        ? toNum((orderItem as { unitPriceOverride?: unknown }).unitPriceOverride as number | string)
+        : null;
       const effectivePrice = orderItem
-        ? Math.max(toNum(orderItem.unitPrice) - toNum(orderItem.discountPerUnit), 0)
+        ? (override != null
+            ? override
+            : Math.max(toNum(orderItem.unitPrice) - toNum(orderItem.discountPerUnit), 0))
         : 0;
       return {
         quantity: item.deliveredQuantity,

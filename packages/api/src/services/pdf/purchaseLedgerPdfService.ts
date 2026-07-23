@@ -37,22 +37,29 @@ interface Col {
 
 // Landscape A4 usable width = 842 - 40 - 40 = 762pt (matches customer ledger).
 // Money columns need width for lakh-scale figures (₹9,99,999.00 = 15 chars).
+// 2026-07-23 — widened Amount to 118 (from 100) + trimmed
+// Source Distributor 130→112 + Notes 104→88 + slimmed unused
+// margin from Purchase # 82→76 to keep 762pt total unchanged.
+// Old widths clipped Rs. 12,12,640.00 to "Rs. 12,12,640…" per user
+// feedback on the Bhargavi + New Distributor ledger downloads.
 const COLS: Col[] = [
   { label: 'Date', width: 60, align: 'left' },
-  { label: 'Purchase #', width: 82, align: 'left' },
-  { label: 'Source Distributor', width: 130, align: 'left' },
-  { label: 'Cylinder Type', width: 100, align: 'left' },
+  { label: 'Purchase #', width: 76, align: 'left' },
+  { label: 'Source Distributor', width: 112, align: 'left' },
+  { label: 'Cylinder Type', width: 96, align: 'left' },
   { label: 'Fulls', width: 46, align: 'right' },
   { label: 'Empties', width: 52, align: 'right' },
-  { label: 'Unit Price', width: 88, align: 'right' },
-  { label: 'Amount', width: 100, align: 'right' },
-  { label: 'Notes', width: 104, align: 'left' },
+  { label: 'Unit Price', width: 92, align: 'right' },
+  { label: 'Amount', width: 118, align: 'right' },
+  { label: 'Notes', width: 110, align: 'left' },
 ];
 
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
 const ROW_HEIGHT = 16;
 
-const COL_CHAR_CAP: number[] = [11, 14, 24, 18, 6, 6, 14, 15, 20];
+// Widen the char cap on Amount (7 → 8) to match the new column width;
+// keep everything else consistent with the column-width diff above.
+const COL_CHAR_CAP: number[] = [11, 12, 20, 17, 6, 6, 14, 18, 21];
 
 function fitCell(s: string, maxChars: number): string {
   if (!s) return '';
