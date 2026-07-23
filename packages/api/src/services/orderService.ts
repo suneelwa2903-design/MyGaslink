@@ -164,7 +164,7 @@ export async function createOrder(
     // tenants that don't maintain Driver records. Optional; unrelated to
     // driverId FK. Max 100 chars enforced upstream at the Zod schema.
     driverNameFreeText?: string;
-    items: { cylinderTypeId: string; quantity: number }[];
+    items: { cylinderTypeId: string; quantity: number; unitPriceOverride?: number | null }[];
   },
   options?: {
     commitment?: { promisedDate?: Date; promisedAmount?: number; acknowledged?: boolean };
@@ -180,7 +180,12 @@ export async function createOrder(
   // Validate customer belongs to distributor and supply is not stopped
   const customer = await prisma.customer.findFirst({
     where: { id: data.customerId, distributorId, deletedAt: null },
-    select: { id: true, customerName: true, stopSupply: true, preferredDriverId: true, transportChargePerCylinder: true },
+    // 2026-07-23 — read orderLevelPricingEnabled + accountType so we can
+    // conditionally accept unitPriceOverride per-line.
+    select: {
+      id: true, customerName: true, stopSupply: true, preferredDriverId: true,
+      transportChargePerCylinder: true, orderLevelPricingEnabled: true,
+    },
   });
   if (!customer) throw new OrderError('Customer not found', 404);
   if (customer.stopSupply) throw new OrderError('Supply is stopped for this customer', 400);
@@ -264,6 +269,15 @@ export async function createOrder(
   });
   const isMiniOperator = distributor?.accountType === 'mini_operator';
 
+  // 2026-07-23 Mini-op order-level pricing gate.
+  // Accept unitPriceOverride only when BOTH conditions hold:
+  //   (a) distributor.accountType='mini_operator' (already isMiniOperator above)
+  //   (b) customer.orderLevelPricingEnabled=true
+  // Otherwise the field is silently dropped so an unauthorised caller
+  // can't sneak in a custom price. Server is the authority — the client
+  // is never trusted for pricing.
+  const orderLevelPricingAllowed = isMiniOperator && customer.orderLevelPricingEnabled === true;
+
   // Calculate prices for each item
   const itemsWithPrices = await Promise.all(data.items.map(async (item) => {
     const unitPrice = await getEffectivePrice(distributorId, item.cylinderTypeId, deliveryDate);
@@ -273,7 +287,18 @@ export async function createOrder(
       where: { customerId_cylinderTypeId: { customerId: data.customerId, cylinderTypeId: item.cylinderTypeId } },
     });
     const discountPerUnit = toNum(discount?.discountPerUnit);
-    const effectivePrice = Math.max(unitPrice - discountPerUnit, 0);
+    // Precedence rule (locked at the service):
+    //   effectiveUnitPrice = unitPriceOverride ?? (unitPrice − discountPerUnit)
+    // Override is authoritative when present + allowed; discount is
+    // NOT applied on top. Historical audit is preserved because both
+    // unitPrice (catalog snapshot) and unitPriceOverride (operator
+    // input) persist to OrderItem.
+    const override = orderLevelPricingAllowed && item.unitPriceOverride != null && item.unitPriceOverride >= 0
+      ? item.unitPriceOverride
+      : null;
+    const effectivePrice = override != null
+      ? override
+      : Math.max(unitPrice - discountPerUnit, 0);
     const totalPrice = effectivePrice * item.quantity;
 
     return {
@@ -281,6 +306,7 @@ export async function createOrder(
       quantity: item.quantity,
       unitPrice,
       discountPerUnit,
+      unitPriceOverride: override,
       totalPrice,
     };
   }));

@@ -212,6 +212,11 @@ export const createCustomerSchema = z.object({
   // rollout). Default false = existing behaviour. updateCustomerSchema
   // inherits via .partial().extend() — no duplicate addition needed.
   requireDeliveryVerification: z.boolean().optional(),
+  // 2026-07-23 Mini-op order-level pricing. When true, the order-form
+  // renders an editable Rate ₹ per line (defaulted to catalog). Server
+  // additionally gates writes to accountType='mini_operator' so a
+  // regular distributor sending this field gets it silently dropped.
+  orderLevelPricingEnabled: z.boolean().optional(),
   contacts: z.array(customerContactSchema).optional(),
   cylinderDiscounts: z.array(cylinderDiscountSchema).optional(),
   // 2026-07-21 — opening-state seed. Universal (any tenant). See
@@ -286,6 +291,13 @@ export type ProvisionGroupPortalAccessInput = z.infer<typeof provisionGroupPorta
 const orderItemSchema = z.object({
   cylinderTypeId: uuid,
   quantity: z.number().int().positive('Quantity must be at least 1'),
+  // 2026-07-23 Mini-op order-level pricing. Nullable per-line override
+  // that supersedes catalog − discount at delivery/invoice time. Server
+  // additionally validates that the customer's orderLevelPricingEnabled
+  // is true AND the distributor's accountType is 'mini_operator' before
+  // persisting; otherwise the field is silently dropped so an unauthorised
+  // caller can't sneak in a custom price.
+  unitPriceOverride: z.number().nonnegative().max(1_000_000).optional(),
 });
 
 export const createOrderSchema = z.object({

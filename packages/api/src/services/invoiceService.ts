@@ -230,7 +230,18 @@ export async function createInvoiceFromOrder(
     // ₹0.00" line on the invoice PDF.
     if (qty <= 0) continue;
     totalDeliveredQty += qty;
-    const effectivePrice = Math.max(toNum(oi.unitPrice) - toNum(oi.discountPerUnit), 0);
+    // 2026-07-23 Mini-op order-level pricing. Precedence:
+    //   effectivePrice = unitPriceOverride ?? (unitPrice − discountPerUnit)
+    // The override was validated at order-create time (gated by
+    // distributor.accountType='mini_operator' AND customer.orderLevelPricingEnabled)
+    // so no re-gate needed here — its presence on OrderItem is authoritative.
+    // GST-inclusive convention (anti-pattern #16) is preserved: the override
+    // MUST be entered as GST-inclusive by the operator (order-form label
+    // instructs this), matching how the catalog price is stored.
+    const override = oi.unitPriceOverride != null ? toNum(oi.unitPriceOverride) : null;
+    const effectivePrice = override != null
+      ? override
+      : Math.max(toNum(oi.unitPrice) - toNum(oi.discountPerUnit), 0);
     const lineTotal = effectivePrice * qty;
     totalAmount += lineTotal;
 
@@ -246,13 +257,16 @@ export async function createInvoiceFromOrder(
       const basePrice = effectivePrice / (1 + gstFactor);
       totalBaseAmount += basePrice * qty;
 
+      // 2026-07-23 — when an override is set, InvoiceItem.unitPrice becomes
+      // the override (the actual sale price) and discountPerUnit=0. Prevents
+      // downstream PDF/IRN readers from double-applying the catalog discount.
       invoiceItems.push({
         cylinderTypeId: oi.cylinderTypeId,
         description: oi.cylinderType.typeName,
         hsnCode: oi.cylinderType.hsnCode,
         quantity: qty,
-        unitPrice: toNum(oi.unitPrice), // GST-inclusive, BEFORE discount
-        discountPerUnit: oi.discountPerUnit, // GST-inclusive
+        unitPrice: override != null ? override : toNum(oi.unitPrice),
+        discountPerUnit: override != null ? 0 : oi.discountPerUnit,
         gstRate: effectiveGstRate,
         totalPrice: lineTotal, // GST-inclusive, AFTER discount = (unitPrice − discountPerUnit) × qty
         // Phase 5 (2026-06-12): GSTR-1 Table 12 (HSN summary) inputs.
@@ -261,14 +275,17 @@ export async function createInvoiceFromOrder(
         taxableValue: basePrice * qty,
       });
     } else {
-      // GST disabled - no GST breakup, price is the full price
+      // GST disabled - no GST breakup, price is the full price.
+      // 2026-07-23 — same override-precedence as the GST-enabled branch:
+      // when unitPriceOverride was set, InvoiceItem.unitPrice becomes the
+      // override and discountPerUnit=0.
       invoiceItems.push({
         cylinderTypeId: oi.cylinderTypeId,
         description: oi.cylinderType.typeName,
         hsnCode: oi.cylinderType.hsnCode,
         quantity: qty,
-        unitPrice: oi.unitPrice,
-        discountPerUnit: oi.discountPerUnit,
+        unitPrice: override != null ? override : toNum(oi.unitPrice),
+        discountPerUnit: override != null ? 0 : oi.discountPerUnit,
         gstRate: 0,
         totalPrice: lineTotal,
         // Phase 5: with gstRate=0 the taxable value equals the line total.

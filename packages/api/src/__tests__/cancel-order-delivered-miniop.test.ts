@@ -115,7 +115,7 @@ async function seedTenant(
 
 async function cleanup(distributorId: string) {
   try {
-    await prisma.paymentAllocation.deleteMany({ where: { distributorId } });
+    await prisma.paymentAllocation.deleteMany({ where: { payment: { distributorId } } });
     await prisma.paymentTransaction.deleteMany({ where: { distributorId } });
     await prisma.customerLedgerEntry.deleteMany({ where: { distributorId } });
     await prisma.inventoryEvent.deleteMany({ where: { distributorId } });
@@ -213,7 +213,7 @@ describe('Mini-op delivered-order cancellation', () => {
     const reversal = await prisma.customerLedgerEntry.findFirst({
       where: { invoiceId, entryType: 'adjustment' },
     });
-    expect(reversal?.narration.startsWith('Cancelled:')).toBe(true);
+    expect((reversal?.narration ?? '').startsWith('Cancelled:')).toBe(true);
     expect(Number(reversal?.amountDelta ?? 0)).toBeLessThan(0);
     // Inventory: fulls returned to godown (fullsChange=+3) + empties
     // returned to customer (emptiesChange=-3 from our stock).
@@ -422,7 +422,7 @@ describe('Mini-op delivered-order cancellation', () => {
       where: { invoiceId: inv.id },
     });
     const debit = rows.find((r) => Number(r.amountDelta) > 0);
-    const credit = rows.find((r) => Number(r.amountDelta) < 0 && r.narration.startsWith('On-account credit applied'));
+    const credit = rows.find((r) => Number(r.amountDelta) < 0 && (r.narration ?? '').startsWith('On-account credit applied'));
     expect(debit).toBeDefined();
     expect(credit).toBeDefined();
     expect(Number(debit?.amountDelta)).toBe(2000);

@@ -248,6 +248,10 @@ export interface Customer {
   // was converted to a customer credit. Auto-applied on the next
   // invoice raised for this customer.
   onAccountBalance?: number;
+  // 2026-07-23 Mini-op order-level pricing toggle. When true, the
+  // order-form line shows an editable Rate ₹ input. Server writes only
+  // when distributor.accountType='mini_operator'.
+  orderLevelPricingEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -509,6 +513,10 @@ export interface OrderItem {
   emptiesCollected: number | null;
   unitPrice: number;
   discountPerUnit: number;
+  // 2026-07-23 Mini-op order-level pricing. When present, supersedes
+  // (unitPrice − discountPerUnit) at delivery/invoice time. Null on
+  // every existing row + on any regular-distributor tenant's rows.
+  unitPriceOverride?: number | null;
   totalPrice: number;
 }
 

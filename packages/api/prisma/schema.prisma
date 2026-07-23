@@ -841,6 +841,13 @@ model Customer {
   /// used as a one-way idempotency guard on the Edit-Customer "seed
   /// opening state" path so double-seeding is impossible.
   openingStateSeededAt       DateTime?      @map("opening_state_seeded_at")
+  /// 2026-07-23 Mini-op order-level pricing toggle. When true, the
+  /// order-creation modal renders an editable Rate ₹ input per line
+  /// (defaulted to catalog price). Persisted per-line as
+  /// OrderItem.unitPriceOverride. Only editable when
+  /// distributor.accountType='mini_operator'; distributor tenants
+  /// stay at false and see no UI change.
+  orderLevelPricingEnabled   Boolean        @default(false) @map("order_level_pricing_enabled")
   /// 2026-07-23 Mini-op delivered-cancel: on-account credit balance.
   /// Populated when a delivered invoice is cancelled AND the operator
   /// converts the already-applied payment to a customer credit rather
@@ -1285,6 +1292,14 @@ model OrderItem {
   emptiesCollected  Int?    @map("empties_collected")
   unitPrice         Decimal @map("unit_price") @db.Decimal(18, 4)
   discountPerUnit   Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
+  /// 2026-07-23 Mini-op order-level pricing. Nullable. When present,
+  /// supersedes (unitPrice − discountPerUnit) at delivery/invoice
+  /// time. Only written when customer.orderLevelPricingEnabled=true
+  /// AND accountType='mini_operator'. NULL for every existing row
+  /// after migration; distributor tenants never write this column.
+  /// Precedence:
+  ///    effective = unitPriceOverride ?? (unitPrice − discountPerUnit)
+  unitPriceOverride Decimal? @map("unit_price_override") @db.Decimal(18, 4)
   totalPrice        Decimal @map("total_price") @db.Decimal(18, 4)
 
   order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)

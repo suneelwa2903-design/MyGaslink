@@ -32,6 +32,10 @@ interface CustomerUpdateData {
   // Proof-of-collection Phase 1 (2026-07-15): when true, driver's
   // confirm-delivery flow requires proof capture.
   requireDeliveryVerification?: boolean;
+  // 2026-07-23 Mini-op order-level pricing toggle. Service silently
+  // drops the value unless distributor.accountType='mini_operator'
+  // so a regular-distributor caller sending the field never persists it.
+  orderLevelPricingEnabled?: boolean;
   contacts?: Array<{ name: string; phone?: string; email?: string | null; isPrimary?: boolean }>;
   cylinderDiscounts?: Array<{ cylinderTypeId: string; discountPerUnit: number }>;
 }
@@ -147,6 +151,9 @@ export async function createCustomer(
     // Proof-of-collection Phase 1 (2026-07-15): driver confirm-delivery
     // proof-capture toggle. Default false = existing behaviour.
     requireDeliveryVerification?: boolean;
+    // 2026-07-23 Mini-op order-level pricing toggle. Silently dropped
+    // when distributor.accountType != 'mini_operator'.
+    orderLevelPricingEnabled?: boolean;
   }
 ) {
   const warnings: string[] = [];
@@ -178,6 +185,16 @@ export async function createCustomer(
 
   const customerType = data.gstin && data.gstin.length > 0 ? 'B2B' : 'B2C';
 
+  // 2026-07-23 Mini-op order-level pricing gate. Accept the toggle only
+  // when the tenant is accountType='mini_operator'; drop silently for
+  // regular distributors so a rogue caller can't enable it via API.
+  const dist = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { accountType: true },
+  });
+  const isMiniOp = dist?.accountType === 'mini_operator';
+  const orderLevelPricingEnabled = isMiniOp && data.orderLevelPricingEnabled === true;
+
   const customer = await prisma.customer.create({
     data: {
       distributorId,
@@ -202,6 +219,7 @@ export async function createCustomer(
       // null when omitted → invoice paths fall back to platform default 18%.
       gstRateOverride: data.gstRateOverride ?? null,
       requireDeliveryVerification: data.requireDeliveryVerification ?? false,
+      orderLevelPricingEnabled,
       contacts: data.contacts && data.contacts.length > 0
         ? { create: data.contacts.map(c => ({ name: c.name, phone: c.phone || '', email: c.email || null, isPrimary: c.isPrimary ?? false })) }
         : undefined,
@@ -880,6 +898,18 @@ export async function updateCustomer(
     }
     if (data.requireDeliveryVerification !== undefined) {
       updateData.requireDeliveryVerification = data.requireDeliveryVerification;
+    }
+    // 2026-07-23 Mini-op order-level pricing toggle. Gated on
+    // accountType='mini_operator' so a regular-distributor update payload
+    // gets the field silently dropped even if the client sends it.
+    if (data.orderLevelPricingEnabled !== undefined) {
+      const dist = await tx.distributor.findUnique({
+        where: { id: distributorId },
+        select: { accountType: true },
+      });
+      if (dist?.accountType === 'mini_operator') {
+        updateData.orderLevelPricingEnabled = data.orderLevelPricingEnabled;
+      }
     }
 
     const updated = await tx.customer.update({
