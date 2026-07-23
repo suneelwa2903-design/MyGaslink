@@ -19,6 +19,18 @@ const sourceDistributorSelect = {
   name: true,
   createdAt: true,
   updatedAt: true,
+  // 2026-07-23 — surface opening state on every list read so the
+  // Purchases page can render existing balances + wire the Edit-OB
+  // modal without a second round-trip.
+  openingBalanceAmount: true,
+  openingStateSeededAt: true,
+  emptyOpenings: {
+    select: {
+      cylinderTypeId: true,
+      openingSeedQty: true,
+      cylinderType: { select: { typeName: true } },
+    },
+  },
 } satisfies Prisma.SourceDistributorSelect;
 
 export class SourceDistributorError extends Error {
@@ -211,7 +223,15 @@ export async function updateOpeningStateOnSupplier(
   sourceDistributorId: string,
   amount: number,
   asOfDate: string,
-): Promise<{ sourceDistributorId: string; openingBalanceAmount: number }> {
+  // 2026-07-23 — same empties axis as seed. Full replace semantics:
+  // whatever's sent becomes the persisted set (zero-qty rows are
+  // deleted). Absent argument = leave existing empties untouched.
+  empties?: Array<{ cylinderTypeId: string; qty: number }>,
+): Promise<{
+  sourceDistributorId: string;
+  openingBalanceAmount: number;
+  empties: Array<{ cylinderTypeId: string; qty: number }>;
+}> {
   const supplier = await prisma.sourceDistributor.findFirst({
     where: { id: sourceDistributorId, distributorId, deletedAt: null },
     select: { id: true, openingStateSeededAt: true },
@@ -244,6 +264,8 @@ export async function updateOpeningStateOnSupplier(
     );
   }
 
+  const nonZeroEmpties = (empties ?? []).filter((e) => Number.isFinite(e.qty) && e.qty > 0);
+
   return prisma.$transaction(async (tx) => {
     await tx.sourceDistributor.update({
       where: { id: sourceDistributorId },
@@ -258,7 +280,44 @@ export async function updateOpeningStateOnSupplier(
         data: { purchaseDate: asOfDate },
       });
     }
-    return { sourceDistributorId: supplier.id, openingBalanceAmount: amount };
+    // If the caller passed `empties`, treat it as a full replace of
+    // the existing set — cheapest correct semantic (delete + createMany).
+    // If they omitted `empties` entirely (undefined), don't touch the
+    // existing rows.
+    if (empties !== undefined) {
+      // Cross-tenant guard on the incoming rows.
+      if (nonZeroEmpties.length > 0) {
+        const typeIds = nonZeroEmpties.map((e) => e.cylinderTypeId);
+        const owned = await tx.cylinderType.findMany({
+          where: { id: { in: typeIds }, distributorId },
+          select: { id: true },
+        });
+        if (owned.length !== typeIds.length) {
+          throw new SourceDistributorError(
+            'One or more cylinder types are not accessible to this tenant',
+            400,
+            'CROSS_TENANT_CYLINDER_TYPE',
+          );
+        }
+      }
+      await tx.sourceDistributorEmptyOpening.deleteMany({
+        where: { sourceDistributorId },
+      });
+      if (nonZeroEmpties.length > 0) {
+        await tx.sourceDistributorEmptyOpening.createMany({
+          data: nonZeroEmpties.map((e) => ({
+            sourceDistributorId,
+            cylinderTypeId: e.cylinderTypeId,
+            openingSeedQty: e.qty,
+          })),
+        });
+      }
+    }
+    return {
+      sourceDistributorId: supplier.id,
+      openingBalanceAmount: amount,
+      empties: nonZeroEmpties,
+    };
   });
 }
 

@@ -120,6 +120,7 @@ router.put('/:id/opening-state',
         param(req.params.id),
         req.body.amount,
         req.body.asOfDate,
+        req.body.empties,
       );
       return sendSuccess(res, result);
     } catch (err) {

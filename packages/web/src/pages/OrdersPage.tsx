@@ -675,7 +675,10 @@ function CreateOrderModal({
       poNumber: '',
       isGodownPickup: false,
       driverNameFreeText: '',
-      items: [{ cylinderTypeId: '', quantity: 1 }],
+      // Mini-op #2 (2026-07-23) — unitPriceOverride added per-line for the
+      // order-level pricing feature. Optional; backend ignores when the
+      // customer's flag is off OR tenant isn't mini_operator.
+      items: [{ cylinderTypeId: '', quantity: 1, unitPriceOverride: undefined }],
     },
   });
   const isGodownPickup = watch('isGodownPickup');
@@ -725,8 +728,19 @@ function CreateOrderModal({
         : `${ct.typeName} (${ct.capacity}${ct.unit})`,
     };
   });
-  const hasPreferredTypes = !!customerId && !!customerCylinderTypes
-    && customerCylinderTypes.some((ct) => (ct as { isPreferred?: boolean }).isPreferred === true);
+  // 2026-07-23 hint text removed per user feedback; ordering is still
+  // preferred-first via the API sort hint above.
+
+  // Mini-op #2 (2026-07-23) — fetch the customer's full detail so we
+  // can read `orderLevelPricingEnabled`. The CustomerSearchInput only
+  // hands us a partial (customerType) — we need one more field.
+  const { data: customerDetail } = useQuery({
+    queryKey: ['customer-detail-for-order', customerId],
+    queryFn: () => apiGet<{ customerId: string; orderLevelPricingEnabled?: boolean }>(`/customers/${customerId}`),
+    enabled: !!customerId,
+    staleTime: 60 * 1000,
+  });
+  const orderLevelPricingOn = customerDetail?.orderLevelPricingEnabled === true;
 
   return (
     <Modal open={open} onClose={onClose} title="Create Order" size="lg">
@@ -793,41 +807,57 @@ function CreateOrderModal({
 
         <div>
           <label className="label">Order Items</label>
-          {hasPreferredTypes && (
-            <p className="mb-2 text-xs text-brand-600 dark:text-brand-400">
-              This customer&apos;s usual types appear first. All catalog types remain available.
-            </p>
-          )}
           <div className="space-y-3">
             {fields.map((field, index) => (
-              <div key={field.id} className="flex items-start gap-2">
-                <div className="flex-1">
-                  <Select
-                    options={cylinderOptions}
-                    placeholder="Select cylinder"
-                    required
-                    error={errors.items?.[index]?.cylinderTypeId?.message}
-                    {...register(`items.${index}.cylinderTypeId`)}
-                  />
+              <div key={field.id} className="space-y-2">
+                <div className="flex items-start gap-2">
+                  <div className="flex-1">
+                    <Select
+                      options={cylinderOptions}
+                      placeholder="Select cylinder"
+                      required
+                      error={errors.items?.[index]?.cylinderTypeId?.message}
+                      {...register(`items.${index}.cylinderTypeId`)}
+                    />
+                  </div>
+                  <div className="w-24">
+                    <Input
+                      type="number"
+                      placeholder="Qty"
+                      min={1}
+                      required
+                      error={errors.items?.[index]?.quantity?.message}
+                      {...register(`items.${index}.quantity`, { valueAsNumber: true })}
+                    />
+                  </div>
+                  {fields.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => remove(index)}
+                      className="mt-1 p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10"
+                    >
+                      <HiOutlineTrash className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
-                <div className="w-24">
-                  <Input
-                    type="number"
-                    placeholder="Qty"
-                    min={1}
-                    required
-                    error={errors.items?.[index]?.quantity?.message}
-                    {...register(`items.${index}.quantity`, { valueAsNumber: true })}
-                  />
-                </div>
-                {fields.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => remove(index)}
-                    className="mt-1 p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10"
-                  >
-                    <HiOutlineTrash className="h-4 w-4" />
-                  </button>
+                {/* Mini-op #2 (2026-07-23) — Rate ₹ per-line override.
+                    Only rendered when customer.orderLevelPricingEnabled
+                    is on. Backend accepts unitPriceOverride only for
+                    mini-op tenants. */}
+                {orderLevelPricingOn && (
+                  <div>
+                    <Input
+                      label="Rate ₹ (overrides catalog price)"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="e.g. 850"
+                      error={errors.items?.[index]?.unitPriceOverride?.message}
+                      {...register(`items.${index}.unitPriceOverride`, {
+                        setValueAs: (v) => (v === '' || v == null ? undefined : Number(v)),
+                      })}
+                    />
+                  </div>
                 )}
               </div>
             ))}
@@ -838,7 +868,7 @@ function CreateOrderModal({
             variant="ghost"
             size="sm"
             className="mt-2"
-            onClick={() => append({ cylinderTypeId: '', quantity: 1 })}
+            onClick={() => append({ cylinderTypeId: '', quantity: 1, unitPriceOverride: undefined })}
           >
             <HiOutlinePlus className="h-3 w-3" />
             Add Item

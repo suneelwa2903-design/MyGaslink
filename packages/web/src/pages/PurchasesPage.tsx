@@ -47,6 +47,14 @@ interface SourceDistributor {
   name: string;
   createdAt: string;
   updatedAt: string;
+  // 2026-07-23 — opening state read from listSourceDistributors.
+  openingBalanceAmount?: number | string;
+  openingStateSeededAt?: string | null;
+  emptyOpenings?: Array<{
+    cylinderTypeId: string;
+    openingSeedQty: number;
+    cylinderType?: { typeName: string } | null;
+  }>;
 }
 
 interface PurchaseEntryItem {
@@ -410,6 +418,11 @@ function SourcesTab() {
     queryKey: ['source-distributors'],
     queryFn: () => apiGet<SourceDistributor[]>('/source-distributors'),
   });
+  const { data: cylinderTypesResp } = useQuery({
+    queryKey: ['cylinder-types'],
+    queryFn: () => apiGet<CylinderTypesListResponse>('/cylinder-types'),
+  });
+  const cylinderTypes = cylinderTypesResp?.cylinderTypes ?? [];
 
   const {
     register,
@@ -421,22 +434,31 @@ function SourcesTab() {
     defaultValues: { name: '' },
   });
 
-  // Mini-op #4 (2026-07-23) — inline opening balance ₹ owed to the
-  // supplier at the moment tracking begins here. Held outside RHF because
-  // createSourceDistributorSchema doesn't carry these fields; we do the
-  // seed-opening-state POST as a follow-up after the create resolves.
+  // Mini-op #4 (2026-07-23) — inline opening balance ₹ + per-cylinder-type
+  // empties owed to the supplier at the moment tracking begins. Held
+  // outside RHF because createSourceDistributorSchema doesn't carry these
+  // fields; we do the seed-opening-state POST as a follow-up after the
+  // create resolves.
   const [openingAmount, setOpeningAmount] = useState('');
   const [openingDate, setOpeningDate] = useState<string>(localTodayISO());
+  const [openingEmpties, setOpeningEmpties] = useState<Record<string, string>>({});
+  // Edit-existing-supplier modal state.
+  const [editingSupplier, setEditingSupplier] = useState<SourceDistributor | null>(null);
 
   const createMutation = useMutation({
     mutationFn: async (payload: CreateSourceDistributorInput) => {
       const created = await apiPost<SourceDistributor>('/source-distributors', payload);
       const amount = parseFloat(openingAmount);
       const hasOb = Number.isFinite(amount) && amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(openingDate);
-      if (hasOb) {
+      const emptiesPayload = Object.entries(openingEmpties)
+        .map(([cylinderTypeId, qtyStr]) => ({ cylinderTypeId, qty: parseInt(qtyStr, 10) }))
+        .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+      const hasEmpties = emptiesPayload.length > 0;
+      if (hasOb || hasEmpties) {
         await apiPost(`/source-distributors/${created.id}/seed-opening-state`, {
-          amount,
+          amount: hasOb ? amount : 0,
           asOfDate: openingDate,
+          empties: hasEmpties ? emptiesPayload : undefined,
         });
       }
       return created;
@@ -448,6 +470,7 @@ function SourcesTab() {
       reset({ name: '' });
       setOpeningAmount('');
       setOpeningDate(localTodayISO());
+      setOpeningEmpties({});
     },
     onError: (err) => toast.error(getErrorMessage(err)),
   });
@@ -481,6 +504,27 @@ function SourcesTab() {
             onChange={(e) => setOpeningDate(e.target.value)}
           />
         </div>
+        {cylinderTypes.length > 0 && (
+          <div>
+            <label className="label">Opening Empties Owed — per cylinder type <span className="text-surface-400 font-normal">(optional)</span></label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
+              {cylinderTypes.map((ct) => (
+                <Input
+                  key={ct.cylinderTypeId}
+                  label={ct.typeName}
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="0"
+                  value={openingEmpties[ct.cylinderTypeId] ?? ''}
+                  onChange={(e) =>
+                    setOpeningEmpties((prev) => ({ ...prev, [ct.cylinderTypeId]: e.target.value.replace(/[^0-9]/g, '') }))
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        )}
         <p className="text-xs text-surface-500 dark:text-surface-400">
           Optional. When set, seeds an &quot;Opening Balance b/f&quot; row on the
           supplier ledger so payments reconcile from day one. Leave blank for
@@ -511,24 +555,176 @@ function SourcesTab() {
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>Opening Balance (₹)</th>
+                  <th>Opening Empties</th>
                   <th>Added</th>
+                  <th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {sources.map((s) => (
-                  <tr key={s.id}>
-                    <td className="font-medium">{s.name}</td>
-                    <td className="text-sm text-surface-500 dark:text-surface-400">
-                      {s.createdAt.split('T')[0]}
-                    </td>
-                  </tr>
-                ))}
+                {sources.map((s) => {
+                  const ob = Number(s.openingBalanceAmount ?? 0);
+                  const seededAt = s.openingStateSeededAt;
+                  const emptiesRows = s.emptyOpenings ?? [];
+                  return (
+                    <tr key={s.id}>
+                      <td className="font-medium">{s.name}</td>
+                      <td className="text-sm">
+                        {seededAt
+                          ? `₹${ob.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+                          : <span className="text-surface-400">—</span>}
+                      </td>
+                      <td className="text-sm">
+                        {emptiesRows.length === 0
+                          ? <span className="text-surface-400">—</span>
+                          : emptiesRows
+                              .map((r) => `${r.openingSeedQty}×${r.cylinderType?.typeName ?? '?'}`)
+                              .join(', ')}
+                      </td>
+                      <td className="text-sm text-surface-500 dark:text-surface-400">
+                        {s.createdAt.split('T')[0]}
+                      </td>
+                      <td className="text-right">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setEditingSupplier(s)}
+                        >
+                          {seededAt ? 'Edit Opening' : 'Seed Opening'}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
+
+      {editingSupplier && (
+        <EditSupplierOpeningModal
+          supplier={editingSupplier}
+          cylinderTypes={cylinderTypes}
+          onClose={() => setEditingSupplier(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ['source-distributors'] });
+            queryClient.invalidateQueries({ queryKey: ['supplier-balances'] });
+            setEditingSupplier(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── Edit Supplier Opening Modal ─────────────────────────────────────────────
+// Mini-op #4 extension (2026-07-23) — dropdown-in-list flow: user clicks
+// "Edit Opening" on any existing supplier row, gets a modal prefilled with
+// the current ₹ balance + per-cylinder-type empties. On save routes to
+// POST /seed-opening-state (never seeded) or PUT /opening-state (already
+// seeded). Wire semantics: `empties` sent as a full replace of the current
+// set; server clears rows not present and creates the new ones.
+
+function EditSupplierOpeningModal({
+  supplier,
+  cylinderTypes,
+  onClose,
+  onSaved,
+}: {
+  supplier: SourceDistributor;
+  cylinderTypes: Array<{ cylinderTypeId: string; typeName: string }>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const wasSeeded = !!supplier.openingStateSeededAt;
+  const [amount, setAmount] = useState(String(Number(supplier.openingBalanceAmount ?? 0)));
+  const [asOfDate, setAsOfDate] = useState<string>(localTodayISO());
+  const [empties, setEmpties] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      (supplier.emptyOpenings ?? []).map((r) => [r.cylinderTypeId, String(r.openingSeedQty)]),
+    ),
+  );
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const amt = parseFloat(amount);
+      const validAmt = Number.isFinite(amt) && amt >= 0 ? amt : 0;
+      const emptiesPayload = Object.entries(empties)
+        .map(([cylinderTypeId, qtyStr]) => ({ cylinderTypeId, qty: parseInt(qtyStr, 10) }))
+        .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+      const path = wasSeeded
+        ? `/source-distributors/${supplier.id}/opening-state`
+        : `/source-distributors/${supplier.id}/seed-opening-state`;
+      const method = wasSeeded ? apiPut : apiPost;
+      return method(path, {
+        amount: validAmt,
+        asOfDate,
+        empties: emptiesPayload,
+      });
+    },
+    onSuccess: () => {
+      toast.success(wasSeeded ? 'Opening balance updated' : 'Opening balance seeded');
+      onSaved();
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  return (
+    <Modal open onClose={onClose} title={`${wasSeeded ? 'Edit' : 'Seed'} Opening — ${supplier.name}`} size="md">
+      <div className="space-y-4">
+        <p className="text-xs text-surface-500 dark:text-surface-400">
+          {wasSeeded
+            ? 'Update this supplier\'s opening ₹ balance + empties. Empties are replaced with what you enter here; blank rows are cleared.'
+            : 'Seed the ₹ amount you already owe this supplier + how many empties of each type you owe back.'}
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Input
+            label="Opening Balance Owed (₹)"
+            type="number"
+            step="0.01"
+            min="0"
+            placeholder="e.g. 5000"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          <Input
+            label="As of"
+            type="date"
+            value={asOfDate}
+            onChange={(e) => setAsOfDate(e.target.value)}
+          />
+        </div>
+        {cylinderTypes.length > 0 && (
+          <div>
+            <label className="label">Opening Empties Owed — per cylinder type</label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
+              {cylinderTypes.map((ct) => (
+                <Input
+                  key={ct.cylinderTypeId}
+                  label={ct.typeName}
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="0"
+                  value={empties[ct.cylinderTypeId] ?? ''}
+                  onChange={(e) =>
+                    setEmpties((prev) => ({ ...prev, [ct.cylinderTypeId]: e.target.value.replace(/[^0-9]/g, '') }))
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="flex justify-end gap-3 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="button" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+            {wasSeeded ? 'Update Opening' : 'Seed Opening'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

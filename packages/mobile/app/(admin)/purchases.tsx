@@ -36,6 +36,15 @@ interface SourceDistributor {
   distributorId: string;
   name: string;
   createdAt: string;
+  // 2026-07-23 — opening state returned by GET /source-distributors
+  // (listSourceDistributors select). Wires the Edit-OB modal prefill.
+  openingBalanceAmount?: number | string;
+  openingStateSeededAt?: string | null;
+  emptyOpenings?: Array<{
+    cylinderTypeId: string;
+    openingSeedQty: number;
+    cylinderType?: { typeName: string } | null;
+  }>;
 }
 
 // Decimal columns (unit_price, amount_paid, outstanding, etc.) are
@@ -155,6 +164,10 @@ export default function PurchasesScreen() {
   // source distributor the user is acting on.
   const [payingSource, setPayingSource] = useState<SupplierBalance | null>(null);
   const [ledgerSource, setLedgerSource] = useState<SupplierBalance | null>(null);
+  // 2026-07-23 — Edit-OB modal for existing supplier. Holds the picked
+  // SourceDistributor from GET /source-distributors (which now returns
+  // opening state fields for prefill).
+  const [editingOpeningSource, setEditingOpeningSource] = useState<SourceDistributor | null>(null);
 
   // 2026-07-19 v2 — Filters + sort chips.
   const [filterSourceId, setFilterSourceId] = useState<string>('');
@@ -176,6 +189,10 @@ export default function PurchasesScreen() {
   const { data: suppliers, refetch: refetchSuppliers } = useApiQuery<SupplierBalancesResponse>(
     ['supplier-balances'],
     '/purchase-payments/supplier-balances',
+  );
+  const { data: sourceDistList, refetch: refetchSources } = useApiQuery<SourceDistributor[]>(
+    ['source-distributors'],
+    '/source-distributors',
   );
   const { data: cylinderTypesResp } = useApiQuery<CylinderTypesListResponse>(
     ['cylinder-types'],
@@ -538,6 +555,7 @@ export default function PurchasesScreen() {
       {fabSheetOpen && (
         <FabChooserSheet
           suppliers={supplierRows}
+          sourceDistList={sourceDistList ?? []}
           onClose={() => setFabSheetOpen(false)}
           onPickPurchase={() => {
             setFabSheetOpen(false);
@@ -551,6 +569,24 @@ export default function PurchasesScreen() {
           onPickLedger={(supplier) => {
             setFabSheetOpen(false);
             setLedgerSource(supplier);
+          }}
+          onPickEditOpening={(source) => {
+            setFabSheetOpen(false);
+            setEditingOpeningSource(source);
+          }}
+        />
+      )}
+
+      {editingOpeningSource && (
+        <EditSupplierOpeningModal
+          source={editingOpeningSource}
+          cylinderTypes={cylinderTypes}
+          onClose={() => setEditingOpeningSource(null)}
+          onSaved={() => {
+            setEditingOpeningSource(null);
+            refetch();
+            refetchSuppliers();
+            refetchSources();
           }}
         />
       )}
@@ -1613,14 +1649,165 @@ function SupplierLedgerModal({
 // visible, so surfacing payment recording from the FAB puts it one
 // tap away regardless of scroll position.
 
+// ─── Edit Supplier Opening Modal (mobile) ────────────────────────────
+// Mini-op #4 (2026-07-23) — edit an EXISTING supplier's opening ₹ + per-
+// cylinder-type empties. Prefill from the SourceDistributor prop (which
+// carries openingBalanceAmount + emptyOpenings from the list endpoint).
+// Routes to POST /seed-opening-state (first time) or PUT /opening-state
+// (already seeded). Empties sent as a full-replace of the existing set.
+
+function EditSupplierOpeningModal({
+  source,
+  cylinderTypes,
+  onClose,
+  onSaved,
+}: {
+  source: SourceDistributor;
+  cylinderTypes: Array<{ cylinderTypeId: string; typeName: string }>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const dark = useIsDark();
+  const bg = dark ? '#0f172a' : '#ffffff';
+  const text = dark ? '#f1f5f9' : '#0f172a';
+  const border = dark ? '#334155' : '#e2e8f0';
+  const muted = dark ? '#94a3b8' : '#64748b';
+  const wasSeeded = !!source.openingStateSeededAt;
+  const [amount, setAmount] = useState(String(Number(source.openingBalanceAmount ?? 0)));
+  const [asOfDate, setAsOfDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [empties, setEmpties] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      (source.emptyOpenings ?? []).map((r) => [r.cylinderTypeId, String(r.openingSeedQty)]),
+    ),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    setError(null);
+    setSaving(true);
+    try {
+      const amt = parseFloat(amount);
+      const validAmt = Number.isFinite(amt) && amt >= 0 ? amt : 0;
+      const emptiesPayload = Object.entries(empties)
+        .map(([cylinderTypeId, qtyStr]) => ({ cylinderTypeId, qty: parseInt(qtyStr, 10) }))
+        .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+      const path = wasSeeded
+        ? `/source-distributors/${source.id}/opening-state`
+        : `/source-distributors/${source.id}/seed-opening-state`;
+      const method = wasSeeded ? 'put' : 'post';
+      await api[method](path, { amount: validAmt, asOfDate, empties: emptiesPayload });
+      onSaved();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal visible transparent={false} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaProvider>
+        <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: bg }}>
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+            paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: border,
+          }}>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={24} color={muted} />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 17, fontWeight: '800', color: text }}>
+              {wasSeeded ? 'Edit Opening' : 'Seed Opening'} — {source.name}
+            </Text>
+            <TouchableOpacity onPress={handleSave} disabled={saving} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={{ fontSize: 16, color: saving ? muted : '#dc2626', fontWeight: '600' }}>
+                {saving ? '…' : 'Save'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }} keyboardShouldPersistTaps="handled">
+            <View style={{ gap: 6 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: text }}>Opening Balance Owed (₹)</Text>
+              <TextInput
+                value={amount}
+                onChangeText={setAmount}
+                keyboardType="decimal-pad"
+                placeholder="e.g. 5000"
+                placeholderTextColor={muted}
+                style={{
+                  borderWidth: 1, borderColor: border, borderRadius: 8, padding: 12,
+                  fontSize: 16, color: text, backgroundColor: bg,
+                }}
+              />
+            </View>
+
+            <View style={{ gap: 6 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: text }}>As of (date)</Text>
+              <TextInput
+                value={asOfDate}
+                onChangeText={setAsOfDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={muted}
+                style={{
+                  borderWidth: 1, borderColor: border, borderRadius: 8, padding: 12,
+                  fontSize: 16, color: text, backgroundColor: bg,
+                }}
+              />
+            </View>
+
+            {cylinderTypes.length > 0 && (
+              <View style={{ gap: 6 }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: text }}>
+                  Opening Empties Owed — per cylinder type
+                </Text>
+                <Text style={{ fontSize: 12, color: muted }}>
+                  Full replace on save — clearing a row sets it to 0.
+                </Text>
+                {cylinderTypes.map((ct) => (
+                  <View key={ct.cylinderTypeId} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <Text style={{ flex: 1, fontSize: 14, color: text }}>{ct.typeName}</Text>
+                    <TextInput
+                      value={empties[ct.cylinderTypeId] ?? ''}
+                      onChangeText={(v) =>
+                        setEmpties((prev) => ({ ...prev, [ct.cylinderTypeId]: v.replace(/[^0-9]/g, '') }))
+                      }
+                      placeholder="0"
+                      placeholderTextColor={muted}
+                      keyboardType="number-pad"
+                      style={{
+                        width: 100, borderWidth: 1, borderColor: border, borderRadius: 8, padding: 10,
+                        fontSize: 15, color: text, backgroundColor: bg, textAlign: 'right',
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {error && <Text style={{ fontSize: 12, color: '#dc2626' }}>{error}</Text>}
+          </ScrollView>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    </Modal>
+  );
+}
+
 function FabChooserSheet({
   suppliers,
+  sourceDistList,
   onClose,
   onPickPurchase,
   onPickPayment,
   onPickLedger,
+  onPickEditOpening,
 }: {
   suppliers: SupplierBalance[];
+  sourceDistList: SourceDistributor[];
   onClose: () => void;
   onPickPurchase: () => void;
   onPickPayment: (s: SupplierBalance) => void;
@@ -1630,6 +1817,8 @@ function FabChooserSheet({
   // this sheet so nothing is lost: each supplier row now has a Pay
   // button (tap the row / Pay) and a Ledger icon on the right.
   onPickLedger: (s: SupplierBalance) => void;
+  // 2026-07-23 — third per-row icon: edit opening balance / empties.
+  onPickEditOpening: (source: SourceDistributor) => void;
 }) {
   const dark = useIsDark();
   const bg = dark ? '#0f172a' : '#ffffff';
@@ -1808,6 +1997,28 @@ function FabChooserSheet({
                       }}
                     >
                       <Ionicons name="receipt-outline" size={16} color={text} />
+                    </TouchableOpacity>
+
+                    {/* 2026-07-23 — Edit-OB icon. Prefill data comes from
+                        GET /source-distributors (sourceDistList). We
+                        find the matching source row by ID. Falls back to
+                        a stub with just id+name if the source list is
+                        still loading. */}
+                    <TouchableOpacity
+                      onPress={() => {
+                        const src = sourceDistList.find((sd) => sd.id === s.sourceDistributorId)
+                          ?? { id: s.sourceDistributorId, distributorId: '', name: s.name, createdAt: '' } as SourceDistributor;
+                        onPickEditOpening(src);
+                      }}
+                      activeOpacity={0.75}
+                      accessibilityLabel={`Edit ${s.name} opening balance`}
+                      style={{
+                        width: 34, height: 34, borderRadius: 8,
+                        borderWidth: 1, borderColor: border,
+                        alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >
+                      <Ionicons name="create-outline" size={16} color={text} />
                     </TouchableOpacity>
                   </View>
                 ))}

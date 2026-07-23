@@ -1131,7 +1131,12 @@ function CreateOrderModal({
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [isGodownPickup, setIsGodownPickup] = useState(false);
-  const [items, setItems] = useState([{ cylinderTypeId: '', quantity: '1' }]);
+  // Mini-op #2 (2026-07-23) — unitPrice added per-line for the
+  // order-level pricing override. Empty string = no override; backend
+  // gates the field on the customer's flag AND accountType=mini_operator.
+  const [items, setItems] = useState<Array<{ cylinderTypeId: string; quantity: string; unitPrice: string }>>([
+    { cylinderTypeId: '', quantity: '1', unitPrice: '' },
+  ]);
 
   // 300 ms debounce, min 3 chars — same shape as the web CustomerSearchInput.
   useEffect(() => {
@@ -1177,10 +1182,21 @@ function CreateOrderModal({
   const effectiveCylinderTypes = customerId && customerTypesData?.cylinderTypes
     ? customerTypesData.cylinderTypes
     : cylinderTypes;
-  const hasPreferredTypes =
-    !!customerId
-    && !!customerTypesData?.cylinderTypes
-    && customerTypesData.cylinderTypes.some((ct) => (ct as { isPreferred?: boolean }).isPreferred === true);
+  // 2026-07-23 — usual-types-appear-first hint removed per user feedback;
+  // ordering is still preferred-first (backend), the note was noise.
+
+  // Mini-op #2 (2026-07-23) — fetch customer detail to read
+  // `orderLevelPricingEnabled`. The list-shape Customer object we hold in
+  // `pickedCustomer` doesn't include this field. When ON, render a
+  // per-line Rate ₹ input; the backend only accepts overrides when both
+  // the flag AND the tenant's accountType=mini_operator.
+  const { data: customerDetail } = useApiQuery<{ customerId: string; orderLevelPricingEnabled?: boolean }>(
+    ['customer-detail-for-order', customerId],
+    `/customers/${customerId}`,
+    undefined,
+    { enabled: !!customerId, staleTime: 60_000 },
+  );
+  const orderLevelPricingOn = customerDetail?.orderLevelPricingEnabled === true;
 
   // PO number is B2B-only; the input hides for B2C customers. Matches the
   // IRN payload emit gate in payloadBuilders so the wire shape and the UI
@@ -1193,14 +1209,14 @@ function CreateOrderModal({
     ? (searchCustomersData?.customers ?? [])
     : recentCustomers;
 
-  const addItem = () => setItems([...items, { cylinderTypeId: '', quantity: '1' }]);
+  const addItem = () => setItems([...items, { cylinderTypeId: '', quantity: '1', unitPrice: '' }]);
 
   const removeItem = (index: number) => {
     if (items.length <= 1) return;
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const updateItem = (index: number, field: 'cylinderTypeId' | 'quantity', value: string) => {
+  const updateItem = (index: number, field: 'cylinderTypeId' | 'quantity' | 'unitPrice', value: string) => {
     const updated = [...items];
     updated[index] = { ...updated[index], [field]: value };
     setItems(updated);
@@ -1226,10 +1242,19 @@ function CreateOrderModal({
       specialInstructions: specialInstructions || undefined,
       poNumber: poNumber.trim() || undefined,
       isGodownPickup,
-      items: validItems.map((it) => ({
-        cylinderTypeId: it.cylinderTypeId,
-        quantity: parseInt(it.quantity, 10),
-      })),
+      items: validItems.map((it) => {
+        // Mini-op #2 (2026-07-23) — attach unitPriceOverride only when
+        // the customer's flag is on AND a valid number was typed. Backend
+        // silently drops when either gate fails, but sending undefined
+        // avoids the round-trip.
+        const override = parseFloat(it.unitPrice);
+        const overrideValid = orderLevelPricingOn && Number.isFinite(override) && override >= 0;
+        return {
+          cylinderTypeId: it.cylinderTypeId,
+          quantity: parseInt(it.quantity, 10),
+          ...(overrideValid ? { unitPriceOverride: override } : {}),
+        };
+      }),
     });
   };
 
@@ -1462,12 +1487,6 @@ function CreateOrderModal({
                 <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600' }}>Add Item</Text>
               </TouchableOpacity>
             </View>
-            {hasPreferredTypes && (
-              <Text style={{ fontSize: 11, color: ACCENT, marginBottom: 6 }}>
-                Usual types appear first. All catalog types remain available.
-              </Text>
-            )}
-
             {items.map((item, index) => (
               <View key={index} style={[styles.itemRow, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
                 {/* Cylinder type picker */}
@@ -1549,6 +1568,27 @@ function CreateOrderModal({
                   >
                     <Ionicons name="trash-outline" size={18} color="#ef4444" />
                   </TouchableOpacity>
+                )}
+                {/* Mini-op #2 (2026-07-23) — Rate ₹ per-line override.
+                    Only rendered when customerDetail.orderLevelPricingEnabled
+                    is on. Full-width row below the type/qty row so the
+                    input has enough space on narrow phones. Backend
+                    accepts unitPriceOverride only for mini-op tenants. */}
+                {orderLevelPricingOn && (
+                  <View style={{ width: '100%', marginTop: 8 }}>
+                    <Text style={[styles.itemFieldLabel, { color: C.textSecondary }]}>
+                      Rate ₹ per line{' '}
+                      <Text style={{ color: C.textMuted }}>— overrides catalog price</Text>
+                    </Text>
+                    <TextInput
+                      style={[styles.textInput, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+                      value={item.unitPrice}
+                      onChangeText={(v) => updateItem(index, 'unitPrice', v.replace(/[^0-9.]/g, ''))}
+                      keyboardType="decimal-pad"
+                      placeholder="e.g. 850"
+                      placeholderTextColor={C.textMuted}
+                    />
+                  </View>
                 )}
               </View>
             ))}
