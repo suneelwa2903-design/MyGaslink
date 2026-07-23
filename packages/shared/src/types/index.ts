@@ -243,6 +243,11 @@ export interface Customer {
   // preference, order form shows all types in the distributor's
   // catalog order.
   preferredCylinderTypeIds: string[];
+  // 2026-07-23 Mini-op delivered-cancel: on-account credit balance
+  // accumulated when a delivered invoice was cancelled + its payment
+  // was converted to a customer credit. Auto-applied on the next
+  // invoice raised for this customer.
+  onAccountBalance?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -482,6 +487,15 @@ export interface Order {
   disputeResolutionNote?: string | null;
   disputeReopenedAt?: string | null;
   disputeReopenReason?: string | null;
+  // 2026-07-23 Mini-op delivered-cancel: cancellation audit trail on
+  // the Order. cancellationType is only set when cancellationReason is
+  // also present (both are populated in one write); null on active or
+  // pre-existing cancelled orders. Values match CANCELLATION_TYPES
+  // in shared/schemas: 'wrong_customer' | 'damaged_returned' |
+  // 'customer_refused' | 'duplicate_entry' | 'other'.
+  cancelledAt?: string | null;
+  cancellationReason?: string | null;
+  cancellationType?: string | null;
   createdAt: string;
   updatedAt: string;
 }

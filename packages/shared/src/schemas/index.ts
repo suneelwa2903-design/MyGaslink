@@ -556,6 +556,29 @@ export const createDebitNoteSchema = z.object({
   note: z.string().max(500).optional(),
 });
 
+// 2026-07-23 Mini-op delivered-cancel: shared validation for the
+// extended POST /api/orders/:id/cancel route. `cancellationType`
+// is REQUIRED whenever a delivered order is being cancelled (route
+// enforces the delivered-vs-pending gate; the schema stays permissive
+// so pre-delivery cancels don't force operators to pick a type).
+// `applyAsCustomerCredit` is REQUIRED when the invoice has a payment
+// allocation — the route returns 409 without it, then the operator
+// re-submits with the flag set true after the confirm dialog.
+export const CANCELLATION_TYPES = [
+  'wrong_customer',
+  'damaged_returned',
+  'customer_refused',
+  'duplicate_entry',
+  'other',
+] as const;
+export type CancellationType = typeof CANCELLATION_TYPES[number];
+export const cancelOrderSchema = z.object({
+  reason: z.string().min(1, 'Reason is required').max(500),
+  cancellationType: z.enum(CANCELLATION_TYPES).optional(),
+  applyAsCustomerCredit: z.boolean().optional(),
+});
+export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+
 // ─── Inventory Schemas ───────────────────────────────────────────────────────
 
 // WI-1.4 — Incoming Fulls modal: "Supply Type" / "Supply Reference No." /

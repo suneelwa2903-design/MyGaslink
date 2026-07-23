@@ -841,6 +841,17 @@ model Customer {
   /// used as a one-way idempotency guard on the Edit-Customer "seed
   /// opening state" path so double-seeding is impossible.
   openingStateSeededAt       DateTime?      @map("opening_state_seeded_at")
+  /// 2026-07-23 Mini-op delivered-cancel: on-account credit balance.
+  /// Populated when a delivered invoice is cancelled AND the operator
+  /// converts the already-applied payment to a customer credit rather
+  /// than reversing the payment entirely. Auto-applied on the next
+  /// invoice created for this customer (subtracted from outstanding
+  /// before the ledger entry is written; the applied portion emits a
+  /// negative-delta ledger row `'On-account credit applied'`).
+  /// Distributor customers stay at 0 (no code path writes this field
+  /// for accountType='distributor' — the delivered-cancel path is
+  /// gated to accountType='mini_operator').
+  onAccountBalance           Decimal        @default(0) @map("on_account_balance") @db.Decimal(12, 2)
   createdAt                  DateTime       @default(now()) @map("created_at")
   updatedAt                  DateTime       @updatedAt @map("updated_at")
   deletedAt                  DateTime?      @map("deleted_at")
@@ -1215,6 +1226,12 @@ model Order {
   deliveredAt           DateTime?   @map("delivered_at")
   cancelledAt           DateTime?   @map("cancelled_at")
   cancellationReason    String?     @map("cancellation_reason")
+  // 2026-07-23 Mini-op delivered-cancel: one of
+  //   'wrong_customer' | 'damaged_returned' | 'customer_refused' |
+  //   'duplicate_entry' | 'other'.
+  // Zod-validated at the route; kept as a plain String for schema-
+  // migration safety (no new enum values to migrate on existing rows).
+  cancellationType      String?     @map("cancellation_type")
   customerConfirmed     Boolean?    @map("customer_confirmed")
   customerConfirmedAt   DateTime?   @map("customer_confirmed_at")
   customerDisputeReason String?     @map("customer_dispute_reason")
@@ -1616,6 +1633,15 @@ model Invoice {
   // because delivered qty ≠ ordered qty) has been applied. Used by the
   // reissue audit + UI badges.
   revisedPostDeliveryAt DateTime?     @map("revised_post_delivery_at")
+  // 2026-07-23 Mini-op delivered-cancel: cancellation audit trail on
+  // the invoice side (mirrors Order.cancelledAt/reason/type). Populated
+  // when a delivered invoice is cancelled via the mini-op flow. `deletedAt`
+  // is INTENTIONALLY LEFT NULL so cancelled invoices stay visible on
+  // Invoices + Orders lists for recon. Consumers must filter by
+  // `status != 'cancelled'` to exclude from revenue/aging aggregations.
+  cancelledAt           DateTime?     @map("cancelled_at")
+  cancellationReason    String?       @map("cancellation_reason")
+  cancellationType      String?       @map("cancellation_type")
   notes                 String?
   issuedBy              String?       @map("issued_by")
   closedAt              DateTime?     @map("closed_at")
