@@ -905,6 +905,26 @@ export interface DashboardStats {
   pendingActions: number;
   /** Total active (non-deleted) customers for the distributor. */
   totalCustomers: number;
+  /**
+   * 2026-07-23 — Per-cylinder-type breakdown of fulls delivered TODAY
+   * (mini-op home shows this as 2 stacked cards below the KPI grid).
+   * Ordered by cylinderTypeName ASC. Empty array if nothing delivered today.
+   */
+  fullsDeliveredByTypeToday: Array<{
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    qty: number;
+  }>;
+  /**
+   * 2026-07-23 — Per-cylinder-type breakdown of empties collected TODAY
+   * from the same delivered orders. Ordered by cylinderTypeName ASC.
+   * Empty array if nothing collected today.
+   */
+  emptiesCollectedByTypeToday: Array<{
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    qty: number;
+  }>;
 }
 
 export interface AnalyticsMetrics {

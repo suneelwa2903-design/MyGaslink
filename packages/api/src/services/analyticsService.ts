@@ -107,6 +107,49 @@ export async function getDashboardStats(distributorId: string) {
     }),
   ]);
 
+  // 2026-07-23 — per-cylinder-type breakdown of today's delivery activity.
+  // Queried separately so the primary KPI aggregate above stays lean.
+  // Reads order_items for orders delivered today, groups by cylinderTypeId.
+  const orderItemAggregates = await prisma.orderItem.groupBy({
+    by: ['cylinderTypeId'],
+    where: {
+      order: {
+        distributorId,
+        deletedAt: null,
+        status: { in: ['delivered', 'modified_delivered'] },
+        deliveredAt: { gte: today, lt: tomorrow },
+      },
+    },
+    _sum: {
+      deliveredQuantity: true,
+      emptiesCollected: true,
+    },
+  });
+  const typeIds = orderItemAggregates.map((r) => r.cylinderTypeId);
+  const cylinderTypes = typeIds.length > 0
+    ? await prisma.cylinderType.findMany({
+        where: { id: { in: typeIds } },
+        select: { id: true, typeName: true },
+      })
+    : [];
+  const nameById = new Map(cylinderTypes.map((c) => [c.id, c.typeName]));
+  const fullsDeliveredByTypeToday = orderItemAggregates
+    .map((r) => ({
+      cylinderTypeId: r.cylinderTypeId,
+      cylinderTypeName: nameById.get(r.cylinderTypeId) ?? '',
+      qty: r._sum.deliveredQuantity ?? 0,
+    }))
+    .filter((r) => r.qty > 0)
+    .sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName));
+  const emptiesCollectedByTypeToday = orderItemAggregates
+    .map((r) => ({
+      cylinderTypeId: r.cylinderTypeId,
+      cylinderTypeName: nameById.get(r.cylinderTypeId) ?? '',
+      qty: r._sum.emptiesCollected ?? 0,
+    }))
+    .filter((r) => r.qty > 0)
+    .sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName));
+
   return {
     ordersToday,
     deliveredToday,
@@ -118,6 +161,8 @@ export async function getDashboardStats(distributorId: string) {
     inventoryAlerts,
     pendingActions,
     totalCustomers,
+    fullsDeliveredByTypeToday,
+    emptiesCollectedByTypeToday,
   };
 }
 

@@ -472,6 +472,70 @@ export default function AdminDashboardScreen() {
           })}
         </View>
 
+        {/* Mini-Operator (2026-07-23) — Today's cylinder movement, by type.
+            Two stacked cards: fulls delivered + empties collected. Data
+            source: `stats.fullsDeliveredByTypeToday` / `stats.emptiesCollectedByTypeToday`
+            (per-cylinder-type rollup from analyticsService). Rendered only
+            when there's activity today, so blank days don't show empty cards. */}
+        {isMiniOperator && (stats?.fullsDeliveredByTypeToday?.length || stats?.emptiesCollectedByTypeToday?.length) ? (
+          <View style={styles.kpiGrid}>
+            <View style={[styles.kpiCard, styles.kpiCardLeft]}>
+              <View
+                style={[
+                  styles.kpiCardInner,
+                  { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, padding: 12, gap: 6 },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={[styles.kpiIconContainer, { backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5', marginBottom: 0 }]}>
+                    <Ionicons name="cube-outline" size={20} color={ACCENT.green} />
+                  </View>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, textTransform: 'uppercase' }}>
+                    Fulls Delivered Today
+                  </Text>
+                </View>
+                {(stats?.fullsDeliveredByTypeToday ?? []).length === 0 ? (
+                  <Text style={{ fontSize: 12, color: theme.textMuted }}>None today</Text>
+                ) : (
+                  (stats?.fullsDeliveredByTypeToday ?? []).map((row) => (
+                    <View key={row.cylinderTypeId} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 13, color: theme.text }}>{row.cylinderTypeName}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: theme.text }}>{row.qty}</Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            </View>
+            <View style={[styles.kpiCard, styles.kpiCardRight]}>
+              <View
+                style={[
+                  styles.kpiCardInner,
+                  { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, padding: 12, gap: 6 },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={[styles.kpiIconContainer, { backgroundColor: isDark ? 'rgba(245, 158, 11, 0.15)' : '#fffbeb', marginBottom: 0 }]}>
+                    <Ionicons name="return-down-back-outline" size={20} color={ACCENT.orange} />
+                  </View>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, textTransform: 'uppercase' }}>
+                    Empties Collected Today
+                  </Text>
+                </View>
+                {(stats?.emptiesCollectedByTypeToday ?? []).length === 0 ? (
+                  <Text style={{ fontSize: 12, color: theme.textMuted }}>None today</Text>
+                ) : (
+                  (stats?.emptiesCollectedByTypeToday ?? []).map((row) => (
+                    <View key={row.cylinderTypeId} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 13, color: theme.text }}>{row.cylinderTypeName}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: theme.text }}>{row.qty}</Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            </View>
+          </View>
+        ) : null}
+
         {/* Mini-Operator (2026-07-17): Reports section on the Home
             screen — two tiles, tapping either opens a filter modal that
             downloads the corresponding PDF from an existing backend
