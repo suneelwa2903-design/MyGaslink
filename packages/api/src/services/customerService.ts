@@ -713,16 +713,49 @@ export async function updateOpeningStateOnCustomer(
           status: ob.amount - paid > 0 ? 'overdue' : 'paid',
         },
       });
-      await tx.customerLedgerEntry.updateMany({
+      // 2026-07-23 — updateMany silently no-ops when the row is missing.
+      // Some historical rows exist without a matching customer_ledger_entries
+      // record (fresh seed via importOpeningBalances or a prior code path
+      // that skipped ledger writes) — the edit-path then updates 0 rows
+      // and the customer ledger PDF renders Due Amt Rs. 0.00 on the
+      // Opening Balance b/f row instead of the real balance. Symptom
+      // observed on the "Check" customer 2026-07-23: OB invoice
+      // OB-5dec2903-… ₹10,000 present in `invoices` but ZERO rows in
+      // `customer_ledger_entries` for that invoice_id.
+      //
+      // Fix: upsert — update when the row exists, create when it doesn't.
+      const existingLedger = await tx.customerLedgerEntry.findFirst({
         where: { invoiceId: existingOb.id, entryType: 'invoice_entry' },
-        data: {
-          amountDelta: ob.amount,
-          narration: ob.notes?.trim()
-            ? `Opening Balance b/f — ${ob.notes.trim()}`
-            : 'Opening Balance b/f',
-          entryDate: asOfDate,
-        },
+        select: { id: true },
       });
+      if (existingLedger) {
+        await tx.customerLedgerEntry.update({
+          where: { id: existingLedger.id },
+          data: {
+            amountDelta: ob.amount,
+            narration: ob.notes?.trim()
+              ? `Opening Balance b/f — ${ob.notes.trim()}`
+              : 'Opening Balance b/f',
+            entryDate: asOfDate,
+          },
+        });
+      } else {
+        await tx.customerLedgerEntry.create({
+          data: {
+            distributorId,
+            customerId,
+            entryType: 'invoice_entry',
+            referenceId: existingOb.id,
+            invoiceId: existingOb.id,
+            amountDelta: ob.amount,
+            narration: ob.notes?.trim()
+              ? `Opening Balance b/f — ${ob.notes.trim()}`
+              : 'Opening Balance b/f',
+            entryDate: asOfDate,
+            createdBy: userId,
+          },
+        });
+      }
     } else if (!existingOb && wantAmount > 0) {
       // No prior OB but they want one now — create fresh.
       const ob = seed.openingBalance!;
