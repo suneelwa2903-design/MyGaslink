@@ -200,12 +200,23 @@ function drawRow(
   doc: PDFKit.PDFDocument,
   y: number,
   cells: string[],
-  opts: { bold?: boolean; zebra?: boolean } = {},
+  opts: { bold?: boolean; zebra?: boolean; cancelled?: boolean } = {},
 ): number {
-  if (opts.zebra) {
+  // 2026-07-23 Mini-op delivered-cancel: cancelled ledger rows carry a
+  // "Cancelled:" narration prefix and a NEGATIVE amount (reversal).
+  // Renderer paints them with:
+  //   - Light-gray row background (distinguishes from active debits)
+  //   - Red text on the money columns (Amount + Due Amt cells)
+  //   - Bold face for the narration to emphasise the cancel event
+  // Cell contents come from the caller unchanged; visual treatment is
+  // pure PDF styling. Detection happens at the emit site by inspecting
+  // the row's narration + kind before calling drawRow.
+  if (opts.cancelled) {
+    doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT).fill('#f1f5f9');
+  } else if (opts.zebra) {
     doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT).fill(THEME.ZEBRA);
   }
-  doc.fillColor(THEME.TEXT).font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(TYPO.BODY);
+  doc.fillColor(THEME.TEXT).font(opts.bold || opts.cancelled ? 'Helvetica-Bold' : 'Helvetica').fontSize(TYPO.BODY);
   let x = MARGIN.left;
   for (let i = 0; i < COLS.length; i++) {
     // lineBreak:false forces single-line rendering inside the cell width
@@ -213,6 +224,15 @@ function drawRow(
     // row). fitCell ellipsises the source text so the visible content
     // matches what was actually rendered.
     const text = fitCell(cells[i] ?? '', COL_CHAR_CAP[i] ?? 999);
+    // Money columns (Amount=idx 4, Total Amt=8, Received=9, Due Amt=10)
+    // render in red for cancelled rows so the negative delta reads at
+    // a glance.
+    const isMoneyCol = i === 4 || i === 8 || i === 9 || i === 10;
+    if (opts.cancelled && isMoneyCol) {
+      doc.fillColor('#dc2626');
+    } else {
+      doc.fillColor(THEME.TEXT);
+    }
     doc.text(text, x + 3, y + 4, {
       width: COLS[i].width - 6,
       align: COLS[i].align,
@@ -583,7 +603,11 @@ export async function generateCustomerLedgerPdf(
         formatMoney(row.overDueAmount),
       ];
     }
-    y += drawRow(doc, y, cells, { zebra });
+    // 2026-07-23 — cancelled-row visual treatment. Detect via the
+    // "Cancelled:" narration prefix set by orderService.cancelOrder's
+    // reversal ledger emit. Applies to individual customer PDF.
+    const isCancelled = (row.narration ?? '').startsWith('Cancelled:');
+    y += drawRow(doc, y, cells, { zebra, cancelled: isCancelled });
     zebra = !zebra;
 
     // Accumulate per-page state AFTER drawing — keeps the page-break
@@ -862,15 +886,28 @@ export async function generateGroupLedgerPdf(
   const drawGroupRow = (
     yy: number,
     cells: string[],
-    opts: { bold?: boolean; zebra?: boolean } = {},
+    opts: { bold?: boolean; zebra?: boolean; cancelled?: boolean } = {},
   ): number => {
-    if (opts.zebra) {
+    // 2026-07-23 — mirror the individual PDF's cancelled-row treatment
+    // so group HQ ledgers get the same visual affordance.
+    if (opts.cancelled) {
+      doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, ROW_HEIGHT).fill('#f1f5f9');
+    } else if (opts.zebra) {
       doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, ROW_HEIGHT).fill(THEME.ZEBRA);
     }
-    doc.fillColor(THEME.TEXT).font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(TYPO.BODY);
+    doc.fillColor(THEME.TEXT).font(opts.bold || opts.cancelled ? 'Helvetica-Bold' : 'Helvetica').fontSize(TYPO.BODY);
     let x = MARGIN.left;
     for (let i = 0; i < GROUP_COLS.length; i++) {
       const text = fitCell(cells[i] ?? '', GROUP_COL_CHAR_CAP[i] ?? 999);
+      // Group PDF has an extra Property column at the start, so the
+      // money-column indices shift by 1 compared to the individual PDF
+      // (Amount=5, Total Amt=9, Received=10, Due Amt=11).
+      const isMoneyCol = i === 5 || i === 9 || i === 10 || i === 11;
+      if (opts.cancelled && isMoneyCol) {
+        doc.fillColor('#dc2626');
+      } else {
+        doc.fillColor(THEME.TEXT);
+      }
       doc.text(text, x + 3, yy + 4, {
         width: GROUP_COLS[i].width - 6,
         align: GROUP_COLS[i].align,
@@ -1009,7 +1046,9 @@ export async function generateGroupLedgerPdf(
         formatMoney(row.overDueAmount ?? 0),
       ];
     }
-    y += drawGroupRow(y, cells, { zebra });
+    // 2026-07-23 — cancelled-row detection (same "Cancelled:" prefix).
+    const isCancelledGroup = (row.narration ?? '').startsWith('Cancelled:');
+    y += drawGroupRow(y, cells, { zebra, cancelled: isCancelledGroup });
     zebra = !zebra;
   }
 

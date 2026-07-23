@@ -10,6 +10,7 @@ import {
   returnsOnlyOrderSchema, returnsConfirmationSchema,
   backdatedOrderSchema,
   backdatedTripSchema,
+  cancelOrderSchema,
   localTodayISO,
 } from '@gaslink/shared';
 import * as orderService from '../services/orderService.js';
@@ -880,18 +881,44 @@ router.post('/:id/resolve-dispute',
 );
 
 // POST /api/orders/:id/cancel
+// 2026-07-23 — extended contract per cancelOrderSchema (shared):
+//   { reason, cancellationType?, applyAsCustomerCredit? }
+// - Pre-delivery: cancellationType optional (kept for audit).
+// - Delivered order + mini_operator tenant: cancellationType required.
+// - Delivered order + regular distributor: service returns 400 (use CN).
+// - Invoice with paymentAllocation + no applyAsCustomerCredit:
+//     service throws 409 PAYMENT_APPLIED with allocatedAmount so the UI
+//     can prompt the operator to convert to on-account credit.
 router.post('/:id/cancel',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
-  validate(z.object({ reason: z.string().min(1, 'Cancellation reason is required') })),
+  validate(cancelOrderSchema),
   auditLog('cancel', 'order'),
   async (req, res) => {
     try {
       const order = await orderService.cancelOrder(
-        param(req.params.id), req.user!.distributorId!, req.user!.userId, req.body.reason
+        param(req.params.id),
+        req.user!.distributorId!,
+        req.user!.userId,
+        req.body.reason,
+        {
+          cancellationType: req.body.cancellationType,
+          applyAsCustomerCredit: req.body.applyAsCustomerCredit,
+        },
       );
       return sendSuccess(res, mapOrder(order));
     } catch (err: unknown) {
-      const e = err as ServiceError;
+      const e = err as ServiceError & { code?: string; allocatedAmount?: number };
+      // Surface the 409 PAYMENT_APPLIED shape so the UI can prompt the
+      // operator to convert to on-account credit and re-submit with
+      // applyAsCustomerCredit=true.
+      if (e.statusCode === 409 && e.code === 'PAYMENT_APPLIED') {
+        return res.status(409).json({
+          success: false,
+          error: e.message,
+          code: 'PAYMENT_APPLIED',
+          allocatedAmount: e.allocatedAmount,
+        });
+      }
       return sendError(res, e.message, e.statusCode || 500);
     }
   }

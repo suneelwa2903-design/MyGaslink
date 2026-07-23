@@ -353,6 +353,23 @@ export async function createInvoiceFromOrder(
   // the historic invoice's PO, so reissue + GSTR-1 export stay aligned.
   const poNumberSnapshot = order.poNumber?.trim() || null;
 
+  // 2026-07-23 Mini-op on-account credit auto-apply.
+  // If the customer has a non-zero onAccountBalance (typically from a
+  // prior delivered-cancel where the operator converted an applied
+  // payment into customer credit), apply it now: reduce outstanding by
+  // the applied amount, decrement onAccountBalance, and emit a matching
+  // negative-delta ledger row for the applied credit so the running
+  // balance stays clean. `outstandingAmount = totalAmount − applied`
+  // (never below 0). `amountPaid` reflects the applied credit so
+  // payment reports see the correct receipts.
+  const customerRow = await tx.customer.findUnique({
+    where: { id: order.customerId },
+    select: { onAccountBalance: true },
+  });
+  const availableCredit = toNum(customerRow?.onAccountBalance ?? 0);
+  const creditApplied = Math.min(availableCredit, totalAmount);
+  const outstandingAfterCredit = Math.max(0, totalAmount - creditApplied);
+
   const invoice = await tx.invoice.create({
     data: {
       invoiceNumber,
@@ -362,8 +379,9 @@ export async function createInvoiceFromOrder(
       issueDate,
       dueDate,
       totalAmount,
-      outstandingAmount: totalAmount,
-      status: 'issued',
+      outstandingAmount: outstandingAfterCredit,
+      amountPaid: creditApplied,
+      status: outstandingAfterCredit <= 0.005 ? 'paid' : 'issued',
       poNumber: poNumberSnapshot,
       cgstValue,
       sgstValue,
@@ -377,7 +395,17 @@ export async function createInvoiceFromOrder(
     },
   });
 
-  // Create ledger entry
+  // Consume the credit from the customer's on-account balance.
+  if (creditApplied > 0 && order.customerId) {
+    await tx.customer.update({
+      where: { id: order.customerId },
+      data: { onAccountBalance: { decrement: creditApplied } },
+    });
+  }
+
+  // Create ledger entry (full invoice debit — reader sums it with the
+  // credit-application row below so the net effect on running balance
+  // is (totalAmount − creditApplied), matching outstandingAmount).
   await tx.customerLedgerEntry.create({
     data: {
       distributorId,
@@ -391,6 +419,26 @@ export async function createInvoiceFromOrder(
       createdBy: userId,
     },
   });
+
+  // 2026-07-23 — matching negative-delta ledger row for the on-account
+  // credit consumed by this invoice. Emits only when creditApplied > 0.
+  // Ensures running balance calc adds the invoice + subtracts the
+  // applied credit → nets to `outstandingAmount`.
+  if (creditApplied > 0 && order.customerId) {
+    await tx.customerLedgerEntry.create({
+      data: {
+        distributorId,
+        customerId: order.customerId,
+        entryType: 'adjustment',
+        referenceId: invoice.id,
+        invoiceId: invoice.id,
+        amountDelta: -creditApplied,
+        narration: `On-account credit applied ₹${creditApplied.toFixed(2)}`,
+        entryDate: issueDate,
+        createdBy: userId,
+      },
+    });
+  }
 
   return invoice;
 }

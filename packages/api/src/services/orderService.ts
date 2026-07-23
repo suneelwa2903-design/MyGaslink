@@ -1461,31 +1461,76 @@ export async function cancelOrder(
   orderId: string,
   distributorId: string,
   userId: string,
-  reason: string
+  reason: string,
+  // 2026-07-23 Mini-op delivered-cancel: extended contract.
+  // - `cancellationType` is REQUIRED for delivered orders (validated at
+  //   the route via cancelOrderSchema); optional otherwise.
+  // - `applyAsCustomerCredit` opts into the payment-allocation-to-
+  //   on-account-balance conversion. Without it, an invoice with any
+  //   allocation triggers 409 PAYMENT_APPLIED so the UI can confirm.
+  options?: {
+    cancellationType?: string;
+    applyAsCustomerCredit?: boolean;
+  },
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, distributorId, deletedAt: null },
     include: {
       items: true,
-      invoice: { select: { id: true, status: true, irnStatus: true, ewbStatus: true } },
+      invoice: { select: { id: true, status: true, irnStatus: true, ewbStatus: true, totalAmount: true } },
+      customer: { select: { id: true } },
     },
   });
   if (!order) throw new OrderError('Order not found', 404);
-  if (['delivered', 'modified_delivered', 'cancelled'].includes(order.status)) {
-    throw new OrderError('Cannot cancel a delivered or already cancelled order', 400);
+  if (order.status === 'cancelled') {
+    throw new OrderError('Order is already cancelled', 400);
+  }
+  const isDelivered = order.status === 'delivered' || order.status === 'modified_delivered';
+  if (isDelivered) {
+    // 2026-07-23 Mini-op-only gate. Regular distributor tenants must
+    // use the Credit Note flow for post-delivery cancels (existing
+    // cancelAndRegenerateInvoice / issueCreditNote pipeline handles
+    // NIC IRN/EWB cancel within the 24h window). Mini-op tenants are
+    // B2C, no NIC integration, so a straightforward cancel + inventory
+    // rollback + ledger reversal is the correct primitive.
+    const dist = await prisma.distributor.findUnique({
+      where: { id: distributorId },
+      select: { accountType: true },
+    });
+    if (dist?.accountType !== 'mini_operator') {
+      throw new OrderError(
+        'Delivered orders can only be cancelled via the Credit Note flow for GST tenants.',
+        400,
+      );
+    }
+    if (!options?.cancellationType) {
+      throw new OrderError(
+        'cancellationType is required to cancel a delivered order.',
+        400,
+      );
+    }
   }
 
-  // STEP 1: Block if payment allocation exists (before any changes)
+  // STEP 1: Block if payment allocation exists (before any changes).
+  // Mini-op delivered cancel with `applyAsCustomerCredit=true` bypasses
+  // this and reverses the allocation inside the TX below.
   const invoiceId = order.invoice?.id ?? null;
+  let allocatedTotal = 0;
   if (invoiceId) {
-    const paymentCount = await prisma.paymentAllocation.count({
+    const paymentAgg = await prisma.paymentAllocation.aggregate({
       where: { invoiceId },
+      _sum: { allocatedAmount: true },
     });
-    if (paymentCount > 0) {
-      throw new OrderError(
-        'Cannot cancel order with recorded payments. Please handle the payment in Billing & Payments first.',
+    const paymentCount = await prisma.paymentAllocation.count({ where: { invoiceId } });
+    allocatedTotal = toNum(paymentAgg._sum?.allocatedAmount ?? 0);
+    if (paymentCount > 0 && !options?.applyAsCustomerCredit) {
+      const err = new OrderError(
+        `This invoice has ₹${allocatedTotal.toFixed(2)} in recorded payments. Confirm to move to customer credit and cancel.`,
         409,
       );
+      (err as unknown as { code?: string }).code = 'PAYMENT_APPLIED';
+      (err as unknown as { allocatedAmount?: number }).allocatedAmount = allocatedTotal;
+      throw err;
     }
   }
 
@@ -1574,6 +1619,7 @@ export async function cancelOrder(
         status: 'cancelled',
         cancelledAt: new Date(),
         cancellationReason: reason,
+        cancellationType: options?.cancellationType ?? null,
         vehicleId: null, // STEP 6: detach vehicle from order
       },
       include: orderInclude,
@@ -1642,19 +1688,50 @@ export async function cancelOrder(
     // STEP 4: Void the invoice (preserve irnStatus/ewbStatus already updated by GST calls)
     // WI-123: a cancelled invoice owes nothing — zero its outstanding so it
     // never shows a balance in the portal/collections.
+    // 2026-07-23: also stamp the invoice-side cancellation audit trail so the
+    // Invoices list / recon pages can display "Cancelled on: DD-MMM" + type.
+    // `deletedAt` INTENTIONALLY STAYS NULL — cancelled invoices remain visible
+    // on Invoices + Orders lists for reconciliation. Aggregators must exclude
+    // by `status != 'cancelled'`.
     if (invoiceId) {
       await tx.invoice.update({
         where: { id: invoiceId },
-        data: { status: 'cancelled', outstandingAmount: 0 },
+        data: {
+          status: 'cancelled',
+          outstandingAmount: 0,
+          cancelledAt: new Date(),
+          cancellationReason: reason,
+          cancellationType: options?.cancellationType ?? null,
+        },
       });
     }
 
-    // STEP 5: Reverse CustomerLedgerEntry
+    // STEP 4b: Payment allocation reversal → customer on-account credit.
+    // Only fires when `applyAsCustomerCredit=true` (the caller confirmed the
+    // 409 preflight). Deletes the PaymentAllocation rows tied to this
+    // invoice and increments Customer.onAccountBalance by the same total.
+    // The PaymentTransaction rows themselves stay — money physically
+    // received doesn't disappear; it just becomes unallocated credit.
+    if (invoiceId && options?.applyAsCustomerCredit && allocatedTotal > 0 && order.customerId) {
+      await tx.paymentAllocation.deleteMany({ where: { invoiceId } });
+      await tx.customer.update({
+        where: { id: order.customerId },
+        data: { onAccountBalance: { increment: allocatedTotal } },
+      });
+    }
+
+    // STEP 5: Reverse CustomerLedgerEntry.
+    // 2026-07-23: narration now starts with "Cancelled:" so the ledger PDF
+    // renderer (customerLedgerPdfService.drawRow) can detect and apply the
+    // "cancelled" visual treatment (red amount, gray row bg).
     if (invoiceId) {
       const ledgerEntry = await tx.customerLedgerEntry.findFirst({
         where: { invoiceId, entryType: 'invoice_entry' as $Enums.LedgerEntryType },
       });
       if (ledgerEntry) {
+        const typeSuffix = options?.cancellationType
+          ? ` — ${options.cancellationType.replace(/_/g, ' ')}`
+          : '';
         await tx.customerLedgerEntry.create({
           data: {
             customerId: ledgerEntry.customerId,
@@ -1663,11 +1740,72 @@ export async function cancelOrder(
             referenceId: orderId,
             invoiceId: ledgerEntry.invoiceId,
             amountDelta: -(toNum(ledgerEntry.amountDelta)),
-            narration: `Order cancelled: ${order.orderNumber}`,
+            narration: `Cancelled: ${order.orderNumber}${typeSuffix}`,
             entryDate: new Date(),
             createdBy: userId,
           },
         });
+      }
+    }
+
+    // STEP 5b: Delivered-order inventory rollback.
+    // Only fires for mini-op delivered cancels (isDelivered guard early in
+    // this function already gated non-mini-op). Rollback logic per the
+    // 5-row matrix:
+    //   wrong_customer / duplicate_entry / customer_refused / other
+    //     → fulls back to godown; empties returned to customer
+    //       (withCustomerQty incremented, our godown empties decremented).
+    //   damaged_returned
+    //     → fulls back to godown; empties STAY with us (we still got
+    //       the returned empties, treated as scrap or reissue stock).
+    if (isDelivered && options?.cancellationType) {
+      const returnEmpties = options.cancellationType !== 'damaged_returned';
+      for (const item of order.items) {
+        const delivered = item.deliveredQuantity ?? item.quantity;
+        const collected = item.emptiesCollected ?? 0;
+
+        // Always put fulls back to godown.
+        if (delivered > 0) {
+          await createInventoryEvent(tx, {
+            distributorId,
+            cylinderTypeId: item.cylinderTypeId,
+            eventType: 'cancellation',
+            fullsChange: delivered,
+            emptiesChange: 0,
+            eventDate: new Date(),
+            referenceId: orderId,
+            referenceType: 'order',
+            createdBy: userId,
+            notes: `Delivered order ${order.orderNumber} cancelled (${options.cancellationType})`,
+          });
+        }
+
+        // Return empties to customer if the cancellation type says so.
+        if (returnEmpties && collected > 0) {
+          await createInventoryEvent(tx, {
+            distributorId,
+            cylinderTypeId: item.cylinderTypeId,
+            eventType: 'cancellation',
+            fullsChange: 0,
+            emptiesChange: -collected,
+            eventDate: new Date(),
+            referenceId: orderId,
+            referenceType: 'order',
+            createdBy: userId,
+            notes: `Empties returned to customer — cancelled order ${order.orderNumber}`,
+          });
+          if (order.customerId) {
+            const bal = await tx.customerInventoryBalance.findFirst({
+              where: { customerId: order.customerId, cylinderTypeId: item.cylinderTypeId },
+            });
+            if (bal) {
+              await tx.customerInventoryBalance.update({
+                where: { id: bal.id },
+                data: { withCustomerQty: { increment: collected } },
+              });
+            }
+          }
+        }
       }
     }
 
