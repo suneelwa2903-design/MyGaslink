@@ -551,10 +551,22 @@ model Distributor {
 /// existing Distributor row — mini-operators may buy from a local kirana
 /// depot or an out-of-network agency. Soft-deleted so historical
 /// PurchaseEntry rows keep a valid FK; UI filters `deletedAt IS NULL`.
+/// 2026-07-23 — Supplier opening balance seed (MVP: ₹ axis).
+/// Populated when a mini-op operator seeds "how much we already owe
+/// this supplier" before the app takes over the ledger. See migration
+/// 20260723020000 for the design rationale.
 model SourceDistributor {
   id            String    @id @default(uuid()) @map("source_distributor_id")
   distributorId String    @map("distributor_id")
   name          String
+  /// 2026-07-23 — ₹ amount ALREADY owed to this supplier at the time
+  /// the operator first seeded them. Positive = we owe them. Written
+  /// via seedOpeningStateOnSupplier (POST /source-distributors/:id/
+  /// seed-opening-state). Zero by default so pre-existing suppliers
+  /// keep their current balances calculated purely from purchase-
+  /// entries and purchase-payments.
+  openingBalanceAmount   Decimal   @default(0) @map("opening_balance_amount") @db.Decimal(18, 4)
+  openingStateSeededAt   DateTime? @map("opening_state_seeded_at")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
   deletedAt     DateTime? @map("deleted_at")
@@ -600,6 +612,11 @@ model PurchaseEntry {
   /// owed = sum(items.unitPrice * items.fullsReceived); outstanding =
   /// max(0, total - amountPaid).
   amountPaid            Decimal   @default(0) @map("amount_paid") @db.Decimal(18, 4)
+  /// 2026-07-23 — set to TRUE when this row is the synthetic "opening
+  /// balance b/f" entry created by seedOpeningStateOnSupplier. The
+  /// supplier ledger reader treats these rows as pre-range carry-forward
+  /// (same convention as Invoice.isOpeningBalance for customer OB).
+  isOpeningBalance      Boolean   @default(false) @map("is_opening_balance")
   createdBy             String    @map("created_by")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")

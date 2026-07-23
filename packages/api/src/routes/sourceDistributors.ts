@@ -17,7 +17,14 @@ import { auditLog } from '../middleware/auditLog.js';
 import { param } from '../utils/params.js';
 import { sendSuccess, sendCreated, sendError, sendNotFound } from '../utils/apiResponse.js';
 import { createSourceDistributorSchema } from '@gaslink/shared';
+import { z } from 'zod';
 import * as sourceDistributorService from '../services/sourceDistributorService.js';
+
+// 2026-07-23 — validation for supplier OB seed + edit routes.
+const supplierOpeningStateSchema = z.object({
+  amount: z.number().nonnegative().max(100_000_000),
+  asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'asOfDate must be YYYY-MM-DD'),
+});
 
 // `authenticate` + `resolveDistributor` + `requireDistributor` are wired in
 // app.ts on the mount path — same pattern as every other tenant-scoped
@@ -53,6 +60,59 @@ router.post('/',
       return sendCreated(res, created);
     } catch (err) {
       if (err instanceof sourceDistributorService.SourceDistributorError) {
+        return sendError(res, err.message, err.statusCode);
+      }
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// 2026-07-23 — POST /api/source-distributors/:id/seed-opening-state
+// One-shot: seeds the ₹ opening balance owed to the supplier. Refuses
+// with 400 ALREADY_SEEDED on second call.
+router.post('/:id/seed-opening-state',
+  requireRole('mini_operator_admin'),
+  validate(supplierOpeningStateSchema),
+  auditLog('seed_opening_state', 'source_distributor'),
+  async (req, res) => {
+    try {
+      const result = await sourceDistributorService.seedOpeningStateOnSupplier(
+        req.user!.distributorId!,
+        req.user!.userId,
+        param(req.params.id),
+        req.body.amount,
+        req.body.asOfDate,
+      );
+      return sendSuccess(res, result);
+    } catch (err) {
+      if (err instanceof sourceDistributorService.SourceDistributorError) {
+        if (err.statusCode === 404) return sendNotFound(res, 'Source distributor');
+        return sendError(res, err.message, err.statusCode);
+      }
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// 2026-07-23 — PUT /api/source-distributors/:id/opening-state
+// Edit path — updates the ₹ balance in place. Refuses reduction below
+// amountPaid on the underlying OB purchase entry.
+router.put('/:id/opening-state',
+  requireRole('mini_operator_admin'),
+  validate(supplierOpeningStateSchema),
+  auditLog('update_opening_state', 'source_distributor'),
+  async (req, res) => {
+    try {
+      const result = await sourceDistributorService.updateOpeningStateOnSupplier(
+        req.user!.distributorId!,
+        param(req.params.id),
+        req.body.amount,
+        req.body.asOfDate,
+      );
+      return sendSuccess(res, result);
+    } catch (err) {
+      if (err instanceof sourceDistributorService.SourceDistributorError) {
+        if (err.statusCode === 404) return sendNotFound(res, 'Source distributor');
         return sendError(res, err.message, err.statusCode);
       }
       return sendError(res, (err as Error).message);

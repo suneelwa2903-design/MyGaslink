@@ -78,6 +78,143 @@ export async function createSourceDistributor(
   });
 }
 
+/**
+ * 2026-07-23 — Seed the ₹ opening balance owed to a supplier at the
+ * time this row was first added to the app. Idempotent-blocking on
+ * openingStateSeededAt (one-shot, similar to
+ * customerService.seedOpeningStateOnCustomer).
+ *
+ * Writes an atomic transaction:
+ *   1. Update source_distributors: openingBalanceAmount + openingStateSeededAt
+ *   2. Create a synthetic purchase_entry with is_opening_balance=TRUE.
+ *      This surfaces the opening balance on the supplier ledger PDF as
+ *      an "Opening Balance b/f" row above delivery entries.
+ *
+ * Only mini_operator tenants can seed — route enforces via requireRole.
+ */
+export async function seedOpeningStateOnSupplier(
+  distributorId: string,
+  userId: string,
+  sourceDistributorId: string,
+  amount: number,
+  asOfDate: string,
+): Promise<{ sourceDistributorId: string; seededAt: string; openingBalanceAmount: number; purchaseEntryId: string }> {
+  const supplier = await prisma.sourceDistributor.findFirst({
+    where: { id: sourceDistributorId, distributorId, deletedAt: null },
+    select: { id: true, name: true, openingStateSeededAt: true },
+  });
+  if (!supplier) throw new SourceDistributorError('Supplier not found', 404, 'NOT_FOUND');
+  if (supplier.openingStateSeededAt) {
+    throw new SourceDistributorError(
+      'This supplier already has an opening balance seeded. Use the edit path.',
+      400,
+      'ALREADY_SEEDED',
+    );
+  }
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new SourceDistributorError('amount must be a non-negative number', 400, 'INVALID_AMOUNT');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
+    throw new SourceDistributorError('asOfDate must be YYYY-MM-DD', 400, 'INVALID_DATE');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const seededAt = new Date();
+    await tx.sourceDistributor.update({
+      where: { id: sourceDistributorId },
+      data: {
+        openingBalanceAmount: amount,
+        openingStateSeededAt: seededAt,
+      },
+    });
+
+    // Synthetic OB purchase-entry so the supplier ledger renders the
+    // "Opening Balance b/f" row above real deliveries.
+    const purchase = await tx.purchaseEntry.create({
+      data: {
+        purchaseNumber: `OB-SUP-${sourceDistributorId.slice(0, 8)}-${Date.now().toString().slice(-6)}`,
+        distributorId,
+        sourceDistributorId,
+        sourceDistributorName: supplier.name,
+        purchaseDate: asOfDate,
+        isOpeningBalance: true,
+        notes: `Opening balance b/f — ${supplier.name}`,
+        createdBy: userId,
+      },
+      select: { id: true },
+    });
+
+    return {
+      sourceDistributorId: supplier.id,
+      seededAt: seededAt.toISOString(),
+      openingBalanceAmount: amount,
+      purchaseEntryId: purchase.id,
+    };
+  });
+}
+
+/**
+ * 2026-07-23 — Edit an already-seeded supplier opening balance.
+ * Refuses reduction below the amountPaid recorded against the OB entry
+ * (would leave a negative outstanding). Refuses delete-to-zero if any
+ * payment has been applied.
+ */
+export async function updateOpeningStateOnSupplier(
+  distributorId: string,
+  sourceDistributorId: string,
+  amount: number,
+  asOfDate: string,
+): Promise<{ sourceDistributorId: string; openingBalanceAmount: number }> {
+  const supplier = await prisma.sourceDistributor.findFirst({
+    where: { id: sourceDistributorId, distributorId, deletedAt: null },
+    select: { id: true, openingStateSeededAt: true },
+  });
+  if (!supplier) throw new SourceDistributorError('Supplier not found', 404, 'NOT_FOUND');
+  if (!supplier.openingStateSeededAt) {
+    throw new SourceDistributorError(
+      'This supplier has never been seeded. Use POST /source-distributors/:id/seed-opening-state first.',
+      400,
+      'NEVER_SEEDED',
+    );
+  }
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new SourceDistributorError('amount must be a non-negative number', 400, 'INVALID_AMOUNT');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
+    throw new SourceDistributorError('asOfDate must be YYYY-MM-DD', 400, 'INVALID_DATE');
+  }
+
+  const obPurchase = await prisma.purchaseEntry.findFirst({
+    where: { distributorId, sourceDistributorId, isOpeningBalance: true, deletedAt: null },
+    select: { id: true, amountPaid: true },
+  });
+  const paid = obPurchase ? Number(obPurchase.amountPaid) : 0;
+  if (amount < paid) {
+    throw new SourceDistributorError(
+      `Cannot reduce opening balance below payments already applied (₹${paid.toFixed(2)}).`,
+      400,
+      'PAYMENTS_APPLIED',
+    );
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.sourceDistributor.update({
+      where: { id: sourceDistributorId },
+      data: {
+        openingBalanceAmount: amount,
+        openingStateSeededAt: new Date(),
+      },
+    });
+    if (obPurchase) {
+      await tx.purchaseEntry.update({
+        where: { id: obPurchase.id },
+        data: { purchaseDate: asOfDate },
+      });
+    }
+    return { sourceDistributorId: supplier.id, openingBalanceAmount: amount };
+  });
+}
+
 export async function deleteSourceDistributor(
   distributorId: string,
   sourceDistributorId: string,
