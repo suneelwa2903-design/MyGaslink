@@ -1777,15 +1777,23 @@ export async function cancelOrder(
     // STEP 5b: Delivered-order inventory rollback.
     // Only fires for mini-op delivered cancels (isDelivered guard early in
     // this function already gated non-mini-op). Rollback logic per the
-    // 5-row matrix:
+    // Inventory reversal matrix (locked 2026-07-23 with user):
     //   wrong_customer / duplicate_entry / customer_refused / other
-    //     → fulls back to godown; empties returned to customer
-    //       (withCustomerQty incremented, our godown empties decremented).
+    //     → FULL REVERSAL. Pretend the delivery never happened:
+    //         · godown: fulls come back, empties leave
+    //         · customer: withCustomerQty -= delivered + collected reversal
+    //           (i.e. decrement fulls that were delivered AND increment
+    //           the empties that were collected back to customer). Net:
+    //           `withCustomerQty += (collected - delivered)`.
     //   damaged_returned
-    //     → fulls back to godown; empties STAY with us (we still got
-    //       the returned empties, treated as scrap or reissue stock).
+    //     → fulls back to godown only; empties STAY with us (customer
+    //       returned a physically damaged cylinder — we keep it). Customer
+    //       balance UNCHANGED (their withCustomerQty is untouched, since
+    //       the fulls physically stayed at their end even if we're refunding
+    //       the sale — an operator will file a separate stock-return if
+    //       they actually pull the fulls back).
     if (isDelivered && options?.cancellationType) {
-      const returnEmpties = options.cancellationType !== 'damaged_returned';
+      const fullReversal = options.cancellationType !== 'damaged_returned';
       for (const item of order.items) {
         const delivered = item.deliveredQuantity ?? item.quantity;
         const collected = item.emptiesCollected ?? 0;
@@ -1806,29 +1814,35 @@ export async function cancelOrder(
           });
         }
 
-        // Return empties to customer if the cancellation type says so.
-        if (returnEmpties && collected > 0) {
-          await createInventoryEvent(tx, {
-            distributorId,
-            cylinderTypeId: item.cylinderTypeId,
-            eventType: 'cancellation',
-            fullsChange: 0,
-            emptiesChange: -collected,
-            eventDate: new Date(),
-            referenceId: orderId,
-            referenceType: 'order',
-            createdBy: userId,
-            notes: `Empties returned to customer — cancelled order ${order.orderNumber}`,
-          });
-          if (order.customerId) {
-            const bal = await tx.customerInventoryBalance.findFirst({
-              where: { customerId: order.customerId, cylinderTypeId: item.cylinderTypeId },
+        // FULL REVERSAL: fulls + empties both come off the customer.
+        // withCustomerQty net delta = collected (returned) - delivered (retracted)
+        if (fullReversal) {
+          if (collected > 0) {
+            await createInventoryEvent(tx, {
+              distributorId,
+              cylinderTypeId: item.cylinderTypeId,
+              eventType: 'cancellation',
+              fullsChange: 0,
+              emptiesChange: -collected,
+              eventDate: new Date(),
+              referenceId: orderId,
+              referenceType: 'order',
+              createdBy: userId,
+              notes: `Empties returned to customer — cancelled order ${order.orderNumber}`,
             });
-            if (bal) {
-              await tx.customerInventoryBalance.update({
-                where: { id: bal.id },
-                data: { withCustomerQty: { increment: collected } },
+          }
+          if (order.customerId) {
+            const netDelta = collected - delivered;
+            if (netDelta !== 0) {
+              const bal = await tx.customerInventoryBalance.findFirst({
+                where: { customerId: order.customerId, cylinderTypeId: item.cylinderTypeId },
               });
+              if (bal) {
+                await tx.customerInventoryBalance.update({
+                  where: { id: bal.id },
+                  data: { withCustomerQty: { increment: netDelta } },
+                });
+              }
             }
           }
         }

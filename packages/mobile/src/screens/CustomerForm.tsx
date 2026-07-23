@@ -116,6 +116,10 @@ export interface CustomerFormState {
   // GST rate (percent). Stored as a string '5' | '18' for picker
   // consistency with the rest of the form; parsed on submit.
   gstRateOverride: '5' | '18';
+  // Mini-op #2 (2026-07-23) order-level pricing. When true, order form
+  // shows a per-line "Rate ₹" override that wins over cylinder-type
+  // discounts. Backend silently drops for non-mini-op tenants.
+  orderLevelPricingEnabled: boolean;
 }
 
 /**
@@ -148,6 +152,9 @@ export interface CustomerFormSubmit {
   // Sent as a number; null when caller passes 18 to keep the platform
   // default semantics (caller code at api layer normalises).
   gstRateOverride: 5 | 18;
+  // Mini-op #2 (2026-07-23). Optional; omitted when unchanged from
+  // default (false). Backend gates on distributor.accountType=mini_operator.
+  orderLevelPricingEnabled?: boolean;
   // 2026-07-21 opening-state seed. Universal. Nested on POST /customers
   // for the create path; caller extracts and POSTs to
   // /customers/:id/seed-opening-state separately on the edit path.
@@ -204,6 +211,7 @@ function emptyFormState(): CustomerFormState {
     creditPeriodDays: '30',
     transportChargePerCylinder: '0',
     gstRateOverride: '18',
+    orderLevelPricingEnabled: false,
   };
 }
 
@@ -247,6 +255,7 @@ export function customerToFormInitial(c: SharedCustomer): CustomerFormInitial {
     creditPeriodDays: String(c.creditPeriodDays ?? 30),
     transportChargePerCylinder: String(c.transportChargePerCylinder ?? 0),
     gstRateOverride: c.gstRateOverride === 5 ? '5' : '18',
+    orderLevelPricingEnabled: (c as unknown as { orderLevelPricingEnabled?: boolean }).orderLevelPricingEnabled === true,
   };
 }
 
@@ -599,6 +608,9 @@ export function CustomerForm({
       creditPeriodDays: credit,
       transportChargePerCylinder: transport,
       gstRateOverride: (form.gstRateOverride === '5' ? 5 : 18) as 5 | 18,
+      // Mini-op #2 (2026-07-23). Send only when true (opt-in flag);
+      // backend defaults false and silently drops for non-mini-op tenants.
+      orderLevelPricingEnabled: isMiniOpAdmin && form.orderLevelPricingEnabled ? true : undefined,
       contacts: form.contacts.length
         ? form.contacts.map((c) => ({
             name: c.name.trim(),
@@ -805,6 +817,42 @@ export function CustomerForm({
               </Text>
             ) : null}
           </View>
+
+          {/* Mini-op #2 (2026-07-23) — Order-Level Pricing toggle, placed
+              here (right after Basic Info) so a mini-op operator sees it
+              without scrolling past 3 address sections. Rest of the form
+              is unchanged. */}
+          {isMiniOpAdmin && (
+            <View
+              style={{
+                marginTop: 4,
+                marginBottom: 16,
+                padding: 14,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: ACCENT + '40',
+                backgroundColor: ACCENT + '08',
+                gap: 8,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: ACCENT }}>
+                    Order-Level Pricing
+                  </Text>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 3 }}>
+                    Enter Rate ₹ per line at order time. Overrides cylinder-type discounts.
+                  </Text>
+                </View>
+                <Switch
+                  value={form.orderLevelPricingEnabled}
+                  onValueChange={(v) => set('orderLevelPricingEnabled', v)}
+                  trackColor={{ false: colors.inputBorder, true: ACCENT }}
+                  thumbColor="#ffffff"
+                />
+              </View>
+            </View>
+          )}
 
           {/* Section 3: Billing Address */}
           <SectionHeader label="Billing Address" colors={colors} />

@@ -287,6 +287,7 @@ export default function AdminCustomerDetailScreen() {
   const canEdit =
     role === UserRole.SUPER_ADMIN ||
     role === UserRole.DISTRIBUTOR_ADMIN ||
+    role === UserRole.MINI_OPERATOR_ADMIN ||
     role === UserRole.INVENTORY;
   const canEditTransport =
     role === UserRole.SUPER_ADMIN || role === UserRole.DISTRIBUTOR_ADMIN;

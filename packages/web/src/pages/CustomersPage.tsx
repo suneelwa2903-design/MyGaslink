@@ -559,6 +559,10 @@ function CustomerFormModal({
           // back is harmless because the service writes null when the
           // value matches the platform default).
           gstRateOverride: (customer.gstRateOverride === 5 ? 5 : 18) as 5 | 18,
+          // Mini-op #2 (2026-07-23) order-level pricing flag. Cast because
+          // the shared Customer type carries this as optional; web form
+          // holds it as boolean with false default.
+          orderLevelPricingEnabled: (customer as unknown as { orderLevelPricingEnabled?: boolean }).orderLevelPricingEnabled === true,
           requireDeliveryVerification: customer.requireDeliveryVerification,
           contacts: customer.contacts.map((c) => ({ name: c.name, phone: c.phone, email: c.email || '', isPrimary: c.isPrimary })),
           cylinderDiscounts: customer.cylinderDiscounts.map((d) => ({ cylinderTypeId: d.cylinderTypeId, discountPerUnit: d.discountPerUnit })),
@@ -569,6 +573,7 @@ function CustomerFormModal({
           creditPeriodDays: 30,
           transportChargePerCylinder: 0,
           gstRateOverride: 18 as 5 | 18,
+          orderLevelPricingEnabled: false,
           requireDeliveryVerification: false,
           contacts: [],
           cylinderDiscounts: [],
@@ -964,6 +969,29 @@ function CustomerFormModal({
                 </span>
               </label>
             </div>
+            {/* Mini-op #2 (2026-07-23) — Order-Level Pricing toggle. When
+                ON, the order form shows a per-line Rate ₹ override that
+                wins over cylinder-type discounts. Mini-op only; backend
+                silently drops for regular distributor tenants. */}
+            {isMiniOpAdmin && (
+              <div className="sm:col-span-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    {...register('orderLevelPricingEnabled')}
+                  />
+                  <span>
+                    <span className="text-sm font-medium text-surface-900 dark:text-white">
+                      Order-Level Pricing
+                    </span>
+                    <span className="block mt-0.5 text-xs text-surface-500 dark:text-surface-400">
+                      Enter Rate ₹ per line at order time. Overrides cylinder-type discounts.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
         </div>
 

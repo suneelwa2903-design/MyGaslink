@@ -210,7 +210,10 @@ export default function AdminCustomersScreen() {
   const auth = useAuthStore();
   const role = auth.user?.role;
   const canEditCustomer =
-    role === 'super_admin' || role === 'distributor_admin' || role === 'inventory';
+    role === 'super_admin' ||
+    role === 'distributor_admin' ||
+    role === 'mini_operator_admin' ||
+    role === 'inventory';
   const canEditTransport = role === 'super_admin' || role === 'distributor_admin';
 
   const [search, setSearch] = useState('');

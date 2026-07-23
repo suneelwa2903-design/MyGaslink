@@ -421,13 +421,33 @@ function SourcesTab() {
     defaultValues: { name: '' },
   });
 
+  // Mini-op #4 (2026-07-23) — inline opening balance ₹ owed to the
+  // supplier at the moment tracking begins here. Held outside RHF because
+  // createSourceDistributorSchema doesn't carry these fields; we do the
+  // seed-opening-state POST as a follow-up after the create resolves.
+  const [openingAmount, setOpeningAmount] = useState('');
+  const [openingDate, setOpeningDate] = useState<string>(localTodayISO());
+
   const createMutation = useMutation({
-    mutationFn: (payload: CreateSourceDistributorInput) =>
-      apiPost<SourceDistributor>('/source-distributors', payload),
+    mutationFn: async (payload: CreateSourceDistributorInput) => {
+      const created = await apiPost<SourceDistributor>('/source-distributors', payload);
+      const amount = parseFloat(openingAmount);
+      const hasOb = Number.isFinite(amount) && amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(openingDate);
+      if (hasOb) {
+        await apiPost(`/source-distributors/${created.id}/seed-opening-state`, {
+          amount,
+          asOfDate: openingDate,
+        });
+      }
+      return created;
+    },
     onSuccess: () => {
       toast.success('Source distributor added');
       queryClient.invalidateQueries({ queryKey: ['source-distributors'] });
+      queryClient.invalidateQueries({ queryKey: ['supplier-balances'] });
       reset({ name: '' });
+      setOpeningAmount('');
+      setOpeningDate(localTodayISO());
     },
     onError: (err) => toast.error(getErrorMessage(err)),
   });
@@ -436,20 +456,42 @@ function SourcesTab() {
     <div className="space-y-4">
       <form
         onSubmit={handleSubmit((v) => createMutation.mutate(v))}
-        className="card p-4 flex gap-3 items-end"
+        className="card p-4 space-y-3"
       >
-        <div className="flex-1">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Input
             label="Add Source Distributor"
             placeholder="e.g. Sharma Gas Distributors"
             error={errors.name?.message}
             {...register('name')}
           />
+          <Input
+            label="Opening Balance Owed (₹) — optional"
+            type="number"
+            step="0.01"
+            min="0"
+            placeholder="e.g. 5000"
+            value={openingAmount}
+            onChange={(e) => setOpeningAmount(e.target.value)}
+          />
+          <Input
+            label="As of"
+            type="date"
+            value={openingDate}
+            onChange={(e) => setOpeningDate(e.target.value)}
+          />
         </div>
-        <Button type="submit" loading={createMutation.isPending}>
-          <HiOutlinePlus className="h-4 w-4" />
-          Add
-        </Button>
+        <p className="text-xs text-surface-500 dark:text-surface-400">
+          Optional. When set, seeds an &quot;Opening Balance b/f&quot; row on the
+          supplier ledger so payments reconcile from day one. Leave blank for
+          brand-new suppliers.
+        </p>
+        <div className="flex justify-end">
+          <Button type="submit" loading={createMutation.isPending}>
+            <HiOutlinePlus className="h-4 w-4" />
+            Add
+          </Button>
+        </div>
       </form>
 
       {isLoading ? (

@@ -26,6 +26,7 @@ import {
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
+import { api } from '../../src/lib/api';
 import { Card, EmptyState, DateInput, todayLocalIso, SelectField, type SelectOption } from '../../src/components/ui';
 import { useIsDark } from '../../src/stores/themeStore';
 import { formatINR } from '../../src/theme';
@@ -966,6 +967,15 @@ function AddSupplierModal({
   const muted = dark ? '#94a3b8' : '#64748b';
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // 2026-07-23 — Optional opening balance ₹ owed to supplier at the
+  // moment the mini-op starts tracking with this app. Follows-up the
+  // create with POST /source-distributors/:id/seed-opening-state.
+  const [openingAmount, setOpeningAmount] = useState('');
+  const [openingDate, setOpeningDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [seeding, setSeeding] = useState(false);
   const createMut = useApiMutation<SourceDistributor, { name: string }>(
     'post',
     '/source-distributors',
@@ -973,11 +983,32 @@ function AddSupplierModal({
       // Invalidate broadly so every consumer refreshes: entry-form
       // picker, Suppliers panel, filter dropdown on the list tab.
       invalidateKeys: [['source-distributors'], ['supplier-balances']],
-      successMessage: 'Supplier added',
-      onSuccess: (res) => {
-        // Use the freshly-created id to auto-select in the parent
-        // picker.
-        if (res?.id) onCreated(res.id);
+      // Suppress default toast — we surface a combined "supplier added +
+      // opening balance seeded" message ourselves after the follow-up
+      // seed call (if any) resolves.
+      onSuccess: async (res) => {
+        if (!res?.id) return;
+        const obAmount = parseFloat(openingAmount);
+        const hasOb = Number.isFinite(obAmount) && obAmount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(openingDate);
+        if (hasOb) {
+          try {
+            setSeeding(true);
+            await api.post(`/source-distributors/${res.id}/seed-opening-state`, {
+              amount: obAmount,
+              asOfDate: openingDate,
+            });
+          } catch (err) {
+            // Supplier was created successfully; the seed follow-up
+            // failed. Show a warning but still route the parent picker
+            // to the new supplier — the seed can be retried later.
+            const msg = err instanceof Error ? err.message : String(err);
+            setError(`Supplier saved. Opening balance seed failed: ${msg}`);
+            setSeeding(false);
+            return;
+          }
+          setSeeding(false);
+        }
+        onCreated(res.id);
       },
       onError: (err) => {
         // Duplicate-name 409 comes back as a route error; surface
@@ -988,7 +1019,7 @@ function AddSupplierModal({
       },
     },
   );
-  const canSave = name.trim().length > 0 && !createMut.isPending;
+  const canSave = name.trim().length > 0 && !createMut.isPending && !seeding;
   return (
     <Modal visible transparent={false} animationType="slide" onRequestClose={onClose}>
       <SafeAreaProvider>
@@ -1057,6 +1088,54 @@ function AddSupplierModal({
               <Text style={{ fontSize: 12, color: muted }}>
                 Max 100 characters. Unique per your tenant. Add more details
                 later from the web app if needed.
+              </Text>
+            </View>
+
+            {/* Mini-op #4 (2026-07-23) — Opening balance ₹ owed to this
+                supplier at the moment you started tracking here. One-shot
+                — leave blank if you don't owe them anything to start. */}
+            <View style={{ gap: 6, marginTop: 4 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: text }}>
+                Opening Balance Owed (₹) <Text style={{ color: muted, fontWeight: '400' }}>— optional</Text>
+              </Text>
+              <TextInput
+                value={openingAmount}
+                onChangeText={setOpeningAmount}
+                placeholder="e.g. 5000"
+                placeholderTextColor={muted}
+                keyboardType="decimal-pad"
+                style={{
+                  borderWidth: 1,
+                  borderColor: border,
+                  borderRadius: 8,
+                  padding: 12,
+                  fontSize: 16,
+                  color: text,
+                  backgroundColor: bg,
+                }}
+              />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: text, marginTop: 8 }}>
+                As of (date)
+              </Text>
+              <TextInput
+                value={openingDate}
+                onChangeText={setOpeningDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={muted}
+                style={{
+                  borderWidth: 1,
+                  borderColor: border,
+                  borderRadius: 8,
+                  padding: 12,
+                  fontSize: 16,
+                  color: text,
+                  backgroundColor: bg,
+                }}
+              />
+              <Text style={{ fontSize: 12, color: muted }}>
+                Seeded once as an &quot;Opening Balance b/f&quot; row on the supplier
+                ledger so payments reconcile from day one. Skip if this is a
+                brand-new supplier.
               </Text>
             </View>
           </ScrollView>
