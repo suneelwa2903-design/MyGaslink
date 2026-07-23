@@ -491,6 +491,24 @@ export default function OrdersPage() {
                             <HiOutlineXCircle className="h-4 w-4" />
                           </button>
                         )}
+                        {/* 2026-07-23 — mini-op admin gets a delivered-cancel
+                            button for delivered/modified_delivered orders.
+                            Regular distributors don't see this (server
+                            rejects with a helpful "use Credit Note" message
+                            if they somehow POST) — UI gate keeps the
+                            surface clean. */}
+                        {isMiniOperatorRole && [
+                          OrderStatus.DELIVERED,
+                          OrderStatus.MODIFIED_DELIVERED,
+                        ].includes(order.status) && (
+                          <button
+                            onClick={() => setCancelOrderTarget(order)}
+                            className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-red-500"
+                            title="Cancel Delivered Order"
+                          >
+                            <HiOutlineXCircle className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1927,6 +1945,23 @@ function ReturnsOrderModal({
 
 // ─── Cancel Order Modal ──────────────────────────────────────────────────────
 
+// 2026-07-23 Mini-op delivered-cancel: extended cancellation modal.
+// - Cancellation type picker (5 options per shared/schemas CANCELLATION_TYPES)
+// - Reason textarea (required)
+// - Handles 409 PAYMENT_APPLIED → shows credit-conversion prompt, resubmits
+//   with applyAsCustomerCredit=true
+// - Delivered-cancel branch gated to distributor.accountType='mini_operator'
+//   (route also enforces; UI just presents the right verbiage)
+// - Expanded cache invalidation covers invoices/payments/dashboard/customers
+//   per audit item #11 (anti-pattern #18).
+const CANCEL_TYPE_OPTIONS = [
+  { value: 'wrong_customer', label: 'Wrong customer' },
+  { value: 'damaged_returned', label: 'Damaged / returned' },
+  { value: 'customer_refused', label: 'Customer refused' },
+  { value: 'duplicate_entry', label: 'Duplicate entry' },
+  { value: 'other', label: 'Other' },
+] as const;
+
 function CancelOrderModal({
   open,
   onClose,
@@ -1937,62 +1972,145 @@ function CancelOrderModal({
   order: Order;
 }) {
   const queryClient = useQueryClient();
+  const [cancellationType, setCancellationType] = useState<string>('');
+  const [reason, setReason] = useState('');
+  // 409 PAYMENT_APPLIED path: server tells us how much is allocated so we
+  // can show the exact ₹ in the confirmation dialog. Once operator confirms,
+  // mutation resubmits with applyAsCustomerCredit=true.
+  const [creditPrompt, setCreditPrompt] = useState<{ amount: number } | null>(null);
+
+  const isDelivered = order.status === 'delivered' || order.status === 'modified_delivered';
+  const isPendingAssignment = order.status === 'pending_driver_assignment';
 
   const mutation = useMutation({
-    mutationFn: () =>
-      apiPost(`/orders/${order.orderId}/cancel`, { reason: 'Cancelled by admin' }),
+    mutationFn: (opts?: { applyAsCustomerCredit?: boolean }) =>
+      apiPost(`/orders/${order.orderId}/cancel`, {
+        reason: reason.trim() || 'Cancelled by admin',
+        ...(cancellationType ? { cancellationType } : {}),
+        ...(opts?.applyAsCustomerCredit ? { applyAsCustomerCredit: true } : {}),
+      }),
     onSuccess: () => {
       toast.success('Order cancelled');
+      // Expanded invalidation — cancel touches invoices/payments/dashboard/
+      // customers (on-account balance) beyond the orders list itself.
       queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
       onClose();
     },
-    onError: (error) => {
-      const msg = getErrorMessage(error);
-      if (msg.toLowerCase().includes('payment')) {
-        toast.error('Cannot cancel — this order has recorded payments. Handle the payment in Billing & Payments first.');
-      } else {
-        toast.error(msg);
+    onError: (error: unknown) => {
+      const err = error as { response?: { data?: { code?: string; allocatedAmount?: number } }; message?: string };
+      const payload = err?.response?.data;
+      if (payload?.code === 'PAYMENT_APPLIED' && typeof payload.allocatedAmount === 'number') {
+        setCreditPrompt({ amount: payload.allocatedAmount });
+        return;
       }
+      toast.error(getErrorMessage(error));
     },
   });
 
-  const isPendingAssignment = order.status === 'pending_driver_assignment';
+  const canSubmit =
+    reason.trim().length > 0 &&
+    (isDelivered ? cancellationType.length > 0 : true) &&
+    !mutation.isPending;
 
   return (
     <Modal open={open} onClose={onClose} title={`Cancel Order ${order.orderNumber}?`}>
       <div className="space-y-4 text-sm text-surface-700 dark:text-surface-300">
         {isPendingAssignment ? (
-          <>
-            <p>This will cancel the order.</p>
-            <p>No invoice has been generated yet.</p>
-            <p className="font-medium text-red-600 dark:text-red-400">This cannot be undone.</p>
-          </>
-        ) : (
+          <p>This will cancel the order. No invoice has been generated yet.</p>
+        ) : isDelivered ? (
           <>
             <p>This will:</p>
             <ul className="list-disc list-inside space-y-1 text-surface-600 dark:text-surface-400">
-              <li>Cancel the order and return stock to depot</li>
-              <li>Void the invoice</li>
-              <li>Attempt to cancel EWB/IRN at NIC automatically</li>
+              <li>Mark the invoice as cancelled (stays visible for recon)</li>
+              <li>Return fulls to godown; handle empties per type below</li>
+              <li>Write a reversal ledger entry</li>
             </ul>
-            <p className="text-surface-500 dark:text-surface-400 text-xs">
-              Note: If EWB/IRN cannot be cancelled (after 24h window), a pending action will be raised for manual handling.
-            </p>
-            <p className="font-medium text-red-600 dark:text-red-400">This cannot be undone.</p>
           </>
+        ) : (
+          <p>This will cancel the order and reverse dispatch state.</p>
         )}
+
+        {/* Cancellation type — REQUIRED for delivered orders */}
+        {(isDelivered || !isPendingAssignment) && (
+          <div>
+            <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+              Cancellation type {isDelivered && <span className="text-red-500">*</span>}
+            </label>
+            <select
+              value={cancellationType}
+              onChange={(e) => setCancellationType(e.target.value)}
+              className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-3 py-2 text-sm"
+            >
+              <option value="">Select a reason type…</option>
+              {CANCEL_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+            Reason <span className="text-red-500">*</span>
+          </label>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            placeholder="Why is this being cancelled?"
+            className="w-full rounded-md border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 px-3 py-2 text-sm"
+          />
+        </div>
+
+        <p className="font-medium text-red-600 dark:text-red-400">This cannot be undone.</p>
       </div>
-      <div className="flex justify-end gap-3 pt-4">
-        <Button type="button" variant="secondary" onClick={onClose}>Go Back</Button>
-        <Button
-          type="button"
-          variant="danger"
-          loading={mutation.isPending}
-          onClick={() => mutation.mutate()}
-        >
-          Cancel Order
-        </Button>
-      </div>
+
+      {/* 409 PAYMENT_APPLIED → credit-conversion confirm */}
+      {creditPrompt && (
+        <div className="mt-4 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50/60 dark:bg-amber-500/10 p-3 text-sm">
+          <p className="font-semibold text-amber-900 dark:text-amber-200">
+            Payment of ₹{creditPrompt.amount.toFixed(2)} already applied
+          </p>
+          <p className="text-amber-800 dark:text-amber-300 mt-1">
+            Convert this payment to a customer credit (on-account balance)? It will auto-apply to the customer&apos;s next invoice.
+          </p>
+          <div className="flex justify-end gap-3 pt-3">
+            <Button type="button" variant="secondary" onClick={() => setCreditPrompt(null)}>
+              Back
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              loading={mutation.isPending}
+              onClick={() => {
+                setCreditPrompt(null);
+                mutation.mutate({ applyAsCustomerCredit: true });
+              }}
+            >
+              Cancel + Move to Credit
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!creditPrompt && (
+        <div className="flex justify-end gap-3 pt-4">
+          <Button type="button" variant="secondary" onClick={onClose}>Go Back</Button>
+          <Button
+            type="button"
+            variant="danger"
+            loading={mutation.isPending}
+            disabled={!canSubmit}
+            onClick={() => mutation.mutate({})}
+          >
+            Cancel Order
+          </Button>
+        </div>
+      )}
     </Modal>
   );
 }

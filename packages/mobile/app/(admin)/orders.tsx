@@ -372,13 +372,29 @@ export default function AdminOrdersScreen() {
 
   // ─── Mutations ──────────────────────────────────────────────────────────
 
-  // STEP-3A: cancelMutation now carries a `reason` field. Server's cancel
-  // route accepts it as `cancellation_reason` (see web's CancelOrderModal).
-  const cancelMutation = useApiMutation<unknown, { orderId: string; reason: string }>(
+  // STEP-3A + 2026-07-23 mini-op delivered-cancel: carries a `reason`
+  // field + optional cancellationType (required for delivered orders,
+  // route enforces) + optional applyAsCustomerCredit (converts an
+  // already-applied payment into Customer.onAccountBalance).
+  // Expanded invalidateKeys per audit item #12 (anti-pattern #18):
+  //   admin-invoices — cancelled invoice UI state
+  //   admin-customers — onAccountBalance updated on credit-conversion
+  //   admin-dashboard — revenue/outstanding tiles
+  //   admin-payments — allocation state after credit reversal
+  const cancelMutation = useApiMutation<
+    unknown,
+    { orderId: string; reason: string; cancellationType?: string; applyAsCustomerCredit?: boolean }
+  >(
     'post',
     (vars) => `/orders/${vars.orderId}/cancel`,
     {
-      invalidateKeys: [['admin-orders']],
+      invalidateKeys: [
+        ['admin-orders'],
+        ['admin-invoices'],
+        ['admin-customers'],
+        ['admin-dashboard'],
+        ['admin-payments'],
+      ],
       successMessage: 'Order cancelled successfully',
       onSuccess: () => setCancelOrder(null),
     },
