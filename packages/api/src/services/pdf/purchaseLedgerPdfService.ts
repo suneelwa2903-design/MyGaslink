@@ -275,18 +275,49 @@ export async function generatePurchaseLedgerPdf(
     },
     { fulls: 0, empties: 0, purchased: 0, paid: 0 },
   );
-  const netOwed = totals.purchased - totals.paid;
-
   // Filter label lookups (best-effort; falls back to "—" if the id was
   // deleted between listing and the ledger call).
+  // 2026-07-23 — pull opening state at the same time so we can render
+  // "Opening Balance b/f" + per-cylinder-type "Opening empties held"
+  // rows at the top of the table, matching the customer ledger shape.
   let sourceDistributorLabel: string | null = null;
+  let openingBalanceAmount = 0;
+  let openingSeededAt: Date | null = null;
+  const openingEmpties: Array<{ cylinderTypeName: string; qty: number }> = [];
   if (filters.sourceDistributorId) {
     const src = await prisma.sourceDistributor.findFirst({
       where: { id: filters.sourceDistributorId, distributorId, deletedAt: null },
-      select: { name: true },
+      select: {
+        name: true,
+        openingBalanceAmount: true,
+        openingStateSeededAt: true,
+        emptyOpenings: {
+          select: {
+            openingSeedQty: true,
+            cylinderType: { select: { typeName: true } },
+          },
+        },
+      },
     });
     sourceDistributorLabel = src?.name ?? null;
+    if (src?.openingStateSeededAt) {
+      openingBalanceAmount = Number(src.openingBalanceAmount ?? 0);
+      openingSeededAt = src.openingStateSeededAt;
+      for (const e of src.emptyOpenings ?? []) {
+        if (e.openingSeedQty > 0) {
+          openingEmpties.push({
+            cylinderTypeName: e.cylinderType?.typeName ?? '?',
+            qty: e.openingSeedQty,
+          });
+        }
+      }
+      // Alphabetical by type name for stable rendering.
+      openingEmpties.sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName));
+    }
   }
+  // Opening balance flows into the Net Owed so the closing figure
+  // reflects "what we started owing + net period activity".
+  const netOwed = openingBalanceAmount + totals.purchased - totals.paid;
   let cylinderTypeLabel: string | null = null;
   if (filters.cylinderTypeId) {
     const ct = await prisma.cylinderType.findFirst({
@@ -341,7 +372,47 @@ export async function generatePurchaseLedgerPdf(
   y += drawTableHeader(doc, y);
 
   const BOTTOM = doc.page.height - MARGIN.bottom - 40;
-  if (rows.length === 0) {
+
+  // 2026-07-23 — Opening balance b/f + per-cylinder-type opening empties
+  // held. Mirrors the customer ledger's opening rows so a supplier who
+  // was seeded shows what we already owed them + what empties we already
+  // held at start. Rendered ONLY when a source distributor filter is
+  // active (unfiltered "all suppliers" ledger doesn't have a single
+  // opening state to display).
+  const openingRowsToRender: string[][] = [];
+  if (filters.sourceDistributorId && openingSeededAt) {
+    const seedDateLabel = formatDate(openingSeededAt);
+    // Only render the ₹ row when there IS an amount (avoid a dangling
+    // "Opening Balance b/f — Rs 0.00" line for empties-only seeds).
+    if (openingBalanceAmount > 0) {
+      openingRowsToRender.push([
+        seedDateLabel,
+        'OB',
+        sourceDistributorLabel ?? '—',
+        '—',
+        '—',
+        '—',
+        '—',
+        formatMoney(openingBalanceAmount),
+        'Opening Balance b/f',
+      ]);
+    }
+    for (const row of openingEmpties) {
+      openingRowsToRender.push([
+        seedDateLabel,
+        'OB',
+        sourceDistributorLabel ?? '—',
+        row.cylinderTypeName,
+        '—',
+        String(row.qty),
+        '—',
+        '—',
+        'Opening empties held',
+      ]);
+    }
+  }
+
+  if (rows.length === 0 && openingRowsToRender.length === 0) {
     doc.font('Helvetica-Oblique').fontSize(TYPO.BODY).fillColor(THEME.MUTED);
     doc.text('No purchase entries in this period.', MARGIN.left, y + 8, {
       width: TABLE_WIDTH,
@@ -349,6 +420,18 @@ export async function generatePurchaseLedgerPdf(
     });
     y += ROW_HEIGHT + 16;
   } else {
+    // Render opening rows first (so they read as row 0 of the ledger).
+    for (let i = 0; i < openingRowsToRender.length; i++) {
+      if (y + ROW_HEIGHT > BOTTOM) {
+        doc.addPage();
+        y = MARGIN.top;
+        y += drawTableHeader(doc, y);
+      }
+      y += drawRow(doc, y, openingRowsToRender[i]!, {
+        bold: true,
+        zebra: i % 2 === 1,
+      });
+    }
     for (let i = 0; i < rows.length; i++) {
       if (y + ROW_HEIGHT > BOTTOM) {
         doc.addPage();
@@ -381,14 +464,36 @@ export async function generatePurchaseLedgerPdf(
   }
 
   // ── Totals + Net Owed summary ──
-  if (rows.length > 0) {
-    if (y + ROW_HEIGHT * 3 + 8 > BOTTOM) {
+  const hasOpening = openingBalanceAmount > 0;
+  if (rows.length > 0 || hasOpening) {
+    if (y + ROW_HEIGHT * 4 + 8 > BOTTOM) {
       doc.addPage();
       y = MARGIN.top;
     }
     y += 2;
     doc.moveTo(MARGIN.left, y).lineTo(MARGIN.left + TABLE_WIDTH, y).strokeColor(THEME.BORDER).lineWidth(0.5).stroke();
     y += 2;
+    // 2026-07-23 — Opening Owed line above period activity so the reader
+    // can see how much of the Net Owed came from the b/f vs new purchases.
+    if (hasOpening) {
+      drawRow(
+        doc,
+        y,
+        [
+          '',
+          '',
+          '',
+          'Opening Owed',
+          '',
+          '',
+          '',
+          formatMoney(openingBalanceAmount),
+          '',
+        ],
+        { bold: true },
+      );
+      y += ROW_HEIGHT;
+    }
     // Purchase totals (fulls, empties, purchased amount).
     drawRow(
       doc,
@@ -404,7 +509,7 @@ export async function generatePurchaseLedgerPdf(
         formatMoney(totals.purchased),
         '',
       ],
-      { bold: true },
+      { bold: true, zebra: hasOpening },
     );
     y += ROW_HEIGHT;
     // Total Paid row (only rendered when there is at least one payment
@@ -428,6 +533,13 @@ export async function generatePurchaseLedgerPdf(
         { bold: true, zebra: true },
       );
       y += ROW_HEIGHT;
+    }
+    // Net Owed row — always render when there is either an opening
+    // balance OR at least one payment (matches the customer ledger's
+    // Closing Balance semantic). When there's no opening and no
+    // payments, the Net Owed equals Total Purchased so we skip it to
+    // keep the summary compact.
+    if (hasOpening || totals.paid > 0) {
       drawRow(
         doc,
         y,
