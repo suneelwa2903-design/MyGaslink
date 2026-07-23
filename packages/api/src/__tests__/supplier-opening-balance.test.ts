@@ -52,7 +52,12 @@ async function cleanup(distributorId: string) {
     await prisma.purchasePayment.deleteMany({ where: { distributorId } });
     await prisma.purchaseEntryItem.deleteMany({ where: { purchaseEntry: { distributorId } } });
     await prisma.purchaseEntry.deleteMany({ where: { distributorId } });
+    // T9/T10 seed cylinder types + empty-openings for the empties path.
+    await prisma.sourceDistributorEmptyOpening.deleteMany({
+      where: { sourceDistributor: { distributorId } },
+    });
     await prisma.sourceDistributor.deleteMany({ where: { distributorId } });
+    await prisma.cylinderType.deleteMany({ where: { distributorId } });
     await prisma.auditLog.deleteMany({ where: { distributorId } });
     await prisma.user.deleteMany({ where: { distributorId } });
     await prisma.distributor.delete({ where: { id: distributorId } });
@@ -142,5 +147,54 @@ describe('Supplier opening balance', () => {
     await expect(
       sourceDistributorService.seedOpeningStateOnSupplier(tenantA.distributorId, tenantA.userId, supplierBId, 1000, '2099-12-30'),
     ).rejects.toThrow(/not found/i);
+  });
+
+  it('T9 — seed with empties writes per-cylinder-type rows, skips zero qty', async () => {
+    const s = await sourceDistributorService.createSourceDistributor(
+      tenantA.distributorId,
+      { name: `WithEmpties ${RUN}` },
+    );
+    const cyl19 = await prisma.cylinderType.create({
+      data: { distributorId: tenantA.distributorId, typeName: `19KG-${RUN}`, capacity: 19 },
+    });
+    const cyl47 = await prisma.cylinderType.create({
+      data: { distributorId: tenantA.distributorId, typeName: `47.5KG-${RUN}`, capacity: 47.5 },
+    });
+    const cyl5 = await prisma.cylinderType.create({
+      data: { distributorId: tenantA.distributorId, typeName: `5KG-${RUN}`, capacity: 5 },
+    });
+    const result = await sourceDistributorService.seedOpeningStateOnSupplier(
+      tenantA.distributorId, tenantA.userId, s.id, 3000, '2099-12-30',
+      [
+        { cylinderTypeId: cyl19.id, qty: 5 },
+        { cylinderTypeId: cyl47.id, qty: 2 },
+        { cylinderTypeId: cyl5.id, qty: 0 }, // zero-qty should be skipped
+      ],
+    );
+    expect(result.empties).toHaveLength(2);
+    const rows = await prisma.sourceDistributorEmptyOpening.findMany({
+      where: { sourceDistributorId: s.id },
+      orderBy: { openingSeedQty: 'desc' },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.openingSeedQty).toBe(5);
+    expect(rows[0]?.cylinderTypeId).toBe(cyl19.id);
+    expect(rows[1]?.openingSeedQty).toBe(2);
+  });
+
+  it('T10 — cross-tenant cylinder-type rejected', async () => {
+    const s = await sourceDistributorService.createSourceDistributor(
+      tenantA.distributorId,
+      { name: `CrossTenantEmp ${RUN}` },
+    );
+    const cylB = await prisma.cylinderType.create({
+      data: { distributorId: tenantB.distributorId, typeName: `X-${RUN}`, capacity: 10 },
+    });
+    await expect(
+      sourceDistributorService.seedOpeningStateOnSupplier(
+        tenantA.distributorId, tenantA.userId, s.id, 1000, '2099-12-30',
+        [{ cylinderTypeId: cylB.id, qty: 1 }],
+      ),
+    ).rejects.toThrow(/not accessible|CROSS_TENANT/i);
   });
 });

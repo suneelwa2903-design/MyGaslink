@@ -21,9 +21,20 @@ import { z } from 'zod';
 import * as sourceDistributorService from '../services/sourceDistributorService.js';
 
 // 2026-07-23 — validation for supplier OB seed + edit routes.
+// `empties` optional array of per-cylinder-type opening quantities the
+// mini-op operator physically owes back to the supplier at seed time.
+// Zero-qty rows are permitted (service filters them out).
 const supplierOpeningStateSchema = z.object({
   amount: z.number().nonnegative().max(100_000_000),
   asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'asOfDate must be YYYY-MM-DD'),
+  empties: z
+    .array(
+      z.object({
+        cylinderTypeId: z.string().min(1),
+        qty: z.number().int().nonnegative().max(100_000),
+      }),
+    )
+    .optional(),
 });
 
 // `authenticate` + `resolveDistributor` + `requireDistributor` are wired in
@@ -82,6 +93,7 @@ router.post('/:id/seed-opening-state',
         param(req.params.id),
         req.body.amount,
         req.body.asOfDate,
+        req.body.empties,
       );
       return sendSuccess(res, result);
     } catch (err) {

@@ -98,7 +98,18 @@ export async function seedOpeningStateOnSupplier(
   sourceDistributorId: string,
   amount: number,
   asOfDate: string,
-): Promise<{ sourceDistributorId: string; seededAt: string; openingBalanceAmount: number; purchaseEntryId: string }> {
+  // 2026-07-23 — per-cylinder-type empties owed to supplier at seed time.
+  // Optional. Zero-qty rows are skipped so callers can pass a full picker
+  // list without filtering. Rows validated for tenant ownership of the
+  // cylinder type inside the transaction.
+  empties?: Array<{ cylinderTypeId: string; qty: number }>,
+): Promise<{
+  sourceDistributorId: string;
+  seededAt: string;
+  openingBalanceAmount: number;
+  purchaseEntryId: string;
+  empties: Array<{ cylinderTypeId: string; qty: number }>;
+}> {
   const supplier = await prisma.sourceDistributor.findFirst({
     where: { id: sourceDistributorId, distributorId, deletedAt: null },
     select: { id: true, name: true, openingStateSeededAt: true },
@@ -118,6 +129,18 @@ export async function seedOpeningStateOnSupplier(
     throw new SourceDistributorError('asOfDate must be YYYY-MM-DD', 400, 'INVALID_DATE');
   }
 
+  // Filter out zero-qty rows up front; validate remaining ones.
+  const nonZeroEmpties = (empties ?? []).filter((e) => Number.isFinite(e.qty) && e.qty > 0);
+  for (const row of nonZeroEmpties) {
+    if (!Number.isInteger(row.qty) || row.qty < 0) {
+      throw new SourceDistributorError(
+        `Empties qty must be a non-negative integer (got ${row.qty} for ${row.cylinderTypeId})`,
+        400,
+        'INVALID_EMPTIES_QTY',
+      );
+    }
+  }
+
   return prisma.$transaction(async (tx) => {
     const seededAt = new Date();
     await tx.sourceDistributor.update({
@@ -127,6 +150,29 @@ export async function seedOpeningStateOnSupplier(
         openingStateSeededAt: seededAt,
       },
     });
+
+    // Cross-tenant guard: cylinder types must belong to the same tenant.
+    if (nonZeroEmpties.length > 0) {
+      const typeIds = nonZeroEmpties.map((e) => e.cylinderTypeId);
+      const owned = await tx.cylinderType.findMany({
+        where: { id: { in: typeIds }, distributorId },
+        select: { id: true },
+      });
+      if (owned.length !== typeIds.length) {
+        throw new SourceDistributorError(
+          'One or more cylinder types are not accessible to this tenant',
+          400,
+          'CROSS_TENANT_CYLINDER_TYPE',
+        );
+      }
+      await tx.sourceDistributorEmptyOpening.createMany({
+        data: nonZeroEmpties.map((e) => ({
+          sourceDistributorId,
+          cylinderTypeId: e.cylinderTypeId,
+          openingSeedQty: e.qty,
+        })),
+      });
+    }
 
     // Synthetic OB purchase-entry so the supplier ledger renders the
     // "Opening Balance b/f" row above real deliveries.
@@ -149,6 +195,7 @@ export async function seedOpeningStateOnSupplier(
       seededAt: seededAt.toISOString(),
       openingBalanceAmount: amount,
       purchaseEntryId: purchase.id,
+      empties: nonZeroEmpties,
     };
   });
 }

@@ -574,10 +574,38 @@ model SourceDistributor {
   distributor     Distributor              @relation(fields: [distributorId], references: [id])
   purchaseEntries PurchaseEntry[]
   purchasePayments PurchasePayment[]
+  /// 2026-07-23 — per-cylinder-type opening empties owed to this supplier
+  /// at the moment we first seeded them. Mirrors CustomerInventoryBalance
+  /// `openingSeedQty` but on the supplier side (empties that customer
+  /// still has to physically hand back). Written by seedOpeningStateOnSupplier
+  /// via `empties: [{cylinderTypeId, qty}]` argument. Zero-qty rows are
+  /// not persisted.
+  emptyOpenings   SourceDistributorEmptyOpening[]
 
   @@unique([distributorId, name])
   @@index([distributorId])
   @@map("source_distributors")
+}
+
+/// Mini-Operator (2026-07-23) — supplier opening empties by cylinder type.
+/// Mirrors the customer-side `CustomerInventoryBalance.openingSeedQty`
+/// axis on the supplier side. When the operator adds a supplier + seeds
+/// opening state, they can enter "at start you owe HPCL 5×19KG + 3×47.5KG
+/// empties." These rows drive the supplier ledger's "Opening empties held"
+/// section, parallel to the customer opening balance b/f row.
+model SourceDistributorEmptyOpening {
+  id                  String   @id @default(uuid())
+  sourceDistributorId String   @map("source_distributor_id")
+  cylinderTypeId      String   @map("cylinder_type_id")
+  openingSeedQty      Int      @default(0) @map("opening_seed_qty")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  sourceDistributor SourceDistributor @relation(fields: [sourceDistributorId], references: [id], onDelete: Cascade)
+  cylinderType      CylinderType      @relation(fields: [cylinderTypeId], references: [id])
+
+  @@unique([sourceDistributorId, cylinderTypeId])
+  @@index([sourceDistributorId])
+  @@map("source_distributor_empty_openings")
 }
 
 /// Purchase-in event recorded by a mini-operator. Header row for a batch of
@@ -1138,6 +1166,9 @@ model CylinderType {
   /// preference table. Reads at RESTRICT delete-cylinder-type surface
   /// which customers are actively using this type.
   allowedForCustomers  CustomerAllowedCylinderType[]
+  /// 2026-07-23 supplier opening empties — reverse of
+  /// SourceDistributorEmptyOpening. Same RESTRICT-delete rationale.
+  supplierEmptyOpenings SourceDistributorEmptyOpening[]
 
   @@unique([distributorId, typeName])
   @@index([providerCatalogId])

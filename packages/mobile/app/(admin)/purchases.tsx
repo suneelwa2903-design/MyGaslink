@@ -976,6 +976,15 @@ function AddSupplierModal({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
   const [seeding, setSeeding] = useState(false);
+  // 2026-07-23 — Per-cylinder-type opening empties owed to supplier at
+  // seed time. Keyed by cylinderTypeId; blank / 0 rows are dropped before
+  // send. Same axis as the customer opening-state empties block.
+  const [openingEmpties, setOpeningEmpties] = useState<Record<string, string>>({});
+  const { data: cylinderTypesResp } = useApiQuery<{ cylinderTypes: { cylinderTypeId: string; typeName: string }[] }>(
+    ['cylinder-types'],
+    '/cylinder-types',
+  );
+  const cylinderTypes = cylinderTypesResp?.cylinderTypes ?? [];
   const createMut = useApiMutation<SourceDistributor, { name: string }>(
     'post',
     '/source-distributors',
@@ -990,12 +999,17 @@ function AddSupplierModal({
         if (!res?.id) return;
         const obAmount = parseFloat(openingAmount);
         const hasOb = Number.isFinite(obAmount) && obAmount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(openingDate);
-        if (hasOb) {
+        const emptiesPayload = Object.entries(openingEmpties)
+          .map(([cylinderTypeId, qtyStr]) => ({ cylinderTypeId, qty: parseInt(qtyStr, 10) }))
+          .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+        const hasEmpties = emptiesPayload.length > 0;
+        if (hasOb || hasEmpties) {
           try {
             setSeeding(true);
             await api.post(`/source-distributors/${res.id}/seed-opening-state`, {
-              amount: obAmount,
+              amount: hasOb ? obAmount : 0,
               asOfDate: openingDate,
+              empties: hasEmpties ? emptiesPayload : undefined,
             });
           } catch (err) {
             // Supplier was created successfully; the seed follow-up
@@ -1138,6 +1152,48 @@ function AddSupplierModal({
                 brand-new supplier.
               </Text>
             </View>
+
+            {/* 2026-07-23 — Opening empties owed to supplier, per cylinder
+                type. Same axis as the customer opening-state empties block.
+                Zero / blank rows are dropped before send. */}
+            {cylinderTypes.length > 0 && (
+              <View style={{ gap: 6, marginTop: 4 }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: text }}>
+                  Opening Empties Owed <Text style={{ color: muted, fontWeight: '400' }}>— optional</Text>
+                </Text>
+                <Text style={{ fontSize: 12, color: muted, marginBottom: 4 }}>
+                  How many empties of each type you already owe this supplier at start.
+                </Text>
+                {cylinderTypes.map((ct) => (
+                  <View
+                    key={ct.cylinderTypeId}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
+                  >
+                    <Text style={{ flex: 1, fontSize: 14, color: text }}>{ct.typeName}</Text>
+                    <TextInput
+                      value={openingEmpties[ct.cylinderTypeId] ?? ''}
+                      onChangeText={(v) =>
+                        setOpeningEmpties((prev) => ({ ...prev, [ct.cylinderTypeId]: v.replace(/[^0-9]/g, '') }))
+                      }
+                      placeholder="0"
+                      placeholderTextColor={muted}
+                      keyboardType="number-pad"
+                      style={{
+                        width: 100,
+                        borderWidth: 1,
+                        borderColor: border,
+                        borderRadius: 8,
+                        padding: 10,
+                        fontSize: 15,
+                        color: text,
+                        backgroundColor: bg,
+                        textAlign: 'right',
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
           </ScrollView>
         </SafeAreaView>
       </SafeAreaProvider>
