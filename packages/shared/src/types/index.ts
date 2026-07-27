@@ -1277,3 +1277,38 @@ export interface DeletionRequestSummary {
   executedAt: string | null;
   cancelledAt: string | null;
 }
+
+/**
+ * Mini-op #5 (2026-07-27) — Expense wire type.
+ * Shape returned by GET /api/expenses. Amount is a number here (Prisma
+ * Decimals are serialised as strings; the mapper coerces before send).
+ * Categories match ExpenseCategoryValue in schemas/index.ts (13 values).
+ */
+export interface Expense {
+  expenseId: string;
+  distributorId: string;
+  expenseDate: string; // YYYY-MM-DD
+  category: string;    // ExpenseCategoryValue
+  amount: number;
+  description: string;
+  paymentMethod: string;
+  vendorName: string | null;
+  vehicleId: string | null;
+  vehicleNumber: string | null;   // joined for display
+  driverId: string | null;
+  driverName: string | null;      // joined for display
+  referenceNumber: string | null;
+  notes: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Summary tile shape returned by GET /api/expenses/summary. */
+export interface ExpenseSummary {
+  from: string | null;
+  to: string | null;
+  totalAmount: number;
+  count: number;
+  byCategory: Array<{ category: string; amount: number; count: number }>;
+}

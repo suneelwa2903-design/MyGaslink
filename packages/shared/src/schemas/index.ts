@@ -1032,6 +1032,58 @@ export type UpdateSourceDistributorInput = z.infer<typeof updateSourceDistributo
 export type CreatePurchaseEntryInput = z.infer<typeof createPurchaseEntrySchema>;
 export type UpdatePurchaseEntryInput = z.infer<typeof updatePurchaseEntrySchema>;
 
+// ─── Mini-op #5 (2026-07-27): Expenses ───────────────────────────────────────
+//
+// 13 fixed categories. Keep in sync with the Prisma ExpenseCategory enum —
+// runtime match is enforced by zod.enum() below and at the DB layer.
+export const EXPENSE_CATEGORIES = [
+  'fuel',
+  'vehicle_maintenance',
+  'salaries_wages',
+  'rent',
+  'utilities',
+  'loading_unloading',
+  'cylinder_deposits',
+  'office_supplies',
+  'communication',
+  'insurance',
+  'taxes_licenses',
+  'bank_charges',
+  'other',
+] as const;
+export type ExpenseCategoryValue = typeof EXPENSE_CATEGORIES[number];
+
+export const EXPENSE_PAYMENT_METHODS = ['cash', 'cheque', 'online', 'upi', 'bank_transfer', 'credit'] as const;
+export type ExpensePaymentMethod = typeof EXPENSE_PAYMENT_METHODS[number];
+
+export const createExpenseSchema = z.object({
+  expenseDate: dateString,
+  category: z.enum(EXPENSE_CATEGORIES),
+  amount: z.number().positive().max(10_000_000),
+  description: z.string().min(1).max(500),
+  paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS).optional(),
+  vendorName: z.string().max(200).optional(),
+  vehicleId: uuid.optional(),
+  driverId: uuid.optional(),
+  referenceNumber: z.string().max(100).optional(),
+  notes: z.string().max(1000).optional(),
+});
+export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
+
+export const updateExpenseSchema = createExpenseSchema.partial();
+export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
+
+export const listExpensesQuerySchema = z.object({
+  from: dateString.optional(),
+  to: dateString.optional(),
+  category: z.enum(EXPENSE_CATEGORIES).optional(),
+  vehicleId: uuid.optional(),
+  driverId: uuid.optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(200).optional(),
+});
+export type ListExpensesQuery = z.infer<typeof listExpensesQuerySchema>;
+
 // ─── FLOAT-001 — Vehicle Load Manifest + Driver walk-in order ────────────────
 
 // Admin enters per-cylinder-type totals BEFORE preflight dispatch. `totalLoaded`

@@ -1883,6 +1883,16 @@ export default function AdminMoreScreen() {
               onPress={() => router.push('/pending-payments')}
               theme={theme}
             />
+            <Divider theme={theme} />
+            {/* Mini-op #5 (2026-07-27) — Expenses. Available to both
+                distributor + mini-op admin. */}
+            <MenuRow
+              icon="wallet-outline"
+              label="Expenses"
+              subtitle="Track operational spend"
+              onPress={() => router.push('/expenses')}
+              theme={theme}
+            />
           </SectionCard>
         )}
 

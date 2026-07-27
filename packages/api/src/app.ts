@@ -54,6 +54,7 @@ import devUploadsRoutes from './routes/devUploads.js';
 import sourceDistributorsRoutes from './routes/sourceDistributors.js';
 import purchaseEntriesRoutes from './routes/purchaseEntries.js';
 import purchasePaymentsRoutes from './routes/purchasePayments.js';
+import expensesRoutes from './routes/expenses.js';
 import { LOCAL_UPLOADS_ROOT, isS3ConfiguredForUploads } from './lib/s3.js';
 
 export function createApp() {
@@ -199,6 +200,10 @@ export function createApp() {
   // Mini-Operator 2026-07-19: money-out to source distributors. Same
   // middleware chain as /purchase-entries so tenant scoping is uniform.
   app.use('/api/purchase-payments', authenticate, resolveDistributor, requireDistributor, purchasePaymentsRoutes);
+  // Mini-op #5 (2026-07-27): Expenses. Available to both distributor and
+  // mini-op tenants — the route layer role-gates on distributor_admin /
+  // finance / mini_operator_admin / super_admin.
+  app.use('/api/expenses', authenticate, resolveDistributor, requireDistributor, expensesRoutes);
 
   // ─── Dev / test helpers (never mounted in production) ─────────────────────
   // Provides POST /test/inject-stale-token and GET /test/token-cache-state

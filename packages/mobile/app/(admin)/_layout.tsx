@@ -250,6 +250,8 @@ function AdminLayoutInner() {
       {/* WI-PENDING-PAYMENTS: pending approval queue. Stack-pushed from
           the More tab, never a primary tab. */}
       <Tabs.Screen name="pending-payments" options={{ href: null, title: 'Pending Payments', tabBarItemStyle: { display: 'none' } }} />
+      {/* Mini-op #5 (2026-07-27) — Expenses. Router-push from More menu. */}
+      <Tabs.Screen name="expenses" options={{ href: null, title: 'Expenses', tabBarItemStyle: { display: 'none' } }} />
     </Tabs>
   );
 }

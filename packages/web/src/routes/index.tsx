@@ -25,6 +25,7 @@ const OrdersPage = lazy(() => import('@/pages/OrdersPage'));
 const InventoryPage = lazy(() => import('@/pages/InventoryPage'));
 // Mini-Operator (2026-07-16): purchase entries + source distributors.
 const PurchasesPage = lazy(() => import('@/pages/PurchasesPage'));
+const ExpensesPage = lazy(() => import('@/pages/ExpensesPage'));
 const CustomersPage = lazy(() => import('@/pages/CustomersPage'));
 const BillingPaymentsPage = lazy(() => import('@/pages/BillingPaymentsPage'));
 const FleetPage = lazy(() => import('@/pages/FleetPage'));
@@ -170,6 +171,25 @@ export function AppRoutes() {
             }
           >
             <Route index element={<PurchasesPage />} />
+          </Route>
+
+          {/* Mini-op #5 (2026-07-27): Expenses — available to both
+              distributor + mini-op operator tenants. */}
+          <Route
+            path="expenses"
+            element={
+              <ProtectedRoute
+                allowedRoles={[
+                  UserRole.SUPER_ADMIN,
+                  UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
+                  UserRole.MINI_OPERATOR_ADMIN,
+                ]}
+                requireDistributor
+              />
+            }
+          >
+            <Route index element={<ExpensesPage />} />
           </Route>
 
           <Route

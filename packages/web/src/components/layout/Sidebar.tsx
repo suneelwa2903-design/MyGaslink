@@ -123,6 +123,17 @@ const adminMenuItems: MenuItem[] = [
       UserRole.INVENTORY,
     ],
   },
+  // Mini-op #5 (2026-07-27) — Expenses for distributor tenants too.
+  {
+    label: 'Expenses',
+    path: '/app/expenses',
+    icon: HiOutlineBanknotes,
+    roles: [
+      UserRole.SUPER_ADMIN,
+      UserRole.DISTRIBUTOR_ADMIN,
+      UserRole.FINANCE,
+    ],
+  },
   {
     label: 'Settings',
     labelKey: 'nav.settings',
@@ -263,6 +274,14 @@ const miniOperatorMenuItems: MenuItem[] = [
     label: 'Billing & Payments',
     labelKey: 'nav.billing',
     path: '/app/billing-payments',
+    icon: HiOutlineBanknotes,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+  // Mini-op #5 (2026-07-27) — Expenses. Available to distributor too;
+  // rendered via the distributor menu block a few lines up as well.
+  {
+    label: 'Expenses',
+    path: '/app/expenses',
     icon: HiOutlineBanknotes,
     roles: [UserRole.MINI_OPERATOR_ADMIN],
   },

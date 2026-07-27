@@ -216,6 +216,28 @@ enum PaymentAllocationStatus {
   fully_allocated
 }
 
+/// Mini-op #5 (2026-07-27) — Expense category taxonomy.
+/// Fixed 13-category set covering everything the distributor / mini-op
+/// operator spends money on OUTSIDE of cylinder purchases (which flow
+/// through PurchaseEntry). Purposely NOT extensible via UI — a stable
+/// enum keeps the reports column-friendly. Reserve "other" for genuine
+/// edge cases; if a category needs adding, do it via schema migration.
+enum ExpenseCategory {
+  fuel                    // vehicle fuel — the biggest recurring line
+  vehicle_maintenance     // service, tyres, spares
+  salaries_wages          // driver + staff pay
+  rent                    // godown + office
+  utilities               // electricity, water, gas connection at office
+  loading_unloading       // per-cylinder labour charges
+  cylinder_deposits       // refundable deposits when adding new cylinders
+  office_supplies         // stationery, printer ink, etc.
+  communication           // mobile bills, internet, hosting
+  insurance               // vehicle, godown, staff
+  taxes_licenses          // GST filing fees, trade license renewal
+  bank_charges            // account fees, transfer charges
+  other                   // last resort — flag for reclassification
+}
+
 // WI-PENDING-PAYMENTS: a self-reported payment claim from a driver or
 // customer that has NOT yet been verified by office staff. Lives on the
 // `payment_submissions` table — see model PaymentSubmission. NEVER
@@ -535,6 +557,7 @@ model Distributor {
   sourceDistributors   SourceDistributor[]
   purchaseEntries      PurchaseEntry[]
   purchasePayments     PurchasePayment[]
+  expenses             Expense[]
 
   @@map("distributors")
 }
@@ -735,6 +758,47 @@ model PurchasePaymentAllocation {
   @@map("purchase_payment_allocations")
 }
 
+/// Mini-op #5 (2026-07-27) — Expense record.
+/// Every operational expense outside of cylinder purchases lands here.
+/// Fixed 13-category enum. Optional attribution to a vehicle and/or driver
+/// so the operator can drill down to "fuel spent on TS08X1234 last month"
+/// or "salary paid to Raju in Feb". Both refs are ON DELETE SET NULL so
+/// deleting a vehicle/driver doesn't cascade-orphan the expense — the row
+/// keeps the amount + description as a historical record.
+///
+/// Available to BOTH distributor + mini_operator tenants (unlike Purchases
+/// which are mini-op-only). The web + mobile routes gate on distributor_admin
+/// / finance / mini_operator_admin roles.
+model Expense {
+  id              String          @id @default(uuid()) @map("expense_id")
+  distributorId   String          @map("distributor_id")
+  expenseDate     String          @map("expense_date") // YYYY-MM-DD local
+  category        ExpenseCategory
+  amount          Decimal         @db.Decimal(18, 4)
+  description     String          @db.VarChar(500)
+  paymentMethod   PaymentMethod   @default(cash) @map("payment_method")
+  vendorName      String?         @db.VarChar(200) @map("vendor_name")
+  vehicleId       String?         @map("vehicle_id")
+  driverId        String?         @map("driver_id")
+  referenceNumber String?         @db.VarChar(100) @map("reference_number")
+  notes           String?         @db.VarChar(1000)
+  createdBy       String          @map("created_by")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  deletedAt       DateTime?       @map("deleted_at")
+
+  distributor Distributor @relation(fields: [distributorId], references: [id])
+  vehicle     Vehicle?    @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  driver      Driver?     @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  createdByUser User      @relation("ExpensesCreated", fields: [createdBy], references: [id])
+
+  @@index([distributorId, expenseDate(sort: Desc)])
+  @@index([distributorId, category, expenseDate(sort: Desc)])
+  @@index([vehicleId])
+  @@index([driverId])
+  @@map("expenses")
+}
+
 model User {
   id                    String             @id @default(uuid()) @map("user_id")
   email                 String             @unique
@@ -795,6 +859,8 @@ model User {
   // WI-PENDING-PAYMENTS: submissions this user submitted (customer/staff path) and verified (office path).
   paymentSubmissionsSubmitted PaymentSubmission[] @relation("SubmittedByUser")
   paymentSubmissionsVerified  PaymentSubmission[] @relation("VerifiedByUser")
+  // Mini-op #5 (2026-07-27) — expenses recorded by this user.
+  expensesCreated             Expense[]           @relation("ExpensesCreated")
   // M14 v1.0 (IOS-ACCOUNT-DELETION-SPEC §3): at most ONE pending/cancelled/completed
   // deletion request per user. Auth middleware joins this on every authenticate() call.
   accountDeletionRequest AccountDeletionRequest?
@@ -1448,6 +1514,9 @@ model Driver {
   stockMismatchRecords StockMismatchRecord[]
   // WI-PENDING-PAYMENTS: payment claims this driver submitted (cash/UPI collected at delivery).
   paymentSubmissions   PaymentSubmission[]   @relation("SubmittedByDriver")
+  // Mini-op #5 (2026-07-27) — expenses attributed to this driver (salary,
+  // reimbursements, etc). ON DELETE SET NULL on the Expense side.
+  expenses             Expense[]
 
   @@index([distributorId, status])
   @@map("drivers")
@@ -1473,6 +1542,9 @@ model Vehicle {
   vehicleInventory     VehicleInventory[]
   cancelledStockEvents CancelledStockEvent[]
   stockMismatchRecords StockMismatchRecord[]
+  // Mini-op #5 (2026-07-27) — expenses attributed to this vehicle
+  // (fuel, maintenance). ON DELETE SET NULL on the Expense side.
+  expenses             Expense[]
 
   @@unique([distributorId, vehicleNumber])
   @@map("vehicles")
