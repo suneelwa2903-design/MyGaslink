@@ -79,6 +79,7 @@ function mapQuotation(q: QuotationWithJoins) {
     recipientState: q.recipientState,
     recipientPincode: q.recipientPincode,
     recipientEmail: q.recipientEmail,
+    ccEmails: Array.isArray(q.ccEmails) ? (q.ccEmails as string[]) : [],
     recipientPhone: q.recipientPhone,
     recipientGstin: q.recipientGstin,
     subject: q.subject,
@@ -215,6 +216,7 @@ export async function createQuotation(
         recipientState: data.recipientState ?? null,
         recipientPincode: data.recipientPincode || null,
         recipientEmail: data.recipientEmail,
+        ccEmails: (data.ccEmails ?? []) as Prisma.InputJsonValue,
         recipientPhone: data.recipientPhone ?? null,
         recipientGstin: data.recipientGstin || null,
         subject: data.subject,
@@ -283,6 +285,9 @@ export async function updateQuotation(
         recipientState: data.recipientState,
         recipientPincode: data.recipientPincode || undefined,
         recipientEmail: data.recipientEmail,
+        ccEmails: data.ccEmails !== undefined
+          ? (data.ccEmails as Prisma.InputJsonValue)
+          : undefined,
         recipientPhone: data.recipientPhone,
         recipientGstin: data.recipientGstin || undefined,
         subject: data.subject,
@@ -451,6 +456,7 @@ export async function duplicateQuotation(
         recipientState: recipient.state,
         recipientPincode: recipient.pincode,
         recipientEmail: recipient.email,
+        ccEmails: source.ccEmails as Prisma.InputJsonValue,
         recipientPhone: recipient.phone,
         recipientGstin: recipient.gstin,
         subject: source.subject,

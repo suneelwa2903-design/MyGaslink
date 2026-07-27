@@ -1380,6 +1380,7 @@ export interface Quotation {
   recipientState: string | null;
   recipientPincode: string | null;
   recipientEmail: string;
+  ccEmails: string[];
   recipientPhone: string | null;
   recipientGstin: string | null;
 

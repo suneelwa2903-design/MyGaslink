@@ -171,6 +171,7 @@ router.post('/:id/send-email',
       const pdf = await generateQuotationPdf(distributorId, id);
       const result = await sendQuotationEmail({
         to: quotation.recipientEmail,
+        cc: quotation.ccEmails,
         recipientName: quotation.recipientName,
         quotationNumber: quotation.quotationNumber,
         subject: quotation.subject,

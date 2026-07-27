@@ -15,7 +15,7 @@ import toast from 'react-hot-toast';
 import {
   HiOutlinePlus, HiOutlinePencilSquare, HiOutlineTrash, HiOutlineArrowDownTray,
   HiOutlineDocumentDuplicate, HiOutlineArrowLeft, HiOutlinePaperAirplane,
-  HiOutlineEye, HiOutlineCheckCircle, HiOutlineXCircle,
+  HiOutlineEye, HiOutlineCheckCircle,
 } from 'react-icons/hi2';
 import {
   localTodayISO, QUOTATION_STATUSES, QUOTATION_GST_RATES, QUOTATION_CREDIT_TERMS_PRESETS,
@@ -295,6 +295,7 @@ function QuotationEditor({
         recipientState: q.recipientState ?? undefined,
         recipientPincode: q.recipientPincode ?? undefined,
         recipientEmail: q.recipientEmail,
+        ccEmails: q.ccEmails ?? [],
         recipientPhone: q.recipientPhone ?? undefined,
         recipientGstin: q.recipientGstin ?? undefined,
         subject: q.subject,
@@ -432,10 +433,28 @@ function QuotationEditor({
             onChange={(e) => setField('recipientName', e.target.value)} />
           <Input label="Contact person" value={form.recipientContactPerson ?? ''}
             onChange={(e) => setField('recipientContactPerson', e.target.value)} />
-          <Input label="Email" required type="email" value={form.recipientEmail}
+          <Input label="Email (primary)" required type="email" value={form.recipientEmail}
             onChange={(e) => setField('recipientEmail', e.target.value)} />
           <Input label="Phone" value={form.recipientPhone ?? ''}
             onChange={(e) => setField('recipientPhone', e.target.value)} />
+          <div className="sm:col-span-2">
+            <Input
+              label="CC (comma-separated, optional)"
+              placeholder="finance@customer.com, procurement@customer.com"
+              value={(form.ccEmails ?? []).join(', ')}
+              onChange={(e) => {
+                // Split on comma OR semicolon, strip whitespace, drop empties.
+                const list = e.target.value
+                  .split(/[,;]+/)
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                setField('ccEmails', list);
+              }}
+            />
+            <p className="text-xs text-surface-400 mt-1">
+              Up to 10 CCs. All get the email + PDF; only the primary is shown on the "Quotation To" block of the PDF.
+            </p>
+          </div>
           <Input label="Address" value={form.recipientAddress ?? ''}
             onChange={(e) => setField('recipientAddress', e.target.value)} />
           <div className="grid grid-cols-3 gap-2">
@@ -549,6 +568,7 @@ function defaultForm(today: string): CreateQuotationInput {
     customerId: null,
     recipientName: '',
     recipientEmail: '',
+    ccEmails: [],
     subject: '',
     coverText: 'Dear Sir / Madam,\n\nThank you for the opportunity. Please find our rates below.\n\nRegards.',
     terms: DEFAULT_TERMS,
@@ -846,16 +866,9 @@ function QuotationView({
             </Button>
           </>
         )}
-        {(q.status === 'draft' || q.status === 'sent') && (
-          <>
-            <Button variant="secondary" onClick={statusMut('mark-accepted')}>
-              <HiOutlineCheckCircle className="h-4 w-4" /> Mark accepted
-            </Button>
-            <Button variant="secondary" onClick={statusMut('mark-rejected')}>
-              <HiOutlineXCircle className="h-4 w-4" /> Mark rejected
-            </Button>
-          </>
-        )}
+        {/* Mark accepted / rejected hidden per user feedback — most users
+            won't track quote outcome that granularly. Endpoints + status
+            enum remain in place so this can come back later. */}
         <Button variant="secondary" onClick={() => duplicateMutation.mutate()}>
           <HiOutlineDocumentDuplicate className="h-4 w-4" /> Duplicate for a new month
         </Button>
@@ -871,6 +884,9 @@ function QuotationView({
             {[q.recipientCity, q.recipientState, q.recipientPincode].filter(Boolean).join(', ')}
           </div>
           <div className="text-sm mt-1">Email: {q.recipientEmail}</div>
+          {q.ccEmails && q.ccEmails.length > 0 && (
+            <div className="text-sm text-surface-500">CC: {q.ccEmails.join(', ')}</div>
+          )}
           {q.recipientPhone && <div className="text-sm">Phone: {q.recipientPhone}</div>}
           {q.recipientGstin && <div className="text-sm font-semibold">GSTIN: {q.recipientGstin}</div>}
         </div>

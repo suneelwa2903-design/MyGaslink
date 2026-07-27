@@ -1255,6 +1255,8 @@ export const createQuotationSchema = z.object({
   recipientState: z.string().max(100).optional().nullable(),
   recipientPincode: pincode,
   recipientEmail: email,
+  /** CC email addresses. Up to 10 — beyond that, use a mailing list. */
+  ccEmails: z.array(email).max(10).optional(),
   recipientPhone: z.string().max(50).optional().nullable(),
   recipientGstin: gstin,
   subject: z.string().min(1).max(500),

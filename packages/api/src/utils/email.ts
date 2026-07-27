@@ -432,6 +432,8 @@ function escapePasswordEmailName(s: string): string {
 
 export async function sendQuotationEmail(input: {
   to: string;
+  /** Extra CC recipients — max 10 addresses. Empty array = none. */
+  cc?: string[];
   recipientName: string;
   quotationNumber: string;
   subject: string;
@@ -520,6 +522,7 @@ export async function sendQuotationEmail(input: {
     await getTransporter().sendMail({
       from: fromHeader(),
       to: input.to,
+      cc: input.cc && input.cc.length > 0 ? input.cc : undefined,
       subject: input.subject,
       html,
       attachments: [{
@@ -528,7 +531,11 @@ export async function sendQuotationEmail(input: {
         contentType: 'application/pdf',
       }],
     });
-    logger.info('Quotation email sent', { to: input.to, quotationNumber: input.quotationNumber });
+    logger.info('Quotation email sent', {
+      to: input.to,
+      cc: input.cc,
+      quotationNumber: input.quotationNumber,
+    });
     await writeEmailLog({ ...baseLog, status: 'sent' });
     return { status: 'sent' };
   } catch (err) {

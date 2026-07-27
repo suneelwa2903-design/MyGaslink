@@ -908,6 +908,9 @@ model Quotation {
   recipientState        String?         @map("recipient_state") @db.VarChar(100)
   recipientPincode      String?         @map("recipient_pincode") @db.VarChar(20)
   recipientEmail        String          @map("recipient_email") @db.VarChar(200)
+  /// v3 (2026-07-27): jsonb array of extra CC email addresses. Empty
+  /// array by default; up to 10 entries validated at the Zod layer.
+  ccEmails              Json            @default("[]") @map("cc_emails") @db.JsonB
   recipientPhone        String?         @map("recipient_phone") @db.VarChar(50)
   recipientGstin        String?         @map("recipient_gstin") @db.VarChar(20)
 
