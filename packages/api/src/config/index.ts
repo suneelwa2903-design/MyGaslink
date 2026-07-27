@@ -1,4 +1,12 @@
-import 'dotenv/config';
+// Load `.env` first, then `.env.local` on top with override:true. This
+// lets a developer keep the tracked-shape .env (prod-like defaults) and
+// stash personal test credentials — SMTP, S3, etc. — in an untracked
+// .env.local without touching what's checked in. .env.local is already
+// covered by .gitignore. On production servers, .env.local doesn't
+// exist so this is a no-op.
+import { config as loadDotenv } from 'dotenv';
+loadDotenv();
+loadDotenv({ path: '.env.local', override: true });
 
 export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
