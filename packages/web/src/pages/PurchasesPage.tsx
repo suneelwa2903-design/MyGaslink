@@ -444,6 +444,8 @@ function SourcesTab() {
   const [openingEmpties, setOpeningEmpties] = useState<Record<string, string>>({});
   // Edit-existing-supplier modal state.
   const [editingSupplier, setEditingSupplier] = useState<SourceDistributor | null>(null);
+  // Mini-op #5 (2026-07-27) — Record Purchase Payment modal state.
+  const [payingSupplier, setPayingSupplier] = useState<SourceDistributor | null>(null);
 
   const createMutation = useMutation({
     mutationFn: async (payload: CreateSourceDistributorInput) => {
@@ -585,14 +587,26 @@ function SourcesTab() {
                         {s.createdAt.split('T')[0]}
                       </td>
                       <td className="text-right">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setEditingSupplier(s)}
-                        >
-                          {seededAt ? 'Edit Opening' : 'Seed Opening'}
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditingSupplier(s)}
+                          >
+                            {seededAt ? 'Edit Opening' : 'Seed Opening'}
+                          </Button>
+                          {/* Mini-op #5 (2026-07-27) — Record Payment on
+                              web parity with mobile. Opens the same modal
+                              flow that mobile Purchases → FAB → Pay uses. */}
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => setPayingSupplier(s)}
+                          >
+                            Record Payment
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -612,6 +626,19 @@ function SourcesTab() {
             queryClient.invalidateQueries({ queryKey: ['source-distributors'] });
             queryClient.invalidateQueries({ queryKey: ['supplier-balances'] });
             setEditingSupplier(null);
+          }}
+        />
+      )}
+
+      {payingSupplier && (
+        <RecordPurchasePaymentModal
+          supplier={payingSupplier}
+          onClose={() => setPayingSupplier(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ['source-distributors'] });
+            queryClient.invalidateQueries({ queryKey: ['supplier-balances'] });
+            queryClient.invalidateQueries({ queryKey: ['purchase-payments'] });
+            setPayingSupplier(null);
           }}
         />
       )}
@@ -721,6 +748,111 @@ function EditSupplierOpeningModal({
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="button" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
             {wasSeeded ? 'Update Opening' : 'Seed Opening'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Record Purchase Payment Modal ───────────────────────────────────────────
+// Mini-op #5 web parity (2026-07-27) — same wire shape as mobile
+// RecordPaymentModal in packages/mobile/app/(admin)/purchases.tsx.
+// Auto-allocates FIFO against outstanding purchase entries when
+// `allocations` is omitted (server-side default). We keep it simple —
+// no manual allocation UI on web for now (mobile has that as an option).
+
+const PAYMENT_METHODS: Array<{ value: 'cash' | 'cheque' | 'online' | 'upi' | 'bank_transfer' | 'credit'; label: string }> = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'upi', label: 'UPI' },
+  { value: 'bank_transfer', label: 'Bank transfer' },
+  { value: 'cheque', label: 'Cheque' },
+  { value: 'online', label: 'Online' },
+  { value: 'credit', label: 'Credit note' },
+];
+
+function RecordPurchasePaymentModal({
+  supplier,
+  onClose,
+  onSaved,
+}: {
+  supplier: SourceDistributor;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [amount, setAmount] = useState('');
+  const [transactionDate, setTransactionDate] = useState<string>(localTodayISO());
+  const [paymentMethod, setPaymentMethod] = useState<typeof PAYMENT_METHODS[number]['value']>('cash');
+  const [referenceNumber, setReferenceNumber] = useState('');
+  const [notes, setNotes] = useState('');
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const amt = parseFloat(amount);
+      if (!Number.isFinite(amt) || amt <= 0) {
+        throw new Error('Enter a positive amount');
+      }
+      return apiPost('/purchase-payments', {
+        sourceDistributorId: supplier.id,
+        transactionDate,
+        amount: amt,
+        paymentMethod,
+        referenceNumber: referenceNumber.trim() || undefined,
+        notes: notes.trim() || undefined,
+      });
+    },
+    onSuccess: () => {
+      toast.success('Payment recorded');
+      onSaved();
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  return (
+    <Modal open onClose={onClose} title={`Record Payment — ${supplier.name}`} size="md">
+      <div className="space-y-4">
+        <p className="text-xs text-surface-500 dark:text-surface-400">
+          Recorded payments auto-allocate FIFO against oldest unpaid purchase entries.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Input
+            label="Amount (₹)"
+            type="number"
+            step="0.01"
+            min="0.01"
+            placeholder="e.g. 5000"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          <Input
+            label="Transaction date"
+            type="date"
+            value={transactionDate}
+            onChange={(e) => setTransactionDate(e.target.value)}
+          />
+        </div>
+        <Select
+          label="Payment method"
+          value={paymentMethod}
+          onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}
+          options={PAYMENT_METHODS.map((m) => ({ value: m.value, label: m.label }))}
+        />
+        <Input
+          label="Reference number (optional)"
+          placeholder="e.g. cheque #, UPI txn ID"
+          value={referenceNumber}
+          onChange={(e) => setReferenceNumber(e.target.value)}
+        />
+        <Input
+          label="Notes (optional)"
+          placeholder="Anything you want to remember"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
+        <div className="flex justify-end gap-3 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="button" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+            Record Payment
           </Button>
         </div>
       </div>
