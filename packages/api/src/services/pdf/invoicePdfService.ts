@@ -406,6 +406,11 @@ function drawParties(
   },
   buyer: { name: string; gstin: string | null; phone: string | null; address: string },
   startY: number,
+  // Mini-op #6 (2026-07-27) — pre-computed PNG buffer for the UPI
+  // payment QR. Renders in the top-right of the Bill From block when
+  // both this AND seller.upiId are set. Layout falls back to the
+  // pre-QR appearance when either is missing.
+  upiQrPng?: Buffer,
 ): number {
   const T = LAYOUT.THEME;
   const F = LAYOUT.TYPO;
@@ -422,8 +427,22 @@ function drawParties(
   // Bill From
   doc.fontSize(F.H2).fillColor(T.PRIMARY).font('Helvetica-Bold');
   doc.text('Bill From', leftX + pad, titleY);
+  // Mini-op #6 (2026-07-27) — UPI payment QR in the top-right of the
+  // Bill From column. Sized to fit next to the seller name / address
+  // block without wrapping. Under the QR: a "Scan to pay" caption.
+  const qrSize = 68;
+  const qrX = leftX + columnWidth - pad - qrSize;
+  const qrY = titleY;
+  if (upiQrPng && seller.upiId) {
+    doc.image(upiQrPng, qrX, qrY, { fit: [qrSize, qrSize] });
+    doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
+    doc.text('Scan to pay', qrX, qrY + qrSize + 2, { width: qrSize, align: 'center' });
+  }
+  // Text-block width narrows when a QR is on the right so the seller
+  // name / address / bank details don't collide with the QR box.
+  const textWidth = upiQrPng && seller.upiId ? columnWidth - pad * 2 - qrSize - 8 : columnWidth - pad * 2;
   let fromY = contentStart;
-  fromY += drawTextBlock(doc, leftX + pad, fromY, columnWidth - pad * 2, seller.name, F.BODY, { bold: true }) + gap;
+  fromY += drawTextBlock(doc, leftX + pad, fromY, textWidth, seller.name, F.BODY, { bold: true }) + gap;
   doc.fontSize(F.BODY).fillColor(T.MUTED).font('Helvetica');
   fromY += drawTextBlock(doc, leftX + pad, fromY, columnWidth - pad * 2, seller.address, F.BODY, { color: T.MUTED }) + 8;
   doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');
@@ -1123,12 +1142,36 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
 
   let cursorY = LAYOUT.MARGIN.top;
 
+  // Mini-op #6 (2026-07-27) — UPI payment QR. Generate a small PNG
+  // buffer once and hand it to drawParties for embedding in the Bill
+  // From block. Uses the standard `upi://pay?…` intent so any UPI app
+  // (GPay / PhonePe / Paytm / BHIM) parses it and pre-fills the payee +
+  // amount + note. Silently skipped when the distributor has no UPI ID
+  // configured — pre-QR invoices keep their existing layout untouched.
+  let upiQrPng: Buffer | undefined;
+  if (seller.upiId) {
+    try {
+      const payee = encodeURIComponent(seller.name);
+      const note = encodeURIComponent(`Invoice ${invoice.invoiceNumber}`);
+      const upiUrl =
+        `upi://pay?pa=${encodeURIComponent(seller.upiId)}` +
+        `&pn=${payee}` +
+        `&am=${grandTotal.toFixed(2)}` +
+        `&cu=INR` +
+        `&tn=${note}`;
+      upiQrPng = await QRCode.toBuffer(upiUrl, { type: 'png', width: 120, margin: 1 });
+    } catch {
+      // QR failure must not block the invoice PDF.
+      upiQrPng = undefined;
+    }
+  }
+
   // Header
   const headerH = drawHeader(doc, seller, meta, cursorY);
   cursorY += headerH + LAYOUT.SECTION_GAP;
 
   // Parties
-  const partiesH = drawParties(doc, seller, buyer, cursorY);
+  const partiesH = drawParties(doc, seller, buyer, cursorY, upiQrPng);
   cursorY += partiesH + LAYOUT.SECTION_GAP - 10;
 
   // Items table
