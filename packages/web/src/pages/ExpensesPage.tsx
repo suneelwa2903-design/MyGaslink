@@ -97,7 +97,7 @@ export default function ExpensesPage() {
   });
   const driversQuery = useQuery({
     queryKey: ['drivers-for-expense'],
-    queryFn: () => apiGet<Driver[]>('/drivers'),
+    queryFn: () => apiGet<{ drivers: Driver[] }>('/drivers'),
   });
 
   const deleteMutation = useMutation({
@@ -243,7 +243,7 @@ export default function ExpensesPage() {
         <ExpenseFormModal
           mode="create"
           vehicles={vehiclesQuery.data?.vehicles ?? []}
-          drivers={driversQuery.data ?? []}
+          drivers={driversQuery.data?.drivers ?? []}
           onClose={() => setCreateOpen(false)}
           onSaved={() => {
             queryClient.invalidateQueries({ queryKey: ['expenses'] });
@@ -258,7 +258,7 @@ export default function ExpensesPage() {
           mode="edit"
           expense={editing}
           vehicles={vehiclesQuery.data?.vehicles ?? []}
-          drivers={driversQuery.data ?? []}
+          drivers={driversQuery.data?.drivers ?? []}
           onClose={() => setEditing(null)}
           onSaved={() => {
             queryClient.invalidateQueries({ queryKey: ['expenses'] });
