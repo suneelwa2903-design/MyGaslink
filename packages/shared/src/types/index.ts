@@ -1299,6 +1299,7 @@ export interface Expense {
   description: string;
   paymentMethod: string;
   vendorName: string | null;
+  paidToName: string | null;
   vehicleId: string | null;
   vehicleNumber: string | null;
   driverId: string | null;
@@ -1334,6 +1335,10 @@ export interface ExpenseCategory {
   referenceLabel: string | null;
   referencePlaceholder: string | null;
   hint: string | null;
+  showPaidTo: boolean;
+  paidToRequired: boolean;
+  paidToLabel: string | null;
+  paidToPlaceholder: string | null;
   taxDeductibleHint: 'capex' | 'opex' | 'non_deductible' | 'uncertain' | null;
   reservedForImport: boolean;
   path: string;                    // resolved "Header / Leaf"

@@ -41,14 +41,22 @@ async function getFuelCategoryId(distributorId: string): Promise<string> {
 }
 
 describe('Expense categories (mini-op #5 v2)', () => {
-  it('T1 — every distributor has all 13 seeded system leaves', async () => {
+  it('T1 — every distributor has all seeded system leaves (v3 taxonomy expansion)', async () => {
+    // v3 (2026-07-27): the initial 13 codes are still guaranteed, but the
+    // 20260727240000 migration added 7 more precise leaves (driver_salary,
+    // helper_wages, vehicle_insurance etc.). Assert both waves.
+    const V3_ADDED_CODES = [
+      'vehicle_insurance', 'vehicle_road_tax',
+      'driver_salary', 'helper_wages', 'office_staff_salary', 'staff_health_insurance',
+      'godown_insurance',
+    ];
+    const expected = [...SYSTEM_EXPENSE_CODES, ...V3_ADDED_CODES].sort();
     for (const distributorId of [DIST_ID, OTHER_DIST_ID]) {
       const leaves = await prisma.expenseCategory.findMany({
         where: { distributorId, isSystem: true, isHeader: false, deletedAt: null },
         select: { code: true },
       });
       const codes = leaves.map((l) => l.code).sort();
-      const expected = [...SYSTEM_EXPENSE_CODES].sort();
       expect(codes).toEqual(expected);
     }
   });

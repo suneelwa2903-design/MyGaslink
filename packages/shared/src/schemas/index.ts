@@ -1098,6 +1098,10 @@ export const createExpenseCategorySchema = z.object({
   referenceLabel: z.string().max(60).optional(),
   referencePlaceholder: z.string().max(120).optional(),
   hint: z.string().max(500).optional(),
+  showPaidTo: z.boolean().optional(),
+  paidToRequired: z.boolean().optional(),
+  paidToLabel: z.string().max(60).optional(),
+  paidToPlaceholder: z.string().max(120).optional(),
   taxDeductibleHint: z.enum(TAX_DEDUCTIBLE_HINTS).optional(),
 });
 export type CreateExpenseCategoryInput = z.infer<typeof createExpenseCategorySchema>;
@@ -1120,6 +1124,10 @@ export const updateExpenseCategorySchema = z.object({
   referenceLabel: z.string().max(60).nullable().optional(),
   referencePlaceholder: z.string().max(120).nullable().optional(),
   hint: z.string().max(500).nullable().optional(),
+  showPaidTo: z.boolean().optional(),
+  paidToRequired: z.boolean().optional(),
+  paidToLabel: z.string().max(60).nullable().optional(),
+  paidToPlaceholder: z.string().max(120).nullable().optional(),
   taxDeductibleHint: z.enum(TAX_DEDUCTIBLE_HINTS).nullable().optional(),
 });
 export type UpdateExpenseCategoryInput = z.infer<typeof updateExpenseCategorySchema>;
@@ -1137,6 +1145,7 @@ export const createExpenseSchema = z.object({
   description: z.string().min(1).max(500),
   paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS).optional(),
   vendorName: z.string().max(200).optional(),
+  paidToName: z.string().max(200).optional(),
   vehicleId: uuid.optional(),
   driverId: uuid.optional(),
   referenceNumber: z.string().max(100).optional(),

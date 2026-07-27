@@ -1301,11 +1301,20 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
   const groupBy: 'trip' | 'day' = f.groupBy === 'trip' ? 'trip' : 'day';
 
   const movementTypes = ['dispatch', 'delivery', 'collection', 'returns_collection', 'reconciliation_empties_return', 'cancellation_return'] as const;
+  // 2026-07-27 — backdated trips (applyBackdatedInventoryAdjustment) emit a
+  // `manual_adjustment` fulls debit as the "delivery" leg. Include those
+  // rows in the fetch ONLY when `referenceType='backdated_inventory_adjustment'`
+  // so genuine "Adjust Stock" corrections (referenceType=null) remain
+  // invisible to the vehicle ledger. See feedback_backdated_trip_visibility
+  // and the audit that confirmed only 3 null-refType rows exist in prod.
   const events = await prisma.inventoryEvent.findMany({
     where: {
       distributorId,
       eventDate: { gte: from, lte: to },
-      eventType: { in: ['incoming_fulls', ...movementTypes] },
+      OR: [
+        { eventType: { in: ['incoming_fulls', ...movementTypes] } },
+        { eventType: 'manual_adjustment', referenceType: 'backdated_inventory_adjustment' },
+      ],
       ...(f.cylinderTypeId ? { cylinderTypeId: f.cylinderTypeId } : {}),
     },
     include: { cylinderType: { select: { typeName: true } } },
@@ -1313,20 +1322,40 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
   });
 
   // ── Attribution maps ──────────────────────────────────────────────────────
+  // referenceType → what reference_id points to:
+  //   order                            → Order.id
+  //   driver_vehicle_assignment        → DVA.id
+  //   cancelled_stock                  → CancelledStockEvent.id
+  //   dva_load_manifest                → DVALoadManifest.id (→ .dvaId → DVA)
+  //   godown_pickup                    → Order.id (synthetic bucket)
+  //   mini_operator_order              → Order.id
+  //   backdated_inventory_adjustment   → Order.id
   const orderIds = new Set<string>();
   const dvaIds = new Set<string>();
   const cseIds = new Set<string>();
+  const manifestIds = new Set<string>();
   for (const e of events) {
-    if (e.referenceType === 'order' && e.referenceId) orderIds.add(e.referenceId);
-    else if (e.referenceType === 'driver_vehicle_assignment' && e.referenceId) dvaIds.add(e.referenceId);
-    else if (e.referenceType === 'cancelled_stock' && e.referenceId) cseIds.add(e.referenceId);
+    if (!e.referenceId) continue;
+    switch (e.referenceType) {
+      case 'order':
+      case 'godown_pickup':
+      case 'mini_operator_order':
+      case 'backdated_inventory_adjustment':
+        orderIds.add(e.referenceId); break;
+      case 'driver_vehicle_assignment':
+        dvaIds.add(e.referenceId); break;
+      case 'cancelled_stock':
+        cseIds.add(e.referenceId); break;
+      case 'dva_load_manifest':
+        manifestIds.add(e.referenceId); break;
+    }
   }
 
-  const [orders, dvas, cses] = await Promise.all([
+  const [orders, dvas, cses, manifests] = await Promise.all([
     orderIds.size
       ? prisma.order.findMany({
           where: { id: { in: [...orderIds] } },
-          select: { id: true, vehicleId: true, tripNumber: true, vehicle: { select: { vehicleNumber: true } }, driver: { select: { driverName: true } } },
+          select: { id: true, vehicleId: true, tripNumber: true, isGodownPickup: true, vehicle: { select: { vehicleNumber: true } }, driver: { select: { driverName: true } } },
         })
       : Promise.resolve([]),
     dvaIds.size
@@ -1341,17 +1370,45 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
           select: { id: true, vehicleId: true, vehicle: { select: { vehicleNumber: true } }, driver: { select: { driverName: true } }, order: { select: { tripNumber: true } } },
         })
       : Promise.resolve([]),
+    manifestIds.size
+      ? prisma.dVALoadManifest.findMany({
+          where: { id: { in: [...manifestIds] } },
+          select: { id: true, dva: { select: { id: true, vehicleId: true, tripNumber: true, vehicle: { select: { vehicleNumber: true } }, driver: { select: { driverName: true } } } } },
+        })
+      : Promise.resolve([]),
   ]);
 
-  const orderAttr = new Map<string, LedgerAttr>(orders.map((o) => [o.id, { vehicleId: o.vehicleId, vehicleNumber: o.vehicle?.vehicleNumber ?? '—', driverName: o.driver?.driverName ?? '—', tripNumber: o.tripNumber ?? null }]));
+  // Godown-pickup orders read as a synthetic "GODOWN" bucket, not a real
+  // vehicle/driver — mirrors deliveryPerformance's GODOWN_PICKUP_DRIVER_*
+  // treatment so both reports agree on the presentation.
+  const orderAttr = new Map<string, LedgerAttr>(orders.map((o) => [o.id, o.isGodownPickup
+    ? { vehicleId: null, vehicleNumber: 'GODOWN', driverName: 'Godown Pickup', tripNumber: o.tripNumber ?? null }
+    : { vehicleId: o.vehicleId, vehicleNumber: o.vehicle?.vehicleNumber ?? '—', driverName: o.driver?.driverName ?? '—', tripNumber: o.tripNumber ?? null }]));
   const dvaAttr = new Map<string, LedgerAttr>(dvas.map((d) => [d.id, { vehicleId: d.vehicleId, vehicleNumber: d.vehicle?.vehicleNumber ?? '—', driverName: d.driver?.driverName ?? '—', tripNumber: d.tripNumber ?? null }]));
   const cseAttr = new Map<string, LedgerAttr>(cses.map((c) => [c.id, { vehicleId: c.vehicleId, vehicleNumber: c.vehicle?.vehicleNumber ?? '—', driverName: c.driver?.driverName ?? '—', tripNumber: c.order?.tripNumber ?? null }]));
+  const manifestAttr = new Map<string, LedgerAttr>(manifests.map((m) => [m.id, m.dva
+    ? { vehicleId: m.dva.vehicleId, vehicleNumber: m.dva.vehicle?.vehicleNumber ?? '—', driverName: m.dva.driver?.driverName ?? '—', tripNumber: m.dva.tripNumber ?? null }
+    : { vehicleId: null, vehicleNumber: '—', driverName: '—', tripNumber: null }]));
 
   const attrFor = (e: (typeof events)[number]): LedgerAttr => {
-    if (e.referenceType === 'order' && e.referenceId && orderAttr.has(e.referenceId)) return orderAttr.get(e.referenceId)!;
-    if (e.referenceType === 'driver_vehicle_assignment' && e.referenceId && dvaAttr.has(e.referenceId)) return dvaAttr.get(e.referenceId)!;
-    if (e.referenceType === 'cancelled_stock' && e.referenceId && cseAttr.has(e.referenceId)) return cseAttr.get(e.referenceId)!;
-    return { vehicleId: null, vehicleNumber: e.vehicleNumber ?? '—', driverName: e.driverName ?? '—', tripNumber: null };
+    if (!e.referenceId) {
+      return { vehicleId: null, vehicleNumber: e.vehicleNumber ?? '—', driverName: e.driverName ?? '—', tripNumber: null };
+    }
+    switch (e.referenceType) {
+      case 'order':
+      case 'godown_pickup':
+      case 'mini_operator_order':
+      case 'backdated_inventory_adjustment':
+        return orderAttr.get(e.referenceId) ?? { vehicleId: null, vehicleNumber: e.vehicleNumber ?? '—', driverName: e.driverName ?? '—', tripNumber: null };
+      case 'driver_vehicle_assignment':
+        return dvaAttr.get(e.referenceId) ?? { vehicleId: null, vehicleNumber: e.vehicleNumber ?? '—', driverName: e.driverName ?? '—', tripNumber: null };
+      case 'cancelled_stock':
+        return cseAttr.get(e.referenceId) ?? { vehicleId: null, vehicleNumber: e.vehicleNumber ?? '—', driverName: e.driverName ?? '—', tripNumber: null };
+      case 'dva_load_manifest':
+        return manifestAttr.get(e.referenceId) ?? { vehicleId: null, vehicleNumber: e.vehicleNumber ?? '—', driverName: e.driverName ?? '—', tripNumber: null };
+      default:
+        return { vehicleId: null, vehicleNumber: e.vehicleNumber ?? '—', driverName: e.driverName ?? '—', tripNumber: null };
+    }
   };
 
   // ── Corporation loads received (depot-level secondary table) ───────────────
@@ -1400,6 +1457,10 @@ export async function vehicleLedger(distributorId: string, f: ReportFilters): Pr
       case 'returns_collection': cur.emptiesCollected += e.emptiesChange; break;
       case 'reconciliation_empties_return': cur.emptiesReturnedVerified += e.emptiesChange; break;
       case 'cancellation_return': cur.cancelledReturns += e.fullsChange; break;
+      // Backdated trip: the manual_adjustment fulls-debit stands in for the
+      // delivery leg that a live trip would emit. Guarded upstream to only
+      // fetch backdated_inventory_adjustment (not null-refType stock corrections).
+      case 'manual_adjustment': cur.fullsDelivered += Math.abs(e.fullsChange); break;
     }
     moveMap.set(key, cur);
   }

@@ -161,6 +161,7 @@ interface RowJoin {
   amount: Prisma.Decimal;
   description: string;
   vendorName: string | null;
+  paidToName: string | null;
   vehicle: { vehicleNumber: string } | null;
   driver: { driverName: string } | null;
   category: {
@@ -201,6 +202,7 @@ export async function generateExpenseReportPdf(
       amount: true,
       description: true,
       vendorName: true,
+      paidToName: true,
       vehicle: { select: { vehicleNumber: true } },
       driver: { select: { driverName: true } },
       category: {
@@ -302,7 +304,7 @@ export async function generateExpenseReportPdf(
             formatDate(r.expenseDate),
             r.category.parent ? `${r.category.parent.name} / ${r.category.name}` : r.category.name,
             r.description,
-            r.vendorName ?? '—',
+            r.paidToName ?? r.vendorName ?? '—',
             r.vehicle?.vehicleNumber ?? '—',
             r.driver?.driverName ?? '—',
             formatMoney(amt),
@@ -327,7 +329,7 @@ export async function generateExpenseReportPdf(
             formatDate(r.expenseDate),
             leaf.leafName,
             r.description,
-            r.vendorName ?? '—',
+            r.paidToName ?? r.vendorName ?? '—',
             r.vehicle?.vehicleNumber ?? '—',
             r.driver?.driverName ?? '—',
             formatMoney(amt),

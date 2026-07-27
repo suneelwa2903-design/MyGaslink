@@ -802,6 +802,17 @@ model ExpenseCategory {
   referencePlaceholder String?  @db.VarChar(120) @map("reference_placeholder")
   hint                 String?  @db.VarChar(500)
 
+  // v3 (2026-07-27) — "Paid to" freeform field. When set, the expense
+  // form renders a text input for a person's name (helper / loader /
+  // landlord / office staff etc.) instead of the Driver picker. This is
+  // the sane default for spend that isn't tied to a specific driver
+  // from the fleet table. Set on categories like helper_wages,
+  // office_staff_salary, godown_rent, etc.
+  showPaidTo           Boolean  @default(false) @map("show_paid_to")
+  paidToRequired       Boolean  @default(false) @map("paid_to_required")
+  paidToLabel          String?  @db.VarChar(60)  @map("paid_to_label")
+  paidToPlaceholder    String?  @db.VarChar(120) @map("paid_to_placeholder")
+
   // Reserved for future integrations — see CLAUDE.md mini-op #5 v2 notes.
   reservedForImport    Boolean  @default(false) @map("reserved_for_import")
   taxDeductibleHint    TaxDeductibleHint? @map("tax_deductible_hint")
@@ -830,6 +841,10 @@ model Expense {
   description     String          @db.VarChar(500)
   paymentMethod   PaymentMethod   @default(cash) @map("payment_method")
   vendorName      String?         @db.VarChar(200) @map("vendor_name")
+  /// v3 (2026-07-27) — freeform "paid to" person (helper / landlord /
+  /// office staff etc.). Distinct from vendorName so reports can slice
+  /// by "who I paid" independently of vendor / business relationship.
+  paidToName      String?         @db.VarChar(200) @map("paid_to_name")
   vehicleId       String?         @map("vehicle_id")
   driverId        String?         @map("driver_id")
   referenceNumber String?         @db.VarChar(100) @map("reference_number")

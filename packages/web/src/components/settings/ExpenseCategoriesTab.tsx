@@ -59,7 +59,9 @@ function buildTree(rows: ExpenseCategory[]): TreeNode[] {
         categoryId: '__orphans__', distributorId: '', parentId: null, code: '__orphans__',
         name: 'Uncategorised', isHeader: true, isSystem: false, isActive: true,
         sortOrder: 9999, showVehicle: false, vehicleRequired: false, showDriver: false,
-        driverRequired: false, vendorLabel: null, vendorPlaceholder: null,
+        driverRequired: false,
+        showPaidTo: false, paidToRequired: false, paidToLabel: null, paidToPlaceholder: null,
+        vendorLabel: null, vendorPlaceholder: null,
         referenceLabel: null, referencePlaceholder: null, hint: null,
         taxDeductibleHint: null, reservedForImport: false, path: 'Uncategorised', expenseCount: 0,
       },
@@ -319,6 +321,18 @@ function CreateCategoryModal({
                   <input type="checkbox" {...register('driverRequired')} disabled={!showDriver} />
                   <span>Driver required</span>
                 </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" {...register('showPaidTo')} />
+                  <span>Show "Paid to" text field</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" {...register('paidToRequired')} disabled={!watch('showPaidTo')} />
+                  <span>Paid-to required</span>
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Paid-to label" placeholder="Paid to" {...register('paidToLabel')} />
+                <Input label="Paid-to placeholder" placeholder="Recipient name" {...register('paidToPlaceholder')} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Input label="Vendor label" placeholder="Vendor" {...register('vendorLabel')} />
@@ -364,6 +378,10 @@ function EditCategoryModal({
       vehicleRequired: category.vehicleRequired,
       showDriver: category.showDriver,
       driverRequired: category.driverRequired,
+      showPaidTo: category.showPaidTo,
+      paidToRequired: category.paidToRequired,
+      paidToLabel: category.paidToLabel ?? undefined,
+      paidToPlaceholder: category.paidToPlaceholder ?? undefined,
       vendorLabel: category.vendorLabel ?? undefined,
       vendorPlaceholder: category.vendorPlaceholder ?? undefined,
       referenceLabel: category.referenceLabel ?? undefined,
@@ -373,6 +391,7 @@ function EditCategoryModal({
   });
   const showVehicle = watch('showVehicle');
   const showDriver = watch('showDriver');
+  const showPaidTo = watch('showPaidTo');
 
   const mutation = useMutation({
     mutationFn: (data: UpdateExpenseCategoryInput) => apiPut(`/expense-categories/${category.categoryId}`, data),
@@ -419,6 +438,18 @@ function EditCategoryModal({
                   <input type="checkbox" {...register('driverRequired')} disabled={!showDriver} />
                   <span>Driver required</span>
                 </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" {...register('showPaidTo')} />
+                  <span>Show "Paid to" text field</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" {...register('paidToRequired')} disabled={!showPaidTo} />
+                  <span>Paid-to required</span>
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Paid-to label" {...register('paidToLabel')} />
+                <Input label="Paid-to placeholder" {...register('paidToPlaceholder')} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Input label="Vendor label" {...register('vendorLabel')} />

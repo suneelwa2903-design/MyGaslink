@@ -513,6 +513,7 @@ function ExpenseFormModal({
           description: expense!.description,
           paymentMethod: expense!.paymentMethod as CreateExpenseInput['paymentMethod'],
           vendorName: expense!.vendorName ?? undefined,
+          paidToName: expense!.paidToName ?? undefined,
           vehicleId: expense!.vehicleId ?? undefined,
           driverId: expense!.driverId ?? undefined,
           referenceNumber: expense!.referenceNumber ?? undefined,
@@ -537,23 +538,32 @@ function ExpenseFormModal({
   const vehicleRequired = currentCategory?.vehicleRequired ?? false;
   const showDriver = currentCategory?.showDriver ?? false;
   const driverRequired = currentCategory?.driverRequired ?? false;
+  // v3 (2026-07-27): freeform Paid-to text field, used where the money went
+  // to a person NOT in the fleet driver list (helper, loader, landlord,
+  // office staff etc.). Enabled per-category via the DB config.
+  const showPaidTo = currentCategory?.showPaidTo ?? false;
+  const paidToRequired = currentCategory?.paidToRequired ?? false;
+  const paidToLabel = currentCategory?.paidToLabel || 'Paid to (optional)';
+  const paidToPlaceholder = currentCategory?.paidToPlaceholder || 'Recipient name';
   const vendorLabel = currentCategory?.vendorLabel || 'Vendor (optional)';
   const vendorPlaceholder = currentCategory?.vendorPlaceholder || 'Vendor name';
   const referenceLabel = currentCategory?.referenceLabel || 'Reference # (optional)';
   const referencePlaceholder = currentCategory?.referencePlaceholder || 'Any reference';
   const hint = currentCategory?.hint;
 
-  // Clear vehicle/driver when switching to a category that doesn't ask for them.
+  // Clear vehicle/driver/paid-to when switching to a category that doesn't ask for them.
   useEffect(() => {
     if (!showVehicle) setValue('vehicleId', undefined);
     if (!showDriver) setValue('driverId', undefined);
-  }, [currentCategoryId, showVehicle, showDriver, setValue]);
+    if (!showPaidTo) setValue('paidToName', undefined);
+  }, [currentCategoryId, showVehicle, showDriver, showPaidTo, setValue]);
 
   const mutation = useMutation({
     mutationFn: (data: CreateExpenseInput) => {
       const clean = {
         ...data,
         vendorName: data.vendorName || undefined,
+        paidToName: data.paidToName || undefined,
         vehicleId: data.vehicleId || undefined,
         driverId: data.driverId || undefined,
         referenceNumber: data.referenceNumber || undefined,
@@ -622,6 +632,14 @@ function ExpenseFormModal({
           />
         </div>
         {hint && <p className="text-xs text-slate-500 dark:text-slate-400 -mt-1">{hint}</p>}
+        {showPaidTo && (
+          <Input
+            label={`${paidToLabel}${paidToRequired ? ' *' : ''}`}
+            placeholder={paidToPlaceholder}
+            required={paidToRequired}
+            {...register('paidToName')}
+          />
+        )}
         {(showVehicle || showDriver) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {showVehicle && (
