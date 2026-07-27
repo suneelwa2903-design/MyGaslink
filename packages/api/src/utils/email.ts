@@ -44,7 +44,8 @@ type EmailLogType =
   | 'password_changed'
   | 'password_reset_completed'
   | 'contact_form'
-  | 'smtp_test';
+  | 'smtp_test'
+  | 'quotation_sent';
 
 type EmailLogStatus = 'sent' | 'failed' | 'skipped';
 
@@ -417,6 +418,125 @@ function escapePasswordEmailName(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// ─── Quotation delivery (mini-op #7) ────────────────────────────────────────
+// Sends a rate-quotation with the generated PDF as attachment. Uses the
+// same cover-text the distributor already typed on the quotation form so the
+// email body reads like an offer letter, not an auto-notification.
+//
+// Fire-and-forget from the caller's perspective — it returns { status, error }
+// instead of throwing so a temporary SMTP outage doesn't wedge the "Send
+// quotation" click. The route uses the return value to decide whether to
+// flip the quotation status to `sent` (only on `status === 'sent'`).
+
+export async function sendQuotationEmail(input: {
+  to: string;
+  recipientName: string;
+  quotationNumber: string;
+  subject: string;
+  coverText: string;
+  validUntil: string;   // YYYY-MM-DD
+  distributorName: string;
+  signatoryName?: string;
+  pdf: Buffer;
+  userId?: string | null;
+}): Promise<{ status: EmailLogStatus; error?: string }> {
+  const baseLog = {
+    toEmail: input.to,
+    subject: input.subject,
+    type: 'quotation_sent' as const,
+    userId: input.userId,
+  };
+
+  if (!smtpAvailable()) {
+    logger.warn('SMTP not configured — quotation email not sent', { to: input.to });
+    await writeEmailLog({ ...baseLog, status: 'skipped', errorText: 'SMTP not configured' });
+    return { status: 'skipped', error: 'SMTP not configured' };
+  }
+
+  // Convert the cover text (line-break separated paragraphs the user typed)
+  // into safe HTML by escaping + splitting on double newlines. Preserves
+  // single newlines within a paragraph via <br/>.
+  const coverHtml = input.coverText
+    .split(/\n\s*\n/)
+    .map((para) => `<p style="margin:0 0 14px;font-size:14px;color:#374151;line-height:1.6;">${escapeHtml(para).replace(/\n/g, '<br/>')}</p>`)
+    .join('');
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="580" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background-color:#0a3d62;padding:20px 32px;">
+              <div style="font-size:20px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">${escapeHtml(input.distributorName.toUpperCase())}</div>
+              <div style="font-size:12px;color:#c8dcee;margin-top:4px;">Quotation ${escapeHtml(input.quotationNumber)}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 32px 8px;">
+              <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Subject</div>
+              <div style="font-size:15px;font-weight:700;color:#0a3d62;line-height:1.4;">${escapeHtml(input.subject)}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 32px;">
+              ${coverHtml}
+              <div style="margin-top:20px;padding:14px 16px;background:#f8fafc;border-left:3px solid #0a3d62;border-radius:4px;">
+                <div style="font-size:13px;color:#374151;">
+                  Full rate details are attached as PDF (<strong>${escapeHtml(input.quotationNumber)}.pdf</strong>).<br/>
+                  Prices are valid until <strong>${escapeHtml(input.validUntil)}</strong>.
+                </div>
+              </div>
+              <p style="margin:24px 0 0;font-size:13px;color:#6b7280;">
+                Regards,<br/>
+                <strong style="color:#0a3d62;">${escapeHtml(input.signatoryName || input.distributorName)}</strong>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f9fafb;padding:14px 32px;text-align:center;border-top:1px solid #e5e7eb;">
+              <p style="margin:0;font-size:11px;color:#9ca3af;">
+                Order faster from the mygaslink app · <a href="https://mygaslink.com/app" style="color:#0a3d62;text-decoration:none;">mygaslink.com/app</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  try {
+    await getTransporter().sendMail({
+      from: fromHeader(),
+      to: input.to,
+      subject: input.subject,
+      html,
+      attachments: [{
+        filename: `${input.quotationNumber}.pdf`,
+        content: input.pdf,
+        contentType: 'application/pdf',
+      }],
+    });
+    logger.info('Quotation email sent', { to: input.to, quotationNumber: input.quotationNumber });
+    await writeEmailLog({ ...baseLog, status: 'sent' });
+    return { status: 'sent' };
+  } catch (err) {
+    const message = (err as Error).message;
+    logger.warn(`Quotation email failed for ${input.quotationNumber}: ${message}`);
+    await writeEmailLog({ ...baseLog, status: 'failed', errorText: message });
+    return { status: 'failed', error: message };
+  }
 }
 
 // ─── Diagnostic — used by scripts/test-smtp.ts ───────────────────────────────

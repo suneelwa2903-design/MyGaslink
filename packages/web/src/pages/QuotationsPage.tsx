@@ -735,7 +735,11 @@ function QuotationView({
     }
   };
 
-  const emailIt = () => {
+  // Fallback for when SMTP isn't configured (or fails). We open a real
+  // new-tab mailto: link — window.location.href was silently ignored on
+  // Chrome without a registered default mailto: handler; window.open
+  // makes the browser show its handler chooser reliably.
+  const openMailtoFallback = () => {
     if (!q) return;
     const subject = encodeURIComponent(q.subject);
     const body = encodeURIComponent(
@@ -743,8 +747,49 @@ function QuotationView({
       `Please find the attached quotation ${q.quotationNumber} valid until ${q.validUntil}.\n\n` +
       `Regards.`,
     );
-    window.location.href = `mailto:${q.recipientEmail}?subject=${subject}&body=${body}`;
+    const href = `mailto:${q.recipientEmail}?subject=${subject}&body=${body}`;
+    // Try a real anchor click first — most reliable across Chrome/Firefox/Safari.
+    const a = document.createElement('a');
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // If the browser has no mailto handler, nothing visible happens — show
+    // a copy-friendly toast with the recipient email and instructions.
+    setTimeout(() => {
+      toast(
+        `No mail app registered on this browser. Recipient: ${q.recipientEmail}\nDownload the PDF and attach it manually, or configure SMTP in Settings.`,
+        { duration: 8000 },
+      );
+    }, 500);
   };
+
+  const [sending, setSending] = useState(false);
+  const sendMutation = useMutation({
+    mutationFn: () => apiPost<{ sent: boolean; reason?: string; error?: string; quotation: Quotation }>(
+      `/quotations/${quotationId}/send-email`, {},
+    ),
+    onMutate: () => setSending(true),
+    onSettled: () => setSending(false),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['quotation', quotationId] });
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      if (result.sent) {
+        toast.success(`Quotation emailed to ${q?.recipientEmail} with the PDF attached`);
+      } else if (result.reason === 'skipped') {
+        toast(
+          'SMTP is not configured on this server. Falling back to opening your mail app — attach the PDF manually.',
+          { duration: 6000 },
+        );
+        openMailtoFallback();
+      } else {
+        toast.error(`SMTP send failed: ${result.error ?? 'unknown error'}. You can open your mail app instead.`);
+      }
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
 
   const statusMut = (endpoint: 'mark-sent' | 'mark-accepted' | 'mark-rejected') => async () => {
     try {
@@ -786,16 +831,22 @@ function QuotationView({
         <Button onClick={handleDownload} loading={downloading}>
           <HiOutlineArrowDownTray className="h-4 w-4" /> Download PDF
         </Button>
-        <Button variant="secondary" onClick={emailIt}>
-          <HiOutlinePaperAirplane className="h-4 w-4" /> Open in email
+        {(q.status === 'draft' || q.status === 'sent') && (
+          <Button onClick={() => sendMutation.mutate()} loading={sending} title={`Send to ${q.recipientEmail} with PDF attached`}>
+            <HiOutlinePaperAirplane className="h-4 w-4" />
+            {q.status === 'sent' ? 'Re-send via email' : 'Send via email'}
+          </Button>
+        )}
+        <Button variant="secondary" onClick={openMailtoFallback} title="Open your mail app with cover text pre-filled">
+          <HiOutlinePaperAirplane className="h-4 w-4" /> Open mail app
         </Button>
         {q.status === 'draft' && (
           <>
             <Button variant="secondary" onClick={() => onEdit(q.quotationId)}>
               <HiOutlinePencilSquare className="h-4 w-4" /> Edit
             </Button>
-            <Button variant="secondary" onClick={statusMut('mark-sent')}>
-              <HiOutlinePaperAirplane className="h-4 w-4" /> Mark as sent
+            <Button variant="secondary" onClick={statusMut('mark-sent')} title="Mark as sent without emailing (already sent out-of-band)">
+              <HiOutlineCheckCircle className="h-4 w-4" /> Mark as sent
             </Button>
           </>
         )}

@@ -21,6 +21,8 @@ import {
 } from '@gaslink/shared';
 import * as service from '../services/quotationService.js';
 import { generateQuotationPdf } from '../services/pdf/quotationPdfService.js';
+import { sendQuotationEmail } from '../utils/email.js';
+import { prisma } from '../lib/prisma.js';
 
 const router = Router();
 router.use(requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'));
@@ -129,13 +131,71 @@ router.post('/:id/duplicate',
   },
 );
 
-// POST /api/quotations/:id/mark-sent
+// POST /api/quotations/:id/mark-sent — just flips status, no email dispatch.
+// Use this when the distributor sent the quote out-of-band (WhatsApp,
+// physical print, phone call).
 router.post('/:id/mark-sent',
   auditLog('update', 'quotation'),
   async (req, res) => {
     try {
       const q = await service.markSent(req.user!.distributorId!, param(req.params.id));
       return sendSuccess(res, q);
+    } catch (err) {
+      if (err instanceof service.QuotationError) {
+        if (err.statusCode === 404) return sendNotFound(res, 'Quotation');
+        return sendError(res, err.message, err.statusCode, err.code);
+      }
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// POST /api/quotations/:id/send-email — server-side SMTP send with PDF
+// attached. Response tells the client whether SMTP is configured; if not,
+// the client falls back to opening a mailto: link with the cover text
+// pre-filled and the user attaches the downloaded PDF manually.
+router.post('/:id/send-email',
+  auditLog('update', 'quotation'),
+  async (req, res) => {
+    try {
+      const distributorId = req.user!.distributorId!;
+      const id = param(req.params.id);
+      const quotation = await service.getQuotation(distributorId, id);
+      if (quotation.status !== 'draft' && quotation.status !== 'sent') {
+        return sendError(res, 'Only draft or already-sent quotes can be re-emailed', 400, 'BAD_STATE');
+      }
+      const distributor = await prisma.distributor.findUnique({
+        where: { id: distributorId },
+        select: { businessName: true, legalName: true },
+      });
+      const pdf = await generateQuotationPdf(distributorId, id);
+      const result = await sendQuotationEmail({
+        to: quotation.recipientEmail,
+        recipientName: quotation.recipientName,
+        quotationNumber: quotation.quotationNumber,
+        subject: quotation.subject,
+        coverText: quotation.coverText,
+        validUntil: quotation.validUntil,
+        distributorName: distributor?.legalName ?? distributor?.businessName ?? 'MyGasLink',
+        userId: req.user!.userId,
+        pdf,
+      });
+      if (result.status === 'sent') {
+        // Flip to sent only if the SMTP actually delivered.
+        if (quotation.status === 'draft') {
+          await service.markSent(distributorId, id);
+        }
+        const refreshed = await service.getQuotation(distributorId, id);
+        return sendSuccess(res, { sent: true, quotation: refreshed });
+      }
+      // status=skipped means SMTP isn't configured — the web falls back
+      // to mailto:. status=failed means SMTP tried and errored.
+      return sendSuccess(res, {
+        sent: false,
+        reason: result.status,
+        error: result.error,
+        quotation,
+      });
     } catch (err) {
       if (err instanceof service.QuotationError) {
         if (err.statusCode === 404) return sendNotFound(res, 'Quotation');
