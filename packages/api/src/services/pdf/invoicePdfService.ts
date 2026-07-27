@@ -304,6 +304,10 @@ function drawHeader(
     isGodownPickup?: boolean;
   },
   startY: number,
+  // Mini-op #6 (2026-07-27) — pre-computed PNG buffer for the UPI
+  // payment QR. Rendered top-centered between the seller name (left)
+  // and Tax Invoice title (right). Omitted entirely when null.
+  upiQrPng?: Buffer,
 ): number {
   const T = LAYOUT.THEME;
   const F = LAYOUT.TYPO;
@@ -313,12 +317,28 @@ function drawHeader(
 
   // Company name
   doc.fontSize(Math.round(F.H2 * 1.5)).fillColor(T.PRIMARY).font('Helvetica-Bold');
-  doc.text(seller.name, leftX, cursorY, { width: 300 });
+  doc.text(seller.name, leftX, cursorY, { width: 240 });
   let companyY = cursorY + 18;
   if (seller.gstin) {
     doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
-    doc.text(`GSTIN: ${seller.gstin}`, leftX, companyY, { width: 300 });
+    doc.text(`GSTIN: ${seller.gstin}`, leftX, companyY, { width: 240 });
     companyY += 12;
+  }
+
+  // Mini-op #6 (2026-07-27) — UPI payment QR top-centered between the
+  // company name (left) and Tax Invoice title (right). 72×72pt with a
+  // "Scan to pay" caption underneath. Silently skipped when no QR was
+  // pre-computed by the caller.
+  if (upiQrPng) {
+    const qrSize = 72;
+    const qrX = leftX + Math.round((rightMargin - leftX - qrSize) / 2);
+    const qrY = cursorY;
+    doc.image(upiQrPng, qrX, qrY, { fit: [qrSize, qrSize] });
+    doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
+    doc.text('Scan to pay', qrX, qrY + qrSize + 2, { width: qrSize, align: 'center' });
+    // Ensure the divider drops below the QR + caption when the QR is
+    // the tallest element in the header row.
+    companyY = Math.max(companyY, qrY + qrSize + 14);
   }
 
   // Right side: Tax Invoice title
@@ -424,25 +444,14 @@ function drawParties(
   const titleY = startY + 8;
   const contentStart = titleY + 20;
 
-  // Bill From
+  // Bill From — QR moved to the top-centered position in drawHeader
+  // per 2026-07-27 user feedback. Bill From block is back to its
+  // original full-width text-column layout.
+  void upiQrPng; // param retained on the signature for backwards-compat callers.
   doc.fontSize(F.H2).fillColor(T.PRIMARY).font('Helvetica-Bold');
   doc.text('Bill From', leftX + pad, titleY);
-  // Mini-op #6 (2026-07-27) — UPI payment QR in the top-right of the
-  // Bill From column. Sized to fit next to the seller name / address
-  // block without wrapping. Under the QR: a "Scan to pay" caption.
-  const qrSize = 68;
-  const qrX = leftX + columnWidth - pad - qrSize;
-  const qrY = titleY;
-  if (upiQrPng && seller.upiId) {
-    doc.image(upiQrPng, qrX, qrY, { fit: [qrSize, qrSize] });
-    doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
-    doc.text('Scan to pay', qrX, qrY + qrSize + 2, { width: qrSize, align: 'center' });
-  }
-  // Text-block width narrows when a QR is on the right so the seller
-  // name / address / bank details don't collide with the QR box.
-  const textWidth = upiQrPng && seller.upiId ? columnWidth - pad * 2 - qrSize - 8 : columnWidth - pad * 2;
   let fromY = contentStart;
-  fromY += drawTextBlock(doc, leftX + pad, fromY, textWidth, seller.name, F.BODY, { bold: true }) + gap;
+  fromY += drawTextBlock(doc, leftX + pad, fromY, columnWidth - pad * 2, seller.name, F.BODY, { bold: true }) + gap;
   doc.fontSize(F.BODY).fillColor(T.MUTED).font('Helvetica');
   fromY += drawTextBlock(doc, leftX + pad, fromY, columnWidth - pad * 2, seller.address, F.BODY, { color: T.MUTED }) + 8;
   doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');
@@ -1166,12 +1175,12 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
     }
   }
 
-  // Header
-  const headerH = drawHeader(doc, seller, meta, cursorY);
+  // Header (with top-centered UPI QR when configured)
+  const headerH = drawHeader(doc, seller, meta, cursorY, upiQrPng);
   cursorY += headerH + LAYOUT.SECTION_GAP;
 
   // Parties
-  const partiesH = drawParties(doc, seller, buyer, cursorY, upiQrPng);
+  const partiesH = drawParties(doc, seller, buyer, cursorY);
   cursorY += partiesH + LAYOUT.SECTION_GAP - 10;
 
   // Items table
