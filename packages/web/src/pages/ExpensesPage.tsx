@@ -12,7 +12,7 @@
  *   - Table: paginated list with per-row edit
  *   - Modals: Create + Edit share the same body
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -29,6 +29,94 @@ import {
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
 import { Button, Input, Loader, EmptyState, Modal, Select } from '@/components/ui';
+
+// Per-category field config. Drives progressive reveal in the form: which of
+// {Vehicle, Driver} are shown, and what label + placeholder Vendor + Reference
+// carry for that category. Kept in ONE place so mobile can re-use identical
+// copy later.
+type CategoryFieldConfig = {
+  showVehicle: boolean;
+  vehicleRequired?: boolean;
+  showDriver: boolean;
+  driverRequired?: boolean;
+  vendorLabel: string;
+  vendorPlaceholder: string;
+  referenceLabel: string;
+  referencePlaceholder: string;
+  hint?: string;
+};
+
+const CATEGORY_FIELDS: Record<string, CategoryFieldConfig> = {
+  fuel: {
+    showVehicle: true, vehicleRequired: true, showDriver: true,
+    vendorLabel: 'Petrol pump', vendorPlaceholder: 'e.g. HP Petrol Pump',
+    referenceLabel: 'Bill #', referencePlaceholder: 'From the fuel bill',
+  },
+  vehicle_maintenance: {
+    showVehicle: true, vehicleRequired: true, showDriver: false,
+    vendorLabel: 'Service center', vendorPlaceholder: 'e.g. Bosch Service',
+    referenceLabel: 'Invoice #', referencePlaceholder: 'From the service invoice',
+  },
+  salaries_wages: {
+    showVehicle: false, showDriver: true,
+    vendorLabel: 'Paid to (helper / staff)', vendorPlaceholder: 'e.g. Ravi (helper)',
+    referenceLabel: 'Reference #', referencePlaceholder: 'Any receipt / note ID',
+    hint: 'Pick a driver from the dropdown for driver salary. For helpers or other staff, type in "Paid to".',
+  },
+  rent: {
+    showVehicle: false, showDriver: false,
+    vendorLabel: 'Landlord', vendorPlaceholder: 'Landlord name',
+    referenceLabel: 'Receipt #', referencePlaceholder: 'Rent receipt number',
+  },
+  utilities: {
+    showVehicle: false, showDriver: false,
+    vendorLabel: 'Provider', vendorPlaceholder: 'e.g. TSSPDCL, Metro Water',
+    referenceLabel: 'Bill / account #', referencePlaceholder: 'Utility bill number',
+  },
+  loading_unloading: {
+    showVehicle: false, showDriver: true,
+    vendorLabel: 'Labor / vendor', vendorPlaceholder: 'e.g. Ramu (loader)',
+    referenceLabel: 'Reference #', referencePlaceholder: 'Any receipt / note ID',
+  },
+  cylinder_deposits: {
+    showVehicle: false, showDriver: false,
+    vendorLabel: 'Supplier', vendorPlaceholder: 'e.g. HPCL depot',
+    referenceLabel: 'Deposit receipt #', referencePlaceholder: 'From deposit slip',
+  },
+  office_supplies: {
+    showVehicle: false, showDriver: false,
+    vendorLabel: 'Store', vendorPlaceholder: 'e.g. Reliance Trends',
+    referenceLabel: 'Bill #', referencePlaceholder: 'From the bill',
+  },
+  communication: {
+    showVehicle: false, showDriver: false,
+    vendorLabel: 'Provider', vendorPlaceholder: 'e.g. Airtel, Jio',
+    referenceLabel: 'Bill / account #', referencePlaceholder: 'Utility bill number',
+  },
+  insurance: {
+    showVehicle: true, showDriver: true,
+    vendorLabel: 'Insurer', vendorPlaceholder: 'e.g. Bajaj Allianz',
+    referenceLabel: 'Policy #', referencePlaceholder: 'Insurance policy number',
+    hint: 'Pick a Vehicle for vehicle insurance, or a Driver for staff health / accident cover.',
+  },
+  taxes_licenses: {
+    showVehicle: false, showDriver: false,
+    vendorLabel: 'Department', vendorPlaceholder: 'e.g. GST, RTO',
+    referenceLabel: 'Challan #', referencePlaceholder: 'Payment challan / receipt',
+  },
+  bank_charges: {
+    showVehicle: false, showDriver: false,
+    vendorLabel: 'Bank', vendorPlaceholder: 'e.g. HDFC, SBI',
+    referenceLabel: 'Transaction #', referencePlaceholder: 'Statement reference',
+  },
+  other: {
+    showVehicle: true, showDriver: true,
+    vendorLabel: 'Vendor (optional)', vendorPlaceholder: 'Vendor name',
+    referenceLabel: 'Reference # (optional)', referencePlaceholder: 'Any reference',
+  },
+};
+
+const DEFAULT_FIELD_CONFIG: CategoryFieldConfig = CATEGORY_FIELDS.other;
 
 // Human-friendly category labels for the dropdown + summary tiles.
 const CATEGORY_LABELS: Record<string, string> = {
@@ -290,7 +378,7 @@ function ExpenseFormModal({
 }) {
   const isEdit = mode === 'edit' && !!expense;
   const {
-    register, handleSubmit, formState: { errors },
+    register, handleSubmit, watch, setValue, formState: { errors },
   } = useForm<CreateExpenseInput>({
     resolver: zodResolver(createExpenseSchema),
     defaultValues: isEdit
@@ -314,6 +402,17 @@ function ExpenseFormModal({
           paymentMethod: 'cash',
         },
   });
+
+  // Progressive reveal — the current category dictates which fields render.
+  const currentCategory = watch('category');
+  const fieldCfg = CATEGORY_FIELDS[currentCategory ?? ''] ?? DEFAULT_FIELD_CONFIG;
+
+  // When the user switches category, drop any vehicle/driver value that the
+  // new category no longer shows — otherwise stale IDs leak on submit.
+  useEffect(() => {
+    if (!fieldCfg.showVehicle) setValue('vehicleId', undefined);
+    if (!fieldCfg.showDriver) setValue('driverId', undefined);
+  }, [currentCategory, fieldCfg.showVehicle, fieldCfg.showDriver, setValue]);
 
   const mutation = useMutation({
     mutationFn: (data: CreateExpenseInput) => {
@@ -380,31 +479,44 @@ function ExpenseFormModal({
             options={EXPENSE_PAYMENT_METHODS.map((m) => ({ value: m, label: PAYMENT_LABELS[m] ?? m }))}
           />
           <Input
-            label="Vendor name (optional)"
-            placeholder="e.g. HP Petrol Pump"
+            label={fieldCfg.vendorLabel}
+            placeholder={fieldCfg.vendorPlaceholder}
             {...register('vendorName')}
           />
         </div>
+        {fieldCfg.hint && (
+          <p className="text-xs text-slate-500 dark:text-slate-400 -mt-1">{fieldCfg.hint}</p>
+        )}
+        {(fieldCfg.showVehicle || fieldCfg.showDriver) && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {fieldCfg.showVehicle && (
+              <Select
+                label={`Vehicle${fieldCfg.vehicleRequired ? '' : ' (optional)'}`}
+                {...register('vehicleId')}
+                options={[
+                  { value: '', label: '—' },
+                  ...vehicles.map((v) => ({ value: v.id, label: v.vehicleNumber })),
+                ]}
+              />
+            )}
+            {fieldCfg.showDriver && (
+              <Select
+                label={`Driver${fieldCfg.driverRequired ? '' : ' (optional)'}`}
+                {...register('driverId')}
+                options={[
+                  { value: '', label: '—' },
+                  ...drivers.map((d) => ({ value: d.id, label: d.driverName })),
+                ]}
+              />
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Select
-            label="Vehicle (optional)"
-            {...register('vehicleId')}
-            options={[
-              { value: '', label: '—' },
-              ...vehicles.map((v) => ({ value: v.id, label: v.vehicleNumber })),
-            ]}
+          <Input
+            label={fieldCfg.referenceLabel}
+            placeholder={fieldCfg.referencePlaceholder}
+            {...register('referenceNumber')}
           />
-          <Select
-            label="Driver (optional)"
-            {...register('driverId')}
-            options={[
-              { value: '', label: '—' },
-              ...drivers.map((d) => ({ value: d.id, label: d.driverName })),
-            ]}
-          />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Input label="Reference # (optional)" placeholder="e.g. Bill #, UPI txn ID" {...register('referenceNumber')} />
           <Input label="Notes (optional)" {...register('notes')} />
         </div>
         <div className="flex justify-end gap-3 pt-3">
