@@ -17,7 +17,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { HiOutlinePlus, HiOutlinePencil, HiOutlineTrash } from 'react-icons/hi2';
+import { HiOutlinePlus, HiOutlinePencil, HiOutlineTrash, HiOutlineArrowDownTray } from 'react-icons/hi2';
+import { api } from '@/lib/api';
 import {
   createExpenseSchema,
   EXPENSE_CATEGORIES,
@@ -165,6 +166,7 @@ export default function ExpensesPage() {
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
+  const [downloadOpen, setDownloadOpen] = useState(false);
 
   const listQuery = useQuery({
     queryKey: ['expenses', from, to, category, page],
@@ -212,10 +214,16 @@ export default function ExpensesPage() {
             Track operational spend outside of cylinder purchases
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <HiOutlinePlus className="h-4 w-4" />
-          Record expense
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setDownloadOpen(true)}>
+            <HiOutlineArrowDownTray className="h-4 w-4" />
+            Download report
+          </Button>
+          <Button onClick={() => setCreateOpen(true)}>
+            <HiOutlinePlus className="h-4 w-4" />
+            Record expense
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -355,7 +363,113 @@ export default function ExpensesPage() {
           }}
         />
       )}
+
+      {downloadOpen && (
+        <DownloadReportModal
+          defaultFrom={from}
+          defaultTo={to}
+          onClose={() => setDownloadOpen(false)}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── Download report modal ─────────────────────────────────────────────────
+
+function DownloadReportModal({
+  defaultFrom, defaultTo, onClose,
+}: {
+  defaultFrom: string;
+  defaultTo: string;
+  onClose: () => void;
+}) {
+  const [from, setFrom] = useState(defaultFrom);
+  const [to, setTo] = useState(defaultTo);
+  const [scope, setScope] = useState<'consolidated' | 'single'>('consolidated');
+  const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0]);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const params: Record<string, string> = { from, to };
+      if (scope === 'single') params.category = category;
+      const resp = await api.get('/expenses/report/pdf', {
+        params,
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(resp.data);
+      const a = document.createElement('a');
+      a.href = url;
+      const suffix = scope === 'single' ? category : 'consolidated';
+      a.download = `expense-report-${suffix}-${from}-to-${to}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      onClose();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Download expense report" size="md">
+      <div className="space-y-4">
+        <p className="text-sm text-surface-600 dark:text-surface-300">
+          Management report — for statutory filings consult your CA.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="From" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <Input label="To" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-surface-700 dark:text-surface-200">Report type</label>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-start gap-2 text-sm">
+              <input type="radio" name="scope" value="consolidated"
+                checked={scope === 'consolidated'}
+                onChange={() => setScope('consolidated')}
+                className="mt-1" />
+              <div>
+                <div className="font-medium">Consolidated (all categories)</div>
+                <div className="text-xs text-surface-500 dark:text-surface-400">
+                  Grouped by category with per-category subtotals and a grand total
+                </div>
+              </div>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="radio" name="scope" value="single"
+                checked={scope === 'single'}
+                onChange={() => setScope('single')}
+                className="mt-1" />
+              <div className="flex-1">
+                <div className="font-medium">Single category</div>
+                <div className="text-xs text-surface-500 dark:text-surface-400 mb-2">
+                  Flat table filtered to one category
+                </div>
+                {scope === 'single' && (
+                  <Select
+                    label=""
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    options={EXPENSE_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] ?? c }))}
+                  />
+                )}
+              </div>
+            </label>
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 pt-3">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleDownload} loading={downloading}>
+            <HiOutlineArrowDownTray className="h-4 w-4" />
+            Download PDF
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

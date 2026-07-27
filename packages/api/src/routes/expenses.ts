@@ -19,6 +19,8 @@ import {
   listExpensesQuerySchema,
 } from '@gaslink/shared';
 import * as service from '../services/expenseService.js';
+import { generateExpenseReportPdf } from '../services/pdf/expenseReportPdfService.js';
+import { EXPENSE_CATEGORIES } from '@gaslink/shared';
 
 // Local dateString helper — same shape as the one in shared/schemas
 // but not re-exported. Trivial pattern; inlining here avoids widening
@@ -79,6 +81,38 @@ router.get('/summary',
         to: q.to,
       });
       return sendSuccess(res, result);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// GET /api/expenses/report/pdf — category-filtered or consolidated PDF.
+// Query: from, to, category (optional; omit for consolidated), vehicleId, driverId.
+const reportQuerySchema = z.object({
+  from: localDateString.optional(),
+  to: localDateString.optional(),
+  category: z.enum(EXPENSE_CATEGORIES).optional(),
+  vehicleId: z.string().uuid().optional(),
+  driverId: z.string().uuid().optional(),
+});
+router.get('/report/pdf',
+  validateQuery(reportQuerySchema),
+  async (req, res) => {
+    try {
+      const q = (req.validated?.query ?? req.query) as z.infer<typeof reportQuerySchema>;
+      const pdf = await generateExpenseReportPdf(req.user!.distributorId!, {
+        from: q.from,
+        to: q.to,
+        category: q.category,
+        vehicleId: q.vehicleId,
+        driverId: q.driverId,
+      });
+      const suffix = q.category ? q.category : 'consolidated';
+      const filename = `expense-report-${suffix}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(pdf);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }
