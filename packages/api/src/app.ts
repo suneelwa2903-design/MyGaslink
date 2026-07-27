@@ -56,6 +56,7 @@ import purchaseEntriesRoutes from './routes/purchaseEntries.js';
 import purchasePaymentsRoutes from './routes/purchasePayments.js';
 import expensesRoutes from './routes/expenses.js';
 import expenseCategoriesRoutes from './routes/expenseCategories.js';
+import quotationsRoutes from './routes/quotations.js';
 import { LOCAL_UPLOADS_ROOT, isS3ConfiguredForUploads } from './lib/s3.js';
 
 export function createApp() {
@@ -206,6 +207,7 @@ export function createApp() {
   // finance / mini_operator_admin / super_admin.
   app.use('/api/expenses', authenticate, resolveDistributor, requireDistributor, expensesRoutes);
   app.use('/api/expense-categories', authenticate, resolveDistributor, requireDistributor, expenseCategoriesRoutes);
+  app.use('/api/quotations', authenticate, resolveDistributor, requireDistributor, quotationsRoutes);
 
   // ─── Dev / test helpers (never mounted in production) ─────────────────────
   // Provides POST /test/inject-stale-token and GET /test/token-cache-state

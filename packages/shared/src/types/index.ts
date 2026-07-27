@@ -1356,3 +1356,88 @@ export interface ExpenseSummary {
     count: number;
   }>;
 }
+
+// ─── Mini-op #7 (2026-07-27) — Quotations ───────────────────────────────────
+
+/** Shape returned by GET /api/quotations and GET /api/quotations/:id.
+ *  Decimals are coerced to numbers server-side. `items` carries the whole
+ *  line-item list on detail reads; list reads may omit items for payload
+ *  compactness (check `items.length === 0`). */
+export interface Quotation {
+  quotationId: string;
+  distributorId: string;
+  quotationNumber: string;            // "QUO-2026-047"
+  year: number;
+  seq: number;
+  quotationDate: string;              // YYYY-MM-DD
+  validUntil: string;
+
+  customerId: string | null;
+  recipientName: string;
+  recipientContactPerson: string | null;
+  recipientAddress: string | null;
+  recipientCity: string | null;
+  recipientState: string | null;
+  recipientPincode: string | null;
+  recipientEmail: string;
+  recipientPhone: string | null;
+  recipientGstin: string | null;
+
+  subject: string;
+  coverText: string;
+  footerNotes: string | null;
+  terms: string[];                    // decoded JSONB
+  creditTerms: string;
+
+  gstRate: number;                    // 0.05 or 0.18
+  mode: 'per_cylinder' | 'per_kg' | 'mixed';
+
+  status: 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired';
+  sentAt: string | null;              // ISO
+  acceptedAt: string | null;
+
+  duplicateFromId: string | null;
+  duplicateFromNumber: string | null; // joined for display, nullable
+
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+
+  items: QuotationItemRow[];
+}
+
+/** Wire shape of a single line — kind discriminates which numeric fields
+ *  are populated. Kept as separate nullable columns rather than a union so
+ *  DB reads project trivially. */
+export interface QuotationItemRow {
+  quotationItemId: string;
+  kind: 'per_cylinder' | 'per_kg';
+  cylinderTypeId: string | null;
+  itemName: string;
+  hsnCode: string;
+  unitPrice: number | null;
+  discountPerUnit: number | null;
+  cylinderCapacityKg: number | null;
+  basicPricePerKg: number | null;
+  discountPerKg: number | null;
+  sortOrder: number;
+  notes: string | null;
+}
+
+/** GET /api/quotations returns a compact list row (no items). */
+export interface QuotationListRow {
+  quotationId: string;
+  quotationNumber: string;
+  quotationDate: string;
+  validUntil: string;
+  recipientName: string;
+  recipientEmail: string;
+  customerId: string | null;
+  subject: string;
+  mode: 'per_cylinder' | 'per_kg' | 'mixed';
+  status: 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired';
+  gstRate: number;
+  itemCount: number;
+  createdAt: string;
+  sentAt: string | null;
+}

@@ -1185,3 +1185,109 @@ export const driverCreateOrderSchema = z.object({
   deliveryDate: dateString,
 });
 export type DriverCreateOrderInput = z.infer<typeof driverCreateOrderSchema>;
+
+// ─── Mini-op #7 (2026-07-27): Quotations ────────────────────────────────────
+
+export const QUOTATION_STATUSES = ['draft', 'sent', 'accepted', 'rejected', 'expired'] as const;
+export type QuotationStatusValue = typeof QUOTATION_STATUSES[number];
+
+export const QUOTATION_MODES = ['per_cylinder', 'per_kg', 'mixed'] as const;
+export type QuotationModeValue = typeof QUOTATION_MODES[number];
+
+export const QUOTATION_ITEM_KINDS = ['per_cylinder', 'per_kg'] as const;
+export type QuotationItemKindValue = typeof QUOTATION_ITEM_KINDS[number];
+
+/** Two GST rates v1: 5% for domestic-style supply, 18% for commercial/industrial. */
+export const QUOTATION_GST_RATES = [0.05, 0.18] as const;
+export type QuotationGstRate = typeof QUOTATION_GST_RATES[number];
+
+/** Preset credit-terms strings surfaced in the form dropdown. Users can type
+ *  a Custom value; the DB field is a free string so anything is accepted. */
+export const QUOTATION_CREDIT_TERMS_PRESETS = [
+  'Advance (100% before dispatch)',
+  'Cash on Delivery',
+  '7 days from date of invoice',
+  '15 days from date of invoice',
+  '30 days from date of invoice',
+  '45 days from date of invoice',
+  '60 days from date of invoice',
+] as const;
+
+const perCylinderItemSchema = z.object({
+  kind: z.literal('per_cylinder'),
+  cylinderTypeId: uuid.optional().nullable(),
+  itemName: z.string().min(1).max(200),
+  hsnCode: z.string().min(1).max(20),
+  unitPrice: z.number().positive().max(1_000_000),
+  discountPerUnit: z.number().min(0).max(1_000_000),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+  notes: z.string().max(500).optional(),
+});
+
+const perKgItemSchema = z.object({
+  kind: z.literal('per_kg'),
+  cylinderTypeId: uuid.optional().nullable(),
+  itemName: z.string().min(1).max(200),
+  hsnCode: z.string().min(1).max(20),
+  cylinderCapacityKg: z.number().positive().max(10_000),
+  basicPricePerKg: z.number().positive().max(10_000),
+  discountPerKg: z.number().min(0).max(10_000),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+  notes: z.string().max(500).optional(),
+});
+
+export const quotationItemSchema = z.discriminatedUnion('kind', [perCylinderItemSchema, perKgItemSchema]);
+export type QuotationItemInput = z.infer<typeof quotationItemSchema>;
+
+export const createQuotationSchema = z.object({
+  quotationDate: dateString,
+  validUntil: dateString,
+  // Either link to an existing customer OR provide the freeform recipient block.
+  customerId: uuid.optional().nullable(),
+  recipientName: z.string().min(1).max(200),
+  recipientContactPerson: z.string().max(200).optional().nullable(),
+  recipientAddress: z.string().max(500).optional().nullable(),
+  recipientCity: z.string().max(100).optional().nullable(),
+  recipientState: z.string().max(100).optional().nullable(),
+  recipientPincode: pincode,
+  recipientEmail: email,
+  recipientPhone: z.string().max(50).optional().nullable(),
+  recipientGstin: gstin,
+  subject: z.string().min(1).max(500),
+  coverText: z.string().min(1).max(5000),
+  footerNotes: z.string().max(1000).optional().nullable(),
+  terms: z.array(z.string().min(1).max(500)).min(1).max(20),
+  creditTerms: z.string().min(1).max(200),
+  gstRate: z.number().refine((v) => (QUOTATION_GST_RATES as readonly number[]).includes(v),
+    { message: 'gstRate must be 0.05 or 0.18' }),
+  items: z.array(quotationItemSchema).min(1).max(50),
+});
+export type CreateQuotationInput = z.infer<typeof createQuotationSchema>;
+
+/** Update — everything is optional; items are replace-all when present. */
+export const updateQuotationSchema = createQuotationSchema.partial();
+export type UpdateQuotationInput = z.infer<typeof updateQuotationSchema>;
+
+export const listQuotationsQuerySchema = z.object({
+  from: dateString.optional(),
+  to: dateString.optional(),
+  status: z.enum(QUOTATION_STATUSES).optional(),
+  customerId: uuid.optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(200).optional(),
+});
+export type ListQuotationsQuery = z.infer<typeof listQuotationsQuerySchema>;
+
+/** Tenant-wide quotation defaults edited under Settings > Quotations. */
+export const quotationDefaultsSchema = z.object({
+  defaultCoverText: z.string().max(5000).optional(),
+  defaultTerms: z.array(z.string().max(500)).max(20).optional(),
+  defaultCreditTerms: z.string().max(200).optional(),
+  defaultValidForDays: z.number().int().min(1).max(365).optional(),
+  defaultGstRate: z.number().refine((v) => (QUOTATION_GST_RATES as readonly number[]).includes(v)).optional(),
+  signatoryName: z.string().max(200).optional(),
+  signatoryDesignation: z.string().max(200).optional(),
+  appDownloadEnabled: z.boolean().optional(),
+});
+export type QuotationDefaultsInput = z.infer<typeof quotationDefaultsSchema>;
+

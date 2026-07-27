@@ -86,6 +86,15 @@ const adminMenuItems: MenuItem[] = [
     roles: [UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR_ADMIN, UserRole.INVENTORY, UserRole.FINANCE],
   },
   {
+    // Mini-op #7 (2026-07-27) — pre-sales quotations. Distributor admin +
+    // finance can create and send. Gated to admin roles only — quoting is
+    // a sales action, not an operations task.
+    label: 'Quotations',
+    path: '/app/quotations',
+    icon: HiOutlineDocumentText,
+    roles: [UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR_ADMIN, UserRole.FINANCE],
+  },
+  {
     label: 'Billing & Payments',
     labelKey: 'nav.billing',
     path: '/app/billing-payments',
@@ -268,6 +277,12 @@ const miniOperatorMenuItems: MenuItem[] = [
     labelKey: 'nav.customers',
     path: '/app/customers',
     icon: HiOutlineUsers,
+    roles: [UserRole.MINI_OPERATOR_ADMIN],
+  },
+  {
+    label: 'Quotations',
+    path: '/app/quotations',
+    icon: HiOutlineDocumentText,
     roles: [UserRole.MINI_OPERATOR_ADMIN],
   },
   {
