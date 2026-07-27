@@ -1407,19 +1407,19 @@ export interface Quotation {
 }
 
 /** Wire shape of a single line — kind discriminates which numeric fields
- *  are populated. Kept as separate nullable columns rather than a union so
- *  DB reads project trivially. */
+ *  are populated. v2 (2026-07-27): all price/discount values are
+ *  GST-INCLUSIVE. Basic (pre-GST) is derived at display time. */
 export interface QuotationItemRow {
   quotationItemId: string;
   kind: 'per_cylinder' | 'per_kg';
   cylinderTypeId: string | null;
   itemName: string;
   hsnCode: string;
-  unitPrice: number | null;
-  discountPerUnit: number | null;
+  priceInclGst: number | null;
+  discountInclGst: number | null;
   cylinderCapacityKg: number | null;
-  basicPricePerKg: number | null;
-  discountPerKg: number | null;
+  pricePerKgInclGst: number | null;
+  discountPerKgInclGst: number | null;
   sortOrder: number;
   notes: string | null;
 }

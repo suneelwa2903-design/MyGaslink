@@ -50,11 +50,11 @@ function mapItem(item: QuotationWithJoins['items'][number]) {
     cylinderTypeId: item.cylinderTypeId,
     itemName: item.itemName,
     hsnCode: item.hsnCode,
-    unitPrice: item.unitPrice !== null ? toNum(item.unitPrice) : null,
-    discountPerUnit: item.discountPerUnit !== null ? toNum(item.discountPerUnit) : null,
+    priceInclGst: item.priceInclGst !== null ? toNum(item.priceInclGst) : null,
+    discountInclGst: item.discountInclGst !== null ? toNum(item.discountInclGst) : null,
     cylinderCapacityKg: item.cylinderCapacityKg !== null ? toNum(item.cylinderCapacityKg) : null,
-    basicPricePerKg: item.basicPricePerKg !== null ? toNum(item.basicPricePerKg) : null,
-    discountPerKg: item.discountPerKg !== null ? toNum(item.discountPerKg) : null,
+    pricePerKgInclGst: item.pricePerKgInclGst !== null ? toNum(item.pricePerKgInclGst) : null,
+    discountPerKgInclGst: item.discountPerKgInclGst !== null ? toNum(item.discountPerKgInclGst) : null,
     sortOrder: item.sortOrder,
     notes: item.notes,
   };
@@ -139,20 +139,20 @@ function itemCreateData(it: QuotationItemInput, idx: number) {
   if (it.kind === 'per_cylinder') {
     return {
       ...base,
-      unitPrice: it.unitPrice,
-      discountPerUnit: it.discountPerUnit,
+      priceInclGst: it.priceInclGst,
+      discountInclGst: it.discountInclGst,
       cylinderCapacityKg: null,
-      basicPricePerKg: null,
-      discountPerKg: null,
+      pricePerKgInclGst: null,
+      discountPerKgInclGst: null,
     };
   }
   return {
     ...base,
-    unitPrice: null,
-    discountPerUnit: null,
+    priceInclGst: null,
+    discountInclGst: null,
     cylinderCapacityKg: it.cylinderCapacityKg,
-    basicPricePerKg: it.basicPricePerKg,
-    discountPerKg: it.discountPerKg,
+    pricePerKgInclGst: it.pricePerKgInclGst,
+    discountPerKgInclGst: it.discountPerKgInclGst,
   };
 }
 
@@ -469,11 +469,11 @@ export async function duplicateQuotation(
             cylinderTypeId: it.cylinderTypeId,
             itemName: it.itemName,
             hsnCode: it.hsnCode,
-            unitPrice: it.unitPrice,
-            discountPerUnit: it.discountPerUnit,
+            priceInclGst: it.priceInclGst,
+            discountInclGst: it.discountInclGst,
             cylinderCapacityKg: it.cylinderCapacityKg,
-            basicPricePerKg: it.basicPricePerKg,
-            discountPerKg: it.discountPerKg,
+            pricePerKgInclGst: it.pricePerKgInclGst,
+            discountPerKgInclGst: it.discountPerKgInclGst,
             sortOrder: it.sortOrder ?? idx * 10,
             notes: it.notes,
           })),

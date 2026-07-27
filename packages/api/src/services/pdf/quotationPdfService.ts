@@ -289,18 +289,18 @@ export async function generateQuotationPdf(
 
 function drawPerCylinderTable(
   doc: PDFKit.PDFDocument, y: number,
-  items: Array<{ itemName: string; hsnCode: string; unitPrice: unknown; discountPerUnit: unknown }>,
-  gstRate: number,
+  items: Array<{ itemName: string; hsnCode: string; priceInclGst: unknown; discountInclGst: unknown }>,
+  _gstRate: number,
 ): number {
+  // All three price columns are GST-INCLUSIVE. Final Rate = Rate − Discount.
   interface Col { label: string; width: number; align: 'left'|'right'|'center' }
-  const gstLabel = `Incl. GST @ ${(gstRate * 100).toFixed(0)}%`;
   const cols: Col[] = [
-    { label: '#',        width: 24,  align: 'center' },
-    { label: 'Item',     width: 210, align: 'left' },
-    { label: 'HSN',      width: 60,  align: 'center' },
-    { label: 'Rate',     width: 70,  align: 'right' },
-    { label: 'Discount', width: 70,  align: 'right' },
-    { label: gstLabel,   width: 81,  align: 'right' },
+    { label: '#',                width: 24,  align: 'center' },
+    { label: 'Item',             width: 200, align: 'left' },
+    { label: 'HSN',              width: 60,  align: 'center' },
+    { label: 'Rate (incl GST)',  width: 80,  align: 'right' },
+    { label: 'Discount',         width: 66,  align: 'right' },
+    { label: 'Final (incl GST)', width: 85,  align: 'right' },
   ];
   const tableW = cols.reduce((s, c) => s + c.width, 0);
   const rowH = 20;
@@ -316,17 +316,16 @@ function drawPerCylinderTable(
 
   doc.font('Helvetica').fontSize(TYPO.BODY).fillColor(THEME.TEXT);
   items.forEach((item, idx) => {
-    const unitPrice = toNum(item.unitPrice);
-    const discountPerUnit = toNum(item.discountPerUnit);
-    const netBasic = unitPrice - discountPerUnit;
-    const inclGst = netBasic * (1 + gstRate);
+    const priceInclGst = toNum(item.priceInclGst);
+    const discountInclGst = toNum(item.discountInclGst);
+    const finalInclGst = priceInclGst - discountInclGst;
 
     if (idx % 2 === 1) doc.rect(MARGIN.left, y, tableW, rowH).fill(THEME.ZEBRA);
     doc.fillColor(THEME.TEXT).font('Helvetica').fontSize(TYPO.BODY);
     x = MARGIN.left;
     const cells = [
       String(idx + 1), item.itemName, item.hsnCode,
-      formatMoney(unitPrice), formatMoney(discountPerUnit), formatMoney(inclGst),
+      formatMoney(priceInclGst), formatMoney(discountInclGst), formatMoney(finalInclGst),
     ];
     for (let i = 0; i < cols.length; i++) {
       doc.text(cells[i], x + 6, y + 6, { width: cols[i].width - 12, align: cols[i].align, lineBreak: false });
@@ -345,7 +344,7 @@ function drawPerCylinderTable(
 
 function drawPerKgCard(
   doc: PDFKit.PDFDocument, y: number,
-  item: { itemName: string; hsnCode: string; basicPricePerKg: unknown; discountPerKg: unknown },
+  item: { itemName: string; hsnCode: string; pricePerKgInclGst: unknown; discountPerKgInclGst: unknown },
   gstRate: number,
 ): number {
   const cardW = USABLE;
@@ -367,11 +366,12 @@ function drawPerKgCard(
     .text(`HSN ${item.hsnCode}`, hsnX, y + 9,
       { width: hsnW, align: 'right', lineBreak: false });
 
-  const basicPricePerKg = toNum(item.basicPricePerKg);
-  const discountPerKg = toNum(item.discountPerKg);
-  const rspPerKg = basicPricePerKg * (1 + gstRate);
-  const netBasic = basicPricePerKg - discountPerKg;
-  const priceInclGst = netBasic * (1 + gstRate);
+  // v2: user enters GST-INCLUSIVE per-KG rate + discount. Basic (pre-GST)
+  // is derived for the "(Basic Rs. X)" reference shown next to the rate.
+  const pricePerKgInclGst = toNum(item.pricePerKgInclGst);
+  const discountPerKgInclGst = toNum(item.discountPerKgInclGst);
+  const basicPerKg = pricePerKgInclGst / (1 + gstRate);
+  const finalInclGst = pricePerKgInclGst - discountPerKgInclGst;
   const gstPct = (gstRate * 100).toFixed(0);
 
   const bodyY = y + 36;
@@ -392,9 +392,10 @@ function drawPerKgCard(
         { width: valueColW, align: 'right', lineBreak: false });
   };
 
-  kvRow(`Rate per KG   (RSP ${formatMoney(rspPerKg)})`, formatMoney(basicPricePerKg), 0);
-  kvRow('Discount per KG', `- ${formatMoney(discountPerKg)}`, 1);
-  kvRow(`Price per KG (incl. GST @ ${gstPct}%)`, formatMoney(priceInclGst), 2, { bold: true });
+  kvRow(`Rate per KG (incl. GST @ ${gstPct}%)   (Basic ${formatMoney(basicPerKg)})`,
+        formatMoney(pricePerKgInclGst), 0);
+  kvRow('Discount per KG', `- ${formatMoney(discountPerKgInclGst)}`, 1);
+  kvRow('Final rate per KG (incl. GST)', formatMoney(finalInclGst), 2, { bold: true });
 
   return y + cardH;
 }

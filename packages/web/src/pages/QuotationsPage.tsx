@@ -42,8 +42,22 @@ const DEFAULT_TERMS = [
 ];
 
 interface ListResponse { quotations: QuotationListRow[]; meta: { page: number; pageSize: number; total: number; pageCount: number } }
-interface CustomerLite { id: string; customerName: string; gstin: string | null; phone: string | null }
-interface CylinderTypeLite { id: string; typeName: string; capacity: number; hsnCode: string }
+// Wire shapes match what mappers.ts emits: customers get customerId (not id)
+// via renameId() in mapCustomer, cylinder types get cylinderTypeId via
+// mapCylinderTypes. Getting these wrong makes every option render with
+// value="", which is the source of the React key warning + broken selection.
+interface CustomerLite { customerId: string; customerName: string; gstin: string | null; phone: string | null }
+interface CylinderTypeLite { cylinderTypeId: string; typeName: string; capacity: number; hsnCode: string }
+/** Latest cylinder price per (distributor, type). Stored GST-INCLUSIVE per
+ *  anti-pattern #16. Prisma Decimals serialise as strings — coerce with
+ *  Number() before use. */
+interface CylinderPriceRow {
+  id: string;
+  cylinderTypeId: string;
+  price: string | number;     // Decimal-as-string; coerce with Number()
+  effectiveDate: string;
+  cylinderType?: { typeName: string };
+}
 
 type ViewMode =
   | { kind: 'list' }
@@ -240,9 +254,26 @@ function QuotationEditor({
     queryKey: ['cylinder-types-for-quote'],
     queryFn: () => apiGet<{ cylinderTypes: CylinderTypeLite[] }>('/cylinder-types'),
   });
+  // Latest cylinder prices for auto-fill. Stored GST-inclusive so they
+  // drop straight into priceInclGst / pricePerKgInclGst.
+  const pricesQuery = useQuery({
+    queryKey: ['cylinder-prices-for-quote'],
+    queryFn: () => apiGet<CylinderPriceRow[]>('/cylinder-types/prices/list'),
+  });
 
   const customers = customersQuery.data?.customers ?? [];
   const cylinderTypes = typesQuery.data?.cylinderTypes ?? [];
+  // Build a Map: cylinderTypeId → latest price (rows are ordered by
+  // effectiveDate desc; first occurrence wins). Prisma serialises Decimal
+  // as string, so Number() is mandatory — passing a string into
+  // toFixed()/divide would either NaN or silently concat.
+  const latestPriceByTypeId = new Map<string, number>();
+  for (const p of (pricesQuery.data ?? [])) {
+    if (!latestPriceByTypeId.has(p.cylinderTypeId)) {
+      const numeric = Number(p.price);
+      if (Number.isFinite(numeric)) latestPriceByTypeId.set(p.cylinderTypeId, numeric);
+    }
+  }
 
   // Form state — plain useState rather than react-hook-form because
   // the dynamic item list is easier to manage manually.
@@ -279,8 +310,8 @@ function QuotationEditor({
                 cylinderTypeId: it.cylinderTypeId,
                 itemName: it.itemName,
                 hsnCode: it.hsnCode,
-                unitPrice: it.unitPrice ?? 0,
-                discountPerUnit: it.discountPerUnit ?? 0,
+                priceInclGst: it.priceInclGst ?? 0,
+                discountInclGst: it.discountInclGst ?? 0,
                 sortOrder: it.sortOrder,
                 notes: it.notes ?? undefined,
               }
@@ -290,8 +321,8 @@ function QuotationEditor({
                 itemName: it.itemName,
                 hsnCode: it.hsnCode,
                 cylinderCapacityKg: it.cylinderCapacityKg ?? 0,
-                basicPricePerKg: it.basicPricePerKg ?? 0,
-                discountPerKg: it.discountPerKg ?? 0,
+                pricePerKgInclGst: it.pricePerKgInclGst ?? 0,
+                discountPerKgInclGst: it.discountPerKgInclGst ?? 0,
                 sortOrder: it.sortOrder,
                 notes: it.notes ?? undefined,
               },
@@ -307,7 +338,7 @@ function QuotationEditor({
       setForm((f) => ({ ...f, customerId: null }));
       return;
     }
-    const c = customers.find((cc) => cc.id === customerId);
+    const c = customers.find((cc) => cc.customerId === customerId);
     if (!c) return;
     setForm((f) => ({
       ...f,
@@ -329,7 +360,23 @@ function QuotationEditor({
       queryClient.invalidateQueries({ queryKey: ['quotation', q.quotationId] });
       onSaved(q.quotationId);
     },
-    onError: (err) => toast.error(getErrorMessage(err)),
+    onError: (err) => {
+      // Surface Zod validation detail if present, otherwise fall back to
+      // the generic error string. The API returns { success:false,
+      // error:{message, details:[{path, message}, ...]} } — the axios
+      // error object exposes response.data.error.details.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const details = (err as any)?.response?.data?.error?.details as { path?: string[]; message?: string }[] | undefined;
+      if (Array.isArray(details) && details.length) {
+        const lines = details.slice(0, 4).map((d) => {
+          const path = Array.isArray(d.path) ? d.path.join('.') : '';
+          return path ? `${path}: ${d.message}` : d.message;
+        });
+        toast.error(`Validation failed:\n${lines.join('\n')}`, { duration: 6000 });
+      } else {
+        toast.error(getErrorMessage(err));
+      }
+    },
   });
 
   const setField = <K extends keyof CreateQuotationInput>(k: K, v: CreateQuotationInput[K]) =>
@@ -337,8 +384,8 @@ function QuotationEditor({
 
   const addItem = (kind: 'per_cylinder' | 'per_kg') => {
     const newItem: QuotationItemInput = kind === 'per_cylinder'
-      ? { kind: 'per_cylinder', itemName: '', hsnCode: '27111900', unitPrice: 0, discountPerUnit: 0 }
-      : { kind: 'per_kg', itemName: '', hsnCode: '27111900', cylinderCapacityKg: 19, basicPricePerKg: 0, discountPerKg: 0 };
+      ? { kind: 'per_cylinder', itemName: '', hsnCode: '27111900', priceInclGst: 0, discountInclGst: 0 }
+      : { kind: 'per_kg', itemName: '', hsnCode: '27111900', cylinderCapacityKg: 19, pricePerKgInclGst: 0, discountPerKgInclGst: 0 };
     setForm((f) => ({ ...f, items: [...f.items, newItem] }));
   };
   const removeItem = (idx: number) => setForm((f) => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
@@ -377,7 +424,7 @@ function QuotationEditor({
             onChange={(e) => applyCustomerPrefill(e.target.value)}
             options={[
               { value: '', label: 'Freeform lead — type details below' },
-              ...customers.map((c) => ({ value: c.id, label: c.customerName })),
+              ...customers.map((c) => ({ value: c.customerId, label: c.customerName })),
             ]}
           />
           <div />
@@ -459,6 +506,8 @@ function QuotationEditor({
             item={it}
             index={idx}
             types={cylinderTypes}
+            latestPriceByTypeId={latestPriceByTypeId}
+            gstRate={form.gstRate}
             onChange={(patch) => updateItem(idx, patch)}
             onRemove={() => removeItem(idx)}
           />
@@ -509,15 +558,72 @@ function defaultForm(today: string): CreateQuotationInput {
   };
 }
 
+/** Numeric input that avoids the "0-prefix" UX by storing the raw string
+ *  and only converting on blur / commit. Empty is stored as 0 upstream. */
+function NumericInput({
+  label, value, onCommit, step = '0.01',
+}: {
+  label: string;
+  value: number;
+  onCommit: (n: number) => void;
+  step?: string;
+}) {
+  // Track local string so the user can type freely (including leading
+  // decimal, empty, etc.) without React clobbering it back to "0.0".
+  const [local, setLocal] = useState<string>(() => value === 0 ? '' : String(value));
+  // When the parent value changes externally (auto-fill), reflect it.
+  useEffect(() => {
+    const asNum = local === '' ? 0 : Number(local);
+    if (asNum !== value) setLocal(value === 0 ? '' : String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <Input
+      label={label}
+      type="number"
+      inputMode="decimal"
+      step={step}
+      value={local}
+      onChange={(e) => {
+        setLocal(e.target.value);
+        // Commit as we type — but only pass the numeric interpretation.
+        onCommit(e.target.value === '' ? 0 : Number(e.target.value));
+      }}
+      onBlur={() => {
+        // Normalise on blur so "0" and "05" both become "5".
+        if (local !== '' && !Number.isNaN(Number(local))) {
+          setLocal(String(Number(local)));
+        }
+      }}
+    />
+  );
+}
+
 function ItemEditor({
-  item, index, types, onChange, onRemove,
+  item, index, types, latestPriceByTypeId, gstRate, onChange, onRemove,
 }: {
   item: QuotationItemInput;
   index: number;
   types: CylinderTypeLite[];
+  latestPriceByTypeId: Map<string, number>;
+  gstRate: number;
   onChange: (patch: Partial<QuotationItemInput>) => void;
   onRemove: () => void;
 }) {
+  // Derived preview so the user sees "final billable" as they type.
+  const preview = (() => {
+    if (item.kind === 'per_cylinder') {
+      const price = item.priceInclGst || 0;
+      const disc = item.discountInclGst || 0;
+      const final = price - disc;
+      return `Final rate: ${inr.format(final)} incl. GST · Basic (pre-GST): ${inr.format(price / (1 + gstRate))}`;
+    }
+    const price = item.pricePerKgInclGst || 0;
+    const disc = item.discountPerKgInclGst || 0;
+    const final = price - disc;
+    return `Final rate per KG: ${inr.format(final)} incl. GST · Basic per KG: ${inr.format(price / (1 + gstRate))}`;
+  })();
+
   return (
     <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-3 space-y-2">
       <div className="flex items-center justify-between">
@@ -528,27 +634,40 @@ function ItemEditor({
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <Select
-          label="Cylinder type (optional link)"
+          label="Cylinder type"
           value={item.cylinderTypeId ?? ''}
           onChange={(e) => {
             const id = e.target.value || null;
-            const t = types.find((tt) => tt.id === id);
+            const t = types.find((tt) => tt.cylinderTypeId === id);
+            const catalogPrice = id ? latestPriceByTypeId.get(id) : undefined;
             if (item.kind === 'per_kg') {
+              // Auto-fill: for per-KG mode, seed the per-KG rate = catalog
+              // price ÷ capacity. User can override.
+              const perKgSeed = catalogPrice && t?.capacity ? catalogPrice / t.capacity : item.pricePerKgInclGst;
               onChange({
                 cylinderTypeId: id,
                 itemName: t?.typeName ?? item.itemName,
                 hsnCode: t?.hsnCode ?? item.hsnCode,
                 cylinderCapacityKg: t?.capacity ?? item.cylinderCapacityKg,
+                pricePerKgInclGst: perKgSeed,
               } as Partial<QuotationItemInput>);
             } else {
+              // Per-cylinder mode: seed price directly from the catalog.
               onChange({
                 cylinderTypeId: id,
                 itemName: t?.typeName ?? item.itemName,
                 hsnCode: t?.hsnCode ?? item.hsnCode,
+                priceInclGst: catalogPrice ?? item.priceInclGst,
               } as Partial<QuotationItemInput>);
             }
           }}
-          options={[{ value: '', label: '— none —' }, ...types.map((t) => ({ value: t.id, label: t.typeName }))]}
+          options={[
+            { value: '', label: '— none (typed below) —' },
+            ...types.map((t) => {
+              const p = latestPriceByTypeId.get(t.cylinderTypeId);
+              return { value: t.cylinderTypeId, label: p ? `${t.typeName} (Rs. ${p.toFixed(2)})` : t.typeName };
+            }),
+          ]}
         />
         <Input label="Item name" value={item.itemName}
           onChange={(e) => onChange({ itemName: e.target.value } as Partial<QuotationItemInput>)} />
@@ -557,26 +676,27 @@ function ItemEditor({
       </div>
       {item.kind === 'per_cylinder' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <Input label="Rate per cylinder (basic, pre-GST)" type="number" step="0.01"
-            value={item.unitPrice}
-            onChange={(e) => onChange({ unitPrice: Number(e.target.value) } as Partial<QuotationItemInput>)} />
-          <Input label="Discount per cylinder (pre-GST)" type="number" step="0.01"
-            value={item.discountPerUnit}
-            onChange={(e) => onChange({ discountPerUnit: Number(e.target.value) } as Partial<QuotationItemInput>)} />
+          <NumericInput label="Rate per cylinder (incl. GST)"
+            value={item.priceInclGst}
+            onCommit={(n) => onChange({ priceInclGst: n } as Partial<QuotationItemInput>)} />
+          <NumericInput label="Discount per cylinder (incl. GST)"
+            value={item.discountInclGst}
+            onCommit={(n) => onChange({ discountInclGst: n } as Partial<QuotationItemInput>)} />
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <Input label="Cylinder capacity (KG)" type="number" step="0.1"
+          <NumericInput label="Cylinder capacity (KG)" step="0.1"
             value={item.cylinderCapacityKg}
-            onChange={(e) => onChange({ cylinderCapacityKg: Number(e.target.value) } as Partial<QuotationItemInput>)} />
-          <Input label="Basic price per KG (pre-GST)" type="number" step="0.01"
-            value={item.basicPricePerKg}
-            onChange={(e) => onChange({ basicPricePerKg: Number(e.target.value) } as Partial<QuotationItemInput>)} />
-          <Input label="Discount per KG" type="number" step="0.01"
-            value={item.discountPerKg}
-            onChange={(e) => onChange({ discountPerKg: Number(e.target.value) } as Partial<QuotationItemInput>)} />
+            onCommit={(n) => onChange({ cylinderCapacityKg: n } as Partial<QuotationItemInput>)} />
+          <NumericInput label="Rate per KG (incl. GST)"
+            value={item.pricePerKgInclGst}
+            onCommit={(n) => onChange({ pricePerKgInclGst: n } as Partial<QuotationItemInput>)} />
+          <NumericInput label="Discount per KG (incl. GST)"
+            value={item.discountPerKgInclGst}
+            onCommit={(n) => onChange({ discountPerKgInclGst: n } as Partial<QuotationItemInput>)} />
         </div>
       )}
+      <p className="text-xs text-surface-500 italic">{preview}</p>
     </div>
   );
 }
@@ -727,25 +847,27 @@ function QuotationView({
         <div className="space-y-2">
           {q.items.map((it) => {
             if (it.kind === 'per_cylinder') {
-              const netBasic = (it.unitPrice ?? 0) - (it.discountPerUnit ?? 0);
-              const inclGst = netBasic * (1 + q.gstRate);
+              const price = it.priceInclGst ?? 0;
+              const disc = it.discountInclGst ?? 0;
+              const final = price - disc;
               return (
                 <div key={it.quotationItemId} className="border-b border-surface-100 dark:border-surface-800 pb-2 text-sm">
                   <div className="font-medium">{it.itemName} <span className="text-xs text-surface-400">· HSN {it.hsnCode}</span></div>
                   <div className="text-xs text-surface-500">
-                    Rate {inr.format(it.unitPrice ?? 0)} · Discount {inr.format(it.discountPerUnit ?? 0)} · Incl. GST {inr.format(inclGst)}
+                    Rate {inr.format(price)} (incl GST) · Discount {inr.format(disc)} · Final {inr.format(final)}
                   </div>
                 </div>
               );
             }
-            const rspPerKg = (it.basicPricePerKg ?? 0) * (1 + q.gstRate);
-            const netBasic = (it.basicPricePerKg ?? 0) - (it.discountPerKg ?? 0);
-            const inclGst = netBasic * (1 + q.gstRate);
+            const price = it.pricePerKgInclGst ?? 0;
+            const disc = it.discountPerKgInclGst ?? 0;
+            const basicPerKg = price / (1 + q.gstRate);
+            const final = price - disc;
             return (
               <div key={it.quotationItemId} className="border-b border-surface-100 dark:border-surface-800 pb-2 text-sm">
                 <div className="font-medium">{it.itemName} <span className="text-xs text-surface-400">· HSN {it.hsnCode}</span></div>
                 <div className="text-xs text-surface-500">
-                  Rate/KG {inr.format(it.basicPricePerKg ?? 0)} (RSP {inr.format(rspPerKg)}) · Discount/KG {inr.format(it.discountPerKg ?? 0)} · Incl. GST/KG {inr.format(inclGst)}
+                  Rate/KG {inr.format(price)} incl GST (Basic {inr.format(basicPerKg)}) · Discount/KG {inr.format(disc)} · Final/KG {inr.format(final)}
                 </div>
               </div>
             );

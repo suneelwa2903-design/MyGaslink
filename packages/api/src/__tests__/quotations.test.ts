@@ -41,7 +41,7 @@ function samplePayload(overrides: Partial<Parameters<typeof service.createQuotat
     creditTerms: '30 days from date of invoice',
     gstRate: 0.05,
     items: [
-      { kind: 'per_cylinder' as const, itemName: 'Test cyl', hsnCode: '27111900', unitPrice: 2150, discountPerUnit: 50 },
+      { kind: 'per_cylinder' as const, itemName: 'Test cyl', hsnCode: '27111900', priceInclGst: 2150, discountInclGst: 50 },
     ],
     ...overrides,
   } satisfies Parameters<typeof service.createQuotation>[2];
@@ -85,8 +85,8 @@ describe('Quotations (mini-op #7)', () => {
       quotationDate: TEST_DATE_2,
       subject: 'Test subject 2',
       items: [
-        { kind: 'per_cylinder', itemName: 'A', hsnCode: '27111900', unitPrice: 100, discountPerUnit: 0 },
-        { kind: 'per_kg', itemName: 'B', hsnCode: '27111900', cylinderCapacityKg: 19, basicPricePerKg: 100, discountPerKg: 10 },
+        { kind: 'per_cylinder', itemName: 'A', hsnCode: '27111900', priceInclGst: 100, discountInclGst: 0 },
+        { kind: 'per_kg', itemName: 'B', hsnCode: '27111900', cylinderCapacityKg: 19, pricePerKgInclGst: 100, discountPerKgInclGst: 10 },
       ],
     }));
     expect(q.mode).toBe('mixed');

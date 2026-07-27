@@ -1213,13 +1213,17 @@ export const QUOTATION_CREDIT_TERMS_PRESETS = [
   '60 days from date of invoice',
 ] as const;
 
+// v2 (2026-07-27) — every price/discount value is GST-INCLUSIVE.
+// The distributor enters the final rate the customer will pay per
+// unit / per KG; the pre-GST basic is derived at display time as
+// basic = incl / (1 + gstRate).
 const perCylinderItemSchema = z.object({
   kind: z.literal('per_cylinder'),
   cylinderTypeId: uuid.optional().nullable(),
   itemName: z.string().min(1).max(200),
   hsnCode: z.string().min(1).max(20),
-  unitPrice: z.number().positive().max(1_000_000),
-  discountPerUnit: z.number().min(0).max(1_000_000),
+  priceInclGst: z.number().positive().max(1_000_000),
+  discountInclGst: z.number().min(0).max(1_000_000),
   sortOrder: z.number().int().min(0).max(9999).optional(),
   notes: z.string().max(500).optional(),
 });
@@ -1230,8 +1234,8 @@ const perKgItemSchema = z.object({
   itemName: z.string().min(1).max(200),
   hsnCode: z.string().min(1).max(20),
   cylinderCapacityKg: z.number().positive().max(10_000),
-  basicPricePerKg: z.number().positive().max(10_000),
-  discountPerKg: z.number().min(0).max(10_000),
+  pricePerKgInclGst: z.number().positive().max(10_000),
+  discountPerKgInclGst: z.number().min(0).max(10_000),
   sortOrder: z.number().int().min(0).max(9999).optional(),
   notes: z.string().max(500).optional(),
 });

@@ -963,13 +963,20 @@ model QuotationItem {
   itemName              String            @map("item_name") @db.VarChar(200)
   hsnCode               String            @map("hsn_code") @db.VarChar(20)
 
-  // Per-cylinder mode: unitPrice + discountPerUnit; capacityKg unused.
-  // Per-KG mode: basicPricePerKg + discountPerKg; capacityKg required for display.
-  unitPrice             Decimal?          @map("unit_price") @db.Decimal(12, 4)
-  discountPerUnit       Decimal?          @map("discount_per_unit") @db.Decimal(12, 4)
+  // v2 (2026-07-27): all price / discount fields store GST-INCLUSIVE
+  // values — the distributor enters the final rate their customer will
+  // pay, not the pre-GST basic. The basic is derived at display time
+  // (basic = incl / (1 + gstRate)). Documented column names make the
+  // convention obvious at the DB layer.
+  //
+  // Per-cylinder mode: priceInclGst + discountInclGst; capacityKg unused.
+  // Per-KG mode: pricePerKgInclGst + discountPerKgInclGst; capacityKg
+  // required for display in the card header ("425 KG Commercial Cyl").
+  priceInclGst          Decimal?          @map("price_incl_gst") @db.Decimal(12, 4)
+  discountInclGst       Decimal?          @map("discount_incl_gst") @db.Decimal(12, 4)
   cylinderCapacityKg    Decimal?          @map("cylinder_capacity_kg") @db.Decimal(8, 2)
-  basicPricePerKg       Decimal?          @map("basic_price_per_kg") @db.Decimal(12, 4)
-  discountPerKg         Decimal?          @map("discount_per_kg") @db.Decimal(12, 4)
+  pricePerKgInclGst     Decimal?          @map("price_per_kg_incl_gst") @db.Decimal(12, 4)
+  discountPerKgInclGst  Decimal?          @map("discount_per_kg_incl_gst") @db.Decimal(12, 4)
 
   sortOrder             Int               @default(0) @map("sort_order")
   notes                 String?           @db.VarChar(500)
