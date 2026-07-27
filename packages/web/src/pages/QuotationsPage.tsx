@@ -735,11 +735,16 @@ function QuotationView({
     }
   };
 
-  // Fallback for when SMTP isn't configured (or fails). We open a real
-  // new-tab mailto: link — window.location.href was silently ignored on
-  // Chrome without a registered default mailto: handler; window.open
-  // makes the browser show its handler chooser reliably.
-  const openMailtoFallback = () => {
+  // Fallback when server-side SMTP isn't available. Two modes:
+  //   'gmail' — opens Gmail's web compose in a new tab. Works reliably in
+  //             Chrome without needing a registered mailto: handler (which
+  //             is what caused the earlier "nothing happens" symptom).
+  //   'mailto' — the OS default mail-client protocol. Use this for
+  //              Outlook / Apple Mail / etc.
+  // Both routes pre-fill To + Subject + Body from the quote's cover text.
+  // Neither can attach the PDF programmatically — the user hits Download
+  // PDF separately and attaches it in their compose window.
+  const openMailComposer = (mode: 'gmail' | 'mailto' = 'gmail') => {
     if (!q) return;
     const subject = encodeURIComponent(q.subject);
     const body = encodeURIComponent(
@@ -747,23 +752,11 @@ function QuotationView({
       `Please find the attached quotation ${q.quotationNumber} valid until ${q.validUntil}.\n\n` +
       `Regards.`,
     );
-    const href = `mailto:${q.recipientEmail}?subject=${subject}&body=${body}`;
-    // Try a real anchor click first — most reliable across Chrome/Firefox/Safari.
-    const a = document.createElement('a');
-    a.href = href;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // If the browser has no mailto handler, nothing visible happens — show
-    // a copy-friendly toast with the recipient email and instructions.
-    setTimeout(() => {
-      toast(
-        `No mail app registered on this browser. Recipient: ${q.recipientEmail}\nDownload the PDF and attach it manually, or configure SMTP in Settings.`,
-        { duration: 8000 },
-      );
-    }, 500);
+    const href = mode === 'gmail'
+      ? `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(q.recipientEmail)}&su=${subject}&body=${body}`
+      : `mailto:${q.recipientEmail}?subject=${subject}&body=${body}`;
+    window.open(href, '_blank', 'noopener');
+    toast('Download the PDF and attach it in the compose window before sending.', { duration: 6000 });
   };
 
   const [sending, setSending] = useState(false);
@@ -780,12 +773,12 @@ function QuotationView({
         toast.success(`Quotation emailed to ${q?.recipientEmail} with the PDF attached`);
       } else if (result.reason === 'skipped') {
         toast(
-          'SMTP is not configured on this server. Falling back to opening your mail app — attach the PDF manually.',
+          'SMTP not configured — opening Gmail compose instead. Attach the downloaded PDF manually.',
           { duration: 6000 },
         );
-        openMailtoFallback();
+        openMailComposer('gmail');
       } else {
-        toast.error(`SMTP send failed: ${result.error ?? 'unknown error'}. You can open your mail app instead.`);
+        toast.error(`SMTP send failed: ${result.error ?? 'unknown error'}. Click "Open in Gmail" to send manually.`);
       }
     },
     onError: (err) => toast.error(getErrorMessage(err)),
@@ -837,8 +830,11 @@ function QuotationView({
             {q.status === 'sent' ? 'Re-send via email' : 'Send via email'}
           </Button>
         )}
-        <Button variant="secondary" onClick={openMailtoFallback} title="Open your mail app with cover text pre-filled">
-          <HiOutlinePaperAirplane className="h-4 w-4" /> Open mail app
+        <Button variant="secondary" onClick={() => openMailComposer('gmail')} title="Open Gmail compose in a new tab (works without a mailto handler)">
+          <HiOutlinePaperAirplane className="h-4 w-4" /> Open in Gmail
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => openMailComposer('mailto')} title="Try the OS default mail app (Outlook, Apple Mail, etc)">
+          <HiOutlinePaperAirplane className="h-3 w-3" /> Default mail app
         </Button>
         {q.status === 'draft' && (
           <>
