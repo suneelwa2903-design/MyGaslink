@@ -217,25 +217,16 @@ enum PaymentAllocationStatus {
 }
 
 /// Mini-op #5 (2026-07-27) — Expense category taxonomy.
-/// Fixed 13-category set covering everything the distributor / mini-op
-/// operator spends money on OUTSIDE of cylinder purchases (which flow
-/// through PurchaseEntry). Purposely NOT extensible via UI — a stable
-/// enum keeps the reports column-friendly. Reserve "other" for genuine
-/// edge cases; if a category needs adding, do it via schema migration.
-enum ExpenseCategory {
-  fuel                    // vehicle fuel — the biggest recurring line
-  vehicle_maintenance     // service, tyres, spares
-  salaries_wages          // driver + staff pay
-  rent                    // godown + office
-  utilities               // electricity, water, gas connection at office
-  loading_unloading       // per-cylinder labour charges
-  cylinder_deposits       // refundable deposits when adding new cylinders
-  office_supplies         // stationery, printer ink, etc.
-  communication           // mobile bills, internet, hosting
-  insurance               // vehicle, godown, staff
-  taxes_licenses          // GST filing fees, trade license renewal
-  bank_charges            // account fees, transfer charges
-  other                   // last resort — flag for reclassification
+/// TaxDeductibleHint (2026-07-27 mini-op #5 v2): per-category CA-facing hint
+/// for how the expense should be treated. NOT enforced anywhere in v1 — reserved
+/// so a future "Tax treatment" column on reports can drop in without a new
+/// migration. `uncertain` is the sane default until the operator confirms with
+/// their CA.
+enum TaxDeductibleHint {
+  capex           // capitalised — depreciate over years
+  opex            // fully deductible in the year
+  non_deductible  // eg personal expense wrongly booked
+  uncertain
 }
 
 // WI-PENDING-PAYMENTS: a self-reported payment claim from a driver or
@@ -558,6 +549,7 @@ model Distributor {
   purchaseEntries      PurchaseEntry[]
   purchasePayments     PurchasePayment[]
   expenses             Expense[]
+  expenseCategories    ExpenseCategory[]
 
   @@map("distributors")
 }
@@ -769,11 +761,70 @@ model PurchasePaymentAllocation {
 /// Available to BOTH distributor + mini_operator tenants (unlike Purchases
 /// which are mini-op-only). The web + mobile routes gate on distributor_admin
 /// / finance / mini_operator_admin roles.
+/// Mini-op #5 v2 (2026-07-27) — tenant-owned expense taxonomy.
+/// Every distributor gets a seeded set of headers + leaves at creation
+/// time via migration. Distributor admins can add / rename / hide
+/// their own categories; system-seeded rows can be renamed and hidden
+/// but not deleted, so historical statutory continuity is preserved.
+///
+/// Hierarchy — 2 levels enforced by service (schema supports N):
+///   - isHeader=true, parentId=null   → group/heading, NOT selectable on
+///     an Expense; used for visual grouping + report subtotals.
+///   - isHeader=false, parentId=set   → leaf, selectable.
+///   - isHeader=false, parentId=null  → allowed for a top-level "Other"
+///     leaf if a tenant wants a bucket outside every header.
+///
+/// `code` is an immutable machine key (kebab-case). `name` is user-editable.
+/// Renaming changes `name` only — CSV imports, integrations, and old
+/// reports keep resolving by `code`. See feedback_immutable_slug memory.
+model ExpenseCategory {
+  id                   String   @id @default(uuid()) @map("expense_category_id")
+  distributorId        String   @map("distributor_id")
+  parentId             String?  @map("parent_id")
+  code                 String   @db.VarChar(64)
+  name                 String   @db.VarChar(120)
+  isHeader             Boolean  @default(false) @map("is_header")
+  isSystem             Boolean  @default(false) @map("is_system")
+  isActive             Boolean  @default(true)  @map("is_active")
+  sortOrder            Int      @default(0)     @map("sort_order")
+
+  // Progressive-reveal field config — the same knobs we used to hard-code
+  // in the web JS. NULL string fields fall back to sensible defaults in
+  // the client. Only meaningful when isHeader=false.
+  showVehicle          Boolean  @default(false) @map("show_vehicle")
+  vehicleRequired      Boolean  @default(false) @map("vehicle_required")
+  showDriver           Boolean  @default(false) @map("show_driver")
+  driverRequired       Boolean  @default(false) @map("driver_required")
+  vendorLabel          String?  @db.VarChar(60)  @map("vendor_label")
+  vendorPlaceholder    String?  @db.VarChar(120) @map("vendor_placeholder")
+  referenceLabel       String?  @db.VarChar(60)  @map("reference_label")
+  referencePlaceholder String?  @db.VarChar(120) @map("reference_placeholder")
+  hint                 String?  @db.VarChar(500)
+
+  // Reserved for future integrations — see CLAUDE.md mini-op #5 v2 notes.
+  reservedForImport    Boolean  @default(false) @map("reserved_for_import")
+  taxDeductibleHint    TaxDeductibleHint? @map("tax_deductible_hint")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  distributor Distributor        @relation(fields: [distributorId], references: [id])
+  parent      ExpenseCategory?   @relation("ExpenseCategoryHierarchy", fields: [parentId], references: [id])
+  children    ExpenseCategory[]  @relation("ExpenseCategoryHierarchy")
+  expenses    Expense[]
+
+  @@unique([distributorId, code])
+  @@index([distributorId, parentId, sortOrder])
+  @@index([distributorId, isActive])
+  @@map("expense_categories")
+}
+
 model Expense {
   id              String          @id @default(uuid()) @map("expense_id")
   distributorId   String          @map("distributor_id")
   expenseDate     String          @map("expense_date") // YYYY-MM-DD local
-  category        ExpenseCategory
+  categoryId      String          @map("category_id")
   amount          Decimal         @db.Decimal(18, 4)
   description     String          @db.VarChar(500)
   paymentMethod   PaymentMethod   @default(cash) @map("payment_method")
@@ -787,13 +838,14 @@ model Expense {
   updatedAt       DateTime        @updatedAt @map("updated_at")
   deletedAt       DateTime?       @map("deleted_at")
 
-  distributor Distributor @relation(fields: [distributorId], references: [id])
-  vehicle     Vehicle?    @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
-  driver      Driver?     @relation(fields: [driverId], references: [id], onDelete: SetNull)
-  createdByUser User      @relation("ExpensesCreated", fields: [createdBy], references: [id])
+  distributor   Distributor     @relation(fields: [distributorId], references: [id])
+  category      ExpenseCategory @relation(fields: [categoryId], references: [id])
+  vehicle       Vehicle?        @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  driver        Driver?         @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  createdByUser User            @relation("ExpensesCreated", fields: [createdBy], references: [id])
 
   @@index([distributorId, expenseDate(sort: Desc)])
-  @@index([distributorId, category, expenseDate(sort: Desc)])
+  @@index([distributorId, categoryId, expenseDate(sort: Desc)])
   @@index([vehicleId])
   @@index([driverId])
   @@map("expenses")

@@ -42,6 +42,8 @@ import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/compo
 import { cn } from '@/lib/cn';
 import { OnboardingTab } from '@/components/OnboardingTab';
 import TallySetupPanel from '@/components/settings/TallySetupPanel';
+import { ExpenseCategoriesTab } from '@/components/settings/ExpenseCategoriesTab';
+import { HiOutlineBanknotes } from 'react-icons/hi2';
 
 type SettingsTabKey =
   | 'onboarding'
@@ -54,7 +56,8 @@ type SettingsTabKey =
   | 'approvals'
   | 'users'
   | 'licenses'
-  | 'tally';
+  | 'tally'
+  | 'expense_categories';
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
@@ -87,6 +90,10 @@ export default function SettingsPage() {
     // Tally Setup — admin only in v1 (matches GST tab edit gate). Finance
     // read-only view is post-launch. Deep link: ?tab=tally from ReportsPage.
     ...(isAdmin ? [{ key: 'tally' as const, label: 'Tally Setup', icon: HiOutlineCalculator }] : []),
+    // Mini-op #5 v2 (2026-07-27): tenant-owned expense taxonomy. Admin +
+    // mini-op only — finance/inventory just consume the picker, they
+    // don't own the taxonomy.
+    ...(isAdmin || isMiniOperator ? [{ key: 'expense_categories' as const, label: 'Expense Categories', icon: HiOutlineBanknotes }] : []),
   ];
 
   const allowedTabs = tabs.map((t) => t.key);
@@ -139,6 +146,7 @@ export default function SettingsPage() {
       {tab === 'users' && <UsersTab />}
       {tab === 'licenses' && <LicensesTab />}
       {tab === 'tally' && <TallySetupPanel />}
+      {tab === 'expense_categories' && <ExpenseCategoriesTab />}
     </div>
   );
 }

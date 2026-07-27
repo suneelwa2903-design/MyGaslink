@@ -142,14 +142,25 @@ async function main() {
   });
   console.log(`Attribution seeds: vehicle=${vehicle?.vehicleNumber ?? '(none)'}, driver=${driver?.driverName ?? '(none)'}`);
 
+  // Look up categoryId by code for every leaf we plan to write.
+  const categoryRows = await prisma.expenseCategory.findMany({
+    where: { distributorId: distributor.id, isHeader: false, deletedAt: null },
+    select: { id: true, code: true },
+  });
+  const codeToId = new Map(categoryRows.map((c) => [c.code, c.id]));
+
   let created = 0;
   for (const r of ROWS) {
+    const categoryId = codeToId.get(r.category);
+    if (!categoryId) {
+      console.warn(`  skipping row — category code ${r.category} not seeded for this tenant`);
+      continue;
+    }
     await prisma.expense.create({
       data: {
         distributorId: distributor.id,
         expenseDate: isoDayLocal(r.daysAgo),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        category: r.category as any,
+        categoryId,
         amount: r.amount,
         description: r.description,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

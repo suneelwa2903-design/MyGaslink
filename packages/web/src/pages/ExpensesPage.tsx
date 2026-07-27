@@ -1,16 +1,11 @@
 /**
- * Mini-op #5 (2026-07-27) — Expenses page.
+ * Mini-op #5 v2 (2026-07-27 evening) — Expenses page.
  *
  * Route: /app/expenses. Available to distributor_admin / finance /
- * mini_operator_admin / super_admin (see the ProtectedRoute wrap in
- * routes/index.tsx). Purposely NOT gated to mini-op — regular
- * distributors also need to track operational expenses.
- *
- * Layout:
- *   - Filter row: date range + category dropdown
- *   - Summary strip: 4 tiles (Total, count, top-3 categories rollup)
- *   - Table: paginated list with per-row edit
- *   - Modals: Create + Edit share the same body
+ * mini_operator_admin / super_admin. Consumes tenant-owned expense
+ * taxonomy from GET /api/expense-categories — no hard-coded categories
+ * left in the client. Progressive-reveal form config is driven by the
+ * selected leaf's own showVehicle / vendorLabel / etc. columns.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -18,123 +13,17 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { HiOutlinePlus, HiOutlinePencil, HiOutlineTrash, HiOutlineArrowDownTray } from 'react-icons/hi2';
-import { api } from '@/lib/api';
 import {
   createExpenseSchema,
-  EXPENSE_CATEGORIES,
   EXPENSE_PAYMENT_METHODS,
   localTodayISO,
   type CreateExpenseInput,
   type Expense,
+  type ExpenseCategory,
   type ExpenseSummary,
 } from '@gaslink/shared';
-import { apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
+import { api, apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
 import { Button, Input, Loader, EmptyState, Modal, Select } from '@/components/ui';
-
-// Per-category field config. Drives progressive reveal in the form: which of
-// {Vehicle, Driver} are shown, and what label + placeholder Vendor + Reference
-// carry for that category. Kept in ONE place so mobile can re-use identical
-// copy later.
-type CategoryFieldConfig = {
-  showVehicle: boolean;
-  vehicleRequired?: boolean;
-  showDriver: boolean;
-  driverRequired?: boolean;
-  vendorLabel: string;
-  vendorPlaceholder: string;
-  referenceLabel: string;
-  referencePlaceholder: string;
-  hint?: string;
-};
-
-const CATEGORY_FIELDS: Record<string, CategoryFieldConfig> = {
-  fuel: {
-    showVehicle: true, vehicleRequired: true, showDriver: true,
-    vendorLabel: 'Petrol pump', vendorPlaceholder: 'e.g. HP Petrol Pump',
-    referenceLabel: 'Bill #', referencePlaceholder: 'From the fuel bill',
-  },
-  vehicle_maintenance: {
-    showVehicle: true, vehicleRequired: true, showDriver: false,
-    vendorLabel: 'Service center', vendorPlaceholder: 'e.g. Bosch Service',
-    referenceLabel: 'Invoice #', referencePlaceholder: 'From the service invoice',
-  },
-  salaries_wages: {
-    showVehicle: false, showDriver: true,
-    vendorLabel: 'Paid to (helper / staff)', vendorPlaceholder: 'e.g. Ravi (helper)',
-    referenceLabel: 'Reference #', referencePlaceholder: 'Any receipt / note ID',
-    hint: 'Pick a driver from the dropdown for driver salary. For helpers or other staff, type in "Paid to".',
-  },
-  rent: {
-    showVehicle: false, showDriver: false,
-    vendorLabel: 'Landlord', vendorPlaceholder: 'Landlord name',
-    referenceLabel: 'Receipt #', referencePlaceholder: 'Rent receipt number',
-  },
-  utilities: {
-    showVehicle: false, showDriver: false,
-    vendorLabel: 'Provider', vendorPlaceholder: 'e.g. TSSPDCL, Metro Water',
-    referenceLabel: 'Bill / account #', referencePlaceholder: 'Utility bill number',
-  },
-  loading_unloading: {
-    showVehicle: false, showDriver: true,
-    vendorLabel: 'Labor / vendor', vendorPlaceholder: 'e.g. Ramu (loader)',
-    referenceLabel: 'Reference #', referencePlaceholder: 'Any receipt / note ID',
-  },
-  cylinder_deposits: {
-    showVehicle: false, showDriver: false,
-    vendorLabel: 'Supplier', vendorPlaceholder: 'e.g. HPCL depot',
-    referenceLabel: 'Deposit receipt #', referencePlaceholder: 'From deposit slip',
-  },
-  office_supplies: {
-    showVehicle: false, showDriver: false,
-    vendorLabel: 'Store', vendorPlaceholder: 'e.g. Reliance Trends',
-    referenceLabel: 'Bill #', referencePlaceholder: 'From the bill',
-  },
-  communication: {
-    showVehicle: false, showDriver: false,
-    vendorLabel: 'Provider', vendorPlaceholder: 'e.g. Airtel, Jio',
-    referenceLabel: 'Bill / account #', referencePlaceholder: 'Utility bill number',
-  },
-  insurance: {
-    showVehicle: true, showDriver: true,
-    vendorLabel: 'Insurer', vendorPlaceholder: 'e.g. Bajaj Allianz',
-    referenceLabel: 'Policy #', referencePlaceholder: 'Insurance policy number',
-    hint: 'Pick a Vehicle for vehicle insurance, or a Driver for staff health / accident cover.',
-  },
-  taxes_licenses: {
-    showVehicle: false, showDriver: false,
-    vendorLabel: 'Department', vendorPlaceholder: 'e.g. GST, RTO',
-    referenceLabel: 'Challan #', referencePlaceholder: 'Payment challan / receipt',
-  },
-  bank_charges: {
-    showVehicle: false, showDriver: false,
-    vendorLabel: 'Bank', vendorPlaceholder: 'e.g. HDFC, SBI',
-    referenceLabel: 'Transaction #', referencePlaceholder: 'Statement reference',
-  },
-  other: {
-    showVehicle: true, showDriver: true,
-    vendorLabel: 'Vendor (optional)', vendorPlaceholder: 'Vendor name',
-    referenceLabel: 'Reference # (optional)', referencePlaceholder: 'Any reference',
-  },
-};
-
-const DEFAULT_FIELD_CONFIG: CategoryFieldConfig = CATEGORY_FIELDS.other;
-
-// Human-friendly category labels for the dropdown + summary tiles.
-const CATEGORY_LABELS: Record<string, string> = {
-  fuel: 'Fuel',
-  vehicle_maintenance: 'Vehicle maintenance',
-  salaries_wages: 'Salaries & wages',
-  rent: 'Rent',
-  utilities: 'Utilities',
-  loading_unloading: 'Loading / unloading',
-  cylinder_deposits: 'Cylinder deposits',
-  office_supplies: 'Office supplies',
-  communication: 'Communication',
-  insurance: 'Insurance',
-  taxes_licenses: 'Taxes & licenses',
-  bank_charges: 'Bank charges',
-  other: 'Other',
-};
 
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Cash',
@@ -154,25 +43,112 @@ const inr = new Intl.NumberFormat('en-IN', {
 interface Vehicle { id: string; vehicleNumber: string }
 interface Driver { id: string; driverName: string }
 interface ExpensesListResponse { expenses: Expense[]; meta: { page: number; pageSize: number; total: number; pageCount: number } }
+interface CategoriesResponse { categories: ExpenseCategory[] }
+
+// ─── Category-tree helpers ───────────────────────────────────────────────
+
+/** Grouped picker options — headers as optgroup labels, leaves as options.
+ * Only active + non-header categories are selectable. */
+interface GroupedOption { headerName: string; leaves: { id: string; name: string }[] }
+
+function buildGroupedOptions(categories: ExpenseCategory[]): GroupedOption[] {
+  const active = categories.filter((c) => c.isActive);
+  const headers = active.filter((c) => c.isHeader).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  const leavesByParent = new Map<string, ExpenseCategory[]>();
+  const orphans: ExpenseCategory[] = [];
+  for (const c of active) {
+    if (c.isHeader) continue;
+    if (c.parentId) {
+      const arr = leavesByParent.get(c.parentId) ?? [];
+      arr.push(c);
+      leavesByParent.set(c.parentId, arr);
+    } else {
+      orphans.push(c);
+    }
+  }
+  const groups: GroupedOption[] = headers.map((h) => ({
+    headerName: h.name,
+    leaves: (leavesByParent.get(h.categoryId) ?? [])
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+      .map((c) => ({ id: c.categoryId, name: c.name })),
+  })).filter((g) => g.leaves.length > 0);
+  if (orphans.length > 0) {
+    groups.push({
+      headerName: 'Uncategorised',
+      leaves: orphans
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+        .map((c) => ({ id: c.categoryId, name: c.name })),
+    });
+  }
+  return groups;
+}
+
+/** Native <select> with <optgroup> support — the shared Select component
+ * only understands flat options, so we render a raw select here. */
+function GroupedCategorySelect({
+  label, value, onChange, groups, required, includeAllOption, allOptionLabel,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  groups: GroupedOption[];
+  required?: boolean;
+  includeAllOption?: boolean;
+  allOptionLabel?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      {label && (
+        <label className="text-sm font-medium text-surface-700 dark:text-surface-200">
+          {label}{required && ' *'}
+        </label>
+      )}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        required={required}
+        className="rounded-md border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 px-3 py-2 text-sm text-surface-900 dark:text-white focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+      >
+        {includeAllOption && <option value="">{allOptionLabel ?? 'All categories'}</option>}
+        {!includeAllOption && !required && <option value="">— select —</option>}
+        {groups.map((g) => (
+          <optgroup key={g.headerName} label={g.headerName}>
+            {g.leaves.map((l) => (
+              <option key={l.id} value={l.id}>{l.name}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────
 
 export default function ExpensesPage() {
   const queryClient = useQueryClient();
-  // Default to current month.
   const today = localTodayISO();
   const monthStart = today.slice(0, 8) + '01';
   const [from, setFrom] = useState<string>(monthStart);
   const [to, setTo] = useState<string>(today);
-  const [category, setCategory] = useState<string>('');
+  const [categoryId, setCategoryId] = useState<string>('');
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
 
+  const categoriesQuery = useQuery({
+    queryKey: ['expense-categories'],
+    queryFn: () => apiGet<CategoriesResponse>('/expense-categories'),
+  });
+  const categories = categoriesQuery.data?.categories ?? [];
+  const groupedOptions = useMemo(() => buildGroupedOptions(categories), [categories]);
+
   const listQuery = useQuery({
-    queryKey: ['expenses', from, to, category, page],
+    queryKey: ['expenses', from, to, categoryId, page],
     queryFn: () => apiGet<ExpensesListResponse>('/expenses', {
       from, to,
-      ...(category ? { category } : {}),
+      ...(categoryId ? { categoryId } : {}),
       page, pageSize: 25,
     }),
   });
@@ -180,7 +156,6 @@ export default function ExpensesPage() {
     queryKey: ['expenses-summary', from, to],
     queryFn: () => apiGet<ExpenseSummary>('/expenses/summary', { from, to }),
   });
-  // Attribution pickers — fetch once on mount.
   const vehiclesQuery = useQuery({
     queryKey: ['vehicles-for-expense'],
     queryFn: () => apiGet<{ vehicles: Vehicle[] }>('/vehicles'),
@@ -230,14 +205,13 @@ export default function ExpensesPage() {
       <div className="card p-4 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
         <Input label="From" type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} />
         <Input label="To" type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} />
-        <Select
+        <GroupedCategorySelect
           label="Category"
-          value={category}
-          onChange={(e) => { setCategory(e.target.value); setPage(1); }}
-          options={[
-            { value: '', label: 'All categories' },
-            ...EXPENSE_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] ?? c })),
-          ]}
+          value={categoryId}
+          onChange={(v) => { setCategoryId(v); setPage(1); }}
+          groups={groupedOptions}
+          includeAllOption
+          allOptionLabel="All categories"
         />
         <div className="text-right text-xs text-surface-500 dark:text-surface-400">
           {summaryQuery.data && `${summaryQuery.data.count} entries · ${inr.format(summaryQuery.data.totalAmount)}`}
@@ -253,8 +227,10 @@ export default function ExpensesPage() {
           </div>
         </div>
         {topCategories.map((c) => (
-          <div key={c.category} className="card p-4">
-            <div className="text-xs text-surface-500 dark:text-surface-400">{CATEGORY_LABELS[c.category] ?? c.category}</div>
+          <div key={c.categoryId} className="card p-4">
+            <div className="text-xs text-surface-500 dark:text-surface-400">
+              {c.parentName ? `${c.parentName} / ${c.categoryName}` : c.categoryName}
+            </div>
             <div className="mt-1 text-2xl font-bold text-surface-900 dark:text-white">
               {inr.format(c.amount)}
             </div>
@@ -296,7 +272,7 @@ export default function ExpensesPage() {
                 {listQuery.data.expenses.map((e) => (
                   <tr key={e.expenseId}>
                     <td className="whitespace-nowrap">{e.expenseDate}</td>
-                    <td>{CATEGORY_LABELS[e.category] ?? e.category}</td>
+                    <td title={e.categoryPath}>{e.categoryName}</td>
                     <td className="max-w-xs truncate" title={e.description}>{e.description}</td>
                     <td>{PAYMENT_LABELS[e.paymentMethod] ?? e.paymentMethod}</td>
                     <td className="text-sm text-surface-500 dark:text-surface-400">
@@ -338,6 +314,8 @@ export default function ExpensesPage() {
       {createOpen && (
         <ExpenseFormModal
           mode="create"
+          categories={categories}
+          groups={groupedOptions}
           vehicles={vehiclesQuery.data?.vehicles ?? []}
           drivers={driversQuery.data?.drivers ?? []}
           onClose={() => setCreateOpen(false)}
@@ -353,6 +331,8 @@ export default function ExpensesPage() {
         <ExpenseFormModal
           mode="edit"
           expense={editing}
+          categories={categories}
+          groups={groupedOptions}
           vehicles={vehiclesQuery.data?.vehicles ?? []}
           drivers={driversQuery.data?.drivers ?? []}
           onClose={() => setEditing(null)}
@@ -368,6 +348,8 @@ export default function ExpensesPage() {
         <DownloadReportModal
           defaultFrom={from}
           defaultTo={to}
+          categories={categories}
+          groups={groupedOptions}
           onClose={() => setDownloadOpen(false)}
         />
       )}
@@ -378,31 +360,46 @@ export default function ExpensesPage() {
 // ─── Download report modal ─────────────────────────────────────────────────
 
 function DownloadReportModal({
-  defaultFrom, defaultTo, onClose,
+  defaultFrom, defaultTo, categories, groups, onClose,
 }: {
   defaultFrom: string;
   defaultTo: string;
+  categories: ExpenseCategory[];
+  groups: GroupedOption[];
   onClose: () => void;
 }) {
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
-  const [scope, setScope] = useState<'consolidated' | 'single'>('consolidated');
-  const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0]);
+  const [scope, setScope] = useState<'consolidated' | 'header' | 'leaf'>('consolidated');
+  const headers = useMemo(
+    () => categories.filter((c) => c.isHeader && c.isActive).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+    [categories],
+  );
+  const [headerId, setHeaderId] = useState<string>(headers[0]?.categoryId ?? '');
+  const [categoryId, setCategoryId] = useState<string>(groups[0]?.leaves[0]?.id ?? '');
   const [downloading, setDownloading] = useState(false);
+
+  // Reset defaults once categories load.
+  useEffect(() => {
+    if (!headerId && headers[0]) setHeaderId(headers[0].categoryId);
+    if (!categoryId && groups[0]?.leaves[0]) setCategoryId(groups[0].leaves[0].id);
+  }, [headers, groups, headerId, categoryId]);
 
   const handleDownload = async () => {
     setDownloading(true);
     try {
       const params: Record<string, string> = { from, to };
-      if (scope === 'single') params.category = category;
-      const resp = await api.get('/expenses/report/pdf', {
-        params,
-        responseType: 'blob',
-      });
+      if (scope === 'header') params.headerId = headerId;
+      if (scope === 'leaf') params.categoryId = categoryId;
+      const resp = await api.get('/expenses/report/pdf', { params, responseType: 'blob' });
       const url = window.URL.createObjectURL(resp.data);
       const a = document.createElement('a');
       a.href = url;
-      const suffix = scope === 'single' ? category : 'consolidated';
+      const suffix = scope === 'leaf'
+        ? categories.find((c) => c.categoryId === categoryId)?.code ?? 'category'
+        : scope === 'header'
+          ? categories.find((c) => c.categoryId === headerId)?.code ?? 'header'
+          : 'consolidated';
       a.download = `expense-report-${suffix}-${from}-to-${to}.pdf`;
       a.click();
       window.URL.revokeObjectURL(url);
@@ -429,32 +426,47 @@ function DownloadReportModal({
           <div className="flex flex-col gap-2">
             <label className="flex items-start gap-2 text-sm">
               <input type="radio" name="scope" value="consolidated"
-                checked={scope === 'consolidated'}
-                onChange={() => setScope('consolidated')}
-                className="mt-1" />
+                checked={scope === 'consolidated'} onChange={() => setScope('consolidated')} className="mt-1" />
               <div>
                 <div className="font-medium">Consolidated (all categories)</div>
                 <div className="text-xs text-surface-500 dark:text-surface-400">
-                  Grouped by category with per-category subtotals and a grand total
+                  Grouped by header with per-leaf subtotals, header totals, and a grand total
                 </div>
               </div>
             </label>
             <label className="flex items-start gap-2 text-sm">
-              <input type="radio" name="scope" value="single"
-                checked={scope === 'single'}
-                onChange={() => setScope('single')}
-                className="mt-1" />
+              <input type="radio" name="scope" value="header"
+                checked={scope === 'header'} onChange={() => setScope('header')} className="mt-1" />
               <div className="flex-1">
-                <div className="font-medium">Single category</div>
+                <div className="font-medium">One header (all its subcategories)</div>
+                <div className="text-xs text-surface-500 dark:text-surface-400 mb-2">
+                  e.g. all "Vehicle Costs" leaves with per-leaf subtotals
+                </div>
+                {scope === 'header' && (
+                  <Select
+                    label=""
+                    value={headerId}
+                    onChange={(e) => setHeaderId(e.target.value)}
+                    options={headers.map((h) => ({ value: h.categoryId, label: h.name }))}
+                  />
+                )}
+              </div>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="radio" name="scope" value="leaf"
+                checked={scope === 'leaf'} onChange={() => setScope('leaf')} className="mt-1" />
+              <div className="flex-1">
+                <div className="font-medium">Single category (leaf)</div>
                 <div className="text-xs text-surface-500 dark:text-surface-400 mb-2">
                   Flat table filtered to one category
                 </div>
-                {scope === 'single' && (
-                  <Select
+                {scope === 'leaf' && (
+                  <GroupedCategorySelect
                     label=""
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    options={EXPENSE_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] ?? c }))}
+                    value={categoryId}
+                    onChange={setCategoryId}
+                    groups={groups}
+                    required
                   />
                 )}
               </div>
@@ -476,21 +488,19 @@ function DownloadReportModal({
 // ─── Create / Edit modal ────────────────────────────────────────────────────
 
 function ExpenseFormModal({
-  mode,
-  expense,
-  vehicles,
-  drivers,
-  onClose,
-  onSaved,
+  mode, expense, categories, groups, vehicles, drivers, onClose, onSaved,
 }: {
   mode: 'create' | 'edit';
   expense?: Expense;
+  categories: ExpenseCategory[];
+  groups: GroupedOption[];
   vehicles: Vehicle[];
   drivers: Driver[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const isEdit = mode === 'edit' && !!expense;
+  const firstLeafId = groups[0]?.leaves[0]?.id ?? '';
   const {
     register, handleSubmit, watch, setValue, formState: { errors },
   } = useForm<CreateExpenseInput>({
@@ -498,7 +508,7 @@ function ExpenseFormModal({
     defaultValues: isEdit
       ? {
           expenseDate: expense!.expenseDate,
-          category: expense!.category as CreateExpenseInput['category'],
+          categoryId: expense!.categoryId,
           amount: expense!.amount,
           description: expense!.description,
           paymentMethod: expense!.paymentMethod as CreateExpenseInput['paymentMethod'],
@@ -510,27 +520,37 @@ function ExpenseFormModal({
         }
       : {
           expenseDate: localTodayISO(),
-          category: 'fuel',
+          categoryId: firstLeafId,
           amount: 0,
           description: '',
           paymentMethod: 'cash',
         },
   });
 
-  // Progressive reveal — the current category dictates which fields render.
-  const currentCategory = watch('category');
-  const fieldCfg = CATEGORY_FIELDS[currentCategory ?? ''] ?? DEFAULT_FIELD_CONFIG;
+  // Watch the selected category so we can drive the progressive reveal.
+  const currentCategoryId = watch('categoryId');
+  const currentCategory = useMemo(
+    () => categories.find((c) => c.categoryId === currentCategoryId),
+    [categories, currentCategoryId],
+  );
+  const showVehicle = currentCategory?.showVehicle ?? false;
+  const vehicleRequired = currentCategory?.vehicleRequired ?? false;
+  const showDriver = currentCategory?.showDriver ?? false;
+  const driverRequired = currentCategory?.driverRequired ?? false;
+  const vendorLabel = currentCategory?.vendorLabel || 'Vendor (optional)';
+  const vendorPlaceholder = currentCategory?.vendorPlaceholder || 'Vendor name';
+  const referenceLabel = currentCategory?.referenceLabel || 'Reference # (optional)';
+  const referencePlaceholder = currentCategory?.referencePlaceholder || 'Any reference';
+  const hint = currentCategory?.hint;
 
-  // When the user switches category, drop any vehicle/driver value that the
-  // new category no longer shows — otherwise stale IDs leak on submit.
+  // Clear vehicle/driver when switching to a category that doesn't ask for them.
   useEffect(() => {
-    if (!fieldCfg.showVehicle) setValue('vehicleId', undefined);
-    if (!fieldCfg.showDriver) setValue('driverId', undefined);
-  }, [currentCategory, fieldCfg.showVehicle, fieldCfg.showDriver, setValue]);
+    if (!showVehicle) setValue('vehicleId', undefined);
+    if (!showDriver) setValue('driverId', undefined);
+  }, [currentCategoryId, showVehicle, showDriver, setValue]);
 
   const mutation = useMutation({
     mutationFn: (data: CreateExpenseInput) => {
-      // Blank strings from selects → undefined so zod optional() accepts.
       const clean = {
         ...data,
         vendorName: data.vendorName || undefined,
@@ -571,13 +591,16 @@ function ExpenseFormModal({
             {...register('amount', { valueAsNumber: true })}
           />
         </div>
-        <Select
+        <GroupedCategorySelect
           label="Category"
+          value={currentCategoryId ?? ''}
+          onChange={(v) => setValue('categoryId', v, { shouldValidate: true })}
+          groups={groups}
           required
-          error={errors.category?.message}
-          {...register('category')}
-          options={EXPENSE_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] ?? c }))}
         />
+        {errors.categoryId?.message && (
+          <p className="text-xs text-red-500 -mt-2">{errors.categoryId.message}</p>
+        )}
         <Input
           label="Description"
           required
@@ -593,19 +616,17 @@ function ExpenseFormModal({
             options={EXPENSE_PAYMENT_METHODS.map((m) => ({ value: m, label: PAYMENT_LABELS[m] ?? m }))}
           />
           <Input
-            label={fieldCfg.vendorLabel}
-            placeholder={fieldCfg.vendorPlaceholder}
+            label={vendorLabel}
+            placeholder={vendorPlaceholder}
             {...register('vendorName')}
           />
         </div>
-        {fieldCfg.hint && (
-          <p className="text-xs text-slate-500 dark:text-slate-400 -mt-1">{fieldCfg.hint}</p>
-        )}
-        {(fieldCfg.showVehicle || fieldCfg.showDriver) && (
+        {hint && <p className="text-xs text-slate-500 dark:text-slate-400 -mt-1">{hint}</p>}
+        {(showVehicle || showDriver) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {fieldCfg.showVehicle && (
+            {showVehicle && (
               <Select
-                label={`Vehicle${fieldCfg.vehicleRequired ? '' : ' (optional)'}`}
+                label={`Vehicle${vehicleRequired ? '' : ' (optional)'}`}
                 {...register('vehicleId')}
                 options={[
                   { value: '', label: '—' },
@@ -613,9 +634,9 @@ function ExpenseFormModal({
                 ]}
               />
             )}
-            {fieldCfg.showDriver && (
+            {showDriver && (
               <Select
-                label={`Driver${fieldCfg.driverRequired ? '' : ' (optional)'}`}
+                label={`Driver${driverRequired ? '' : ' (optional)'}`}
                 {...register('driverId')}
                 options={[
                   { value: '', label: '—' },
@@ -626,11 +647,7 @@ function ExpenseFormModal({
           </div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Input
-            label={fieldCfg.referenceLabel}
-            placeholder={fieldCfg.referencePlaceholder}
-            {...register('referenceNumber')}
-          />
+          <Input label={referenceLabel} placeholder={referencePlaceholder} {...register('referenceNumber')} />
           <Input label="Notes (optional)" {...register('notes')} />
         </div>
         <div className="flex justify-end gap-3 pt-3">

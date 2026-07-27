@@ -1,42 +1,24 @@
 /**
- * Mini-op #5 (2026-07-27) — Mobile Expenses screen.
+ * Mini-op #5 v2 (2026-07-27 evening) — Mobile Expenses screen.
  *
- * Hidden route under the (admin) tab group (registered via href: null in
- * the layout below). Reached from More → Expenses OR via router.push.
- *
- * MVP: list + create modal. Edit/delete on web only for v1 — fits the
- * mobile screen budget and keeps this file small.
+ * Hidden route under (admin) — reached from More → Expenses.
+ * MVP: list + create modal. Edit/delete + category management live on
+ * the web. Categories are fetched from GET /api/expense-categories and
+ * rendered as chip rows grouped under their header labels.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
 import {
-  EXPENSE_CATEGORIES,
   EXPENSE_PAYMENT_METHODS,
-  type ExpenseCategoryValue,
   type ExpensePaymentMethod,
   type Expense,
+  type ExpenseCategory,
   type ExpenseSummary,
 } from '@gaslink/shared';
-
-const CATEGORY_LABELS: Record<string, string> = {
-  fuel: 'Fuel',
-  vehicle_maintenance: 'Vehicle maintenance',
-  salaries_wages: 'Salaries & wages',
-  rent: 'Rent',
-  utilities: 'Utilities',
-  loading_unloading: 'Loading / unloading',
-  cylinder_deposits: 'Cylinder deposits',
-  office_supplies: 'Office supplies',
-  communication: 'Communication',
-  insurance: 'Insurance',
-  taxes_licenses: 'Taxes & licenses',
-  bank_charges: 'Bank charges',
-  other: 'Other',
-};
 
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Cash', cheque: 'Cheque', online: 'Online',
@@ -50,6 +32,36 @@ const inr = new Intl.NumberFormat('en-IN', {
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+interface GroupedOption { headerName: string; leaves: ExpenseCategory[] }
+
+function buildGroupedOptions(categories: ExpenseCategory[]): GroupedOption[] {
+  const active = categories.filter((c) => c.isActive);
+  const headers = active.filter((c) => c.isHeader).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  const leavesByParent = new Map<string, ExpenseCategory[]>();
+  const orphans: ExpenseCategory[] = [];
+  for (const c of active) {
+    if (c.isHeader) continue;
+    if (c.parentId) {
+      const arr = leavesByParent.get(c.parentId) ?? [];
+      arr.push(c);
+      leavesByParent.set(c.parentId, arr);
+    } else {
+      orphans.push(c);
+    }
+  }
+  const groups: GroupedOption[] = headers.map((h) => ({
+    headerName: h.name,
+    leaves: (leavesByParent.get(h.categoryId) ?? []).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+  })).filter((g) => g.leaves.length > 0);
+  if (orphans.length) {
+    groups.push({
+      headerName: 'Uncategorised',
+      leaves: orphans.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+    });
+  }
+  return groups;
 }
 
 export default function ExpensesScreen() {
@@ -69,18 +81,19 @@ export default function ExpensesScreen() {
     '/expenses/summary',
     { from, to },
   );
+  const { data: categoriesResp } = useApiQuery<{ categories: ExpenseCategory[] }>(
+    ['expense-categories'],
+    '/expense-categories',
+  );
+  const categories = categoriesResp?.categories ?? [];
+  const groups = useMemo(() => buildGroupedOptions(categories), [categories]);
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 96 }}>
-        {/* Summary tile */}
         <View style={{
-          backgroundColor: colors.cardBg,
-          borderRadius: 12,
-          padding: 16,
-          borderWidth: 1,
-          borderColor: colors.cardBorder,
-          marginBottom: 12,
+          backgroundColor: colors.cardBg, borderRadius: 12, padding: 16,
+          borderWidth: 1, borderColor: colors.cardBorder, marginBottom: 12,
         }}>
           <Text style={{ fontSize: 12, color: colors.textMuted }}>Total spent · {from} → {to}</Text>
           <Text style={{ fontSize: 26, fontWeight: '800', color: colors.text, marginTop: 4 }}>
@@ -91,33 +104,18 @@ export default function ExpensesScreen() {
           </Text>
         </View>
 
-        {/* Date range picker (text inputs — matches the rest of the mini-op forms) */}
         <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textSecondary, marginBottom: 4 }}>From</Text>
-            <TextInput
-              value={from}
-              onChangeText={setFrom}
-              placeholder="YYYY-MM-DD"
+            <TextInput value={from} onChangeText={setFrom} placeholder="YYYY-MM-DD"
               placeholderTextColor={colors.textMuted}
-              style={{
-                borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 8,
-                padding: 10, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg,
-              }}
-            />
+              style={{ borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 8, padding: 10, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg }} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textSecondary, marginBottom: 4 }}>To</Text>
-            <TextInput
-              value={to}
-              onChangeText={setTo}
-              placeholder="YYYY-MM-DD"
+            <TextInput value={to} onChangeText={setTo} placeholder="YYYY-MM-DD"
               placeholderTextColor={colors.textMuted}
-              style={{
-                borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 8,
-                padding: 10, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg,
-              }}
-            />
+              style={{ borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 8, padding: 10, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg }} />
           </View>
         </View>
 
@@ -135,17 +133,11 @@ export default function ExpensesScreen() {
         ) : (
           <View style={{ backgroundColor: colors.cardBg, borderRadius: 12, borderWidth: 1, borderColor: colors.cardBorder, overflow: 'hidden' }}>
             {list.expenses.map((e, idx) => (
-              <View
-                key={e.expenseId}
-                style={{
-                  padding: 12,
-                  borderBottomWidth: idx === list.expenses.length - 1 ? 0 : 1,
-                  borderBottomColor: colors.divider,
-                }}
-              >
+              <View key={e.expenseId}
+                style={{ padding: 12, borderBottomWidth: idx === list.expenses.length - 1 ? 0 : 1, borderBottomColor: colors.divider }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }} numberOfLines={1}>
-                    {CATEGORY_LABELS[e.category] ?? e.category}
+                    {e.categoryName}
                   </Text>
                   <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>
                     {inr.format(e.amount)}
@@ -166,44 +158,50 @@ export default function ExpensesScreen() {
         )}
       </ScrollView>
 
-      {/* Floating add button */}
-      <TouchableOpacity
-        onPress={() => setCreateOpen(true)}
-        activeOpacity={0.8}
+      <TouchableOpacity onPress={() => setCreateOpen(true)} activeOpacity={0.8}
         style={{
-          position: 'absolute', bottom: 24, right: 24,
-          width: 56, height: 56, borderRadius: 28,
-          backgroundColor: '#dc2626',
-          alignItems: 'center', justifyContent: 'center',
-          elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 3 },
-          shadowOpacity: 0.25, shadowRadius: 6,
-        }}
-      >
+          position: 'absolute', bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28,
+          backgroundColor: '#dc2626', alignItems: 'center', justifyContent: 'center',
+          elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 6,
+        }}>
         <Ionicons name="add" size={28} color="#ffffff" />
       </TouchableOpacity>
 
       {createOpen && (
         <CreateExpenseModal
+          groups={groups}
           onClose={() => setCreateOpen(false)}
-          onCreated={() => {
-            setCreateOpen(false);
-            refetch();
-          }}
+          onCreated={() => { setCreateOpen(false); refetch(); }}
         />
       )}
     </SafeAreaView>
   );
 }
 
-function CreateExpenseModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateExpenseModal({
+  groups, onClose, onCreated,
+}: {
+  groups: GroupedOption[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const { colors } = useTheme();
+  const firstLeaf = groups[0]?.leaves[0] ?? null;
   const [expenseDate, setExpenseDate] = useState(todayISO());
-  const [category, setCategory] = useState<ExpenseCategoryValue>('fuel');
+  const [categoryId, setCategoryId] = useState<string>(firstLeaf?.categoryId ?? '');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<ExpensePaymentMethod>('cash');
   const [vendorName, setVendorName] = useState('');
   const [notes, setNotes] = useState('');
+
+  const selectedLeaf = useMemo(() => {
+    for (const g of groups) {
+      const found = g.leaves.find((l) => l.categoryId === categoryId);
+      if (found) return found;
+    }
+    return null;
+  }, [groups, categoryId]);
 
   const createMut = useApiMutation('post', '/expenses', {
     invalidateKeys: [['expenses'], ['expenses-summary']],
@@ -211,7 +209,7 @@ function CreateExpenseModal({ onClose, onCreated }: { onClose: () => void; onCre
     onSuccess: onCreated,
   });
 
-  const canSave = amount.trim().length > 0 && description.trim().length > 0 && !createMut.isPending;
+  const canSave = !!categoryId && amount.trim().length > 0 && description.trim().length > 0 && !createMut.isPending;
 
   const handleSubmit = () => {
     const amt = parseFloat(amount);
@@ -219,9 +217,13 @@ function CreateExpenseModal({ onClose, onCreated }: { onClose: () => void; onCre
       Alert.alert('Validation', 'Enter a positive amount.');
       return;
     }
+    if (!categoryId) {
+      Alert.alert('Validation', 'Pick a category.');
+      return;
+    }
     createMut.mutate({
       expenseDate,
-      category,
+      categoryId,
       amount: amt,
       description: description.trim(),
       paymentMethod,
@@ -251,32 +253,44 @@ function CreateExpenseModal({ onClose, onCreated }: { onClose: () => void; onCre
         <ScrollView contentContainerStyle={{ padding: 20, gap: 14 }} keyboardShouldPersistTaps="handled">
           <Field label="Date" colors={colors}>
             <TextInput value={expenseDate} onChangeText={setExpenseDate} placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textMuted}
-              style={fieldStyle(colors)} />
+              placeholderTextColor={colors.textMuted} style={fieldStyle(colors)} />
           </Field>
 
           <Field label="Category" colors={colors}>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-              {EXPENSE_CATEGORIES.map((c) => {
-                const active = category === c;
-                return (
-                  <TouchableOpacity
-                    key={c}
-                    onPress={() => setCategory(c)}
-                    style={{
-                      paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16,
-                      backgroundColor: active ? '#dc2626' : colors.inputBg,
-                      borderWidth: 1, borderColor: active ? '#dc2626' : colors.inputBorder,
-                    }}
-                  >
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: active ? '#ffffff' : colors.text }}>
-                      {CATEGORY_LABELS[c] ?? c}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            {groups.map((g) => (
+              <View key={g.headerName} style={{ marginBottom: 10 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                  {g.headerName}
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {g.leaves.map((leaf) => {
+                    const active = categoryId === leaf.categoryId;
+                    return (
+                      <TouchableOpacity
+                        key={leaf.categoryId}
+                        onPress={() => setCategoryId(leaf.categoryId)}
+                        style={{
+                          paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16,
+                          backgroundColor: active ? '#dc2626' : colors.inputBg,
+                          borderWidth: 1, borderColor: active ? '#dc2626' : colors.inputBorder,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: active ? '#ffffff' : colors.text }}>
+                          {leaf.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
           </Field>
+
+          {selectedLeaf?.hint && (
+            <Text style={{ fontSize: 12, color: colors.textMuted, fontStyle: 'italic' }}>
+              {selectedLeaf.hint}
+            </Text>
+          )}
 
           <Field label="Amount (₹)" colors={colors}>
             <TextInput value={amount} onChangeText={setAmount} placeholder="e.g. 500"
@@ -312,8 +326,9 @@ function CreateExpenseModal({ onClose, onCreated }: { onClose: () => void; onCre
             </View>
           </Field>
 
-          <Field label="Vendor (optional)" colors={colors}>
-            <TextInput value={vendorName} onChangeText={setVendorName} placeholder="e.g. HP Petrol Pump"
+          <Field label={selectedLeaf?.vendorLabel ?? 'Vendor (optional)'} colors={colors}>
+            <TextInput value={vendorName} onChangeText={setVendorName}
+              placeholder={selectedLeaf?.vendorPlaceholder ?? 'Vendor name'}
               placeholderTextColor={colors.textMuted} style={fieldStyle(colors)} />
           </Field>
 

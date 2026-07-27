@@ -1032,11 +1032,19 @@ export type UpdateSourceDistributorInput = z.infer<typeof updateSourceDistributo
 export type CreatePurchaseEntryInput = z.infer<typeof createPurchaseEntrySchema>;
 export type UpdatePurchaseEntryInput = z.infer<typeof updatePurchaseEntrySchema>;
 
-// ─── Mini-op #5 (2026-07-27): Expenses ───────────────────────────────────────
+// ─── Mini-op #5 v2 (2026-07-27): Expense Categories + Expenses ──────────────
 //
-// 13 fixed categories. Keep in sync with the Prisma ExpenseCategory enum —
-// runtime match is enforced by zod.enum() below and at the DB layer.
-export const EXPENSE_CATEGORIES = [
+// v2 (2026-07-27 evening): the fixed enum was replaced by a tenant-owned
+// `expense_categories` table with 2-level hierarchy (headers → leaves).
+// EXPENSE_CATEGORIES is retained ONLY as the seeded system-category
+// code list — every distributor is guaranteed to have these 13 leaf
+// codes after migration, and importers / integrations can rely on them.
+// Runtime references, though, use categoryId (a UUID) — NOT the enum.
+
+/** System-seeded leaf codes. Every tenant has these 13 after migration
+ * (immutable `code` field, though the `name` can be renamed by admins).
+ * Reserved for CSV imports + future integrations. */
+export const SYSTEM_EXPENSE_CODES = [
   'fuel',
   'vehicle_maintenance',
   'salaries_wages',
@@ -1051,14 +1059,80 @@ export const EXPENSE_CATEGORIES = [
   'bank_charges',
   'other',
 ] as const;
-export type ExpenseCategoryValue = typeof EXPENSE_CATEGORIES[number];
+export type SystemExpenseCode = typeof SYSTEM_EXPENSE_CODES[number];
+
+/** @deprecated Use SYSTEM_EXPENSE_CODES for the seeded set and pull the live
+ * list of categories from GET /api/expense-categories at runtime. Kept only
+ * so pre-v2 imports keep resolving during the transition. */
+export const EXPENSE_CATEGORIES = SYSTEM_EXPENSE_CODES;
+export type ExpenseCategoryValue = SystemExpenseCode;
 
 export const EXPENSE_PAYMENT_METHODS = ['cash', 'cheque', 'online', 'upi', 'bank_transfer', 'credit'] as const;
 export type ExpensePaymentMethod = typeof EXPENSE_PAYMENT_METHODS[number];
 
+export const TAX_DEDUCTIBLE_HINTS = ['capex', 'opex', 'non_deductible', 'uncertain'] as const;
+export type TaxDeductibleHintValue = typeof TAX_DEDUCTIBLE_HINTS[number];
+
+// ─── Expense category CRUD (distributor_admin only) ─────────────────────────
+
+/** Machine-key slug. Immutable after create. kebab-case, 2..64 chars.
+ * Reserved prefix `__hdr_` is reserved for system headers. */
+export const expenseCategoryCodeSchema = z
+  .string()
+  .min(2).max(64)
+  .regex(/^[a-z0-9_-]+$/, 'code must be kebab-case (lowercase, digits, _, -)')
+  .refine((v) => !v.startsWith('__hdr_'), '__hdr_ prefix is reserved for system headers');
+
+export const createExpenseCategorySchema = z.object({
+  parentId: uuid.nullable().optional(),
+  code: expenseCategoryCodeSchema.optional(), // auto-generated from name if omitted
+  name: z.string().min(1).max(120),
+  isHeader: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+  showVehicle: z.boolean().optional(),
+  vehicleRequired: z.boolean().optional(),
+  showDriver: z.boolean().optional(),
+  driverRequired: z.boolean().optional(),
+  vendorLabel: z.string().max(60).optional(),
+  vendorPlaceholder: z.string().max(120).optional(),
+  referenceLabel: z.string().max(60).optional(),
+  referencePlaceholder: z.string().max(120).optional(),
+  hint: z.string().max(500).optional(),
+  taxDeductibleHint: z.enum(TAX_DEDUCTIBLE_HINTS).optional(),
+});
+export type CreateExpenseCategoryInput = z.infer<typeof createExpenseCategorySchema>;
+
+/** Update — `code` is deliberately absent. `code` is IMMUTABLE.
+ * `parentId` can move a leaf between headers but service enforces
+ * "can't turn a leaf into a header while expenses reference it". */
+export const updateExpenseCategorySchema = z.object({
+  parentId: uuid.nullable().optional(),
+  name: z.string().min(1).max(120).optional(),
+  isHeader: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+  showVehicle: z.boolean().optional(),
+  vehicleRequired: z.boolean().optional(),
+  showDriver: z.boolean().optional(),
+  driverRequired: z.boolean().optional(),
+  vendorLabel: z.string().max(60).nullable().optional(),
+  vendorPlaceholder: z.string().max(120).nullable().optional(),
+  referenceLabel: z.string().max(60).nullable().optional(),
+  referencePlaceholder: z.string().max(120).nullable().optional(),
+  hint: z.string().max(500).nullable().optional(),
+  taxDeductibleHint: z.enum(TAX_DEDUCTIBLE_HINTS).nullable().optional(),
+});
+export type UpdateExpenseCategoryInput = z.infer<typeof updateExpenseCategorySchema>;
+
+// ─── Expense create / update / list ─────────────────────────────────────────
+//
+// v2 (2026-07-27 evening): categoryId (uuid) replaces category (enum). Every
+// consumer picks a leaf from GET /api/expense-categories. Service enforces
+// leaf-only + tenant scope.
+
 export const createExpenseSchema = z.object({
   expenseDate: dateString,
-  category: z.enum(EXPENSE_CATEGORIES),
+  categoryId: uuid,
   amount: z.number().positive().max(10_000_000),
   description: z.string().min(1).max(500),
   paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS).optional(),
@@ -1076,7 +1150,7 @@ export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
 export const listExpensesQuerySchema = z.object({
   from: dateString.optional(),
   to: dateString.optional(),
-  category: z.enum(EXPENSE_CATEGORIES).optional(),
+  categoryId: uuid.optional(),
   vehicleId: uuid.optional(),
   driverId: uuid.optional(),
   page: z.coerce.number().int().min(1).optional(),

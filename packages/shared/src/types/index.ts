@@ -1279,29 +1279,65 @@ export interface DeletionRequestSummary {
 }
 
 /**
- * Mini-op #5 (2026-07-27) — Expense wire type.
+ * Mini-op #5 v2 (2026-07-27 evening) — Expense wire type.
  * Shape returned by GET /api/expenses. Amount is a number here (Prisma
  * Decimals are serialised as strings; the mapper coerces before send).
- * Categories match ExpenseCategoryValue in schemas/index.ts (13 values).
+ * `category` (enum) was replaced by `categoryId` (uuid) + joined display
+ * fields `categoryCode`, `categoryName`, `categoryPath` (e.g.
+ * "Vehicle Costs / Fuel"). Consumers should render `categoryName` for
+ * a compact label and `categoryPath` for full context.
  */
 export interface Expense {
   expenseId: string;
   distributorId: string;
   expenseDate: string; // YYYY-MM-DD
-  category: string;    // ExpenseCategoryValue
+  categoryId: string;
+  categoryCode: string;             // immutable slug
+  categoryName: string;             // user-editable display label
+  categoryPath: string;             // "Parent Header / Leaf Name" (or "Leaf" for orphans)
   amount: number;
   description: string;
   paymentMethod: string;
   vendorName: string | null;
   vehicleId: string | null;
-  vehicleNumber: string | null;   // joined for display
+  vehicleNumber: string | null;
   driverId: string | null;
-  driverName: string | null;      // joined for display
+  driverName: string | null;
   referenceNumber: string | null;
   notes: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Category tree row. GET /api/expense-categories returns a flat list;
+ * clients build the tree by `parentId`. `path` is the resolved
+ * "Header / Leaf" string for display in flat lists.
+ */
+export interface ExpenseCategory {
+  categoryId: string;
+  distributorId: string;
+  parentId: string | null;
+  code: string;
+  name: string;
+  isHeader: boolean;
+  isSystem: boolean;
+  isActive: boolean;
+  sortOrder: number;
+  showVehicle: boolean;
+  vehicleRequired: boolean;
+  showDriver: boolean;
+  driverRequired: boolean;
+  vendorLabel: string | null;
+  vendorPlaceholder: string | null;
+  referenceLabel: string | null;
+  referencePlaceholder: string | null;
+  hint: string | null;
+  taxDeductibleHint: 'capex' | 'opex' | 'non_deductible' | 'uncertain' | null;
+  reservedForImport: boolean;
+  path: string;                    // resolved "Header / Leaf"
+  expenseCount: number;            // number of active expenses referencing this leaf
 }
 
 /** Summary tile shape returned by GET /api/expenses/summary. */
@@ -1310,5 +1346,13 @@ export interface ExpenseSummary {
   to: string | null;
   totalAmount: number;
   count: number;
-  byCategory: Array<{ category: string; amount: number; count: number }>;
+  byCategory: Array<{
+    categoryId: string;
+    categoryCode: string;
+    categoryName: string;
+    parentId: string | null;
+    parentName: string | null;
+    amount: number;
+    count: number;
+  }>;
 }

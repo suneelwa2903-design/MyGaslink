@@ -1,10 +1,10 @@
 /**
- * Mini-op #5 (2026-07-27) — Expenses routes.
+ * Mini-op #5 v2 (2026-07-27 evening) — Expenses routes.
  *
- * Mounted at /api/expenses. Available to BOTH distributor + mini-op tenants.
- * Roles allowed: super_admin, distributor_admin, finance, mini_operator_admin.
- * Inventory role is intentionally excluded — recording money-out isn't their
- * job (same rule as payment verification, see WI-PENDING-PAYMENTS notes).
+ * Category is now a FK (categoryId) — see routes/expenseCategories.ts
+ * for the taxonomy CRUD. Read is open to admin + finance + inventory;
+ * inventory can list (audit access) but the write endpoints stay
+ * gated to admin + finance so they can record from the field.
  */
 import { Router } from 'express';
 import { requireRole } from '../middleware/auth.js';
@@ -20,11 +20,7 @@ import {
 } from '@gaslink/shared';
 import * as service from '../services/expenseService.js';
 import { generateExpenseReportPdf } from '../services/pdf/expenseReportPdfService.js';
-import { EXPENSE_CATEGORIES } from '@gaslink/shared';
 
-// Local dateString helper — same shape as the one in shared/schemas
-// but not re-exported. Trivial pattern; inlining here avoids widening
-// the shared surface just for this route.
 const localDateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
 
 const router = Router();
@@ -66,7 +62,7 @@ router.get('/',
   },
 );
 
-// GET /api/expenses/summary — per-category rollup + grand total.
+// GET /api/expenses/summary
 const summaryQuerySchema = z.object({
   from: localDateString.optional(),
   to: localDateString.optional(),
@@ -87,12 +83,12 @@ router.get('/summary',
   },
 );
 
-// GET /api/expenses/report/pdf — category-filtered or consolidated PDF.
-// Query: from, to, category (optional; omit for consolidated), vehicleId, driverId.
+// GET /api/expenses/report/pdf
 const reportQuerySchema = z.object({
   from: localDateString.optional(),
   to: localDateString.optional(),
-  category: z.enum(EXPENSE_CATEGORIES).optional(),
+  categoryId: z.string().uuid().optional(),
+  headerId: z.string().uuid().optional(), // scope to a single header + its leaves
   vehicleId: z.string().uuid().optional(),
   driverId: z.string().uuid().optional(),
 });
@@ -104,11 +100,12 @@ router.get('/report/pdf',
       const pdf = await generateExpenseReportPdf(req.user!.distributorId!, {
         from: q.from,
         to: q.to,
-        category: q.category,
+        categoryId: q.categoryId,
+        headerId: q.headerId,
         vehicleId: q.vehicleId,
         driverId: q.driverId,
       });
-      const suffix = q.category ? q.category : 'consolidated';
+      const suffix = q.categoryId ? 'category' : q.headerId ? 'header' : 'consolidated';
       const filename = `expense-report-${suffix}-${new Date().toISOString().slice(0, 10)}.pdf`;
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

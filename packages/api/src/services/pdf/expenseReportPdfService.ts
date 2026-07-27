@@ -1,25 +1,26 @@
 /**
- * Mini-op #5 (2026-07-27) — Expense Report PDF.
+ * Mini-op #5 v2 (2026-07-27 evening) — Expense Report PDF.
  *
- * Two report modes off the same endpoint:
- *   - CONSOLIDATED: every category grouped, with per-category subtotal
- *     and a grand total row. Use for "give me an overview of last month's
- *     spend".
- *   - SINGLE CATEGORY: flat table filtered to one ExpenseCategory. Use for
- *     "print me all fuel expenses for Q1".
+ * Three scopes off one endpoint:
+ *   - CONSOLIDATED (no categoryId, no headerId): rows grouped by header,
+ *     then per-leaf subtotal within, header total, grand total.
+ *   - HEADER: rows in one header only (all leaves), per-leaf subtotal +
+ *     header total.
+ *   - LEAF (categoryId): flat table for one leaf.
  *
- * Portrait A4. Same header/footer style as purchaseLedgerPdfService.
- * Management report — NOT audited P&L. Footer disclaimer says so.
+ * Portrait A4. Reads live category names via join — renames are reflected
+ * immediately without a report-side migration. Footer disclaimer keeps
+ * the "not audited / consult CA" position (see CLAUDE.md GAAP note).
  */
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
 import { formatDate, formatMoney } from './pdfLayoutUtils.js';
-import type { Prisma, ExpenseCategory } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { toNum } from '../../utils/decimal.js';
 
-const PAGE_WIDTH = 595;      // A4 portrait
+const PAGE_WIDTH = 595;
 const MARGIN = { left: 40, right: 40, top: 40, bottom: 40 };
-const USABLE = PAGE_WIDTH - MARGIN.left - MARGIN.right; // 515
+const USABLE = PAGE_WIDTH - MARGIN.left - MARGIN.right;
 
 const THEME = {
   PRIMARY: '#0a3d62',
@@ -27,48 +28,25 @@ const THEME = {
   MUTED: '#6b7280',
   BORDER: '#e5e7eb',
   ZEBRA: '#f8fafc',
+  HEADER_BAND: '#dbeafe',
   ACCENT: '#1e4a76',
 };
 const TYPO = { H1: 18, H2: 12, BODY: 8, LABEL: 8, CAPTION: 7 };
 
-const CATEGORY_LABELS: Record<string, string> = {
-  fuel: 'Fuel',
-  vehicle_maintenance: 'Vehicle maintenance',
-  salaries_wages: 'Salaries & wages',
-  rent: 'Rent',
-  utilities: 'Utilities',
-  loading_unloading: 'Loading / unloading',
-  cylinder_deposits: 'Cylinder deposits',
-  office_supplies: 'Office supplies',
-  communication: 'Communication',
-  insurance: 'Insurance',
-  taxes_licenses: 'Taxes & licenses',
-  bank_charges: 'Bank charges',
-  other: 'Other',
-};
+interface Col { label: string; width: number; align: 'left' | 'right' | 'center' }
 
-interface Col {
-  label: string;
-  width: number;
-  align: 'left' | 'right' | 'center';
-}
-
-// 515pt total. Wider Description & Vendor since most entries carry one or the other.
 const COLS: Col[] = [
   { label: 'Date',        width: 62,  align: 'left'  },
-  { label: 'Category',    width: 90,  align: 'left'  },
+  { label: 'Category',    width: 100, align: 'left'  },
   { label: 'Description', width: 130, align: 'left'  },
-  { label: 'Vendor',      width: 90,  align: 'left'  },
+  { label: 'Vendor',      width: 82,  align: 'left'  },
   { label: 'Vehicle',     width: 45,  align: 'left'  },
   { label: 'Driver',      width: 45,  align: 'left'  },
-  { label: 'Amount',      width: 53,  align: 'right' },
+  { label: 'Amount',      width: 51,  align: 'right' },
 ];
-
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
 const ROW_HEIGHT = 15;
-
-// Rough per-column char cap. Undersized values get truncated with an ellipsis.
-const COL_CHAR_CAP: number[] = [10, 15, 24, 16, 8, 8, 10];
+const COL_CHAR_CAP: number[] = [10, 18, 24, 15, 8, 8, 10];
 
 function fitCell(s: string, maxChars: number): string {
   if (!s) return '';
@@ -91,9 +69,8 @@ function drawHeader(
     .text(reportTitle, MARGIN.left, y, { width: USABLE, align: 'center' });
   y += 16;
   if (from || to) {
-    const period = `Period: ${from ?? 'earliest'}  →  ${to ?? 'today'}`;
     doc.font('Helvetica').fontSize(TYPO.LABEL).fillColor(THEME.MUTED)
-      .text(period, MARGIN.left, y, { width: USABLE, align: 'center' });
+      .text(`Period: ${from ?? 'earliest'}  →  ${to ?? 'today'}`, MARGIN.left, y, { width: USABLE, align: 'center' });
     y += 14;
   }
   return y + 4;
@@ -104,9 +81,7 @@ function drawTableHeader(doc: PDFKit.PDFDocument, y: number): number {
   doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT + 2).fill(THEME.PRIMARY);
   doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(TYPO.CAPTION);
   for (const col of COLS) {
-    doc.text(col.label, x + 3, y + 4, {
-      width: col.width - 6, align: col.align, lineBreak: false, ellipsis: true,
-    });
+    doc.text(col.label, x + 3, y + 4, { width: col.width - 6, align: col.align, lineBreak: false, ellipsis: true });
     x += col.width;
   }
   doc.fillColor(THEME.TEXT);
@@ -114,14 +89,11 @@ function drawTableHeader(doc: PDFKit.PDFDocument, y: number): number {
 }
 
 function drawRow(
-  doc: PDFKit.PDFDocument,
-  y: number,
-  cells: string[],
-  opts: { bold?: boolean; zebra?: boolean; color?: string } = {},
+  doc: PDFKit.PDFDocument, y: number, cells: string[],
+  opts: { bold?: boolean; zebra?: boolean } = {},
 ): number {
   if (opts.zebra) doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT).fill(THEME.ZEBRA);
-  doc.fillColor(opts.color ?? THEME.TEXT)
-    .font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(TYPO.BODY);
+  doc.fillColor(THEME.TEXT).font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(TYPO.BODY);
   let x = MARGIN.left;
   for (let i = 0; i < COLS.length; i++) {
     doc.text(fitCell(cells[i] ?? '', COL_CHAR_CAP[i] ?? 999), x + 3, y + 4, {
@@ -132,11 +104,24 @@ function drawRow(
   return ROW_HEIGHT;
 }
 
-function drawSubtotalRow(doc: PDFKit.PDFDocument, y: number, label: string, amount: number): number {
+function drawHeaderBand(doc: PDFKit.PDFDocument, y: number, headerName: string): number {
+  doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT + 2).fill(THEME.HEADER_BAND);
+  doc.fillColor(THEME.PRIMARY).font('Helvetica-Bold').fontSize(TYPO.BODY);
+  doc.text(headerName.toUpperCase(), MARGIN.left + 6, y + 4, {
+    width: TABLE_WIDTH - 12, align: 'left', lineBreak: false, ellipsis: true,
+  });
+  doc.fillColor(THEME.TEXT);
+  return ROW_HEIGHT + 2;
+}
+
+function drawSubtotalRow(
+  doc: PDFKit.PDFDocument, y: number,
+  label: string, amount: number,
+  opts: { emphasise?: boolean } = {},
+): number {
   doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT).fill(THEME.ZEBRA);
-  doc.strokeColor(THEME.BORDER).lineWidth(0.5)
-    .moveTo(MARGIN.left, y).lineTo(MARGIN.left + TABLE_WIDTH, y).stroke();
-  doc.fillColor(THEME.ACCENT).font('Helvetica-Bold').fontSize(TYPO.BODY);
+  doc.strokeColor(THEME.BORDER).lineWidth(0.5).moveTo(MARGIN.left, y).lineTo(MARGIN.left + TABLE_WIDTH, y).stroke();
+  doc.fillColor(opts.emphasise ? THEME.PRIMARY : THEME.ACCENT).font('Helvetica-Bold').fontSize(TYPO.BODY);
   const amountCol = COLS[COLS.length - 1];
   const amountX = MARGIN.left + TABLE_WIDTH - amountCol.width;
   doc.text(label, MARGIN.left + 3, y + 4, {
@@ -150,7 +135,7 @@ function drawSubtotalRow(doc: PDFKit.PDFDocument, y: number, label: string, amou
 }
 
 function drawFooter(doc: PDFKit.PDFDocument, page: number): void {
-  const y = 800; // A4 height 842 - 42 footer margin
+  const y = 800;
   doc.strokeColor(THEME.BORDER).lineWidth(0.5)
     .moveTo(MARGIN.left, y - 4).lineTo(MARGIN.left + USABLE, y - 4).stroke();
   doc.font('Helvetica-Oblique').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED)
@@ -164,16 +149,29 @@ function drawFooter(doc: PDFKit.PDFDocument, page: number): void {
 export interface ExpenseReportFilters {
   from?: string;
   to?: string;
-  category?: string;
+  categoryId?: string; // single-leaf scope
+  headerId?: string;   // one-header scope (all its leaves)
   vehicleId?: string;
   driverId?: string;
 }
 
-/**
- * Generates an expense-report PDF.
- * - filters.category present → single-category flat report
- * - filters.category absent  → consolidated grouped-by-category report
- */
+interface RowJoin {
+  id: string;
+  expenseDate: string;
+  amount: Prisma.Decimal;
+  description: string;
+  vendorName: string | null;
+  vehicle: { vehicleNumber: string } | null;
+  driver: { driverName: string } | null;
+  category: {
+    id: string;
+    name: string;
+    sortOrder: number;
+    parentId: string | null;
+    parent: { id: string; name: string; sortOrder: number } | null;
+  };
+}
+
 export async function generateExpenseReportPdf(
   distributorId: string,
   filters: ExpenseReportFilters,
@@ -190,24 +188,46 @@ export async function generateExpenseReportPdf(
     if (filters.from) (where.expenseDate as { gte?: string }).gte = filters.from;
     if (filters.to) (where.expenseDate as { lte?: string }).lte = filters.to;
   }
-  if (filters.category) where.category = filters.category as ExpenseCategory;
+  if (filters.categoryId) where.categoryId = filters.categoryId;
+  if (filters.headerId) where.category = { parentId: filters.headerId };
   if (filters.vehicleId) where.vehicleId = filters.vehicleId;
   if (filters.driverId) where.driverId = filters.driverId;
 
-  const rows = await prisma.expense.findMany({
+  const rows: RowJoin[] = await prisma.expense.findMany({
     where,
-    include: {
+    select: {
+      id: true,
+      expenseDate: true,
+      amount: true,
+      description: true,
+      vendorName: true,
       vehicle: { select: { vehicleNumber: true } },
       driver: { select: { driverName: true } },
+      category: {
+        select: {
+          id: true, name: true, sortOrder: true, parentId: true,
+          parent: { select: { id: true, name: true, sortOrder: true } },
+        },
+      },
     },
-    orderBy: [{ category: 'asc' }, { expenseDate: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ expenseDate: 'asc' }, { createdAt: 'asc' }],
   });
 
   const businessName = distributor.legalName ?? distributor.businessName;
-  const isConsolidated = !filters.category;
-  const reportTitle = isConsolidated
-    ? 'Expense Report — Consolidated'
-    : `Expense Report — ${CATEGORY_LABELS[filters.category!] ?? filters.category}`;
+  let reportTitle = 'Expense Report — Consolidated';
+  if (filters.categoryId) {
+    const cat = await prisma.expenseCategory.findFirst({
+      where: { id: filters.categoryId, distributorId },
+      select: { name: true, parent: { select: { name: true } } },
+    });
+    reportTitle = `Expense Report — ${cat?.parent?.name ? `${cat.parent.name} / ${cat.name}` : cat?.name ?? 'Category'}`;
+  } else if (filters.headerId) {
+    const hdr = await prisma.expenseCategory.findFirst({
+      where: { id: filters.headerId, distributorId },
+      select: { name: true },
+    });
+    reportTitle = `Expense Report — ${hdr?.name ?? 'Header'} (all subcategories)`;
+  }
 
   const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: false });
   const chunks: Buffer[] = [];
@@ -218,83 +238,114 @@ export async function generateExpenseReportPdf(
   doc.addPage({ size: 'A4', margin: 0 });
   let y = drawHeader(doc, businessName, reportTitle, filters.from ?? null, filters.to ?? null);
   y += drawTableHeader(doc, y);
+  const pageBottom = 780;
 
-  const pageBottom = 780; // above footer
   const ensureSpace = (needed: number) => {
     if (y + needed > pageBottom) {
-      drawFooter(doc, page);
-      page += 1;
+      drawFooter(doc, page); page += 1;
       doc.addPage({ size: 'A4', margin: 0 });
       y = MARGIN.top;
       y += drawTableHeader(doc, y);
     }
   };
 
-  let grandTotal = 0;
-
-  if (isConsolidated) {
-    // Group by category. Prisma already sorted by category asc so a
-    // single linear pass is enough.
-    let currentCategory: ExpenseCategory | null = null;
-    let categorySubtotal = 0;
-    let zebra = false;
-
-    const flushSubtotal = () => {
-      if (currentCategory !== null) {
-        ensureSpace(ROW_HEIGHT + 4);
-        y += drawSubtotalRow(
-          doc, y,
-          `${CATEGORY_LABELS[currentCategory] ?? currentCategory} subtotal`,
-          categorySubtotal,
-        );
-        y += 6;
-      }
-    };
-
-    for (const r of rows) {
-      if (r.category !== currentCategory) {
-        flushSubtotal();
-        currentCategory = r.category;
-        categorySubtotal = 0;
-        zebra = false;
-      }
-      const amount = toNum(r.amount);
-      ensureSpace(ROW_HEIGHT);
-      y += drawRow(doc, y, [
-        formatDate(r.expenseDate),
-        CATEGORY_LABELS[r.category] ?? r.category,
-        r.description,
-        r.vendorName ?? '—',
-        r.vehicle?.vehicleNumber ?? '—',
-        r.driver?.driverName ?? '—',
-        formatMoney(amount),
-      ], { zebra });
-      zebra = !zebra;
-      categorySubtotal += amount;
-      grandTotal += amount;
+  // Group rows by header → leaf.
+  // Rows with no parent (top-level leaves) get a synthetic bucket "Uncategorised".
+  interface Bucket {
+    headerId: string;
+    headerName: string;
+    headerSort: number;
+    leaves: Map<string, {
+      leafName: string;
+      leafSort: number;
+      rows: RowJoin[];
+      subtotal: number;
+    }>;
+    subtotal: number;
+  }
+  const buckets = new Map<string, Bucket>();
+  const uncategorisedKey = '__uncategorised';
+  for (const r of rows) {
+    const headerId = r.category.parent?.id ?? uncategorisedKey;
+    const headerName = r.category.parent?.name ?? 'Uncategorised';
+    const headerSort = r.category.parent?.sortOrder ?? 9999;
+    let b = buckets.get(headerId);
+    if (!b) {
+      b = { headerId, headerName, headerSort, leaves: new Map(), subtotal: 0 };
+      buckets.set(headerId, b);
     }
-    flushSubtotal();
-  } else {
-    // Flat table for the single-category report.
+    let leaf = b.leaves.get(r.category.id);
+    if (!leaf) {
+      leaf = { leafName: r.category.name, leafSort: r.category.sortOrder, rows: [], subtotal: 0 };
+      b.leaves.set(r.category.id, leaf);
+    }
+    const amt = toNum(r.amount);
+    leaf.rows.push(r);
+    leaf.subtotal += amt;
+    b.subtotal += amt;
+  }
+
+  const sortedBuckets = [...buckets.values()].sort((a, b) => a.headerSort - b.headerSort || a.headerName.localeCompare(b.headerName));
+
+  let grandTotal = 0;
+  const isFlatSingleLeaf = !!filters.categoryId;
+
+  if (isFlatSingleLeaf) {
+    // Flat table for single-leaf scope. Skip header/subtotal banding.
     let zebra = false;
-    for (const r of rows) {
-      const amount = toNum(r.amount);
-      ensureSpace(ROW_HEIGHT);
-      y += drawRow(doc, y, [
-        formatDate(r.expenseDate),
-        CATEGORY_LABELS[r.category] ?? r.category,
-        r.description,
-        r.vendorName ?? '—',
-        r.vehicle?.vehicleNumber ?? '—',
-        r.driver?.driverName ?? '—',
-        formatMoney(amount),
-      ], { zebra });
-      zebra = !zebra;
-      grandTotal += amount;
+    for (const b of sortedBuckets) {
+      for (const leaf of b.leaves.values()) {
+        for (const r of leaf.rows) {
+          const amt = toNum(r.amount);
+          ensureSpace(ROW_HEIGHT);
+          y += drawRow(doc, y, [
+            formatDate(r.expenseDate),
+            r.category.parent ? `${r.category.parent.name} / ${r.category.name}` : r.category.name,
+            r.description,
+            r.vendorName ?? '—',
+            r.vehicle?.vehicleNumber ?? '—',
+            r.driver?.driverName ?? '—',
+            formatMoney(amt),
+          ], { zebra });
+          zebra = !zebra;
+          grandTotal += amt;
+        }
+      }
+    }
+  } else {
+    // Grouped: HEADER BAND → leaves within → leaf subtotal → header subtotal.
+    for (const b of sortedBuckets) {
+      ensureSpace(ROW_HEIGHT + 4);
+      y += drawHeaderBand(doc, y, b.headerName);
+      const sortedLeaves = [...b.leaves.values()].sort((x, y) => x.leafSort - y.leafSort || x.leafName.localeCompare(y.leafName));
+      for (const leaf of sortedLeaves) {
+        let zebra = false;
+        for (const r of leaf.rows) {
+          const amt = toNum(r.amount);
+          ensureSpace(ROW_HEIGHT);
+          y += drawRow(doc, y, [
+            formatDate(r.expenseDate),
+            leaf.leafName,
+            r.description,
+            r.vendorName ?? '—',
+            r.vehicle?.vehicleNumber ?? '—',
+            r.driver?.driverName ?? '—',
+            formatMoney(amt),
+          ], { zebra });
+          zebra = !zebra;
+        }
+        ensureSpace(ROW_HEIGHT);
+        y += drawSubtotalRow(doc, y, `${leaf.leafName} subtotal`, leaf.subtotal);
+        y += 2;
+      }
+      ensureSpace(ROW_HEIGHT + 4);
+      y += drawSubtotalRow(doc, y, `${b.headerName} total`, b.subtotal, { emphasise: true });
+      y += 6;
+      grandTotal += b.subtotal;
     }
   }
 
-  // Grand total row — always emit, even for zero-row reports.
+  // Grand total.
   ensureSpace(ROW_HEIGHT + 6);
   y += 4;
   doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT + 2).fill(THEME.PRIMARY);
