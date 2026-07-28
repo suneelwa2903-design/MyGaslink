@@ -236,11 +236,17 @@ export default function LoginPage() {
       toast.success(t('auth.welcomeBackToast', { name: data.user.firstName }));
       if (from) { navigate(from, { replace: true }); return; }
       // Feature A (2026-07-15): customer_hq role → HQ portal (web only in v1).
+      // 2026-07-28: mini_operator_admin routes straight to /app/orders (matches
+      // PublicOnlyRoute) — was previously falling through to /app/dashboard
+      // which then Navigate-bounced to /app/analytics. Two redirects, harmless
+      // but structurally noisy (scenario test issue #3).
       const target = data.user.role === UserRole.CUSTOMER
         ? '/app/customer/dashboard'
         : data.user.role === UserRole.CUSTOMER_HQ
           ? '/hq'
-          : '/app/dashboard';
+          : data.user.role === UserRole.MINI_OPERATOR_ADMIN
+            ? '/app/orders'
+            : '/app/dashboard';
       navigate(target, { replace: true });
     },
     onError: (error) => toast.error(getErrorMessage(error)),

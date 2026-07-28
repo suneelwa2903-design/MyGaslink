@@ -560,6 +560,21 @@ function ExpenseFormModal({
 
   const mutation = useMutation({
     mutationFn: (data: CreateExpenseInput) => {
+      // Client-side gate for category-driven required fields. The shared
+      // Zod schema treats vehicleId / driverId / paidToName as optional
+      // (they only become required when the CATEGORY says so via the
+      // showXxx + xxxRequired flags), so react-hook-form's resolver
+      // won't catch these. Silent-fail was the symptom: Record clicked
+      // → no POST → no toast (scenario test issue #1). Guard here.
+      const missing: string[] = [];
+      if (showVehicle && vehicleRequired && !data.vehicleId) missing.push('Vehicle');
+      if (showDriver && driverRequired && !data.driverId) missing.push('Driver');
+      if (showPaidTo && paidToRequired && !data.paidToName?.trim()) missing.push(paidToLabel);
+      if (missing.length > 0) {
+        toast.error(`Please fill: ${missing.join(', ')}`);
+        return Promise.reject(new Error('validation'));
+      }
+
       const clean = {
         ...data,
         vendorName: data.vendorName || undefined,
@@ -577,7 +592,11 @@ function ExpenseFormModal({
       toast.success(isEdit ? 'Expense updated' : 'Expense recorded');
       onSaved();
     },
-    onError: (err) => toast.error(getErrorMessage(err)),
+    onError: (err) => {
+      // Suppress the local 'validation' pseudo-error — a toast already fired.
+      if ((err as Error).message === 'validation') return;
+      toast.error(getErrorMessage(err));
+    },
   });
 
   return (
