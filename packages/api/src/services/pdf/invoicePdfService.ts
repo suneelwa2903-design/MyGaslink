@@ -1162,10 +1162,16 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
     try {
       const payee = encodeURIComponent(seller.name);
       const note = encodeURIComponent(`Invoice ${invoice.invoiceNumber}`);
+      // Mini-op #6 v2 (2026-07-28): drop the `am` parameter. Some GPay
+      // builds treat `am` as a hard lock — the customer sees the amount
+      // pre-filled but the field is greyed out, so they can't pay a
+      // partial / different total. Amount-free QR lets them type whatever
+      // they want. We keep `tn` (invoice number as note) so when the
+      // seller receives the UPI notification it identifies the invoice
+      // — reconciliation still works.
       const upiUrl =
         `upi://pay?pa=${encodeURIComponent(seller.upiId)}` +
         `&pn=${payee}` +
-        `&am=${grandTotal.toFixed(2)}` +
         `&cu=INR` +
         `&tn=${note}`;
       upiQrPng = await QRCode.toBuffer(upiUrl, { type: 'png', width: 120, margin: 1 });
