@@ -23,7 +23,7 @@ import {
   View, Text, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator,
   RefreshControl, FlatList, KeyboardAvoidingView, Platform, TextInput,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -440,6 +440,14 @@ function QuotationDetailModal({
 
   return (
     <Modal visible transparent={false} animationType="slide" onRequestClose={onClose}>
+      {/* 2026-07-29 iPhone SafeArea fix — Modal on iOS spawns a fresh
+          native view hierarchy that does NOT inherit the app-root
+          SafeAreaProvider, so SafeAreaView reads 0 insets and the
+          header overlaps the status bar / Dynamic Island. Wrapping
+          the Modal contents in a scoped SafeAreaProvider restores
+          real insets so `edges={['top', ...]}` pushes the header
+          below the notch. Same pattern as dashboard.tsx / orders.tsx. */}
+      <SafeAreaProvider>
       <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
         <View
           style={{
@@ -688,6 +696,7 @@ function QuotationDetailModal({
           </View>
         )}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

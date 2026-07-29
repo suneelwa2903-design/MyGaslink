@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, SafeAreaProvider, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
@@ -626,6 +626,14 @@ function CreateExpenseModal({
 
   return (
     <Modal visible transparent={false} animationType="slide" onRequestClose={onClose}>
+      {/* 2026-07-29 iPhone SafeArea fix — Modal on iOS spawns a fresh
+          native view hierarchy that does NOT inherit the app-root
+          SafeAreaProvider, so SafeAreaView reads 0 insets and the
+          header overlaps the status bar / Dynamic Island. Wrapping
+          the Modal contents in a scoped SafeAreaProvider restores
+          real insets so `edges={['top', ...]}` pushes the header
+          below the notch. Same pattern as dashboard.tsx / orders.tsx. */}
+      <SafeAreaProvider>
       <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
         <View style={{
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -748,6 +756,7 @@ function CreateExpenseModal({
         </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
