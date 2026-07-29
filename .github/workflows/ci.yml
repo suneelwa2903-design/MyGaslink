@@ -291,7 +291,24 @@ jobs:
             # at job end. No manual rotation needed. Replaces the old GH_PAT
             # workaround (2026-07-01 after PAT expiry surfaced in CI run
             # 28491377944).
-            git pull https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/suneelwa2903-design/MyGaslink.git main
+            #
+            # 2026-07-29 — moved from a plain `git pull` to a fetch → reset
+            # → clean triad so the working tree ends up byte-identical to
+            # origin/main every deploy. Rationale: ad-hoc files scp'd onto
+            # the EC2 host during ops sessions (diagnostic scripts, one-off
+            # SQL dumps, audit tools) accumulate as untracked files. A
+            # later push that adds a file at the same path fails
+            # `git pull` with "The following untracked working tree files
+            # would be overwritten by merge" — the whole deploy stops
+            # (CI run 30425636955 tripped on packages/api/scripts/
+            # audit-ledger-date-drift.ts). Reset + clean makes the deploy
+            # self-healing: whatever the EC2 checkout looked like, it now
+            # matches origin/main exactly. `-fd` preserves gitignored
+            # files (node_modules — they're wiped explicitly a few lines
+            # below anyway).
+            git fetch https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/suneelwa2903-design/MyGaslink.git main
+            git reset --hard FETCH_HEAD
+            git clean -fd
             # appleboy/ssh-action runs commands without a pty. Under pnpm 9,
             # if node_modules has drifted (e.g. a transitive that landed in
             # the lockfile but wasn't installed last time), `pnpm install`
