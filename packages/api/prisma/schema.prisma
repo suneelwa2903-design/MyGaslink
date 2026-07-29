@@ -821,7 +821,7 @@ model ExpenseCategory {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
 
-  distributor Distributor        @relation(fields: [distributorId], references: [id])
+  distributor Distributor        @relation(fields: [distributorId], references: [id], onDelete: Cascade)
   parent      ExpenseCategory?   @relation("ExpenseCategoryHierarchy", fields: [parentId], references: [id])
   children    ExpenseCategory[]  @relation("ExpenseCategoryHierarchy")
   expenses    Expense[]
