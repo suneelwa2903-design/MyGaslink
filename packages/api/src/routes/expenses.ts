@@ -17,6 +17,7 @@ import {
   createExpenseSchema,
   updateExpenseSchema,
   listExpensesQuerySchema,
+  localTodayISO,
 } from '@gaslink/shared';
 import * as service from '../services/expenseService.js';
 import { generateExpenseReportPdf } from '../services/pdf/expenseReportPdfService.js';
@@ -63,9 +64,15 @@ router.get('/',
 );
 
 // GET /api/expenses/summary
+// 2026-07-29 — accepts the same categoryId / paymentMethod / search filters
+// as GET /api/expenses so the mobile "filtered total" strip stays in sync
+// with the list scoped by the same filters.
 const summaryQuerySchema = z.object({
   from: localDateString.optional(),
   to: localDateString.optional(),
+  categoryId: z.string().uuid().optional(),
+  paymentMethod: z.string().optional(),
+  search: z.string().max(120).optional(),
 });
 router.get('/summary',
   validateQuery(summaryQuerySchema),
@@ -75,6 +82,9 @@ router.get('/summary',
       const result = await service.summarizeExpenses(req.user!.distributorId!, {
         from: q.from,
         to: q.to,
+        categoryId: q.categoryId,
+        paymentMethod: q.paymentMethod,
+        search: q.search,
       });
       return sendSuccess(res, result);
     } catch (err) {
@@ -106,7 +116,7 @@ router.get('/report/pdf',
         driverId: q.driverId,
       });
       const suffix = q.categoryId ? 'category' : q.headerId ? 'header' : 'consolidated';
-      const filename = `expense-report-${suffix}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      const filename = `expense-report-${suffix}-${localTodayISO()}.pdf`;
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(pdf);

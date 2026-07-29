@@ -268,11 +268,19 @@ export async function generateCustomerLedgerPdf(
       // bankAccountNumber AND ifscCode are non-empty.
       bankName: true, bankAccountNumber: true, bankBranchName: true,
       ifscCode: true, upiId: true,
+      // 2026-07-28 — mini-op tenants get cancelled-order pairs hidden from
+      // their customer statements (both the original invoice_entry and its
+      // paired 'adjustment' reversal). Regular distributors keep the full
+      // audit trail on the statement so their accountants can see the
+      // reversal. DB rows are unchanged — this is a render-time filter only.
+      accountType: true,
     },
   });
   if (!distributor) throw new Error('Distributor not found');
 
-  const ledger = await getCustomerLedger(distributorId, customerId, range);
+  const ledger = await getCustomerLedger(distributorId, customerId, range, {
+    hideCancelledInvoices: distributor.accountType === 'mini_operator',
+  });
 
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
   const buffers: Buffer[] = [];
@@ -569,16 +577,25 @@ export async function generateCustomerLedgerPdf(
       ];
     } else if (row.kind === 'empties_return') {
       // Q3 (2026-07-09) — stock-only row. Narration ("Empties: 50× 19 KG")
-      // is the whole payload; all money cells render as "-" so it reads
-      // as a non-money event. Total / Due carry forward unchanged (the
-      // running balance is untouched by this row — see the emit in
-      // paymentService.getCustomerLedger which does not touch the
-      // cumulative accumulators).
+      // is the whole payload; money cells render as "-" so it reads as a
+      // non-money event. Total / Due carry forward unchanged.
+      //
+      // 2026-07-27 — Fix 1. Emp C now shows the returned qty (populated by
+      // paymentService.getCustomerLedger's Fix 1 path) and Pend E shows
+      // the running counter AFTER this row's decrement. Also feed the
+      // qty into totalCollected so the Total row's Pend E formula
+      // (openingSeeded + delivered − collected) subtracts standalone
+      // returns — before this fix the Total over-reported by the
+      // returned qty on every statement that had a standalone return.
+      if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
       cells = [
         formatDate(row.orderDate),
         typeLabel(row),
         narration,
-        '-', '-', '-', '-', '-',
+        '-', '-',
+        row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-',
+        row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-',
+        '-',
         formatMoney(row.totalAmount),
         '-',
         formatMoney(row.dueAmount),
@@ -781,6 +798,10 @@ export async function generateGroupLedgerPdf(
     select: {
       businessName: true, legalName: true, gstin: true,
       address: true, city: true, state: true, pincode: true, phone: true,
+      // 2026-07-28 — same mini-op-only cancelled-row suppression as the
+      // individual statement PDF above. See getGroupLedger's
+      // hideCancelledInvoices option in customerGroupPortalService.
+      accountType: true,
     },
   });
   if (!distributor) throw new Error('Distributor not found');
@@ -794,6 +815,7 @@ export async function generateGroupLedgerPdf(
       customerId: range?.customerId,
     },
     displayNames,
+    { hideCancelledInvoices: distributor.accountType === 'mini_operator' },
   );
 
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
@@ -1016,10 +1038,18 @@ export async function generateGroupLedgerPdf(
         '',
       ];
     } else if (row.kind === 'empties_return') {
+      // 2026-07-27 — Fix 1 (group PDF). Mirror the individual PDF: feed
+      // the returned qty into totalCollected so the group Total row's
+      // Pend E rolls up correctly, and render Emp C / Pend E from the
+      // row's populated values (was blank).
+      if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
       cells = [
         formatDate(new Date(row.orderDate)),
         property, type, narration,
-        '-', '-', '-', '-', '-',
+        '-', '-',
+        row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-',
+        row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-',
+        '-',
         formatMoney(row.totalAmount),
         '-',
         formatMoney(row.dueAmount),

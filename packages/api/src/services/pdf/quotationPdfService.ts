@@ -348,7 +348,9 @@ function drawPerKgCard(
   gstRate: number,
 ): number {
   const cardW = USABLE;
-  const cardH = 118;
+  // 2026-07-29 — grew by one row to accommodate the excl-GST final rate.
+  // Previously 118 (3 rows); now 140 (4 rows).
+  const cardH = 140;
   const pad = 14;
 
   doc.roundedRect(MARGIN.left, y, cardW, cardH, 4)
@@ -366,12 +368,15 @@ function drawPerKgCard(
     .text(`HSN ${item.hsnCode}`, hsnX, y + 9,
       { width: hsnW, align: 'right', lineBreak: false });
 
-  // v2: user enters GST-INCLUSIVE per-KG rate + discount. Basic (pre-GST)
-  // is derived for the "(Basic Rs. X)" reference shown next to the rate.
+  // v2: user enters GST-INCLUSIVE per-KG rate + discount. The excl-GST
+  // (pre-GST) values are derived so the reader sees both sides of the tax
+  // — asked-for change on 2026-07-29 after "Basic Rs. X" was ambiguous.
   const pricePerKgInclGst = toNum(item.pricePerKgInclGst);
   const discountPerKgInclGst = toNum(item.discountPerKgInclGst);
-  const basicPerKg = pricePerKgInclGst / (1 + gstRate);
+  const pricePerKgExclGst = pricePerKgInclGst / (1 + gstRate);
+  const discountPerKgExclGst = discountPerKgInclGst / (1 + gstRate);
   const finalInclGst = pricePerKgInclGst - discountPerKgInclGst;
+  const finalExclGst = pricePerKgExclGst - discountPerKgExclGst;
   const gstPct = (gstRate * 100).toFixed(0);
 
   const bodyY = y + 36;
@@ -392,10 +397,21 @@ function drawPerKgCard(
         { width: valueColW, align: 'right', lineBreak: false });
   };
 
-  kvRow(`Rate per KG (incl. GST @ ${gstPct}%)   (Basic ${formatMoney(basicPerKg)})`,
-        formatMoney(pricePerKgInclGst), 0);
-  kvRow('Discount per KG', `- ${formatMoney(discountPerKgInclGst)}`, 1);
+  // 2026-07-29 — relabelled "Basic Rs. X" → "excl GST Rs. X" so the
+  // reader can tell at a glance which side of the tax each figure sits on.
+  // Added a Final rate (excl GST) line under the incl-GST bold total.
+  kvRow(
+    `Rate per KG (incl. GST @ ${gstPct}%)   (excl GST ${formatMoney(pricePerKgExclGst)})`,
+    formatMoney(pricePerKgInclGst),
+    0,
+  );
+  kvRow(
+    `Discount per KG   (excl GST - ${formatMoney(discountPerKgExclGst)})`,
+    `- ${formatMoney(discountPerKgInclGst)}`,
+    1,
+  );
   kvRow('Final rate per KG (incl. GST)', formatMoney(finalInclGst), 2, { bold: true });
+  kvRow('Final rate per KG (excl. GST)', formatMoney(finalExclGst), 3, { bold: true });
 
   return y + cardH;
 }

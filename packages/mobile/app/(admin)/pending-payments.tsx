@@ -27,7 +27,8 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
@@ -88,6 +89,7 @@ export default function PendingPaymentsScreen() {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       <Stack.Screen options={{ title: 'Pending Approvals', headerShown: true }} />
       <ScrollView
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: 16, gap: 12 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >

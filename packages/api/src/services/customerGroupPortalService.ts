@@ -800,6 +800,16 @@ export interface GroupLedgerFilters {
   to?: string;
 }
 
+// 2026-07-28 — mini-op statement PDFs suppress both the original
+// invoice_entry row for a cancelled invoice AND the paired 'adjustment'
+// reversal ('narration LIKE Cancelled:%'). Threaded through
+// getGroupLedger → filter before processLedgerEntries so the running
+// balance stays consistent (both sides of the reversal drop atomically).
+// DB rows are unchanged — render-time filter only.
+export interface GroupLedgerOptions {
+  hideCancelledInvoices?: boolean;
+}
+
 export interface GroupLedgerRow {
   customerId: string;
   customerName: string;
@@ -859,6 +869,7 @@ export async function getGroupLedger(
   visibleCustomerIds: string[],
   filters: GroupLedgerFilters,
   displayNames?: DisplayNameMap,
+  options?: GroupLedgerOptions,
 ): Promise<GroupLedgerResponse> {
   const custFilter = resolveCustomerIdFilter(visibleCustomerIds, filters.customerId);
   const effectiveIds =
@@ -922,11 +933,28 @@ export async function getGroupLedger(
     openingEmptiesByCustomer.set(r.customerId, inner);
   }
 
+  // 2026-07-28 — mini-op statement PDFs drop the cancelled invoice_entry
+  // AND its paired reversal ('adjustment' with narration 'Cancelled:%')
+  // atomically so the running balance stays consistent. Mirror of the
+  // filter in paymentService.getCustomerLedger.
+  const filteredEntries = options?.hideCancelledInvoices
+    ? allEntries.filter((e) => {
+        if (e.entryType === 'invoice_entry' && e.invoiceId) {
+          const inv = invoiceMap.get(e.invoiceId);
+          if (inv?.status === 'cancelled') return false;
+        }
+        if (e.entryType === 'adjustment' && (e.narration ?? '').startsWith('Cancelled:')) {
+          return false;
+        }
+        return true;
+      })
+    : allEntries;
+
   // 3. Bucket entries by customerId, then run processLedgerEntries
   // once per bucket. Each customer's running balance / FIFO / opening-
   // balance state stays isolated in its own call.
   const bucketed = new Map<string, typeof allEntries>();
-  for (const e of allEntries) {
+  for (const e of filteredEntries) {
     const bucket = bucketed.get(e.customerId) ?? [];
     bucket.push(e);
     bucketed.set(e.customerId, bucket);

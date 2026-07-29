@@ -162,9 +162,12 @@ describe('Ledger PDF consistency — Group PDF row semantics mirror individual',
     // only rendering.
     const empties = (src.match(/empties_return/g) ?? []).length;
     expect(empties).toBeGreaterThanOrEqual(3);
-    // Cell composition uses "5 dashes then formatMoney" — the fingerprint
-    // of the empties row.
-    expect(src).toContain("'-', '-', '-', '-', '-'");
+    // 2026-07-27 — Fix 1. The empties row now shows Emp C + Pend E when
+    // populated (was 5 dashes). Fingerprint updated to the current cell
+    // shape: two leading dashes for Del F + Amount, then conditional
+    // Emp C / Pend E cells, then dash for Emp Cost.
+    expect(src).toContain("row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-'");
+    expect(src).toContain("row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-'");
   });
 
   it('group PDF renders an Opening Balance row with bold', () => {

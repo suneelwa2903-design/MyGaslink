@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, TouchableOpacity, TextInput, Modal, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
@@ -192,6 +192,9 @@ function CreateDistributorModal({ visible, onClose, dark, colors }: {
   dark: boolean;
   colors: ThemeColors;
 }) {
+  // 2026-07-28 (anti-pattern #25) — bottom-sheet Create button clips
+  // under Samsung 3-button nav without insets padding.
+  const insets = useSafeAreaInsets();
   const [form, setForm] = useState({
     businessName: '', legalName: '', gstin: '', phone: '', email: '', address: '', state: '',
   });
@@ -225,7 +228,8 @@ function CreateDistributorModal({ visible, onClose, dark, colors }: {
             backgroundColor: dark ? colors.cardBg : '#fff',
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
-            padding: 24,
+            paddingTop: 24, paddingHorizontal: 24,
+            paddingBottom: Math.max(insets.bottom + 8, 24),
             maxHeight: '85%',
           }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -235,7 +239,7 @@ function CreateDistributorModal({ visible, onClose, dark, colors }: {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }} keyboardShouldPersistTaps="handled">
               <FormField label="Business Name *" value={form.businessName} onChange={(v) => setForm({ ...form, businessName: v })} dark={dark} colors={colors} />
               <FormField label="Legal Name" value={form.legalName} onChange={(v) => setForm({ ...form, legalName: v })} dark={dark} colors={colors} />
               <FormField label="GSTIN" value={form.gstin} onChange={(v) => setForm({ ...form, gstin: v })} autoCapitalize="characters" dark={dark} colors={colors} />

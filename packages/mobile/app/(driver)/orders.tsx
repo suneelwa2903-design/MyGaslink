@@ -1067,6 +1067,9 @@ function WalkInOrderModal({
   onCreated: () => void;
 }) {
   const { colors } = useTheme();
+  // 2026-07-28 (anti-pattern #25) — WalkInOrder sheet's "Create Order &
+  // Dispatch" button clips under Samsung 3-button nav without insets.
+  const insets = useSafeAreaInsets();
   const [customerQuery, setCustomerQuery] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
   const [cylinderTypeId, setCylinderTypeId] = useState<string | null>(null);
@@ -1171,7 +1174,7 @@ function WalkInOrderModal({
           </View>
           <ScrollView
             style={{ padding: 16 }}
-            contentContainerStyle={{ paddingBottom: 32 }}
+            contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
             keyboardShouldPersistTaps="handled"
           >
             {/* 1. Customer search */}

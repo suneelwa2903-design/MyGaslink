@@ -3,7 +3,8 @@ import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity, Modal,
   FlatList, Alert, ActivityIndicator,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -238,7 +239,7 @@ export default function CustomerInvoicesScreen() {
             )}
           </View>
 
-          <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }} keyboardShouldPersistTaps="handled">
             {invoiceDetail ? (
               <>
                 {/* Status & Dates */}

@@ -13,7 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -22,7 +22,7 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme } from '../../src/theme';
 import { api, apiPut, getErrorMessage } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores/authStore';
-import { Badge, DateInput, SelectField } from '../../src/components/ui';
+import { Badge, DateInput, SelectField, SearchInput } from '../../src/components/ui';
 import {
   invoiceStatusLabel,
   invoiceStatusVariant,
@@ -276,6 +276,11 @@ export default function AdminFinanceScreen() {
   const [invoiceDateFrom, setInvoiceDateFrom] = useState(getDateNDaysAgoISO(30));
   const [invoiceDateTo, setInvoiceDateTo] = useState(getTodayISO());
   const [irnFilter, setIrnFilter] = useState('all');
+  // 2026-07-28 — mobile-only quick search across invoiceNumber /
+  // poNumber / customer name (backend ILIKE in invoiceService.listInvoices).
+  // Immediate value drives the input; debounced feeds the query key.
+  const [invoiceSearchInput, setInvoiceSearchInput] = useState('');
+  const [invoiceSearch, setInvoiceSearch] = useState('');
   const [expandedInvoiceId, setExpandedInvoiceId] = useState<string | null>(null);
   const [payInvoice, setPayInvoice] = useState<Invoice | null>(null);
 
@@ -287,6 +292,15 @@ export default function AdminFinanceScreen() {
 
   // Payment state
   const [createPaymentVisible, setCreatePaymentVisible] = useState(false);
+  // 2026-07-28 — Payment list filters + search, mirroring Invoices' shape.
+  // Backend already accepts paymentMethod / allocationStatus / dateFrom /
+  // dateTo / search on GET /api/payments (paymentService.listPayments).
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState('all');
+  const [paymentAllocationFilter, setPaymentAllocationFilter] = useState('all');
+  const [paymentDateFrom, setPaymentDateFrom] = useState(getDateNDaysAgoISO(30));
+  const [paymentDateTo, setPaymentDateTo] = useState(getTodayISO());
+  const [paymentSearchInput, setPaymentSearchInput] = useState('');
+  const [paymentSearch, setPaymentSearch] = useState('');
 
   // Feature 2: CN/DN modal state (lifted to screen level so gstEnabled is accessible)
   const [creditNoteInvoice, setCreditNoteInvoice] = useState<Invoice | null>(null);
@@ -320,6 +334,7 @@ export default function AdminFinanceScreen() {
   if (gstEnabled && irnFilter !== 'all') invoiceParams.irnStatus = irnFilter;
   if (invoiceDateFrom) invoiceParams.dateFrom = invoiceDateFrom;
   if (invoiceDateTo) invoiceParams.dateTo = invoiceDateTo;
+  if (invoiceSearch) invoiceParams.search = invoiceSearch;
 
   const {
     data: invoicesData,
@@ -327,7 +342,7 @@ export default function AdminFinanceScreen() {
     refetch: refetchInvoices,
     isRefetching: invoicesRefetching,
   } = useApiQuery<{ invoices: Invoice[]; total: number }>(
-    ['admin-invoices', invoiceStatus, irnFilter, invoiceDateFrom, invoiceDateTo],
+    ['admin-invoices', invoiceStatus, irnFilter, invoiceDateFrom, invoiceDateTo, invoiceSearch],
     '/invoices',
     invoiceParams,
     { enabled: topTab === 'invoices' },
@@ -335,15 +350,22 @@ export default function AdminFinanceScreen() {
 
   // ─── Payment Queries ───────────────────────────────────────────────────
 
+  const paymentParams: Record<string, unknown> = { limit: 50 };
+  if (paymentMethodFilter !== 'all') paymentParams.paymentMethod = paymentMethodFilter;
+  if (paymentAllocationFilter !== 'all') paymentParams.allocationStatus = paymentAllocationFilter;
+  if (paymentDateFrom) paymentParams.dateFrom = paymentDateFrom;
+  if (paymentDateTo) paymentParams.dateTo = paymentDateTo;
+  if (paymentSearch) paymentParams.search = paymentSearch;
+
   const {
     data: paymentsData,
     isLoading: paymentsLoading,
     refetch: refetchPayments,
     isRefetching: paymentsRefetching,
   } = useApiQuery<{ payments: Payment[]; total: number }>(
-    ['admin-payments'],
+    ['admin-payments', paymentMethodFilter, paymentAllocationFilter, paymentDateFrom, paymentDateTo, paymentSearch],
     '/payments',
-    { limit: 50 },
+    paymentParams,
     { enabled: topTab === 'payments' },
   );
 
@@ -398,6 +420,9 @@ export default function AdminFinanceScreen() {
           setInvoiceDateTo={setInvoiceDateTo}
           irnFilter={irnFilter}
           setIrnFilter={setIrnFilter}
+          invoiceSearchInput={invoiceSearchInput}
+          setInvoiceSearchInput={setInvoiceSearchInput}
+          setInvoiceSearchDebounced={setInvoiceSearch}
           invoicesData={invoicesData}
           invoicesLoading={invoicesLoading}
           invoicesRefetching={invoicesRefetching}
@@ -413,6 +438,17 @@ export default function AdminFinanceScreen() {
         <PaymentsTab
           C={C}
           dark={dark}
+          paymentMethodFilter={paymentMethodFilter}
+          setPaymentMethodFilter={setPaymentMethodFilter}
+          paymentAllocationFilter={paymentAllocationFilter}
+          setPaymentAllocationFilter={setPaymentAllocationFilter}
+          paymentDateFrom={paymentDateFrom}
+          setPaymentDateFrom={setPaymentDateFrom}
+          paymentDateTo={paymentDateTo}
+          setPaymentDateTo={setPaymentDateTo}
+          paymentSearchInput={paymentSearchInput}
+          setPaymentSearchInput={setPaymentSearchInput}
+          setPaymentSearchDebounced={setPaymentSearch}
           paymentsData={paymentsData}
           paymentsLoading={paymentsLoading}
           paymentsRefetching={paymentsRefetching}
@@ -515,6 +551,9 @@ interface InvoicesTabProps {
   setInvoiceDateTo: (s: string) => void;
   irnFilter: string;
   setIrnFilter: (s: string) => void;
+  invoiceSearchInput: string;
+  setInvoiceSearchInput: (s: string) => void;
+  setInvoiceSearchDebounced: (s: string) => void;
   invoicesData: { invoices: Invoice[]; total: number } | undefined;
   invoicesLoading: boolean;
   invoicesRefetching: boolean;
@@ -540,6 +579,9 @@ function InvoicesTab({
   setInvoiceDateTo,
   irnFilter,
   setIrnFilter,
+  invoiceSearchInput,
+  setInvoiceSearchInput,
+  setInvoiceSearchDebounced,
   invoicesData,
   invoicesLoading,
   invoicesRefetching,
@@ -1019,6 +1061,14 @@ function InvoicesTab({
 
   return (
     <View style={{ flex: 1 }}>
+      <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+        <SearchInput
+          value={invoiceSearchInput}
+          onChangeText={setInvoiceSearchInput}
+          onDebouncedChange={setInvoiceSearchDebounced}
+          placeholder="Search invoice #, PO, customer"
+        />
+      </View>
       {renderDateRange()}
       {renderFilters()}
       <FlatList
@@ -1299,6 +1349,7 @@ interface RejectNoteModalProps {
 }
 
 function RejectNoteModal({ C, dark, target, onClose, onSubmit }: RejectNoteModalProps) {
+  const insets = useSafeAreaInsets();
   const [reason, setReason] = useState('');
   const noun = target.kind === 'cn' ? 'Credit Note' : 'Debit Note';
 
@@ -1326,7 +1377,7 @@ function RejectNoteModal({ C, dark, target, onClose, onSubmit }: RejectNoteModal
               borderTopRightRadius: 20,
               paddingHorizontal: 20,
               paddingTop: 16,
-              paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+              paddingBottom: (Platform.OS === 'ios' ? 36 : 24) + insets.bottom,
             }}
           >
             <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: C.divider, marginBottom: 16 }} />
@@ -1401,6 +1452,10 @@ interface CreateNoteModalProps {
 }
 
 function CreateNoteModal({ C, dark, kind, invoice, onClose }: CreateNoteModalProps) {
+  // 2026-07-28 (anti-pattern #25) — sheet's paddingBottom hard-codes
+  // Platform-conditional value; on Samsung 3-button the Create button
+  // clips. Adding insets.bottom respects the OS nav.
+  const insets = useSafeAreaInsets();
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
@@ -1486,7 +1541,7 @@ function CreateNoteModal({ C, dark, kind, invoice, onClose }: CreateNoteModalPro
               borderTopRightRadius: 20,
               paddingHorizontal: 20,
               paddingTop: 16,
-              paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+              paddingBottom: (Platform.OS === 'ios' ? 36 : 24) + insets.bottom,
               maxHeight: '90%',
             }}
           >
@@ -1592,6 +1647,17 @@ function CreateNoteModal({ C, dark, kind, invoice, onClose }: CreateNoteModalPro
 interface PaymentsTabProps {
   C: ReturnType<typeof getColors>;
   dark: boolean;
+  paymentMethodFilter: string;
+  setPaymentMethodFilter: (s: string) => void;
+  paymentAllocationFilter: string;
+  setPaymentAllocationFilter: (s: string) => void;
+  paymentDateFrom: string;
+  setPaymentDateFrom: (s: string) => void;
+  paymentDateTo: string;
+  setPaymentDateTo: (s: string) => void;
+  paymentSearchInput: string;
+  setPaymentSearchInput: (s: string) => void;
+  setPaymentSearchDebounced: (s: string) => void;
   paymentsData: { payments: Payment[]; total: number } | undefined;
   paymentsLoading: boolean;
   paymentsRefetching: boolean;
@@ -1604,6 +1670,17 @@ interface PaymentsTabProps {
 function PaymentsTab({
   C,
   dark,
+  paymentMethodFilter,
+  setPaymentMethodFilter,
+  paymentAllocationFilter,
+  setPaymentAllocationFilter,
+  paymentDateFrom,
+  setPaymentDateFrom,
+  paymentDateTo,
+  setPaymentDateTo,
+  paymentSearchInput,
+  setPaymentSearchInput,
+  setPaymentSearchDebounced,
   paymentsData,
   paymentsLoading,
   paymentsRefetching,
@@ -1781,8 +1858,82 @@ function PaymentsTab({
     );
   };
 
+  const paymentMethodOptions = [
+    { label: 'All methods', value: 'all' },
+    { label: 'Cash', value: 'cash' },
+    { label: 'UPI', value: 'upi' },
+    { label: 'Bank Transfer', value: 'bank_transfer' },
+    { label: 'Cheque', value: 'cheque' },
+  ];
+  const paymentAllocationOptions = [
+    { label: 'All', value: 'all' },
+    { label: 'Unallocated', value: 'unallocated' },
+    { label: 'Partial', value: 'partial' },
+    { label: 'Fully allocated', value: 'full' },
+  ];
+
   return (
     <View style={{ flex: 1 }}>
+      <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+        <SearchInput
+          value={paymentSearchInput}
+          onChangeText={setPaymentSearchInput}
+          onDebouncedChange={setPaymentSearchDebounced}
+          placeholder="Search customer, reference, amount"
+        />
+      </View>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 12,
+          paddingTop: 8,
+          paddingBottom: 2,
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <DateInput
+            value={paymentDateFrom || null}
+            onChange={setPaymentDateFrom}
+            placeholder="From"
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <DateInput
+            value={paymentDateTo || null}
+            onChange={setPaymentDateTo}
+            placeholder="To"
+          />
+        </View>
+      </View>
+      <View
+        style={{
+          flexDirection: 'row',
+          gap: 8,
+          paddingHorizontal: 16,
+          paddingVertical: 8,
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <SelectField
+            label="Method"
+            value={paymentMethodFilter}
+            options={paymentMethodOptions}
+            onChange={setPaymentMethodFilter}
+            accent={ACCENT}
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <SelectField
+            label="Allocation"
+            value={paymentAllocationFilter}
+            options={paymentAllocationOptions}
+            onChange={setPaymentAllocationFilter}
+            accent="#0369a1"
+          />
+        </View>
+      </View>
       <FlatList
         data={payments}
         keyExtractor={(item) => item.paymentId}
@@ -1835,6 +1986,7 @@ interface AllocatePaymentModalProps {
 }
 
 function AllocatePaymentModal({ C, dark, payment, onClose }: AllocatePaymentModalProps) {
+  const insets = useSafeAreaInsets();
   const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
   const [amount, setAmount] = useState('');
   const [invoicePickerVisible, setInvoicePickerVisible] = useState(false);
@@ -1936,7 +2088,7 @@ function AllocatePaymentModal({ C, dark, payment, onClose }: AllocatePaymentModa
               borderTopRightRadius: 20,
               paddingHorizontal: 20,
               paddingTop: 16,
-              paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+              paddingBottom: (Platform.OS === 'ios' ? 36 : 24) + insets.bottom,
               maxHeight: '90%',
             }}
           >
@@ -2093,6 +2245,7 @@ interface PayInvoiceModalProps {
 }
 
 function PayInvoiceModal({ C, dark, invoice, onClose }: PayInvoiceModalProps) {
+  const insets = useSafeAreaInsets();
   const [amount, setAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [referenceNumber, setReferenceNumber] = useState('');
@@ -2174,7 +2327,7 @@ function PayInvoiceModal({ C, dark, invoice, onClose }: PayInvoiceModalProps) {
               borderTopRightRadius: 20,
               paddingHorizontal: 20,
               paddingTop: 16,
-              paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+              paddingBottom: (Platform.OS === 'ios' ? 36 : 24) + insets.bottom,
               maxHeight: '85%',
             }}
           >

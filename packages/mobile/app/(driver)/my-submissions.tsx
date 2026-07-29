@@ -16,7 +16,8 @@ import {
   TouchableOpacity,
   Modal,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
@@ -88,6 +89,7 @@ export default function DriverMySubmissionsScreen() {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
       <Stack.Screen options={{ title: 'My Payment Submissions', headerShown: true }} />
       <ScrollView
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: 16, gap: 10 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >

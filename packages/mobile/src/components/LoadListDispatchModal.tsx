@@ -10,6 +10,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApiQuery, useApiMutation } from '../hooks/useApi';
 import { useTheme, ACCENT } from '../theme';
@@ -70,6 +71,11 @@ export interface LoadListDispatchModalProps {
 export function LoadListDispatchModal(props: LoadListDispatchModalProps) {
   const { visible, driverName, vehicleNumber, assignmentId, tripNumber, orderItems, onClose, onDispatchNow } = props;
   const { colors } = useTheme();
+  // 2026-07-28 (anti-pattern #25) — overFullScreen + statusBarTranslucent
+  // draws under the Android nav bar; without insets the Confirm/Save/
+  // Dispatch buttons at the bottom of the ScrollView sit under Samsung's
+  // 3-button nav. Bump the ScrollView's bottom padding by insets.bottom.
+  const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
 
   const [spareByType, setSpareByType] = useState<Record<string, string>>({});
@@ -226,7 +232,7 @@ export function LoadListDispatchModal(props: LoadListDispatchModalProps) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 + insets.bottom }} keyboardShouldPersistTaps="handled">
               {manifestLoading && (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
                   <ActivityIndicator color={ACCENT.red} />

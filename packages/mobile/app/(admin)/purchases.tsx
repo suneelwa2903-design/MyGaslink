@@ -23,7 +23,7 @@ import { useMemo, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, Modal, StyleSheet, Alert,
 } from 'react-native';
-import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaView, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { api } from '../../src/lib/api';
@@ -1821,6 +1821,9 @@ function FabChooserSheet({
   onPickEditOpening: (source: SourceDistributor) => void;
 }) {
   const dark = useIsDark();
+  // 2026-07-28 (anti-pattern #25) — FAB action-sheet buttons clip under
+  // Samsung 3-button nav without insets padding.
+  const insets = useSafeAreaInsets();
   const bg = dark ? '#0f172a' : '#ffffff';
   const text = dark ? '#f1f5f9' : '#0f172a';
   const muted = dark ? '#94a3b8' : '#64748b';
@@ -1851,7 +1854,7 @@ function FabChooserSheet({
             borderTopRightRadius: 20,
             paddingHorizontal: 16,
             paddingTop: 12,
-            paddingBottom: 24,
+            paddingBottom: Math.max(insets.bottom + 8, 24),
             maxHeight: '75%',
           }}
         >
@@ -1927,7 +1930,7 @@ function FabChooserSheet({
                 </Text>
               </View>
             ) : (
-              <ScrollView style={{ maxHeight: 340 }}>
+              <ScrollView style={{ maxHeight: 340 }} keyboardShouldPersistTaps="handled">
                 {suppliers.map((s, idx) => (
                   <View
                     key={s.sourceDistributorId}

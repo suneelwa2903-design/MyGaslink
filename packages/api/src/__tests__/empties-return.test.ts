@@ -252,6 +252,35 @@ describe('Item 7 — empties return', () => {
     expect(Number(ledger.summary.overdueAmount)).toBe(0);
   });
 
+  it('T4c — Fix 1: empties_return row credits emptyCylsCollected and decrements pendingEmptyCyls', async () => {
+    // Guards the 3-layer fix (reader + PDF individual + PDF group) that
+    // makes standalone empties returns visible in the customer statement's
+    // Pend E column. Before Fix 1, empties_return rows emitted with
+    // emptyCylsCollected=0 and pendingEmptyCyls=0 — the PDF Total
+    // over-reported pending empties by exactly the returned qty.
+    const customer = await makeCustomer('T4c-fix1');
+    const cyl = seedData.cylinderTypes[0];
+    await request(app)
+      .post('/api/inventory/empties-return')
+      .set(auth(adminToken))
+      .send({
+        customerId: customer.id,
+        cylinderTypeId: cyl.id,
+        quantity: 8,
+        returnDate: today(),
+        notes: TEST_NOTES_MARKER,
+      })
+      .expect(201);
+    const { getCustomerLedger } = await import('../services/paymentService.js');
+    const ledger = await getCustomerLedger('dist-001', customer.id);
+    const row = ledger.rows.find((r) => r.narration?.startsWith('Empties: '));
+    expect(row).toBeDefined();
+    expect(row!.emptyCylsCollected).toBe(8);
+    // Customer had no prior delivery in this test — running Pend E after
+    // decrement clamps to 0 (see the Math.max(0, …) in the reader).
+    expect(row!.pendingEmptyCyls).toBe(0);
+  });
+
   it('T5 — past return date (30 days ago) is accepted', async () => {
     const customer = await makeCustomer('T5-past');
     const cyl = seedData.cylinderTypes[0];

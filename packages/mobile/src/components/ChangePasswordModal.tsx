@@ -35,6 +35,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api, getErrorMessage } from '../lib/api';
 import { useTheme } from '../theme';
@@ -58,6 +59,10 @@ export function ChangePasswordModal({
   const [showNew, setShowNew] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 2026-07-28 (anti-pattern #25) — read insets for defense-in-depth on
+  // very short devices where a centered dialog can still bleed under the
+  // Android nav bar. Applied to the outer KAV padding below.
+  const insets = useSafeAreaInsets();
 
   const reset = () => {
     setCurrentPassword('');
@@ -128,7 +133,9 @@ export function ChangePasswordModal({
           flex: 1,
           backgroundColor: 'rgba(0,0,0,0.4)',
           justifyContent: 'center',
-          padding: 24,
+          paddingTop: 24,
+          paddingHorizontal: 24,
+          paddingBottom: 24 + insets.bottom,
         }}
       >
         <View

@@ -323,7 +323,7 @@ function CreateCategoryModal({
                 </label>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" {...register('showPaidTo')} />
-                  <span>Show "Paid to" text field</span>
+                  <span>Show &ldquo;Paid to&rdquo; text field</span>
                 </label>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" {...register('paidToRequired')} disabled={!watch('showPaidTo')} />
@@ -440,7 +440,7 @@ function EditCategoryModal({
                 </label>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" {...register('showPaidTo')} />
-                  <span>Show "Paid to" text field</span>
+                  <span>Show &ldquo;Paid to&rdquo; text field</span>
                 </label>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" {...register('paidToRequired')} disabled={!showPaidTo} />

@@ -431,6 +431,19 @@ interface UnifiedRow {
 }
 
 function UnifiedVehicleLedger({ report, view }: { report: ReportResult; view: 'all' | 'corporation' | 'trips' }) {
+  // 2026-07-27 — Fix 2. Two bugs in one line replaced:
+  //   (a) `??` treats 0 as a real value, so `fullsDispatched === 0` used to
+  //       short-circuit to 0 for every delivery-only or empties-only row.
+  //       Use an explicit first-non-zero pick to fall through to the next key.
+  //   (b) The follow-up keys `deliveredQty` / `collectedEmpties` don't exist —
+  //       the API emits `fullsDelivered` / `emptiesCollected` (see
+  //       packages/api/src/services/reportsService.ts vehicleLedger totals).
+  const firstNonZero = (...vals: (ReportCellValue | undefined)[]): string | number => {
+    for (const v of vals) if (typeof v === 'number' && v !== 0) return v;
+    for (const v of vals) if (typeof v === 'string' && v !== '') return v;
+    for (const v of vals) if (typeof v === 'number') return v; // include the zero if that's all we have
+    return '';
+  };
   const tripRows: UnifiedRow[] = (report.rows ?? []).map((r) => ({
     type: 'Trip',
     date: String(r.date ?? r.tripDate ?? r.eventDate ?? ''),
@@ -438,7 +451,7 @@ function UnifiedVehicleLedger({ report, view }: { report: ReportResult; view: 'a
     driverName: String(r.driverName ?? ''),
     cylinderType: String(r.cylinderType ?? r.cylinderTypeName ?? ''),
     documentNumber: '',
-    quantity: r.fullsDispatched ?? r.deliveredQty ?? r.collectedEmpties ?? '',
+    quantity: firstNonZero(r.fullsDispatched, r.fullsDelivered, r.emptiesCollected),
     raw: r,
   }));
   const corporationRows: UnifiedRow[] = (report.secondary?.rows ?? []).map((r) => ({

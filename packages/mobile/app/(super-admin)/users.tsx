@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, TextInput, TouchableOpacity, Modal, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
@@ -169,6 +169,9 @@ function CreateUserModal({ visible, onClose, dark, colors, accent }: {
   colors: ThemeColors;
   accent: AccentColors;
 }) {
+  // 2026-07-28 (anti-pattern #25) — bottom-sheet Create button clips
+  // under Samsung 3-button nav without insets padding.
+  const insets = useSafeAreaInsets();
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', phone: '', role: UserRole.DISTRIBUTOR_ADMIN, password: '',
   });
@@ -202,7 +205,8 @@ function CreateUserModal({ visible, onClose, dark, colors, accent }: {
             backgroundColor: dark ? colors.cardBg : '#fff',
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
-            padding: 24,
+            paddingTop: 24, paddingHorizontal: 24,
+            paddingBottom: Math.max(insets.bottom + 8, 24),
             maxHeight: '85%',
           }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -212,7 +216,7 @@ function CreateUserModal({ visible, onClose, dark, colors, accent }: {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }} keyboardShouldPersistTaps="handled">
               <FormField label="First Name *" value={form.firstName} onChange={(v) => setForm({ ...form, firstName: v })} dark={dark} colors={colors} />
               <FormField label="Last Name" value={form.lastName} onChange={(v) => setForm({ ...form, lastName: v })} dark={dark} colors={colors} />
               <FormField label="Email *" value={form.email} onChange={(v) => setForm({ ...form, email: v })} keyboardType="email-address" dark={dark} colors={colors} />

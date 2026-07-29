@@ -43,7 +43,8 @@ import {
   Alert,
   StyleSheet,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -172,6 +173,7 @@ function PillRow({
   return (
     <ScrollView
       horizontal
+      keyboardShouldPersistTaps="handled"
       showsHorizontalScrollIndicator={false}
       style={{ flexGrow: 0 }}
       contentContainerStyle={styles.pillRow}

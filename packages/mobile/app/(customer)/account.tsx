@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, Alert, TouchableOpacity, Modal, TextInput,
   KeyboardAvoidingView, Platform, RefreshControl,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
@@ -76,6 +76,10 @@ function InfoRow({ label, value, colors }: {
 
 export default function CustomerAccountScreen() {
   const { dark, colors, accent } = useTheme();
+  // 2026-07-28 (anti-pattern #25) — Edit Profile bottom-sheet at line 282
+  // uses overFullScreen + statusBarTranslucent; Save button clips under
+  // Samsung 3-button nav without insets padding.
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, logout } = useAuthStore();
 
@@ -295,13 +299,16 @@ export default function CustomerAccountScreen() {
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{
               backgroundColor: dark ? colors.cardBg : colors.bg,
-              borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '80%',
+              borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              paddingTop: 24, paddingHorizontal: 24,
+              paddingBottom: Math.max(insets.bottom + 8, 24),
+              maxHeight: '80%',
             }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>
                 Edit Profile
               </Text>
 
-              <ScrollView style={{ maxHeight: 400 }}>
+              <ScrollView style={{ maxHeight: 400 }} keyboardShouldPersistTaps="handled">
                 <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
                   Phone Number
                 </Text>

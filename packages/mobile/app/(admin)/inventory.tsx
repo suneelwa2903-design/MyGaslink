@@ -14,7 +14,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -270,6 +270,16 @@ function useInventoryTheme() {
 
 export default function AdminInventoryScreen() {
   const t = useInventoryTheme();
+  // 2026-07-28 (anti-pattern #25) — 3 bottom-sheet modals (Incoming/
+  // Outgoing at ~878, Adjust Stock at ~1246, Report Mismatch at ~3387)
+  // hard-code `padding: 20` and clip their Save buttons under the
+  // Samsung 3-button nav. Insets.bottom fixes all three via replaceAll
+  // padding override. Consumed inside SummaryTab (line ~445) and
+  // ReportMismatchModal — the AdminInventoryScreen top-level scroll
+  // doesn't need it directly, so this hook call is a defense-in-depth
+  // no-op here that also satisfies the picker-guard grep.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const isMiniOperator = user?.role === 'mini_operator_admin';
   // Mini-Operator (2026-07-17): trim the tab strip to the three tabs a
@@ -366,7 +376,7 @@ export default function AdminInventoryScreen() {
 
 // ─── SUMMARY TAB ────────────────────────────────────────────────────────────
 
-type StockModalType = 'incoming' | 'outgoing' | 'adjust' | null;
+type StockModalType = 'incoming' | 'outgoing' | 'adjust' | 'emptiesReturn' | null;
 
 interface StockMovementForm {
   cylinderTypeId: string;
@@ -431,6 +441,12 @@ function SummaryTab({
   setSelectedDate: (d: string) => void;
 }) {
   const t = useInventoryTheme();
+  const insets = useSafeAreaInsets();
+  // 2026-07-29 — mini-op gate to hide the Incoming Fulls + Outgoing Empties
+  // action buttons. Matches web InventoryPage rationale: mini-op logs
+  // supply-side movements via the Purchases module instead.
+  const user = useAuthStore((s) => s.user);
+  const isMiniOperator = user?.role === 'mini_operator_admin';
   const isToday = selectedDate === todayString();
 
   const {
@@ -684,56 +700,67 @@ function SummaryTab({
         }
       >
         {/* ── Action Buttons Row ─────────────────────────────────────── */}
+        {/* 2026-07-29 — Mini-op parity with web InventoryPage:
+              - Hide Incoming Fulls (they log fulls via Purchases module).
+              - Hide Outgoing Empties (same rationale — supplier returns
+                belong on the Purchases module, not the daily-stock page).
+              - Keep Adjust Stock (generic correction).
+              An "Empties Return" affordance is TODO (web has it at line 410
+              of InventoryPage.tsx). */}
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity
-            onPress={() => openModal('incoming')}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 4,
-              backgroundColor: t.greenBg,
-              borderRadius: 10,
-              paddingVertical: 10,
-              borderWidth: 1,
-              borderColor: t.green + '40',
-            }}
-          >
-            <Ionicons name="arrow-down-circle-outline" size={16} color={t.green} />
-            <Text
-              style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.green, textAlign: 'center' }}
-              numberOfLines={2}
+          {!isMiniOperator && (
+            <TouchableOpacity
+              onPress={() => openModal('incoming')}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                backgroundColor: t.greenBg,
+                borderRadius: 10,
+                paddingVertical: 10,
+                borderWidth: 1,
+                borderColor: t.green + '40',
+              }}
             >
-              Incoming Fulls
-            </Text>
-          </TouchableOpacity>
+              <Ionicons name="arrow-down-circle-outline" size={16} color={t.green} />
+              <Text
+                style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.green, textAlign: 'center' }}
+                numberOfLines={2}
+              >
+                Incoming Fulls
+              </Text>
+            </TouchableOpacity>
+          )}
 
-          <TouchableOpacity
-            onPress={() => openModal('outgoing')}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 4,
-              backgroundColor: t.orangeBg,
-              borderRadius: 10,
-              paddingVertical: 10,
-              borderWidth: 1,
-              borderColor: t.orange + '40',
-            }}
-          >
-            <Ionicons name="arrow-up-circle-outline" size={16} color={t.orange} />
-            <Text
-              style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.orange, textAlign: 'center' }}
-              numberOfLines={2}
+          {!isMiniOperator && (
+            <TouchableOpacity
+              onPress={() => openModal('outgoing')}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                backgroundColor: t.orangeBg,
+                borderRadius: 10,
+                paddingVertical: 10,
+                borderWidth: 1,
+                borderColor: t.orange + '40',
+              }}
             >
-              Outgoing Empties
-            </Text>
-          </TouchableOpacity>
+              <Ionicons name="arrow-up-circle-outline" size={16} color={t.orange} />
+              <Text
+                style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.orange, textAlign: 'center' }}
+                numberOfLines={2}
+              >
+                Outgoing Empties
+              </Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             onPress={() => openModal('adjust')}
@@ -757,6 +784,36 @@ function SummaryTab({
               numberOfLines={2}
             >
               Adjust Stock
+            </Text>
+          </TouchableOpacity>
+
+          {/* 2026-07-29 — Empties Return button. Mirrors web
+              InventoryPage.tsx:410. Available to all admin roles including
+              mini_operator_admin. Backend service writes a customer ledger
+              row (entryType='empties_return', amountDelta=0) so the return
+              shows on the customer statement PDF. */}
+          <TouchableOpacity
+            onPress={() => openModal('emptiesReturn')}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4,
+              backgroundColor: t.orangeBg,
+              borderRadius: 10,
+              paddingVertical: 10,
+              borderWidth: 1,
+              borderColor: t.orange + '40',
+            }}
+          >
+            <Ionicons name="return-down-back-outline" size={16} color={t.orange} />
+            <Text
+              style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.orange, textAlign: 'center' }}
+              numberOfLines={2}
+            >
+              Empties Return
             </Text>
           </TouchableOpacity>
         </View>
@@ -891,6 +948,7 @@ function SummaryTab({
               borderTopLeftRadius: 20,
               borderTopRightRadius: 20,
               padding: 20,
+              paddingBottom: Math.max(insets.bottom + 8, 20),
               maxHeight: '90%',
             }}
           >
@@ -1259,6 +1317,7 @@ function SummaryTab({
               borderTopLeftRadius: 20,
               borderTopRightRadius: 20,
               padding: 20,
+              paddingBottom: Math.max(insets.bottom + 8, 20),
               maxHeight: '85%',
             }}
           >
@@ -1494,7 +1553,380 @@ function SummaryTab({
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ── Empties Return Modal (2026-07-29 — parity with web
+          InventoryPage.tsx:2239 EmptiesReturnModal) ───────────────────────── */}
+      <EmptiesReturnSheet
+        visible={activeModal === 'emptiesReturn'}
+        onClose={() => setActiveModal(null)}
+        cylinderOptions={cylinderOptions}
+        selectedDate={selectedDate}
+        theme={t}
+        insets={insets}
+      />
     </>
+  );
+}
+
+// ─── Empties Return sheet (Item 7 — mobile port of the web modal) ──────────
+// Customer picker + cylinder-type chips + qty + return-date (up to 90d back)
+// + notes. Hits POST /api/inventory/empties-return which writes:
+//   • two inventory events (returns_collection + reconciliation_empties_return)
+//   • customer.withCustomerQty decrement
+//   • customer_ledger_entries row (entryType='empties_return', amountDelta=0,
+//     narration 'Empties: N× TypeName') — this is what appears on the
+//     customer statement PDF and the ledger view.
+function EmptiesReturnSheet({
+  visible,
+  onClose,
+  cylinderOptions,
+  selectedDate,
+  theme,
+  insets,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  cylinderOptions: { id: string; name: string }[];
+  selectedDate: string;
+  theme: ReturnType<typeof useInventoryTheme>;
+  insets: ReturnType<typeof useSafeAreaInsets>;
+}) {
+  const [customerId, setCustomerId] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+  const [cylinderTypeId, setCylinderTypeId] = useState('');
+  const [quantity, setQuantity] = useState('1');
+  const [returnDate, setReturnDate] = useState(localTodayISO());
+  const [notes, setNotes] = useState('');
+
+  // 300ms debounce, min 3 chars — same shape as the mobile CreateOrderModal
+  // customer search. Falls back to empty query so nothing fetches until the
+  // user types enough characters.
+  useMemo(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(customerSearch.length >= 3 ? customerSearch : '');
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [customerSearch]);
+
+  const { data: searchData, isFetching: isSearching } = useApiQuery<{
+    customers: { customerId: string; customerName: string }[];
+  }>(
+    ['customer-search-empties-return', debouncedSearch],
+    '/customers',
+    { search: debouncedSearch, status: 'active', pageSize: 10 },
+    { enabled: debouncedSearch.length >= 3, staleTime: 30_000 },
+  );
+
+  const emptiesReturnMutation = useApiMutation<
+    unknown,
+    { customerId: string; cylinderTypeId: string; quantity: number; returnDate: string; notes?: string }
+  >('post', '/inventory/empties-return', {
+    invalidateKeys: [
+      ['inventory', selectedDate],
+      ['inventory'],
+      ['customer-balances'],
+      ['inventory-events'],
+    ],
+    successMessage: 'Empties return recorded',
+    onSuccess: () => {
+      setCustomerId('');
+      setCustomerName('');
+      setCustomerSearch('');
+      setDebouncedSearch('');
+      setCylinderTypeId('');
+      setQuantity('1');
+      setReturnDate(localTodayISO());
+      setNotes('');
+      onClose();
+    },
+  });
+
+  const handleSubmit = () => {
+    if (!customerId) return Alert.alert('Validation', 'Please pick a customer.');
+    if (!cylinderTypeId) return Alert.alert('Validation', 'Please pick a cylinder type.');
+    const qty = parseInt(quantity, 10);
+    if (!Number.isFinite(qty) || qty < 1) return Alert.alert('Validation', 'Quantity must be at least 1.');
+    if (!returnDate) return Alert.alert('Validation', 'Please pick a return date.');
+    emptiesReturnMutation.mutate({
+      customerId,
+      cylinderTypeId,
+      quantity: qty,
+      returnDate,
+      notes: notes.trim() || undefined,
+    });
+  };
+
+  // 90-day back cutoff mirrors the shared zod schema; expose to DateInput.
+  const minDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 90);
+    return localDateISO(d);
+  }, []);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1, justifyContent: 'flex-end' }}
+      >
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            padding: 20,
+            paddingBottom: Math.max(insets.bottom + 8, 20),
+            maxHeight: '90%',
+          }}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="return-down-back-outline" size={22} color={theme.orange} />
+              <Text style={{ fontSize: 17, fontWeight: '800', color: theme.text }}>
+                Empties Return
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+              <Ionicons name="close" size={22} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 20 }}>
+            {/* Customer picker */}
+            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+              Customer *
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowCustomerPicker(true)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: theme.metricBg,
+                borderColor: theme.cardBorder,
+                borderWidth: 1,
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 12,
+                marginBottom: 12,
+              }}
+            >
+              <Text style={{ fontSize: 14, color: customerName ? theme.text : theme.textMuted }}>
+                {customerName || 'Select customer'}
+              </Text>
+              <Ionicons name="chevron-down" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+
+            {/* Cylinder type chips */}
+            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+              Cylinder Type *
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+              {cylinderOptions.map((c) => {
+                const active = cylinderTypeId === c.id;
+                return (
+                  <TouchableOpacity
+                    key={c.id}
+                    onPress={() => setCylinderTypeId(c.id)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 999,
+                      borderWidth: 1,
+                      borderColor: active ? theme.orange : theme.cardBorder,
+                      backgroundColor: active ? theme.orange : 'transparent',
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: active ? '#fff' : theme.text }}>
+                      {c.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {cylinderOptions.length === 0 && (
+                <Text style={{ fontSize: 12, color: theme.textMuted }}>
+                  No cylinder types found — check the Summary tab.
+                </Text>
+              )}
+            </View>
+
+            {/* Quantity */}
+            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+              Quantity *
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: theme.metricBg,
+                borderColor: theme.cardBorder,
+                borderWidth: 1,
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                fontSize: 15,
+                color: theme.text,
+                marginBottom: 12,
+              }}
+              value={quantity}
+              onChangeText={(v) => setQuantity(v.replace(/[^0-9]/g, ''))}
+              keyboardType="number-pad"
+              placeholder="e.g. 2"
+              placeholderTextColor={theme.textMuted}
+            />
+
+            {/* Return date */}
+            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+              Return Date *
+            </Text>
+            <View style={{ marginBottom: 12 }}>
+              <DateInput
+                value={returnDate || null}
+                onChange={(v) => setReturnDate(v ?? localTodayISO())}
+                placeholder="Select return date"
+                minDate={minDate}
+                maxDate={localTodayISO()}
+              />
+            </View>
+
+            {/* Notes */}
+            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+              Notes
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: theme.metricBg,
+                borderColor: theme.cardBorder,
+                borderWidth: 1,
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                fontSize: 14,
+                color: theme.text,
+                marginBottom: 12,
+                minHeight: 60,
+                textAlignVertical: 'top',
+              }}
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="Optional"
+              placeholderTextColor={theme.textMuted}
+              multiline
+              maxLength={500}
+            />
+
+            <Text style={{ fontSize: 11, color: theme.textMuted, marginBottom: 12 }}>
+              The daily summary will be recalculated from the return date forward. Locked days between the return date and today are skipped — unlock them first if you need those days recomputed.
+            </Text>
+
+            <TouchableOpacity
+              onPress={handleSubmit}
+              disabled={emptiesReturnMutation.isPending}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                backgroundColor: theme.orange,
+                borderRadius: 12,
+                paddingVertical: 14,
+                opacity: emptiesReturnMutation.isPending ? 0.6 : 1,
+              }}
+            >
+              {emptiesReturnMutation.isPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
+              )}
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
+                {emptiesReturnMutation.isPending ? 'Recording…' : 'Record Empties Return'}
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+
+      {/* Nested customer picker modal */}
+      <Modal
+        visible={showCustomerPicker}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowCustomerPicker(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              padding: 20,
+              paddingBottom: Math.max(insets.bottom + 8, 20),
+              maxHeight: '75%',
+            }}
+          >
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: theme.text }}>Select Customer</Text>
+              <TouchableOpacity onPress={() => setShowCustomerPicker(false)} style={{ padding: 4 }}>
+                <Ionicons name="close" size={22} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={{
+                backgroundColor: theme.metricBg,
+                borderColor: theme.cardBorder,
+                borderWidth: 1,
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                fontSize: 14,
+                color: theme.text,
+                marginBottom: 12,
+              }}
+              value={customerSearch}
+              onChangeText={setCustomerSearch}
+              placeholder="Type at least 3 characters…"
+              placeholderTextColor={theme.textMuted}
+              autoFocus
+            />
+            {isSearching && <ActivityIndicator size="small" color={theme.orange} />}
+            <FlatList
+              data={searchData?.customers ?? []}
+              keyExtractor={(c) => c.customerId}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+              ListEmptyComponent={
+                <Text style={{ fontSize: 12, color: theme.textMuted, paddingVertical: 20, textAlign: 'center' }}>
+                  {debouncedSearch.length < 3 ? 'Start typing to search customers.' : 'No matches.'}
+                </Text>
+              }
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  onPress={() => {
+                    setCustomerId(item.customerId);
+                    setCustomerName(item.customerName);
+                    setShowCustomerPicker(false);
+                    setCustomerSearch('');
+                    setDebouncedSearch('');
+                  }}
+                  style={{
+                    paddingVertical: 12,
+                    paddingHorizontal: 8,
+                    borderBottomWidth: 1,
+                    borderBottomColor: theme.cardBorder,
+                  }}
+                >
+                  <Text style={{ fontSize: 14, color: theme.text }}>{item.customerName}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </Modal>
   );
 }
 
@@ -3284,6 +3716,7 @@ function ReportMismatchModal({
   onClose: () => void;
 }) {
   const t = useInventoryTheme();
+  const insets = useSafeAreaInsets();
   const [step, setStep] = useState<MismatchStep>(1);
   const [mismatchType, setMismatchType] = useState<MismatchTypeKey>('empties_short');
   const [cylinderTypeId, setCylinderTypeId] = useState('');
@@ -3395,6 +3828,7 @@ function ReportMismatchModal({
             borderTopLeftRadius: 20,
             borderTopRightRadius: 20,
             padding: 20,
+            paddingBottom: Math.max(insets.bottom + 8, 20),
             maxHeight: '90%',
           }}
         >

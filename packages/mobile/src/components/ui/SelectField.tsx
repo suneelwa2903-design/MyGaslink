@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { useTheme } from '../../theme';
 
 /**
@@ -46,6 +48,10 @@ export function SelectField({
   disabled = false,
 }: SelectFieldProps) {
   const { dark, colors } = useTheme();
+  // 2026-07-28 (anti-pattern #25) — Android <Modal> doesn't inherit outer
+  // safe-area insets; on Samsung 3-button nav the sheet's Cancel button ends
+  // up under the nav bar. Add insets.bottom to the hard-coded padding.
+  const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
 
   const selected = options.find((o) => o.value === value);
@@ -106,7 +112,7 @@ export function SelectField({
               styles.sheet,
               {
                 backgroundColor: sheetBg,
-                paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+                paddingBottom: (Platform.OS === 'ios' ? 36 : 24) + insets.bottom,
               },
             ]}
           >
@@ -125,7 +131,7 @@ export function SelectField({
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ maxHeight: 360 }}>
+            <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
               {options.map((opt) => {
                 const active = opt.value === value;
                 return (

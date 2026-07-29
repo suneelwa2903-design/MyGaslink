@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
@@ -217,6 +217,12 @@ function TabBar({
 
 export default function AdminFleetScreen() {
   const { colors } = useTheme();
+  // 2026-07-28 — Android nav-bar padding for the vehicle-picker bottom
+  // sheet (line ~1191). Same rationale as (admin)/orders.tsx: RN Modal
+  // does NOT propagate SafeAreaView bottom insets on Android, so opaque
+  // nav bars (Samsung 3-button, older stock Android) clip the sheet's
+  // last row without explicit padding.
+  const insets = useSafeAreaInsets();
   // canEdit gate: pattern mirrors (admin)/customer-detail.tsx:907-916.
   // Hides every mutation affordance for the finance role (which can read
   // drivers/vehicles/assignments but is blocked by the API on writes —
@@ -1187,7 +1193,7 @@ export default function AdminFleetScreen() {
                 borderTopLeftRadius: 20,
                 borderTopRightRadius: 20,
                 maxHeight: '80%',
-                paddingBottom: 24,
+                paddingBottom: Math.max(insets.bottom + 8, 24),
               }}
             >
               <View
@@ -1217,7 +1223,7 @@ export default function AdminFleetScreen() {
                 if (!row) return null;
                 const options = optionsForDriver(row.driverId, row.vehicleId);
                 return (
-                  <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12 }}>
+                  <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12 }} keyboardShouldPersistTaps="handled">
                     {options.length === 0 ? (
                       <Text
                         style={{

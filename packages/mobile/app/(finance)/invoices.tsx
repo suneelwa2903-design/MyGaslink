@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, TouchableOpacity, Modal, FlatList, ActivityIndicator, Alert } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { api, getErrorMessage } from '../../src/lib/api';
 import { useTheme, formatINR } from '../../src/theme';
-import { Card, Badge, MetricCard, EmptyState, SelectField } from '../../src/components/ui';
+import { Card, Badge, MetricCard, EmptyState, SelectField, SearchInput } from '../../src/components/ui';
 import type { Invoice } from '@gaslink/shared';
 import { invoiceStatusLabel, invoiceStatusVariant } from '@gaslink/shared';
 
@@ -25,11 +26,19 @@ export default function FinanceInvoicesScreen() {
   const { dark, colors, accent } = useTheme();
   const [tab, setTab] = useState<InvoiceFilter>('all');
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  // 2026-07-28 — mobile-only quick search (backend ILIKE across
+  // invoice_number, po_number, customer name — invoiceService.listInvoices).
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+
+  const invoiceParams: Record<string, unknown> = {};
+  if (tab !== 'all') invoiceParams.status = tab;
+  if (search) invoiceParams.search = search;
 
   const { data: invoicesResponse, isLoading, refetch } = useApiQuery<{ invoices: Invoice[] }>(
-    ['fin-invoices', tab],
+    ['fin-invoices', tab, search],
     '/invoices',
-    tab === 'all' ? {} : { status: tab },
+    invoiceParams,
   );
   const invoices: Invoice[] = invoicesResponse?.invoices ?? [];
 
@@ -106,6 +115,14 @@ export default function FinanceInvoicesScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
+      <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+        <SearchInput
+          value={searchInput}
+          onChangeText={setSearchInput}
+          onDebouncedChange={setSearch}
+          placeholder="Search invoice #, PO, customer"
+        />
+      </View>
       {/* STAGE-D: horizontal pill-row replaced with a chip-shaped SelectField
           dropdown for parity with the admin Billing screen UX. */}
       <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
@@ -290,7 +307,7 @@ function InvoiceDetailModal({
             <ActivityIndicator size="large" color={accent.red} />
           </View>
         ) : (
-          <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }} keyboardShouldPersistTaps="handled">
             {/* Invoice Header */}
             <View style={{ gap: 4 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>

@@ -381,7 +381,9 @@ function DownloadReportModal({
 
   // Reset defaults once categories load.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!headerId && headers[0]) setHeaderId(headers[0].categoryId);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!categoryId && groups[0]?.leaves[0]) setCategoryId(groups[0].leaves[0].id);
   }, [headers, groups, headerId, categoryId]);
 
@@ -440,7 +442,7 @@ function DownloadReportModal({
               <div className="flex-1">
                 <div className="font-medium">One header (all its subcategories)</div>
                 <div className="text-xs text-surface-500 dark:text-surface-400 mb-2">
-                  e.g. all "Vehicle Costs" leaves with per-leaf subtotals
+                  e.g. all &ldquo;Vehicle Costs&rdquo; leaves with per-leaf subtotals
                 </div>
                 {scope === 'header' && (
                   <Select

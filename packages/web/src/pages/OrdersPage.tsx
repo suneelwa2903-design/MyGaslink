@@ -266,6 +266,15 @@ export default function OrdersPage() {
                 Backdated / On-Demand
               </Button>
             )}
+            {/* 2026-07-28 — mini_operator_admin uses the regular Create Order
+                flow with a past deliveryDate for backdated entries. Reason:
+                mini-op is a single-user tenant model (no separate
+                order-creator + delivery-confirmer roles) so a two-modal UX
+                is friction with no benefit. orderService.createOrder detects
+                past deliveryDate + mini-op accountType and inline-delegates
+                to createBackdatedOrder — same historical-date write path
+                (orderDate/deliveryDate/deliveredAt/issueDate/entryDate all
+                land on the entered date), no separate button needed. */}
             {/* 2026-07-17: bulk CSV / PDF download of the current filter set.
                 Same pattern as the Payments tab — never limited to the current
                 page, always the full filter result (up to 10k rows). */}

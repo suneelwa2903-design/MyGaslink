@@ -140,6 +140,12 @@ export async function listExpenses(distributorId: string, query: ListExpensesQue
   if (query.categoryId) where.categoryId = query.categoryId;
   if (query.vehicleId) where.vehicleId = query.vehicleId;
   if (query.driverId) where.driverId = query.driverId;
+  // 2026-07-29 — added by the mobile Expenses screen. Case-insensitive
+  // contains on description; matches Postgres ILIKE via Prisma's mode.
+  if (query.search && query.search.trim().length > 0) {
+    where.description = { contains: query.search.trim(), mode: 'insensitive' };
+  }
+  if (query.paymentMethod) where.paymentMethod = query.paymentMethod;
 
   const page = query.page ?? 1;
   const pageSize = query.pageSize ?? 50;
@@ -227,7 +233,7 @@ export async function deleteExpense(distributorId: string, id: string) {
  */
 export async function summarizeExpenses(
   distributorId: string,
-  query: { from?: string; to?: string },
+  query: { from?: string; to?: string; categoryId?: string; paymentMethod?: string; search?: string },
 ) {
   const where: Prisma.ExpenseWhereInput = {
     distributorId,
@@ -237,6 +243,17 @@ export async function summarizeExpenses(
     where.expenseDate = {};
     if (query.from) (where.expenseDate as { gte?: string }).gte = query.from;
     if (query.to) (where.expenseDate as { lte?: string }).lte = query.to;
+  }
+  // 2026-07-29 — same filter set as listExpenses so the summary card
+  // reflects the applied filters (mobile Expenses "filtered total").
+  if (query.categoryId) where.categoryId = query.categoryId;
+  if (query.paymentMethod) {
+    // Prisma types paymentMethod as its own enum; the shared schema
+    // validates before this reaches the service so a string cast is safe.
+    where.paymentMethod = query.paymentMethod as Prisma.ExpenseWhereInput['paymentMethod'];
+  }
+  if (query.search && query.search.trim().length > 0) {
+    where.description = { contains: query.search.trim(), mode: 'insensitive' };
   }
 
   const [total, byCategoryRows] = await Promise.all([

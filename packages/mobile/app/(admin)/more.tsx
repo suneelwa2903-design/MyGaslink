@@ -14,7 +14,7 @@ import {
   Platform,
   Switch,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
@@ -874,6 +874,9 @@ function CylinderTypesModal({ visible, onClose }: { visible: boolean; onClose: (
 
 function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
+  // 2026-07-28 (anti-pattern #25) — Add Price bottom-sheet Save button
+  // clips under Samsung 3-button nav without insets padding.
+  const insets = useSafeAreaInsets();
 
   const { data: prices, isLoading, isRefetching, refetch, error } = useApiQuery<CylinderPriceRow[]>(
     ['cylinder-prices'],
@@ -1065,7 +1068,7 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
         {/* Add Price modal — bottom-sheet style */}
         <Modal visible={addOpen} animationType="slide" transparent onRequestClose={() => setAddOpen(false)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-            <View style={{ backgroundColor: theme.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16 }}>
+            <View style={{ backgroundColor: theme.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, paddingBottom: Math.max(insets.bottom + 8, 16) }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <Text style={{ fontSize: 17, fontWeight: '700', color: theme.text }}>Add Price</Text>
                 <TouchableOpacity onPress={() => setAddOpen(false)}>
@@ -1074,7 +1077,7 @@ function CylinderPricesModal({ visible, onClose }: { visible: boolean; onClose: 
               </View>
 
               <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textMuted, marginBottom: 4 }}>CYLINDER TYPE</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginBottom: 14 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginBottom: 14 }} keyboardShouldPersistTaps="handled">
                 {cylinderTypes.map((ct) => {
                   const selected = addCylinderTypeId === ct.id;
                   return (
@@ -1353,6 +1356,10 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
 // ═══════════════════════════════════════════════════════════════════════════
 
 function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  // 2026-07-28 (anti-pattern #25) — Edit User bottom-sheet Save button
+  // clips under Samsung 3-button nav without insets padding.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const insetsHook = useSafeAreaInsets();
   const theme = useMoreTheme();
   const [showCreate, setShowCreate] = useState(false);
   // Edit-role state. When set, we render the edit modal instead of the
@@ -1751,7 +1758,7 @@ function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: 
           onRequestClose={() => setEditingUser(null)}
         >
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-            <View style={{ backgroundColor: theme.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, maxHeight: '85%' }}>
+            <View style={{ backgroundColor: theme.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, paddingBottom: Math.max(insetsHook.bottom + 8, 16), maxHeight: '85%' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <Text style={{ fontSize: 17, fontWeight: '700', color: theme.text }}>Edit user</Text>
                 <TouchableOpacity onPress={() => setEditingUser(null)}>
@@ -1883,18 +1890,41 @@ export default function AdminMoreScreen() {
               onPress={() => router.push('/pending-payments')}
               theme={theme}
             />
-            <Divider theme={theme} />
-            {/* Mini-op #5 (2026-07-27) — Expenses. Available to both
-                distributor + mini-op admin. */}
-            <MenuRow
-              icon="wallet-outline"
-              label="Expenses"
-              subtitle="Track operational spend"
-              onPress={() => router.push('/expenses')}
-              theme={theme}
-            />
           </SectionCard>
         )}
+
+        {/* ── Section: Business ──────────────────────────────────── */}
+        {/* Mini-op #7 (2026-07-28) — moved Expenses out of Analytics
+            (which is hidden for mini-op) into its own section that both
+            roles can see. Quotations is mini-op only. */}
+        <SectionCard title="Business" theme={theme}>
+          {/* Mini-op #5 (2026-07-27) — Expenses. Available to both
+              distributor + mini-op admin. */}
+          <MenuRow
+            icon="wallet-outline"
+            label="Expenses"
+            subtitle="Track operational spend"
+            onPress={() => router.push('/expenses')}
+            theme={theme}
+          />
+          {/* 2026-07-29 — Quotations for distributor_admin + finance ONLY
+              (matches web sidebar). Mini-op uses its own pricing model
+              (order-level override) and doesn't send quotes. Previously
+              mis-gated as mini-op-only; corrected to distributor + finance
+              per the pricing/GST scope. */}
+          {!isMiniOperator && (
+            <>
+              <Divider theme={theme} />
+              <MenuRow
+                icon="document-text-outline"
+                label="Quotations"
+                subtitle="Create, view, resend, duplicate"
+                onPress={() => router.push('/quotations')}
+                theme={theme}
+              />
+            </>
+          )}
+        </SectionCard>
 
         {/* ── STAGE-A A7: Appearance ──────────────────────────────── */}
         {/* Dark-mode toggle parity with (driver)/more.tsx. The themeStore

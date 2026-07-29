@@ -298,6 +298,15 @@ const orderItemSchema = z.object({
   // persisting; otherwise the field is silently dropped so an unauthorised
   // caller can't sneak in a custom price.
   unitPriceOverride: z.number().nonnegative().max(1_000_000).optional(),
+  // 2026-07-29 Mini-op backdated shortcut — when a mini-op admin picks a
+  // past deliveryDate, orderService.createOrder inline-delegates to
+  // createBackdatedOrder which needs empties-per-item to write the
+  // reconciliation_empties_return event. The regular (today) create
+  // path ignores this — empties on today's deliveries come in through
+  // the driver confirmDelivery flow. Server drops the field for any
+  // non-backdated path so a rogue caller can't back-fill inventory
+  // without going through delivery.
+  emptiesCollected: z.number().int().min(0).optional(),
 });
 
 export const createOrderSchema = z.object({
@@ -385,11 +394,24 @@ export const backdatedOrderSchema = z.object({
     // type, the service layer normalises with `?? 0`. Same pattern
     // as isGodownPickup in createOrderSchema (Brief 2 lesson).
     emptiesCollected: z.number().int().min(0).default(0).optional(),
+    // 2026-07-29 — Mini-op order-level pricing override for
+    // backdated orders. Same server-side gate as
+    // orderService.createOrder: applied only when
+    // distributor.accountType='mini_operator' AND
+    // customer.orderLevelPricingEnabled=true. Silently dropped
+    // otherwise so an unauthorised caller cannot sneak a custom price.
+    unitPriceOverride: z.number().nonnegative().max(1_000_000).optional(),
   })).min(1),
   specialInstructions: z.string().max(500).optional(),
   driverId: uuid.optional(),
   vehicleId: uuid.optional(),
   poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
+  // 2026-07-29 Mini-op backdated shortcut — mini-op tenants have no
+  // Driver FK, so the inline delegation from orderService.createOrder
+  // passes the free-text driver name through here. Regular distributor
+  // callers of the backdated endpoint should continue to use `driverId`;
+  // both are optional so neither side breaks.
+  driverNameFreeText: z.string().max(100).optional(),
   payment: z.object({
     amount: z.number().positive(),
     paymentMethod: z.enum(['cash', 'upi', 'cheque', 'neft', 'rtgs', 'other']),
@@ -1162,6 +1184,13 @@ export const listExpensesQuerySchema = z.object({
   categoryId: uuid.optional(),
   vehicleId: uuid.optional(),
   driverId: uuid.optional(),
+  // 2026-07-29 — mobile added a search input + payment-method filter for
+  // the Expenses list, so users can find a row by description text
+  // instead of remembering the category. Case-insensitive contains on
+  // description; paymentMethod matches the same enum values used at
+  // create time. Both are ignored server-side when absent.
+  search: z.string().max(120).optional(),
+  paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS).optional(),
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(200).optional(),
 });

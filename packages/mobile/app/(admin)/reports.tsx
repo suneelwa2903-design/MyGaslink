@@ -487,7 +487,7 @@ function ReportTable({
   rows: Record<string, ReportCellValue>[];
   totals?: Record<string, ReportCellValue>;
 }) {
-  const { colors } = useTheme();
+  const { colors, dark } = useTheme();
 
   const colWidth = (c: ReportColumn): number => {
     // Money columns get a touch more room for ₹ + thousands separators.
@@ -522,13 +522,15 @@ function ReportTable({
       )}
       <ScrollView horizontal showsHorizontalScrollIndicator>
         <View>
-          {/* Header */}
+          {/* Header — 2026-07-29 minimal colour polish: subtle indigo
+              tint on the header row so it stands apart from the body
+              without dominating. Text stays on the same colour scale. */}
           <View
             style={{
               flexDirection: 'row',
               borderBottomWidth: 1,
-              borderBottomColor: colors.divider,
-              backgroundColor: colors.inputBg,
+              borderBottomColor: '#c7d2fe',
+              backgroundColor: dark ? 'rgba(99, 102, 241, 0.18)' : '#eef2ff',
             }}
           >
             {columns.map((c) => (
@@ -540,7 +542,7 @@ function ReportTable({
                   paddingVertical: 10,
                   fontSize: 11,
                   fontWeight: '700',
-                  color: colors.textSecondary,
+                  color: dark ? '#c7d2fe' : '#3730a3',
                   textTransform: 'uppercase',
                   textAlign: c.money ? 'right' : 'left',
                 }}

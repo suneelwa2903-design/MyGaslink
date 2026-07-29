@@ -3,11 +3,11 @@ import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity,
   Modal, TextInput, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
-import { Card, Badge, MetricCard, Button, EmptyState } from '../../src/components/ui';
+import { Card, Badge, MetricCard, Button, EmptyState, SearchInput } from '../../src/components/ui';
 import type { Payment, Customer } from '@gaslink/shared';
 import { localTodayISO } from '@gaslink/shared';
 
@@ -45,10 +45,18 @@ export default function FinancePaymentsScreen() {
   const [showRecord, setShowRecord] = useState(false);
   const [showCreateNote, setShowCreateNote] = useState(false);
   const [screenTab, setScreenTab] = useState<ScreenTab>('payments');
+  // 2026-07-28 — quick search across customer name / reference / amount
+  // (backend paymentService.listPayments treats numeric tokens as amount).
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+
+  const paymentParams: Record<string, unknown> = {};
+  if (search) paymentParams.search = search;
 
   const { data: paymentsResponse, isLoading, refetch } = useApiQuery<{ payments: Payment[] }>(
-    ['fin-payments'],
+    ['fin-payments', search],
     '/payments',
+    paymentParams,
   );
   const payments: Payment[] = paymentsResponse?.payments ?? [];
 
@@ -99,6 +107,14 @@ export default function FinancePaymentsScreen() {
 
       {screenTab === 'payments' && (
         <>
+          <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+            <SearchInput
+              value={searchInput}
+              onChangeText={setSearchInput}
+              onDebouncedChange={setSearch}
+              placeholder="Search customer, reference, amount"
+            />
+          </View>
           <ScrollView
             contentContainerStyle={{ padding: 16, gap: 10 }}
             refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} />}
@@ -254,6 +270,9 @@ function RecordPaymentModal({ visible, dark, colors, accent, onClose, onSuccess 
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  // 2026-07-28 (anti-pattern #25) — bottom-sheet Record Payment button
+  // clips under Samsung 3-button nav without insets padding.
+  const insets = useSafeAreaInsets();
   const [customerId, setCustomerId] = useState('');
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('cash');
@@ -329,7 +348,8 @@ function RecordPaymentModal({ visible, dark, colors, accent, onClose, onSuccess 
             backgroundColor: dark ? colors.cardBg : '#fff',
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
-            padding: 24,
+            paddingTop: 24, paddingHorizontal: 24,
+            paddingBottom: Math.max(insets.bottom + 8, 24),
             maxHeight: '90%',
           }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -339,7 +359,7 @@ function RecordPaymentModal({ visible, dark, colors, accent, onClose, onSuccess 
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 16 }}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 16 }} keyboardShouldPersistTaps="handled">
               {/* Customer Search */}
               <View>
                 <Text style={{ fontSize: 14, fontWeight: '500', color: colors.textSecondary, marginBottom: 6 }}>Customer *</Text>
@@ -496,6 +516,9 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  // 2026-07-28 (anti-pattern #25) — bottom-sheet Create Note button
+  // clips under Samsung 3-button nav without insets padding.
+  const insets = useSafeAreaInsets();
   const [noteType, setNoteType] = useState<'credit' | 'debit'>('credit');
   const [customerId, setCustomerId] = useState('');
   const [amount, setAmount] = useState('');
@@ -566,7 +589,8 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
             backgroundColor: dark ? colors.cardBg : '#fff',
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
-            padding: 24,
+            paddingTop: 24, paddingHorizontal: 24,
+            paddingBottom: Math.max(insets.bottom + 8, 24),
             maxHeight: '90%',
           }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -576,7 +600,7 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 16 }}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 16 }} keyboardShouldPersistTaps="handled">
               {/* Note Type */}
               <View>
                 <Text style={{ fontSize: 14, fontWeight: '500', color: colors.textSecondary, marginBottom: 8 }}>Type *</Text>

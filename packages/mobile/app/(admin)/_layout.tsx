@@ -252,6 +252,9 @@ function AdminLayoutInner() {
       <Tabs.Screen name="pending-payments" options={{ href: null, title: 'Pending Payments', tabBarItemStyle: { display: 'none' } }} />
       {/* Mini-op #5 (2026-07-27) — Expenses. Router-push from More menu. */}
       <Tabs.Screen name="expenses" options={{ href: null, title: 'Expenses', tabBarItemStyle: { display: 'none' } }} />
+      {/* Mini-op #7 (2026-07-28) — read-only mobile Quotations. Hidden route
+          reached from More → Quotations (mini-op admin only). */}
+      <Tabs.Screen name="quotations" options={{ href: null, title: 'Quotations', tabBarItemStyle: { display: 'none' } }} />
     </Tabs>
   );
 }

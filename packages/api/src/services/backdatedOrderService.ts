@@ -62,6 +62,10 @@ export async function createBackdatedOrder(
     select: {
       id: true, customerName: true, customerType: true, gstin: true,
       stopSupply: true, transportChargePerCylinder: true,
+      // 2026-07-29 — needed for the mini-op unitPriceOverride gate below.
+      // Precedence: override wins when both (a) distributor is mini_operator
+      // AND (b) customer.orderLevelPricingEnabled === true.
+      orderLevelPricingEnabled: true,
     },
   });
   if (!customer) throw new BackdatedOrderError('Customer not found', 404);
@@ -71,12 +75,22 @@ export async function createBackdatedOrder(
 
   // Pre-load distributor docCode for the order-number allocator inside
   // the transaction below. Same pattern as orderService.createOrder.
+  // 2026-07-29 — accountType joins here so the mini-op pricing gate can
+  // fire on the same read.
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
-    select: { docCode: true },
+    select: { docCode: true, accountType: true },
   });
+  const isMiniOperator = distributor?.accountType === 'mini_operator';
+  const orderLevelPricingAllowed =
+    isMiniOperator && customer.orderLevelPricingEnabled === true;
 
   // Per-item price resolution mirrors orderService.createOrder.
+  // 2026-07-29 — unitPriceOverride precedence:
+  //   effectivePrice = unitPriceOverride ?? (unitPrice − discountPerUnit)
+  // The catalog snapshot (unitPrice) and operator override
+  // (unitPriceOverride) both persist to OrderItem so the audit stays
+  // reconstructable through re-issue.
   const issueDate = new Date(data.issueDate);
   const itemsWithPrices = await Promise.all(data.items.map(async (item) => {
     const unitPrice = await getEffectivePrice(distributorId, item.cylinderTypeId, issueDate);
@@ -84,13 +98,22 @@ export async function createBackdatedOrder(
       where: { customerId_cylinderTypeId: { customerId: data.customerId, cylinderTypeId: item.cylinderTypeId } },
     });
     const discountPerUnit = toNum(discount?.discountPerUnit);
-    const effectivePrice = Math.max(unitPrice - discountPerUnit, 0);
+    const override =
+      orderLevelPricingAllowed
+      && item.unitPriceOverride != null
+      && item.unitPriceOverride >= 0
+        ? item.unitPriceOverride
+        : null;
+    const effectivePrice = override != null
+      ? override
+      : Math.max(unitPrice - discountPerUnit, 0);
     const totalPrice = effectivePrice * item.quantity;
     return {
       cylinderTypeId: item.cylinderTypeId,
       quantity: item.quantity,
       unitPrice,
       discountPerUnit,
+      unitPriceOverride: override,
       totalPrice,
       // Empties handed back at the historical delivery — feeds the
       // reconciliation_empties_return event written by
@@ -123,6 +146,11 @@ export async function createBackdatedOrder(
         poNumber: data.poNumber ?? null,
         driverId: data.driverId ?? null,
         vehicleId: data.vehicleId ?? null,
+        // 2026-07-29 Mini-op tenants use a free-text driver name instead
+        // of the Driver FK — matches the regular createOrder path so the
+        // customer-facing order/invoice display is consistent between
+        // today's orders and backdated historical entries.
+        driverNameFreeText: data.driverNameFreeText?.trim() || null,
         // Historical timestamps — orderDate/deliveryDate/deliveredAt all
         // land on the entered issueDate. createdAt stays `now()` so the
         // audit trail records when the row was actually entered.
@@ -138,6 +166,11 @@ export async function createBackdatedOrder(
             quantity: it.quantity,
             unitPrice: it.unitPrice,
             discountPerUnit: it.discountPerUnit,
+            // 2026-07-29 — persist the per-line override alongside the
+            // catalog snapshot. Matches OrderItem shape written by
+            // orderService.createOrder so the confirmDelivery /
+            // invoice / PDF / IRN readers all see it consistently.
+            unitPriceOverride: it.unitPriceOverride,
             totalPrice: it.totalPrice,
             // Brief 3: backdated orders go straight to delivered — the
             // entered quantity IS the delivered quantity. No partial

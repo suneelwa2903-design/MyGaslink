@@ -284,6 +284,7 @@ function QuotationEditor({
   useEffect(() => {
     if (isEdit && existingQuery.data) {
       const q = existingQuery.data;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setForm({
         quotationDate: q.quotationDate,
         validUntil: q.validUntil,
@@ -452,7 +453,7 @@ function QuotationEditor({
               }}
             />
             <p className="text-xs text-surface-400 mt-1">
-              Up to 10 CCs. All get the email + PDF; only the primary is shown on the "Quotation To" block of the PDF.
+              Up to 10 CCs. All get the email + PDF; only the primary is shown on the &ldquo;Quotation To&rdquo; block of the PDF.
             </p>
           </div>
           <Input label="Address" value={form.recipientAddress ?? ''}
@@ -594,6 +595,7 @@ function NumericInput({
   // When the parent value changes externally (auto-fill), reflect it.
   useEffect(() => {
     const asNum = local === '' ? 0 : Number(local);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (asNum !== value) setLocal(value === 0 ? '' : String(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);

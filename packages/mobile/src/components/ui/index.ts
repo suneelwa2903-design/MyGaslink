@@ -7,3 +7,5 @@ export { DateInput, todayLocalIso, MIN_DATE_FLOOR } from './DateInput';
 export type { DateInputProps } from './DateInput';
 export { SelectField } from './SelectField';
 export type { SelectFieldProps, SelectOption } from './SelectField';
+export { SearchInput } from './SearchInput';
+export type { SearchInputProps } from './SearchInput';

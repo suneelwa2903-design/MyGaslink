@@ -422,7 +422,7 @@ export default function CustomerOrdersScreen() {
     items: Record<string, number>,
     setter: React.Dispatch<React.SetStateAction<Record<string, number>>>,
   ) => (
-    <ScrollView style={{ maxHeight: 300 }}>
+    <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
       {cylinderTypes.length === 0 ? (
         <Text style={{ color: colors.textMuted, textAlign: 'center', paddingVertical: 24 }}>
           No cylinder types available. Contact your distributor.

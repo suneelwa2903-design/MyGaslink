@@ -13,7 +13,8 @@ import {
   TextInput,
   FlatList,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -205,7 +206,7 @@ const MINI_OP_KPI_KEYS: (keyof DashboardStats)[] = [
 ];
 const MINI_OP_KPI_LABEL_OVERRIDES: Partial<Record<keyof DashboardStats, string>> = {
   deliveredToday: 'Delivered Today',
-  revenueToday: 'Sales Today',
+  revenueToday: 'Sale Amount',
   overdueInvoices: 'Overdue Bills',
 };
 
@@ -409,9 +410,18 @@ export default function AdminDashboardScreen() {
               ? formatCurrency(rawValue as number)
               : String(rawValue);
             const showQtySubtitle = isMiniOperator && card.key === 'revenueToday';
+            // 2026-07-29 — `deliveredToday` is an order.count(), NOT a
+            // cylinder count (see analyticsService.getDashboardStats). The
+            // old "N cyl. delivered" subtitle was misleading.
             const qtySubtitle = showQtySubtitle
-              ? `${stats?.deliveredToday ?? 0} cyl. delivered`
+              ? `${stats?.deliveredToday ?? 0} ${(stats?.deliveredToday ?? 0) === 1 ? 'order' : 'orders'}`
               : null;
+            // Delivered Today card shows just the count; add "Order(s)" as
+            // a subtitle so the unit is clear at a glance.
+            const orderSubtitle =
+              isMiniOperator && card.key === 'deliveredToday'
+                ? `${(stats?.deliveredToday ?? 0) === 1 ? 'Order' : 'Orders'}`
+                : null;
 
             return (
               <TouchableOpacity
@@ -465,6 +475,14 @@ export default function AdminDashboardScreen() {
                         {qtySubtitle}
                       </Text>
                     )}
+                    {orderSubtitle && (
+                      <Text
+                        style={{ fontSize: 11, color: theme.textMuted, marginTop: 1 }}
+                        numberOfLines={1}
+                      >
+                        {orderSubtitle}
+                      </Text>
+                    )}
                   </View>
                 </View>
               </TouchableOpacity>
@@ -491,7 +509,7 @@ export default function AdminDashboardScreen() {
                     <Ionicons name="cube-outline" size={20} color={ACCENT.green} />
                   </View>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, textTransform: 'uppercase' }}>
-                    Fulls Delivered Today
+                    Fulls Delivered
                   </Text>
                 </View>
                 {(stats?.fullsDeliveredByTypeToday ?? []).length === 0 ? (
@@ -518,7 +536,7 @@ export default function AdminDashboardScreen() {
                     <Ionicons name="return-down-back-outline" size={20} color={ACCENT.orange} />
                   </View>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textSecondary, textTransform: 'uppercase' }}>
-                    Empties Collected Today
+                    Empties Collected
                   </Text>
                 </View>
                 {(stats?.emptiesCollectedByTypeToday ?? []).length === 0 ? (
@@ -997,6 +1015,7 @@ function CustomerLedgerModal({
         <FlatList
           data={filteredCustomers}
           keyExtractor={(c) => c.customerId}
+          keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}
           renderItem={({ item }) => {
             const selected = item.customerId === customerId;
@@ -1118,7 +1137,7 @@ function PurchaseLedgerModal({
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }} keyboardShouldPersistTaps="handled">
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <View style={{ flex: 1 }}>
               <DateInput label="From" value={from || null} onChange={setFrom} placeholder="From" />

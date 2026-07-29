@@ -531,10 +531,17 @@ export default function AdminOrdersScreen() {
       const canAssign = order.status === 'pending_driver_assignment';
       const canDeliver =
         order.status === 'pending_delivery' || order.status === 'pending_dispatch';
+      // 2026-07-28 — mini-op delivered-cancel parity with web (OrdersPage.tsx
+       // line 500-503): mini_operator_admin can cancel delivered/modified_delivered
+       // orders too (Ramani-style reversal flow). Regular admin still capped at
+       // non-delivered states; server side would reject anyway with a "use Credit
+       // Note" hint. Non-cancelled floor keeps everyone from double-cancelling.
       const canCancel =
-        order.status !== 'delivered' &&
-        order.status !== 'modified_delivered' &&
-        order.status !== 'cancelled';
+        order.status !== 'cancelled' &&
+        (
+          (order.status !== 'delivered' && order.status !== 'modified_delivered') ||
+          isMiniOperator
+        );
 
       return (
         <TouchableOpacity
@@ -986,6 +993,7 @@ export default function AdminOrdersScreen() {
           recentCustomers={customers}
           cylinderTypes={cylinderTypes}
           dark={dark}
+          isMiniOperator={isMiniOperator}
         />
       )}
 
@@ -1070,7 +1078,16 @@ export default function AdminOrdersScreen() {
           onClose={() => setCancelOrder(null)}
           order={cancelOrder}
           isSubmitting={cancelMutation.isPending}
-          onSubmit={(reason) => cancelMutation.mutate({ orderId: cancelOrder.orderId, reason })}
+          onSubmit={(reason, cancellationType) =>
+            cancelMutation.mutate({
+              orderId: cancelOrder.orderId,
+              reason,
+              // 2026-07-29 — server requires cancellationType for delivered
+              // orders (mini-op delivered-cancel path). Send when the user
+              // picked one; server ignores it for pending orders.
+              ...(cancellationType ? { cancellationType } : {}),
+            })
+          }
           dark={dark}
         />
       )}
@@ -1110,14 +1127,29 @@ function CreateOrderModal({
   recentCustomers,
   cylinderTypes,
   dark,
+  isMiniOperator,
 }: {
   visible: boolean;
   onClose: () => void;
   recentCustomers: Customer[];
   cylinderTypes: CylinderType[];
   dark: boolean;
+  // 2026-07-29 — mini_operator_admin gets (a) the free-text driver-name
+  // input (their tenant has no Driver FK — matches web OrdersPage
+  // CreateOrderModal), and (b) a per-item empties-collected input when the
+  // picked deliveryDate is in the past (inline backdated shortcut in
+  // orderService.createOrder — the empties feed the reconciliation event
+  // in createBackdatedOrder).
+  isMiniOperator: boolean;
 }) {
   const C = getColors(dark);
+  // 2026-07-28 — Samsung S23 (3-button nav) covers the last FlatList row of the
+  // customer picker. RN Modal on Android does NOT propagate the outer
+  // SafeAreaView bottom inset into the modal, so we read it directly and pad
+  // the FlatList's contentContainer. Applies to any device with an opaque
+  // system nav bar (Samsung 3-button, older stock Android). Pixel/OnePlus on
+  // gesture nav report insets.bottom ≈ 0 and get zero extra padding — safe.
+  const insets = useSafeAreaInsets();
 
   // Item 1 (2026-07-09): the picker holds the FULL Customer object it
   // saw at pick time in local state so a subsequent search (or the
@@ -1131,12 +1163,24 @@ function CreateOrderModal({
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [isGodownPickup, setIsGodownPickup] = useState(false);
+  // 2026-07-29 — mini-op free-text driver name (mirrors web OrdersPage
+  // CreateOrderModal). Persists to Order.driverNameFreeText via the
+  // orderService.createOrder branch that runs for mini_operator tenants.
+  const [driverNameFreeText, setDriverNameFreeText] = useState('');
   // Mini-op #2 (2026-07-23) — unitPrice added per-line for the
   // order-level pricing override. Empty string = no override; backend
   // gates the field on the customer's flag AND accountType=mini_operator.
-  const [items, setItems] = useState<Array<{ cylinderTypeId: string; quantity: string; unitPrice: string }>>([
-    { cylinderTypeId: '', quantity: '1', unitPrice: '' },
+  // 2026-07-29 — emptiesCollected added per-line for the backdated
+  // shortcut. Only rendered when isMiniOperator AND deliveryDate < today.
+  const [items, setItems] = useState<Array<{ cylinderTypeId: string; quantity: string; unitPrice: string; emptiesCollected: string }>>([
+    { cylinderTypeId: '', quantity: '1', unitPrice: '', emptiesCollected: '' },
   ]);
+
+  // 2026-07-29 — mini-op inline backdated: when a mini-op admin picks a
+  // deliveryDate in the past, orderService.createOrder inline-delegates
+  // to createBackdatedOrder. Surface the per-item empties input in that
+  // case so the customer's cylinder ledger stays consistent.
+  const isBackdatedMiniOp = isMiniOperator && !!deliveryDate && deliveryDate < getTodayISO();
 
   // 300 ms debounce, min 3 chars — same shape as the web CustomerSearchInput.
   useEffect(() => {
@@ -1209,14 +1253,14 @@ function CreateOrderModal({
     ? (searchCustomersData?.customers ?? [])
     : recentCustomers;
 
-  const addItem = () => setItems([...items, { cylinderTypeId: '', quantity: '1', unitPrice: '' }]);
+  const addItem = () => setItems([...items, { cylinderTypeId: '', quantity: '1', unitPrice: '', emptiesCollected: '' }]);
 
   const removeItem = (index: number) => {
     if (items.length <= 1) return;
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const updateItem = (index: number, field: 'cylinderTypeId' | 'quantity' | 'unitPrice', value: string) => {
+  const updateItem = (index: number, field: 'cylinderTypeId' | 'quantity' | 'unitPrice' | 'emptiesCollected', value: string) => {
     const updated = [...items];
     updated[index] = { ...updated[index], [field]: value };
     setItems(updated);
@@ -1242,6 +1286,12 @@ function CreateOrderModal({
       specialInstructions: specialInstructions || undefined,
       poNumber: poNumber.trim() || undefined,
       isGodownPickup,
+      // 2026-07-29 — mini-op driver name (free text). Backend accepts on
+      // both today's-order and backdated paths; distributor_admin flows
+      // never send this field so the null-default fires.
+      driverNameFreeText: isMiniOperator && driverNameFreeText.trim()
+        ? driverNameFreeText.trim()
+        : undefined,
       items: validItems.map((it) => {
         // Mini-op #2 (2026-07-23) — attach unitPriceOverride only when
         // the customer's flag is on AND a valid number was typed. Backend
@@ -1249,10 +1299,17 @@ function CreateOrderModal({
         // avoids the round-trip.
         const override = parseFloat(it.unitPrice);
         const overrideValid = orderLevelPricingOn && Number.isFinite(override) && override >= 0;
+        // 2026-07-29 — empties only on the backdated shortcut. Regular
+        // same-day orders route empties through confirmDelivery; sending
+        // it here would be dropped anyway (createOrder ignores the field
+        // outside the past-date branch).
+        const emptiesRaw = parseInt(it.emptiesCollected, 10);
+        const emptiesValid = isBackdatedMiniOp && Number.isFinite(emptiesRaw) && emptiesRaw >= 0;
         return {
           cylinderTypeId: it.cylinderTypeId,
           quantity: parseInt(it.quantity, 10),
           ...(overrideValid ? { unitPriceOverride: override } : {}),
+          ...(emptiesValid ? { emptiesCollected: emptiesRaw } : {}),
         };
       }),
     });
@@ -1363,6 +1420,7 @@ function CreateOrderModal({
                       data={displayedCustomers}
                       keyExtractor={(c) => c.customerId}
                       keyboardShouldPersistTaps="handled"
+                      contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
                       renderItem={({ item: c }) => (
                         <TouchableOpacity
                           style={[
@@ -1434,6 +1492,53 @@ function CreateOrderModal({
               </>
             )}
 
+            {/* 2026-07-29 — Driver Name (mini-op only). Mini-operator tenants
+                don't maintain a Driver FK; this free-text field is the only
+                place the shipping driver is recorded. Backend accepts on
+                both today's-order path and the inline backdated shortcut. */}
+            {isMiniOperator && (
+              <>
+                <Text style={[styles.fieldLabel, { color: C.text, marginTop: 16 }]}>
+                  Driver Name
+                </Text>
+                <TextInput
+                  style={[
+                    styles.textInput,
+                    { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text },
+                  ]}
+                  value={driverNameFreeText}
+                  onChangeText={(v) => setDriverNameFreeText(v.slice(0, 100))}
+                  placeholder="e.g. Raju"
+                  placeholderTextColor={C.textMuted}
+                  maxLength={100}
+                />
+              </>
+            )}
+
+            {/* 2026-07-29 — Backdated notice + empties reminder. When the
+                mini-op admin picks a past deliveryDate, the create flow
+                inline-delegates to createBackdatedOrder — the order lands
+                already-delivered on the picked date. Nudge the user to fill
+                the per-item Empties field below so cylinder ledgers stay
+                consistent with the historical delivery. */}
+            {isBackdatedMiniOp && (
+              <View style={{
+                marginTop: 12,
+                padding: 10,
+                borderRadius: 8,
+                backgroundColor: dark ? 'rgba(59, 130, 246, 0.15)' : '#eff6ff',
+                borderWidth: 1,
+                borderColor: dark ? 'rgba(59, 130, 246, 0.35)' : '#bfdbfe',
+              }}>
+                <Text style={{ fontSize: 12, color: dark ? '#93c5fd' : '#1e40af', fontWeight: '600' }}>
+                  Backdated delivery
+                </Text>
+                <Text style={{ fontSize: 12, color: dark ? '#bfdbfe' : '#1e3a8a', marginTop: 4 }}>
+                  This order will be recorded as delivered on {deliveryDate}. Enter empties collected per item below (leave blank if none).
+                </Text>
+              </View>
+            )}
+
             {/* Godown Pickup toggle — skips driver assignment + dispatch.
                 Mirrors web OrdersPage create modal. */}
             <TouchableOpacity
@@ -1489,6 +1594,12 @@ function CreateOrderModal({
             </View>
             {items.map((item, index) => (
               <View key={index} style={[styles.itemRow, { backgroundColor: C.card, borderColor: C.cardBorder }]}>
+                {/* 2026-07-29 — inner row holds chips + qty + trash side by
+                    side; Rate ₹ and Empties are full-width column siblings
+                    below. Previous flexWrap-on-parent approach caused the
+                    wrapped inputs to overlap with the next section when
+                    combined with alignItems: flex-end. */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, width: '100%' }}>
                 {/* Cylinder type picker */}
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.itemFieldLabel, { color: C.textSecondary }]}>Cylinder Type</Text>
@@ -1569,6 +1680,7 @@ function CreateOrderModal({
                     <Ionicons name="trash-outline" size={18} color="#ef4444" />
                   </TouchableOpacity>
                 )}
+                </View>{/* /inner top row */}
                 {/* Mini-op #2 (2026-07-23) — Rate ₹ per-line override.
                     Only rendered when customerDetail.orderLevelPricingEnabled
                     is on. Full-width row below the type/qty row so the
@@ -1586,6 +1698,27 @@ function CreateOrderModal({
                       onChangeText={(v) => updateItem(index, 'unitPrice', v.replace(/[^0-9.]/g, ''))}
                       keyboardType="decimal-pad"
                       placeholder="e.g. 850"
+                      placeholderTextColor={C.textMuted}
+                    />
+                  </View>
+                )}
+                {/* 2026-07-29 — Empties collected per line, only when the
+                    mini-op admin picked a past deliveryDate. Backend maps
+                    this into createBackdatedOrder's per-item
+                    emptiesCollected, which fires a reconciliation event
+                    for values > 0 (0 or blank = no empties, no event). */}
+                {isBackdatedMiniOp && (
+                  <View style={{ width: '100%', marginTop: 8 }}>
+                    <Text style={[styles.itemFieldLabel, { color: C.textSecondary }]}>
+                      Empties Collected{' '}
+                      <Text style={{ color: C.textMuted }}>— cylinders returned by customer</Text>
+                    </Text>
+                    <TextInput
+                      style={[styles.textInput, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
+                      value={item.emptiesCollected}
+                      onChangeText={(v) => updateItem(index, 'emptiesCollected', v.replace(/[^0-9]/g, ''))}
+                      keyboardType="number-pad"
+                      placeholder="e.g. 2"
                       placeholderTextColor={C.textMuted}
                     />
                   </View>
@@ -2313,6 +2446,8 @@ function ReturnsOrderModal({
   dark: boolean;
 }) {
   const C = getColors(dark);
+  // 2026-07-28 — mirror CreateOrderModal's Android nav-bar padding.
+  const insets = useSafeAreaInsets();
 
   // Item 1 (2026-07-09) — same server-side-search treatment as
   // CreateOrderModal above. This modal is currently unreachable from the
@@ -2464,6 +2599,7 @@ function ReturnsOrderModal({
                       data={displayedCustomers}
                       keyExtractor={(c) => c.customerId}
                       keyboardShouldPersistTaps="handled"
+                      contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
                       renderItem={({ item }) => (
                         <TouchableOpacity
                           style={[styles.pickerRow, { borderBottomColor: C.divider }]}
@@ -2843,6 +2979,16 @@ function OrderDetailModal({
 // Replaces the prior Alert.alert flow. Reason is required and is sent to the
 // server as `cancellation_reason` to match the web CancelOrderModal payload.
 
+// 2026-07-29 — mirror web CANCEL_TYPE_OPTIONS. Backend enum lives at
+// shared/CANCELLATION_TYPES; keep labels here in sync with web.
+const CANCEL_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'wrong_customer', label: 'Wrong customer' },
+  { value: 'damaged_returned', label: 'Damaged / returned' },
+  { value: 'customer_refused', label: 'Customer refused' },
+  { value: 'duplicate_entry', label: 'Duplicate entry' },
+  { value: 'other', label: 'Other' },
+];
+
 function CancelOrderModal({
   visible,
   onClose,
@@ -2855,18 +3001,29 @@ function CancelOrderModal({
   onClose: () => void;
   order: Order;
   isSubmitting: boolean;
-  onSubmit: (reason: string) => void;
+  onSubmit: (reason: string, cancellationType?: string) => void;
   dark: boolean;
 }) {
   const C = getColors(dark);
   const [reason, setReason] = useState('');
+  const [cancellationType, setCancellationType] = useState<string>('');
+
+  // 2026-07-29 — mini-op delivered-cancel path requires cancellationType.
+  // Backend rejects with "cancellationType is required to cancel a
+  // delivered order" otherwise. Regular pending orders skip the picker.
+  const isDelivered = order.status === 'delivered' || order.status === 'modified_delivered';
+  const isPendingAssignment = order.status === 'pending_driver_assignment';
 
   const handleSubmit = () => {
     if (!reason.trim()) {
       Alert.alert('Reason required', 'Please enter a reason for cancellation.');
       return;
     }
-    onSubmit(reason.trim());
+    if (isDelivered && !cancellationType) {
+      Alert.alert('Type required', 'Please pick a cancellation type.');
+      return;
+    }
+    onSubmit(reason.trim(), cancellationType || undefined);
   };
 
   return (
@@ -2876,14 +3033,63 @@ function CancelOrderModal({
       transparent
       onRequestClose={onClose}
     >
-      <View style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}>
+      {/* 2026-07-29 — KAV wrap: on Android the on-screen keyboard covered
+          the Reason input + Cancel/Go Back buttons; iOS lifts natively via
+          behavior='padding'. Android 'height' resizes the modal frame so
+          the input stays visible above the keyboard. */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={[styles.pickerOverlay, { backgroundColor: C.overlay }]}
+      >
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
+        >
         <View style={[styles.cancelSheet, { backgroundColor: C.modalBg }]}>
           <Text style={[styles.modalTitle, { color: C.text, textAlign: 'left', marginBottom: 6 }]}>
             Cancel {order.orderNumber}
           </Text>
           <Text style={{ color: C.textSecondary, fontSize: 13, marginBottom: 12 }}>
-            This will cancel the order. No invoice has been generated yet. This cannot be undone.
+            {isDelivered
+              ? 'This will mark the invoice as cancelled, return fulls to godown, and write a reversal ledger entry. This cannot be undone.'
+              : isPendingAssignment
+                ? 'This will cancel the order. No invoice has been generated yet. This cannot be undone.'
+                : 'This will cancel the order and reverse dispatch state. This cannot be undone.'}
           </Text>
+
+          {/* Cancellation type — REQUIRED for delivered orders; hidden for
+              pre-dispatch cancels where free-text reason is enough. */}
+          {isDelivered && (
+            <>
+              <Text style={[styles.fieldLabel, { color: C.text }]}>
+                Cancellation type *
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                {CANCEL_TYPE_OPTIONS.map((opt) => {
+                  const active = cancellationType === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      onPress={() => setCancellationType(opt.value)}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        borderColor: active ? ACCENT : C.inputBorder,
+                        backgroundColor: active ? ACCENT : 'transparent',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: active ? '#fff' : C.text }}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>
+          )}
+
           <Text style={[styles.fieldLabel, { color: C.text }]}>Reason *</Text>
           <TextInput
             style={[styles.textareaField, { backgroundColor: C.card, borderColor: C.inputBorder, color: C.text }]}
@@ -2893,7 +3099,6 @@ function CancelOrderModal({
             onChangeText={setReason}
             multiline
             numberOfLines={3}
-            autoFocus
           />
 
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
@@ -2915,7 +3120,8 @@ function CancelOrderModal({
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -3272,8 +3478,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   itemRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
+    // 2026-07-29 — column layout: an inner row holds cylinder chips + qty
+    // + trash side-by-side; Rate ₹ override and Empties Collected stack as
+    // full-width column siblings below. Column parent avoids the
+    // flex-wrap-with-alignItems-flex-end overlap where wrapped inputs
+    // rendered on top of the next form section.
+    flexDirection: 'column',
     gap: 8,
     padding: 12,
     borderRadius: 10,

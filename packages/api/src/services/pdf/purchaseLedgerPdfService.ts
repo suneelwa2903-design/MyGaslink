@@ -458,10 +458,13 @@ export async function generatePurchaseLedgerPdf(
           isPayment ? '—' : String(r.fulls),
           isPayment ? '—' : String(r.empties),
           !isPayment && r.unitPrice > 0 ? formatMoney(r.unitPrice) : '—',
-          // Payment amounts get a "− " prefix so at-a-glance the
-          // downloaded ledger reads like a debit/credit statement.
+          // Payment amounts get a "- " (ASCII hyphen) prefix so at-a-glance
+          // the ledger reads like a debit/credit statement. Must be plain
+          // ASCII — Helvetica in PDFKit has no glyph for U+2212 (real minus)
+          // and renders it as a missing-glyph indicator that looks like a
+          // double-quote ("), which is what the user saw before this fix.
           r.amount > 0
-            ? (isPayment ? `− ${formatMoney(r.amount)}` : formatMoney(r.amount))
+            ? (isPayment ? `- ${formatMoney(r.amount)}` : formatMoney(r.amount))
             : '—',
           r.notes,
         ],
@@ -534,7 +537,7 @@ export async function generatePurchaseLedgerPdf(
           '',
           '',
           '',
-          `− ${formatMoney(totals.paid)}`,
+          `- ${formatMoney(totals.paid)}`,
           '',
         ],
         { bold: true, zebra: true },

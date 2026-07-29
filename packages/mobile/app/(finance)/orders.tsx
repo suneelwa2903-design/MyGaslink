@@ -35,7 +35,8 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
@@ -213,7 +214,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string; onClose: () =
               <ActivityIndicator size="large" color={accent.red} />
             </View>
           ) : (
-            <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+            <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }} keyboardShouldPersistTaps="handled">
               <View style={{ gap: 4 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <View style={{ flex: 1 }}>

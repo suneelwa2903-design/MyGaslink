@@ -423,6 +423,17 @@ export async function getCustomerLedger(
   distributorId: string,
   customerId: string,
   range?: { from?: string; to?: string },
+  options?: {
+    // 2026-07-28 — hide cancelled-order pairs from the returned rows and from
+    // the running-balance calc. Both the original invoice_entry row AND its
+    // paired 'adjustment' reversal row are dropped, so the customer statement
+    // reads as though the cancelled order never happened. DB rows are
+    // untouched — every non-hiding reader (in-app operator ledger table,
+    // aging queries, analytics) still sees them. Used by mini-op tenants
+    // only: customerLedgerPdfService.generateCustomerLedgerPdf/generateGroupLedgerPdf
+    // gate this on distributor.accountType === 'mini_operator'.
+    hideCancelledInvoices?: boolean;
+  },
 ): Promise<CustomerLedgerResponse> {
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
@@ -432,7 +443,7 @@ export async function getCustomerLedger(
 
   // Pull ALL ledger entries (not range-filtered yet) so we can compute the
   // carry-forward "Opening Balance b/f" amount from pre-range entries.
-  const allEntries = await prisma.customerLedgerEntry.findMany({
+  const rawEntries = await prisma.customerLedgerEntry.findMany({
     where: { distributorId, customerId },
     orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
   });
@@ -443,8 +454,66 @@ export async function getCustomerLedger(
   // buckets in a single query and run the processor per bucket without
   // additional round-trips. The old flow (fetch → process inline) is
   // preserved exactly here: same DB reads, same output.
-  const invoiceMap = await loadInvoicesForLedger(allEntries);
+  const invoiceMap = await loadInvoicesForLedger(rawEntries);
+
+  // 2026-07-28 — hideCancelledInvoices: drop the original invoice_entry row
+  // for every cancelled invoice AND the paired 'adjustment' reversal row
+  // (identified by narration starting with 'Cancelled:'). Both drops must
+  // happen atomically or the running balance goes off — the original alone
+  // being present would leave a debit that never gets undone, and the
+  // reversal alone being present would credit a debit that isn't there.
+  // Anything else stays: payments to the cancelled invoice (still real
+  // money in), empties_return rows tied to the cancelled order (already
+  // reversed by the same cancel flow via a separate empties event, if the
+  // order was delivered).
+  const allEntries = options?.hideCancelledInvoices
+    ? rawEntries.filter((e) => {
+        if (e.entryType === 'invoice_entry' && e.invoiceId) {
+          const inv = invoiceMap.get(e.invoiceId);
+          if (inv?.status === 'cancelled') return false;
+        }
+        if (
+          e.entryType === 'adjustment'
+          && (e.narration ?? '').startsWith('Cancelled:')
+        ) {
+          return false;
+        }
+        return true;
+      })
+    : rawEntries;
   const emptyPriceMap = await loadEmptyPricesForLedger(distributorId);
+  // 2026-07-27 — Fix 1. Pre-load the standalone empties-return inventory
+  // events so processLedgerEntries can decrement the running Pend E counter
+  // on each empties_return ledger row. The writer at
+  // emptiesReturnService.recordEmptiesReturn emits two paired inventory
+  // events per return (`returns_collection` + `reconciliation_empties_return`)
+  // with identical `emptiesChange`, so we fetch `returns_collection` only
+  // to avoid double-counting. Key: `${dateISO}|${qty}` because a customer
+  // can legitimately have multiple returns of different cylinder types on
+  // the same date; the ledger entry's narration ("Empties: {qty}× {type}")
+  // is the discriminator (see parse in processLedgerEntries).
+  const emptiesReturnEvents = await prisma.inventoryEvent.findMany({
+    where: {
+      distributorId,
+      referenceType: 'empties_return',
+      referenceId: customerId,
+      eventType: 'returns_collection',
+    },
+    select: { eventDate: true, cylinderTypeId: true, emptiesChange: true, cylinderType: { select: { typeName: true } } },
+  });
+  const emptiesReturnByKey = new Map<string, { cylinderTypeId: string; typeName: string; qty: number }>();
+  for (const ev of emptiesReturnEvents) {
+    const key = `${ev.eventDate.toISOString().slice(0, 10)}|${ev.emptiesChange}`;
+    // If two returns of identical qty on same date for different cyl types
+    // exist, the later one overwrites — a caveat callers should be aware of.
+    // No such collisions in prod as of the 2026-07-27 audit (6 returns total,
+    // all with distinct qty+date signatures).
+    emptiesReturnByKey.set(key, {
+      cylinderTypeId: ev.cylinderTypeId,
+      typeName: ev.cylinderType?.typeName ?? '',
+      qty: ev.emptiesChange,
+    });
+  }
   // 2026-07-21 opening-state seed: load the OB empties snapshot with
   // cylinder type NAMES so the Ledger can emit one OB row per seeded
   // cylinder type. `openingSeedQty=0` rows are skipped (map stays
@@ -470,6 +539,7 @@ export async function getCustomerLedger(
     creditPeriodDays: customer.creditPeriodDays,
     range,
     openingEmptiesByType,
+    emptiesReturnByKey,
   });
 }
 
@@ -513,6 +583,9 @@ const LEDGER_INVOICE_SELECT = {
   // billing list, GSTR-1, and the PDF download.
   invoiceNumber: true,
   isOpeningBalance: true,
+  // 2026-07-28 — needed by getCustomerLedger's hideCancelledInvoices option
+  // to filter out cancelled invoice_entry rows for mini-op statement PDFs.
+  status: true,
   orderId: true,
   items: {
     select: {
@@ -541,6 +614,7 @@ type LedgerInvoiceRow = {
   id: string;
   invoiceNumber: string;
   isOpeningBalance: boolean;
+  status: string;
   orderId: string | null;
   items: Array<{
     quantity: number;
@@ -579,6 +653,15 @@ export interface LedgerProcessingInput {
   // Legacy customers (never seeded) → undefined → single aggregate
   // OB row with blank Type + Pend E blank (previous behaviour).
   openingEmptiesByType?: Map<string, { typeName: string; qty: number }>;
+  // 2026-07-27 — Fix 1. Pre-loaded map of standalone empties-return
+  // inventory-event details, keyed by `${dateISO}|${qty}`. Populated by
+  // getCustomerLedger from `inventoryEvent` rows with
+  // referenceType='empties_return' (writer: emptiesReturnService).
+  // Enables the reader to (a) decrement the running Pend E counter on
+  // each empties_return ledger row and (b) attach the returned qty +
+  // cylinder-type name to the emitted row so the PDF Total picks it up.
+  // Undefined when no returns exist for the customer.
+  emptiesReturnByKey?: Map<string, { cylinderTypeId: string; typeName: string; qty: number }>;
 }
 
 /**
@@ -602,7 +685,7 @@ export interface LedgerProcessingInput {
  * strictly separated.
  */
 export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedgerResponse {
-  const { entries: allEntries, invoiceMap, emptyPriceMap, creditPeriodDays: creditDays, range, openingEmptiesByType } = input;
+  const { entries: allEntries, invoiceMap, emptyPriceMap, creditPeriodDays: creditDays, range, openingEmptiesByType, emptiesReturnByKey } = input;
 
   const fromDate = range?.from ? new Date(range.from) : null;
   const toDate = range?.to ? new Date(range.to) : null;
@@ -626,6 +709,24 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
   if (openingEmptiesByType) {
     for (const [typeId, { qty }] of openingEmptiesByType) {
       if (qty > 0) pendingEmptiesPerType.set(typeId, qty);
+    }
+  }
+  // 2026-07-29 — Track the naive (unclamped-per-step) totals per type so
+  // summary.emptyCylsCost matches the Total-row Pend E rendered by the
+  // PDF. Previously summary.emptyCylsCost read the running clamped state
+  // — which loses "over-return" credits at each `max(0, cur+d-c)` step —
+  // and diverged from the naive Total formula the PDF uses
+  // (`max(0, opening + Σdelivered − Σcollected)`). Symptom: a statement
+  // could show Total Pend E = 1 next to Emp Cost = ₹7,200 (= 3 × price),
+  // where the 3 came from the clamped final and the 1 from the naive sum.
+  // These accumulators use the same math the Total row does, so the
+  // summary always agrees with the visible bottom-row.
+  const openingPerType = new Map<string, number>();
+  const deliveredPerType = new Map<string, number>();
+  const collectedPerType = new Map<string, number>();
+  if (openingEmptiesByType) {
+    for (const [typeId, { qty }] of openingEmptiesByType) {
+      if (qty > 0) openingPerType.set(typeId, qty);
     }
   }
   const openingEmptySeedEntries = openingEmptiesByType
@@ -720,7 +821,19 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
         const delivered = it.deliveredQuantity ?? it.quantity;
         const collected = it.emptiesCollected ?? 0;
         const cur = pendingEmptiesPerType.get(it.cylinderTypeId) ?? 0;
-        pendingEmptiesPerType.set(it.cylinderTypeId, Math.max(0, cur + delivered - collected));
+        // 2026-07-29 — no per-step clamp. Previously we clamped at every
+        // update (`max(0, cur + d − c)`) which capped an empties return at
+        // "what's currently pending" and dropped the "over-return credit"
+        // that should offset the NEXT delivery. Symptom: 5 opening → 3
+        // pending, customer returns 4, pending shows 0 (should be −1);
+        // next delivery of 3 fulls shows pending 3 (should be 2). Now we
+        // let the counter carry the signed net; display sites clamp at
+        // emit time so the reader still sees a non-negative Pend E.
+        pendingEmptiesPerType.set(it.cylinderTypeId, cur + delivered - collected);
+        // Per-type naive accumulators (unchanged) — feed summary.emptyCylsCost
+        // via the Total-row formula (see openingPerType comment).
+        deliveredPerType.set(it.cylinderTypeId, (deliveredPerType.get(it.cylinderTypeId) ?? 0) + delivered);
+        collectedPerType.set(it.cylinderTypeId, (collectedPerType.get(it.cylinderTypeId) ?? 0) + collected);
       }
     }
 
@@ -797,7 +910,12 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
           }
         }
         for (const [typeId, agg] of aggByType) {
-          const pendingForType = pendingEmptiesPerType.get(typeId) ?? 0;
+          // 2026-07-29 — signed running counter; clamp at display so the
+          // over-return credit still flows to the NEXT delivery (which
+                // will surface it as `cur + delivered − collected` = the
+                // net-positive pending) but individual rows never render
+                // a negative Pend E on-screen.
+          const pendingForType = Math.max(0, pendingEmptiesPerType.get(typeId) ?? 0);
           const emptyPrice = emptyPriceMap.get(typeId) ?? 0;
           emitRow(entry.entryDate, {
             orderDate: dateStr,
@@ -886,11 +1004,52 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
         // The row emits with the narration ("Returned 50× 19 KG empties")
         // and no money fields — PDF + web/mobile ledger surfaces render
         // amount as "—" in a neutral colour.
+        //
+        // 2026-07-27 — Fix 1. Attach the returned qty + type name so the
+        // PDF Total row's Pend E formula picks up standalone returns (it
+        // previously only saw invoice-row collections and over-reported
+        // pending empties by the returned qty). Also decrement the running
+        // pendingEmptiesPerType counter so the row itself shows the
+        // updated Pend E (was blank on empties_return rows).
+        // Match key: `${dateISO}|${qty}` — see the emptiesReturnByKey
+        // build site in getCustomerLedger for the format.
+        let matched: { cylinderTypeId: string; typeName: string; qty: number } | undefined;
+        if (emptiesReturnByKey) {
+          const narrMatch = /^Empties:\s*(\d+)/.exec(entry.narration ?? '');
+          const parsedQty = narrMatch ? parseInt(narrMatch[1], 10) : NaN;
+          if (Number.isFinite(parsedQty)) {
+            const key = `${entry.entryDate.toISOString().slice(0, 10)}|${parsedQty}`;
+            matched = emptiesReturnByKey.get(key);
+          }
+        }
+        if (matched) {
+          // 2026-07-29 — no clamp. An over-return (customer hands back more
+          // empties than currently pending) becomes a negative counter that
+          // offsets the next delivery. See the delivery-branch comment for
+          // the rationale. Display sites clamp at emit.
+          const cur = pendingEmptiesPerType.get(matched.cylinderTypeId) ?? 0;
+          pendingEmptiesPerType.set(matched.cylinderTypeId, cur - matched.qty);
+          // Mirror into the naive collected counter so summary.emptyCylsCost
+          // reconciles with the Total-row formula for standalone returns too.
+          collectedPerType.set(matched.cylinderTypeId, (collectedPerType.get(matched.cylinderTypeId) ?? 0) + matched.qty);
+        }
         if (!emit) return;
         emitRow(entry.entryDate, {
           orderDate: dateStr,
           amount: 0,
           receivedAmount: 0,
+          // Populated when the pre-fetch found the matching inventoryEvent;
+          // falls back to 0/blank if it didn't (defensive — PDF renders "-"
+          // for zero, same as before this fix). The PDF Total sums this
+          // column, so having the real qty here is what closes the bug.
+          emptyCylsCollected: matched?.qty ?? 0,
+          cylinderType: matched?.typeName ?? '',
+          // Running Pend E after this row's decrement — surfaces on the
+          // empties_return row itself so the ledger visibly drops. Clamp
+          // at display so an over-return doesn't render a negative on-screen.
+          pendingEmptyCyls: matched
+            ? Math.max(0, [...pendingEmptiesPerType.values()].reduce((s, v) => s + v, 0))
+            : 0,
           narration: entry.narration ?? 'Empties return',
           kind: 'empties_return',
         });
@@ -1012,10 +1171,25 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
     if (inRange && !isOB) processEntry(entry, true);
   }
 
+  // 2026-07-29 — sum over the naive per-type totals (matches the
+  // Total-row Pend E formula in customerLedgerPdfService). Previously we
+  // summed `pendingEmptiesPerType` (the clamped-per-step running state)
+  // which could exceed the naive figure when a customer over-returned at
+  // some point mid-period (the per-step clamp lost the "credit"). That
+  // produced statements with e.g. Pend E=1 next to Emp Cost=₹7,200.
+  const allTypeIds = new Set<string>([
+    ...openingPerType.keys(),
+    ...deliveredPerType.keys(),
+    ...collectedPerType.keys(),
+  ]);
   let totalEmptyCylsCost = 0;
-  for (const [typeId, pending] of pendingEmptiesPerType) {
+  for (const typeId of allTypeIds) {
+    const opening = openingPerType.get(typeId) ?? 0;
+    const delivered = deliveredPerType.get(typeId) ?? 0;
+    const collected = collectedPerType.get(typeId) ?? 0;
+    const naivePending = Math.max(0, opening + delivered - collected);
     const price = emptyPriceMap.get(typeId) ?? 0;
-    totalEmptyCylsCost += pending * price;
+    totalEmptyCylsCost += naivePending * price;
   }
 
   const summary = {

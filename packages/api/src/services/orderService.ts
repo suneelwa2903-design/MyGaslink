@@ -8,6 +8,8 @@ import { generateOrRefreshOtp } from './deliveryProofService.js';
 import { logger } from '../utils/logger.js';
 import { toNum } from '../utils/decimal.js';
 import { allocateNumber } from './numberingService.js';
+import { localTodayISO } from '@gaslink/shared';
+import { createBackdatedOrder } from './backdatedOrderService.js';
 import { notifyDriver } from '../lib/sseManager.js';
 
 // WI-108: legacy random order-number generator, kept as the fallback when a
@@ -164,7 +166,16 @@ export async function createOrder(
     // tenants that don't maintain Driver records. Optional; unrelated to
     // driverId FK. Max 100 chars enforced upstream at the Zod schema.
     driverNameFreeText?: string;
-    items: { cylinderTypeId: string; quantity: number; unitPriceOverride?: number | null }[];
+    items: {
+      cylinderTypeId: string;
+      quantity: number;
+      unitPriceOverride?: number | null;
+      // 2026-07-29 Mini-op backdated shortcut — empties handed back at
+      // the historical delivery. Only consumed on the past-date branch
+      // below (piped into createBackdatedOrder). The regular same-day
+      // path drops this — today's empties flow through confirmDelivery.
+      emptiesCollected?: number;
+    }[];
   },
   options?: {
     commitment?: { promisedDate?: Date; promisedAmount?: number; acknowledged?: boolean };
@@ -189,6 +200,66 @@ export async function createOrder(
   });
   if (!customer) throw new OrderError('Customer not found', 404);
   if (customer.stopSupply) throw new OrderError('Supply is stopped for this customer', 400);
+
+  // 2026-07-28 — Mini-op backdated shortcut.
+  //
+  // Bhargava at Mannava Bhargava (2026-07-28): entered orders with
+  // deliveryDate=4-Jul / 14-Jul from the regular Create Order form,
+  // expecting the ledger to reflect those historical dates. Actual outcome:
+  // the regular flow set orderDate=new Date() and (on confirmDelivery)
+  // invoice.issueDate=new Date() → ledger.entryDate landed on 28-Jul (today).
+  // Prod PDF showed IMBH2627000070/071 as 28-Jul instead of 4/14.
+  //
+  // Why this only affects mini-op: distributor_admin has a separate
+  // "Backdated / On-Demand" modal in OrdersPage that routes to
+  // createBackdatedOrder — a full replay-history path that stamps the
+  // historical date across Order/Invoice/Ledger. Mini-op admins don't have
+  // that button (see OrdersPage.tsx:263 gate) and shouldn't need it —
+  // mini-op is a single-user tenant model where the same person creates
+  // the order + records the delivery at end-of-day. A two-modal UX is
+  // friction for no benefit.
+  //
+  // Fix: when a mini-op admin picks a deliveryDate in the past, inline
+  // delegate to createBackdatedOrder. Its schema-edge guard already
+  // enforces same-calendar-month + before-today (backdatedOrderSchema in
+  // shared), so we don't duplicate those checks here — the wrapped throw
+  // surfaces the same 400 message the standalone endpoint returns.
+  //
+  // Distributor_admin path is unchanged: regular createOrder writes with
+  // today's date, backdated modal handles history. Prevents behaviour drift
+  // for tenants whose ops model separates order creators from delivery
+  // confirmers.
+  const distributorEarly = await prisma.distributor.findUnique({
+    where: { id: distributorId }, select: { accountType: true },
+  });
+  if (
+    distributorEarly?.accountType === 'mini_operator'
+    && data.deliveryDate < localTodayISO()
+  ) {
+    const result = await createBackdatedOrder(distributorId, userId, {
+      customerId: data.customerId,
+      issueDate: data.deliveryDate,
+      items: data.items.map((it) => ({
+        cylinderTypeId: it.cylinderTypeId,
+        quantity: it.quantity,
+        // Empties per-item — the historical delivery already handed
+        // these back. createBackdatedOrder writes a
+        // reconciliation_empties_return event only for values > 0.
+        emptiesCollected: it.emptiesCollected,
+        // 2026-07-29 — pass the per-line rate override too. Same
+        // server-side gate (mini_operator + orderLevelPricingEnabled)
+        // is applied inside createBackdatedOrder; dropped otherwise.
+        unitPriceOverride: it.unitPriceOverride ?? undefined,
+      })),
+      specialInstructions: data.specialInstructions,
+      poNumber: data.poNumber,
+      // Mini-op tenants have no Driver FK — the free-text field is the
+      // only place the shipping driver is captured. Regular distributor
+      // callers of the backdated endpoint still use driverId.
+      driverNameFreeText: data.driverNameFreeText,
+    });
+    return result.order;
+  }
 
   // WI-122: payment-commitment gate. Runs at the SERVICE layer so admin-created
   // orders are gated too — not just the customer portal. Single source of truth
