@@ -147,42 +147,54 @@ export async function createDistributor(data: {
   const docCode = data.docCode?.trim().toUpperCase() || null;
   if (docCode) await assertDocCodeUnique(docCode);
 
-  return prisma.distributor.create({
-    data: {
-      businessName: data.businessName,
-      legalName: data.legalName,
-      docCode,
-      gstin: data.gstin || null,
-      accountType: (data.accountType ?? 'distributor') as Prisma.DistributorCreateInput['accountType'],
-      address: data.address || null,
-      city: data.city || null,
-      state: data.state || null,
-      pincode: data.pincode || null,
-      phone: data.phone || null,
-      email: data.email || null,
-      providerCodes: data.providerCodes || [],
-      latitude: data.latitude ?? null,
-      longitude: data.longitude ?? null,
-      godownAddress: data.godownAddress || null,
-      godownCity: data.godownCity || null,
-      godownState: data.godownState || null,
-      godownPincode: data.godownPincode || null,
-      godownLatitude: data.godownLatitude ?? null,
-      godownLongitude: data.godownLongitude ?? null,
-      officeAddress: data.officeAddress || null,
-      officeCity: data.officeCity || null,
-      officeState: data.officeState || null,
-      officePincode: data.officePincode || null,
-      // Phase 3 — bank + UPI: empty strings normalised to null so the
-      // PDF "Payment Details" guard (account + ifsc must both be non-
-      // null) reads cleanly.
-      bankName: data.bankName || null,
-      bankAccountNumber: data.bankAccountNumber || null,
-      bankBranchName: data.bankBranchName || null,
-      ifscCode: data.ifscCode ? data.ifscCode.trim().toUpperCase() : null,
-      upiId: data.upiId || null,
-    },
-    select: distributorSelect,
+  // 2026-07-29 — seed the 5-header × 20-leaf system expense taxonomy in
+  // the same transaction as the distributor row. The v2 + v3 migrations
+  // that shipped this taxonomy only iterate over distributors that
+  // existed AT MIGRATION TIME (fine for prod: dist-001/002/003 were
+  // pre-existing; miss for any tenant onboarded after). Seeding at
+  // creation-time closes that gap forever.
+  const { seedSystemExpenseCategoriesForDistributor } = await import('./expenseCategoryService.js');
+
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.distributor.create({
+      data: {
+        businessName: data.businessName,
+        legalName: data.legalName,
+        docCode,
+        gstin: data.gstin || null,
+        accountType: (data.accountType ?? 'distributor') as Prisma.DistributorCreateInput['accountType'],
+        address: data.address || null,
+        city: data.city || null,
+        state: data.state || null,
+        pincode: data.pincode || null,
+        phone: data.phone || null,
+        email: data.email || null,
+        providerCodes: data.providerCodes || [],
+        latitude: data.latitude ?? null,
+        longitude: data.longitude ?? null,
+        godownAddress: data.godownAddress || null,
+        godownCity: data.godownCity || null,
+        godownState: data.godownState || null,
+        godownPincode: data.godownPincode || null,
+        godownLatitude: data.godownLatitude ?? null,
+        godownLongitude: data.godownLongitude ?? null,
+        officeAddress: data.officeAddress || null,
+        officeCity: data.officeCity || null,
+        officeState: data.officeState || null,
+        officePincode: data.officePincode || null,
+        // Phase 3 — bank + UPI: empty strings normalised to null so the
+        // PDF "Payment Details" guard (account + ifsc must both be non-
+        // null) reads cleanly.
+        bankName: data.bankName || null,
+        bankAccountNumber: data.bankAccountNumber || null,
+        bankBranchName: data.bankBranchName || null,
+        ifscCode: data.ifscCode ? data.ifscCode.trim().toUpperCase() : null,
+        upiId: data.upiId || null,
+      },
+      select: distributorSelect,
+    });
+    await seedSystemExpenseCategoriesForDistributor(created.id, tx);
+    return created;
   });
 }
 

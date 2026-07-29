@@ -352,3 +352,158 @@ export async function restoreSystemDefaults(distributorId: string) {
   });
   return listCategories(distributorId);
 }
+
+// 2026-07-29 — Static definition of the system taxonomy. The v2 + v3
+// migrations seed this via PL/pgSQL DO-loops that iterate over existing
+// `distributors` rows. That works for prod (dist-001/002/003 already
+// existed when the migrations shipped) but leaves two gaps closed here:
+//   1. New distributors created via `createDistributor()` after these
+//      migrations ran wouldn't get any categories — the DO-loop is a
+//      one-time replay, not a continuously-fired trigger.
+//   2. CI tests (fresh Postgres → migrate → then create dist-001/002 via
+//      the seed script) hit the same trap: migrations ran when the
+//      distributors table was still empty, so 0 rows were inserted.
+// The helper below is called at both sites (see createDistributor +
+// prisma/seed.ts). Idempotent — an existing `(distributor_id, code)`
+// row is left alone.
+
+type SystemHeader = {
+  code: string;
+  name: string;
+  sortOrder: number;
+};
+
+type SystemLeaf = {
+  headerCode: string;
+  code: string;
+  name: string;
+  sortOrder: number;
+  showVehicle?: boolean;
+  vehicleRequired?: boolean;
+  showDriver?: boolean;
+  driverRequired?: boolean;
+  showPaidTo?: boolean;
+  paidToRequired?: boolean;
+  paidToLabel?: string | null;
+  paidToPlaceholder?: string | null;
+  vendorLabel?: string | null;
+  vendorPlaceholder?: string | null;
+  referenceLabel?: string | null;
+  referencePlaceholder?: string | null;
+  hint?: string | null;
+};
+
+const SYSTEM_HEADERS: SystemHeader[] = [
+  { code: '__hdr_vehicle',    name: 'Vehicle Costs',        sortOrder: 10 },
+  { code: '__hdr_staff',      name: 'Staff Costs',          sortOrder: 20 },
+  { code: '__hdr_facility',   name: 'Facility Costs',       sortOrder: 30 },
+  { code: '__hdr_compliance', name: 'Compliance & Finance', sortOrder: 40 },
+  { code: '__hdr_misc',       name: 'Miscellaneous',        sortOrder: 50 },
+];
+
+// 20 system leaves = 13 from v2 taxonomy + 7 added in v3. Field-reveal
+// tweaks from the v3 UPDATE statements (salaries_wages / loading_unloading
+// / rent / insurance) are baked in directly here — the post-migration
+// state is the source of truth for anyone landing on the current schema.
+const SYSTEM_LEAVES: SystemLeaf[] = [
+  // Vehicle Costs
+  { headerCode: '__hdr_vehicle', code: 'fuel', name: 'Fuel', sortOrder: 10, showVehicle: true, vehicleRequired: true, showDriver: true, vendorLabel: 'Petrol pump', vendorPlaceholder: 'e.g. HP Petrol Pump', referenceLabel: 'Bill #', referencePlaceholder: 'From the fuel bill' },
+  { headerCode: '__hdr_vehicle', code: 'vehicle_maintenance', name: 'Vehicle maintenance', sortOrder: 20, showVehicle: true, vehicleRequired: true, vendorLabel: 'Service center', vendorPlaceholder: 'e.g. Bosch Service', referenceLabel: 'Invoice #', referencePlaceholder: 'From the service invoice' },
+  { headerCode: '__hdr_vehicle', code: 'vehicle_insurance', name: 'Vehicle Insurance', sortOrder: 25, showVehicle: true, vehicleRequired: true, vendorLabel: 'Insurer', vendorPlaceholder: 'e.g. Bajaj Allianz', referenceLabel: 'Policy #', referencePlaceholder: 'Insurance policy number' },
+  { headerCode: '__hdr_vehicle', code: 'vehicle_road_tax', name: 'Vehicle Road Tax / RTO', sortOrder: 30, showVehicle: true, vehicleRequired: true, vendorLabel: 'Department', vendorPlaceholder: 'e.g. RTO Telangana', referenceLabel: 'Challan #', referencePlaceholder: 'Payment challan / receipt' },
+  // Staff Costs
+  { headerCode: '__hdr_staff', code: 'driver_salary', name: 'Driver Salary', sortOrder: 5, showDriver: true, driverRequired: true, vendorLabel: 'Month / period', vendorPlaceholder: 'e.g. July 2026', referenceLabel: 'Reference #', referencePlaceholder: 'Payslip # / bank ref', hint: 'Pulls the driver from your fleet list. Use "Salaries & wages" or "Helper / Loader Wages" for others.' },
+  { headerCode: '__hdr_staff', code: 'salaries_wages', name: 'Salaries & wages', sortOrder: 10, showPaidTo: true, paidToRequired: true, paidToLabel: 'Paid to (staff name)', paidToPlaceholder: 'e.g. Raju (driver) OR Ravi (helper)', referenceLabel: 'Reference #', referencePlaceholder: 'Any receipt / note ID', hint: 'For driver salary specifically, use the "Driver Salary" category instead — it pulls the driver from the fleet list.' },
+  { headerCode: '__hdr_staff', code: 'helper_wages', name: 'Helper / Loader Wages', sortOrder: 15, showPaidTo: true, paidToRequired: true, paidToLabel: 'Helper / loader name', paidToPlaceholder: 'e.g. Ramu (loader)', referenceLabel: 'Reference #', referencePlaceholder: 'Any receipt / note ID' },
+  { headerCode: '__hdr_staff', code: 'loading_unloading', name: 'Loading / unloading', sortOrder: 20, showPaidTo: true, paidToLabel: 'Labor / loader name', paidToPlaceholder: 'e.g. Depot loader team', referenceLabel: 'Reference #', referencePlaceholder: 'Any receipt / note ID' },
+  { headerCode: '__hdr_staff', code: 'office_staff_salary', name: 'Office Staff Salary', sortOrder: 25, showPaidTo: true, paidToRequired: true, paidToLabel: 'Staff name', paidToPlaceholder: 'e.g. Priya (accountant)', referenceLabel: 'Reference #', referencePlaceholder: 'Payslip # / bank ref' },
+  { headerCode: '__hdr_staff', code: 'staff_health_insurance', name: 'Staff Health Insurance', sortOrder: 30, showPaidTo: true, paidToRequired: true, paidToLabel: 'Beneficiary (staff name)', paidToPlaceholder: 'e.g. Raju (driver) family', vendorLabel: 'Insurer', vendorPlaceholder: 'e.g. HDFC Ergo', referenceLabel: 'Policy #', referencePlaceholder: 'Insurance policy number' },
+  // Facility Costs
+  { headerCode: '__hdr_facility', code: 'rent', name: 'Rent', sortOrder: 10, showPaidTo: true, paidToRequired: true, paidToLabel: 'Landlord name', paidToPlaceholder: 'e.g. Sri Ramesh (owner)', vendorLabel: 'Property / building name (optional)', vendorPlaceholder: 'e.g. Godown #4, Kondapur', referenceLabel: 'Receipt #', referencePlaceholder: 'Rent receipt number' },
+  { headerCode: '__hdr_facility', code: 'godown_insurance', name: 'Godown Insurance', sortOrder: 15, vendorLabel: 'Insurer', vendorPlaceholder: 'e.g. Bajaj Allianz', referenceLabel: 'Policy #', referencePlaceholder: 'Insurance policy number' },
+  { headerCode: '__hdr_facility', code: 'utilities', name: 'Utilities', sortOrder: 20, vendorLabel: 'Provider', vendorPlaceholder: 'e.g. TSSPDCL, Metro Water', referenceLabel: 'Bill / account #', referencePlaceholder: 'Utility bill number' },
+  { headerCode: '__hdr_facility', code: 'office_supplies', name: 'Office supplies', sortOrder: 30, vendorLabel: 'Store', vendorPlaceholder: 'e.g. Reliance Trends', referenceLabel: 'Bill #', referencePlaceholder: 'From the bill' },
+  { headerCode: '__hdr_facility', code: 'communication', name: 'Communication', sortOrder: 40, vendorLabel: 'Provider', vendorPlaceholder: 'e.g. Airtel, Jio', referenceLabel: 'Bill / account #', referencePlaceholder: 'Utility bill number' },
+  // Compliance & Finance
+  { headerCode: '__hdr_compliance', code: 'insurance', name: 'Insurance', sortOrder: 10, vendorLabel: 'Insurer', vendorPlaceholder: 'e.g. Bajaj Allianz', referenceLabel: 'Policy #', referencePlaceholder: 'Insurance policy number', hint: 'Prefer the specific leaves below — Vehicle Insurance, Godown Insurance, or Staff Health Insurance — for cleaner reports.' },
+  { headerCode: '__hdr_compliance', code: 'taxes_licenses', name: 'Taxes & licenses', sortOrder: 20, vendorLabel: 'Department', vendorPlaceholder: 'e.g. GST, RTO', referenceLabel: 'Challan #', referencePlaceholder: 'Payment challan / receipt' },
+  { headerCode: '__hdr_compliance', code: 'bank_charges', name: 'Bank charges', sortOrder: 30, vendorLabel: 'Bank', vendorPlaceholder: 'e.g. HDFC, SBI', referenceLabel: 'Transaction #', referencePlaceholder: 'Statement reference' },
+  { headerCode: '__hdr_compliance', code: 'cylinder_deposits', name: 'Cylinder deposits', sortOrder: 40, vendorLabel: 'Supplier', vendorPlaceholder: 'e.g. HPCL depot', referenceLabel: 'Deposit receipt #', referencePlaceholder: 'From deposit slip' },
+  // Miscellaneous
+  { headerCode: '__hdr_misc', code: 'other', name: 'Other', sortOrder: 10, showVehicle: true, showDriver: true, vendorLabel: 'Vendor (optional)', vendorPlaceholder: 'Vendor name', referenceLabel: 'Reference # (optional)', referencePlaceholder: 'Any reference' },
+];
+
+/**
+ * Idempotently seed the 5 system headers + 20 system leaves for one
+ * distributor. Existing `(distributor_id, code)` rows are left alone —
+ * safe to call multiple times, safe to call after the initial DO-loop
+ * migrations ran.
+ *
+ * Callers:
+ *   - `distributorService.createDistributor` (production runtime — every
+ *     new tenant is seeded on creation).
+ *   - `prisma/seed.ts` (test / dev DB reseed).
+ */
+export async function seedSystemExpenseCategoriesForDistributor(
+  distributorId: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<void> {
+  const headerIds = new Map<string, string>();
+
+  for (const h of SYSTEM_HEADERS) {
+    const existing = await client.expenseCategory.findFirst({
+      where: { distributorId, code: h.code },
+      select: { id: true },
+    });
+    if (existing) {
+      headerIds.set(h.code, existing.id);
+      continue;
+    }
+    const created = await client.expenseCategory.create({
+      data: {
+        distributorId,
+        code: h.code,
+        name: h.name,
+        isHeader: true,
+        isSystem: true,
+        sortOrder: h.sortOrder,
+      },
+      select: { id: true },
+    });
+    headerIds.set(h.code, created.id);
+  }
+
+  for (const l of SYSTEM_LEAVES) {
+    const existing = await client.expenseCategory.findFirst({
+      where: { distributorId, code: l.code },
+      select: { id: true },
+    });
+    if (existing) continue;
+    const parentId = headerIds.get(l.headerCode);
+    if (!parentId) throw new Error(`Header ${l.headerCode} missing while seeding leaf ${l.code}`);
+    await client.expenseCategory.create({
+      data: {
+        distributorId,
+        parentId,
+        code: l.code,
+        name: l.name,
+        isHeader: false,
+        isSystem: true,
+        sortOrder: l.sortOrder,
+        showVehicle: l.showVehicle ?? false,
+        vehicleRequired: l.vehicleRequired ?? false,
+        showDriver: l.showDriver ?? false,
+        driverRequired: l.driverRequired ?? false,
+        showPaidTo: l.showPaidTo ?? false,
+        paidToRequired: l.paidToRequired ?? false,
+        paidToLabel: l.paidToLabel ?? null,
+        paidToPlaceholder: l.paidToPlaceholder ?? null,
+        vendorLabel: l.vendorLabel ?? null,
+        vendorPlaceholder: l.vendorPlaceholder ?? null,
+        referenceLabel: l.referenceLabel ?? null,
+        referencePlaceholder: l.referencePlaceholder ?? null,
+        hint: l.hint ?? null,
+      },
+    });
+  }
+}

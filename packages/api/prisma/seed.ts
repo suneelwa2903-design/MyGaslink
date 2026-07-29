@@ -72,6 +72,18 @@ async function main() {
   });
   console.log('Distributor created:', distributor.businessName);
 
+  // 2026-07-29 — Seed the 5-header × 20-leaf system expense taxonomy for
+  // dist-001. The v2 + v3 migrations only iterate over distributors that
+  // existed AT MIGRATION TIME. In CI (`prisma migrate deploy` runs against
+  // an empty DB, then this seed creates dist-001/002), those DO-loops
+  // insert zero rows. Calling the TS helper here closes that gap so
+  // expense-categories.test.ts sees the 20 seeded leaves.
+  const { seedSystemExpenseCategoriesForDistributor } = await import(
+    '../src/services/expenseCategoryService.js'
+  );
+  await seedSystemExpenseCategoriesForDistributor(distributor.id);
+  console.log('Expense categories seeded for', distributor.businessName);
+
   // ─── 3. Create Distributor Admin ──────────────────────────────────────────
   const distAdminPassword = await bcrypt.hash('Distadmin@123', 12);
   const distAdmin = await prisma.user.upsert({
@@ -399,6 +411,8 @@ async function main() {
     },
   });
   console.log('GST-enabled distributor created:', gstDist.businessName);
+  await seedSystemExpenseCategoriesForDistributor(gstDist.id);
+  console.log('Expense categories seeded for', gstDist.businessName);
 
   // GST distributor admin — upsert by email (User.email is @unique).
   const gstAdminPassword = await bcrypt.hash('Gstadmin@123', 12);
