@@ -29,6 +29,10 @@ const createPriceSchema = z.object({
 const emptyPriceSchema = z.object({
   cylinderTypeId: z.string().uuid(),
   emptyCylinderPrice: z.number().min(0),
+  // 2026-08-01 — required alongside every new empty-price save so history
+  // is preserved. Web UI defaults to today's local date but the operator
+  // may pick a future/past date the same as CylinderPrice.
+  effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
 // ─── Cylinder Types ─────────────────────────────────────────────────────────
@@ -113,6 +117,23 @@ router.get('/prices/list', async (req, res) => {
   }
 });
 
+// 2026-08-01 — full history for the Price History modal. Same as
+// /prices/list under the hood (listPrices already returns all rows in
+// effectiveDate DESC order), aliased with /history so the UI intent is
+// explicit and future divergence (e.g. per-type paging) is a
+// non-breaking change.
+router.get('/prices/history', async (req, res) => {
+  try {
+    const prices = await cylinderTypeService.listPrices(
+      req.user!.distributorId!,
+      req.query.cylinderTypeId as string,
+    );
+    return sendSuccess(res, prices);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
+
 router.post('/prices',
   requireRole('super_admin', 'distributor_admin', 'inventory', 'finance', 'mini_operator_admin'),
   validate(createPriceSchema),
@@ -152,16 +173,32 @@ router.get('/empty-prices/list', async (req, res) => {
   }
 });
 
+// 2026-08-01 — empty-deposit price history for the Price History modal.
+router.get('/empty-prices/history', async (req, res) => {
+  try {
+    const prices = await cylinderTypeService.listEmptyPriceHistory(
+      req.user!.distributorId!,
+      req.query.cylinderTypeId as string | undefined,
+    );
+    return sendSuccess(res, prices);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
+
 // PUT /empty-prices must be before PUT /:id (static beats param in registration order).
 // WI-2: admin-only — deposit price drives downstream mismatch unit-amount calcs;
 // inventory/finance roles must not be able to silently shift those amounts.
+// 2026-08-01 — creates a new history row (was: upsert overwrite). Path
+// left as PUT for backward-compat with the web UI; the audit action was
+// renamed to reflect the insert semantics.
 router.put('/empty-prices',
   requireRole('super_admin', 'distributor_admin', 'mini_operator_admin'),
   validate(emptyPriceSchema),
-  auditLog('upsert', 'empty_cylinder_price'),
+  auditLog('create', 'empty_cylinder_price'),
   async (req, res) => {
     try {
-      const price = await cylinderTypeService.upsertEmptyPrice(req.user!.distributorId!, req.body);
+      const price = await cylinderTypeService.createEmptyPrice(req.user!.distributorId!, req.body);
       return sendSuccess(res, price);
     } catch (err) {
       return sendError(res, (err as Error).message);

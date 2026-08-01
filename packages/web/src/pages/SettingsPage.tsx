@@ -761,20 +761,28 @@ function PricesTab() {
       apiPost('/cylinder-types/prices', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cylinder-prices'] });
+      queryClient.invalidateQueries({ queryKey: ['cylinder-prices-history'] });
       queryClient.invalidateQueries({ queryKey: ['cylinder-types'] });
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   // Save empty price mutation
+  // 2026-08-01 — carries an effectiveDate now (was previously an unconditional
+  // upsert overwrite). History-modal invalidation is added too so the modal
+  // shows the new row instantly.
   const emptyPriceMutation = useMutation({
-    mutationFn: (data: { cylinderTypeId: string; emptyCylinderPrice: number }) =>
+    mutationFn: (data: { cylinderTypeId: string; emptyCylinderPrice: number; effectiveDate: string }) =>
       apiPut('/cylinder-types/empty-prices', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cylinder-empty-prices'] });
+      queryClient.invalidateQueries({ queryKey: ['cylinder-empty-prices-history'] });
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
+
+  // Price History modal state (one at a time — cylinder or empty).
+  const [historyOpen, setHistoryOpen] = useState<'cylinder' | 'empty' | null>(null);
 
   // Build a map of latest price per cylinder type
   const latestPriceMap: Record<string, number> = {};
@@ -842,7 +850,16 @@ function PricesTab() {
     let successCount = 0;
     for (const [cylinderTypeId, priceStr] of entries) {
       try {
-        await emptyPriceMutation.mutateAsync({ cylinderTypeId, emptyCylinderPrice: Number(priceStr) });
+        // 2026-08-01 — reuse the effectiveDate from the Monthly Cylinder
+        // Prices section so a single save flow captures both. If they
+        // want a different date for the empty deposit, they can adjust
+        // that field before hitting Save (both save buttons read the
+        // same effectiveDate state).
+        await emptyPriceMutation.mutateAsync({
+          cylinderTypeId,
+          emptyCylinderPrice: Number(priceStr),
+          effectiveDate,
+        });
         successCount++;
       } catch {
         // error already toasted by mutation
@@ -942,9 +959,17 @@ function PricesTab() {
           </table>
         </div>
 
-        <Button onClick={handleSavePrices} loading={priceMutation.isPending}>
-          Save Prices
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={handleSavePrices} loading={priceMutation.isPending}>
+            Save Prices
+          </Button>
+          {/* 2026-08-01 — Price History modal. Reads all rows for this
+              distributor from /cylinder-types/prices/history (returns
+              every row, effectiveDate DESC). */}
+          <Button variant="secondary" onClick={() => setHistoryOpen('cylinder')}>
+            View History
+          </Button>
+        </div>
       </div>
 
       {/* Section 2: Empty Deposit Prices (WI-2 — renamed from "Empty Cylinder
@@ -994,11 +1019,166 @@ function PricesTab() {
           (Inventory → Vehicle Return).
         </p>
 
-        <Button onClick={handleSaveEmptyPrices} loading={emptyPriceMutation.isPending}>
-          Save Empty Deposit Prices
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={handleSaveEmptyPrices} loading={emptyPriceMutation.isPending}>
+            Save Empty Deposit Prices
+          </Button>
+          <Button variant="secondary" onClick={() => setHistoryOpen('empty')}>
+            View History
+          </Button>
+        </div>
       </div>
+
+      {/* 2026-08-01 — Price History modal. Shared for cylinder and empty
+          deposit — the `historyOpen` state discriminates. Reads full
+          history keyed off distributor; groups by cylinder type; renders
+          Effective From, Effective To (computed = next row - 1 day, or
+          "current" for the newest), Duration, Changed On (createdAt).
+          Auto-refetches on parent-page save via query invalidation set
+          on both mutations. */}
+      {historyOpen && (
+        <PriceHistoryModal
+          kind={historyOpen}
+          cylinderTypes={cylinderTypes ?? []}
+          onClose={() => setHistoryOpen(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// 2026-08-01 — Price history modal, shared between cylinder + empty
+// deposit prices. Fetches ALL rows for the tenant and groups client-side
+// by cylinder type. Effective-To and Duration are computed per row from
+// the next row's effectiveDate.
+interface PriceHistoryRow {
+  id: string;
+  cylinderTypeId: string;
+  effectiveDate: string;
+  createdAt: string;
+  price?: number;
+  emptyCylinderPrice?: number;
+  cylinderType?: { typeName: string };
+}
+function PriceHistoryModal({
+  kind,
+  cylinderTypes,
+  onClose,
+}: {
+  kind: 'cylinder' | 'empty';
+  cylinderTypes: CylinderTypeItem[];
+  onClose: () => void;
+}) {
+  const distributorId = useAuthStore(selectDistributorId);
+  const path = kind === 'cylinder'
+    ? '/cylinder-types/prices/history'
+    : '/cylinder-types/empty-prices/history';
+  const queryKey = kind === 'cylinder'
+    ? ['cylinder-prices-history', distributorId]
+    : ['cylinder-empty-prices-history', distributorId];
+
+  const { data: rows, isLoading } = useQuery({
+    queryKey,
+    queryFn: () => apiGet<PriceHistoryRow[]>(path),
+    enabled: !!distributorId,
+  });
+
+  const [typeFilter, setTypeFilter] = useState<string>('');
+  const filtered = (rows ?? []).filter((r) => !typeFilter || r.cylinderTypeId === typeFilter);
+
+  // Group by cylinder type + sort each group by effectiveDate desc.
+  // Same shape as the server sends (already sorted) — we just partition.
+  const byType = new Map<string, PriceHistoryRow[]>();
+  for (const r of filtered) {
+    const list = byType.get(r.cylinderTypeId) ?? [];
+    list.push(r);
+    byType.set(r.cylinderTypeId, list);
+  }
+  for (const list of byType.values()) {
+    list.sort((a, b) => (a.effectiveDate < b.effectiveDate ? 1 : -1));
+  }
+
+  const fmtDate = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const daysBetween = (a: string, b: string) => {
+    const ms = new Date(b).getTime() - new Date(a).getTime();
+    return Math.round(ms / 86400000);
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={kind === 'cylinder' ? 'Cylinder Price History' : 'Empty Deposit Price History'}
+      size="xl"
+    >
+      <div className="space-y-4">
+        <div>
+          <Select
+            label="Filter by cylinder type"
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            options={[
+              { value: '', label: 'All types' },
+              ...cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName })),
+            ]}
+          />
+        </div>
+
+        {isLoading && <div className="flex justify-center py-8"><Loader /></div>}
+
+        {!isLoading && byType.size === 0 && (
+          <EmptyState title="No price history" description="Save a price to start building history." />
+        )}
+
+        {!isLoading && Array.from(byType.entries()).map(([typeId, list]) => {
+          const typeName = list[0]?.cylinderType?.typeName
+            ?? cylinderTypes.find((ct) => ct.cylinderTypeId === typeId)?.typeName
+            ?? '—';
+          return (
+            <div key={typeId} className="card p-4">
+              <h4 className="font-semibold mb-3 text-surface-900 dark:text-white">{typeName}</h4>
+              <div className="table-container">
+                <table className="table text-sm">
+                  <thead>
+                    <tr>
+                      <th>Price</th>
+                      <th>Effective From</th>
+                      <th>Effective To</th>
+                      <th>Duration</th>
+                      <th>Changed On</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {list.map((row, idx) => {
+                      const price = kind === 'cylinder' ? row.price : row.emptyCylinderPrice;
+                      const nextRow = list[idx - 1]; // newer row (list is desc)
+                      const effTo = nextRow
+                        ? fmtDate(new Date(new Date(nextRow.effectiveDate).getTime() - 86400000).toISOString())
+                        : 'current';
+                      const duration = nextRow
+                        ? `${daysBetween(row.effectiveDate, nextRow.effectiveDate)} days`
+                        : `${daysBetween(row.effectiveDate, new Date().toISOString())} days (running)`;
+                      return (
+                        <tr key={row.id}>
+                          <td className="font-medium">
+                            ₹{Number(price ?? 0).toLocaleString('en-IN')}
+                          </td>
+                          <td>{fmtDate(row.effectiveDate)}</td>
+                          <td>{effTo}</td>
+                          <td className="text-surface-500">{duration}</td>
+                          <td className="text-surface-500 text-xs">{fmtDate(row.createdAt)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
   );
 }
 

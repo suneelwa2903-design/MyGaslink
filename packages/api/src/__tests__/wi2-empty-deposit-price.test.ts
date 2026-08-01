@@ -78,7 +78,10 @@ describe('WI-2 — Empty Deposit Price', () => {
       .put('/api/cylinder-types/empty-prices')
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Distributor-Id', DIST)
-      .send({ cylinderTypeId, emptyCylinderPrice: 1500 });
+      // 2026-08-01 — effectiveDate now required alongside every save
+      // (empty-price history migration). Pin to a fixed past date so this
+      // fixture is timezone-neutral.
+      .send({ cylinderTypeId, emptyCylinderPrice: 1500, effectiveDate: '2026-01-01' });
 
     expect(putRes.status).toBe(200);
     expect(putRes.body.success).toBe(true);

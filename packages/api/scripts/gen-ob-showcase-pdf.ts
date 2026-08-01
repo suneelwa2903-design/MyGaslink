@@ -46,8 +46,9 @@ async function main() {
   const ct47 = await prisma.cylinderType.create({
     data: { distributorId: dist.id, typeName: '47.5 KG', capacity: 47, unit: 'KG', hsnCode: '27111900', isActive: true },
   });
-  await prisma.emptyCylinderPrice.create({ data: { distributorId: dist.id, cylinderTypeId: ct19.id, emptyCylinderPrice: 2400 } });
-  await prisma.emptyCylinderPrice.create({ data: { distributorId: dist.id, cylinderTypeId: ct47.id, emptyCylinderPrice: 7200 } });
+  // 2026-08-01 — effectiveDate now required (empty-price history migration).
+  await prisma.emptyCylinderPrice.create({ data: { distributorId: dist.id, cylinderTypeId: ct19.id, emptyCylinderPrice: 2400, effectiveDate: new Date('2020-01-01') } });
+  await prisma.emptyCylinderPrice.create({ data: { distributorId: dist.id, cylinderTypeId: ct47.id, emptyCylinderPrice: 7200, effectiveDate: new Date('2020-01-01') } });
 
   // Cylinder prices so we can seed a couple of delivered invoices.
   await prisma.cylinderPrice.create({ data: { distributorId: dist.id, cylinderTypeId: ct19.id, price: 3211, effectiveDate: new Date() } });

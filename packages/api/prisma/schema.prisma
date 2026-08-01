@@ -1489,12 +1489,19 @@ model EmptyCylinderPrice {
   distributorId      String   @map("distributor_id")
   cylinderTypeId     String   @map("cylinder_type_id")
   emptyCylinderPrice Decimal  @map("empty_cylinder_price") @db.Decimal(18, 4)
+  // 2026-08-01 — history preservation. Prior to this migration the
+  // (distributorId, cylinderTypeId) unique constraint forced every
+  // save to overwrite the previous row, destroying history. Mirrors
+  // CylinderPrice.effectiveDate so both surfaces share the "most-recent
+  // effective row wins" read pattern (see getEffectiveEmptyPrice).
+  // The old unique constraint is dropped in the same migration.
+  effectiveDate      DateTime @map("effective_date") @db.Date
   createdAt          DateTime @default(now()) @map("created_at")
 
   distributor  Distributor  @relation(fields: [distributorId], references: [id])
   cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
 
-  @@unique([distributorId, cylinderTypeId])
+  @@index([distributorId, cylinderTypeId, effectiveDate(sort: Desc)])
   @@map("empty_cylinder_prices")
 }
 

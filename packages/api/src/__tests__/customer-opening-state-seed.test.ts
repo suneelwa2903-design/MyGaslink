@@ -649,6 +649,10 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
             distributorId: miniOp.distributorId,
             cylinderTypeId: miniOp.cylinderTypeAId,
             emptyCylinderPrice: 2400,
+            // 2026-08-01 — effectiveDate is now NOT NULL (empty price
+            // history). Pin to a fixed past date so this fixture is
+            // deterministic across timezone / calendar boundaries.
+            effectiveDate: new Date('2020-01-01'),
           },
         });
       }
@@ -661,6 +665,7 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
             distributorId: miniOp.distributorId,
             cylinderTypeId: miniOp.cylinderTypeBId,
             emptyCylinderPrice: 800,
+            effectiveDate: new Date('2020-01-01'),
           },
         });
       }

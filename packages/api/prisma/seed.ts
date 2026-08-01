@@ -204,11 +204,24 @@ async function main() {
   ];
 
   for (const ep of emptyPrices) {
-    await prisma.emptyCylinderPrice.upsert({
-      where: { distributorId_cylinderTypeId: { distributorId: distributor.id, cylinderTypeId: ep.cylinderTypeId } },
-      update: {},
-      create: { distributorId: distributor.id, cylinderTypeId: ep.cylinderTypeId, emptyCylinderPrice: ep.price },
+    // 2026-08-01 — after empty-price history migration, the composite
+    // unique on (distributor, type) was dropped. Use findFirst + create
+    // to keep seeding idempotent: if the distributor already has an
+    // effective row for this type, skip; else create one dated far in
+    // the past so real ops-entered future rows always supersede.
+    const existingEp = await prisma.emptyCylinderPrice.findFirst({
+      where: { distributorId: distributor.id, cylinderTypeId: ep.cylinderTypeId },
     });
+    if (!existingEp) {
+      await prisma.emptyCylinderPrice.create({
+        data: {
+          distributorId: distributor.id,
+          cylinderTypeId: ep.cylinderTypeId,
+          emptyCylinderPrice: ep.price,
+          effectiveDate: new Date('2020-01-01'),
+        },
+      });
+    }
   }
   console.log('Empty cylinder prices set');
 
