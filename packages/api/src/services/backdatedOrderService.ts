@@ -1,5 +1,8 @@
 import { prisma } from '../lib/prisma.js';
-import { localTodayISO, type BackdatedOrderInput } from '@gaslink/shared';
+import {
+  localTodayISO, isBackdatedIssueDateAllowed, backdatedRejectMessage,
+  type BackdatedOrderInput,
+} from '@gaslink/shared';
 import { computeOrderTotal } from './orderService.js';
 import { getEffectivePrice } from './cylinderTypeService.js';
 import { createInvoiceFromOrder } from './invoiceService.js';
@@ -41,13 +44,15 @@ export async function createBackdatedOrder(
   userId: string,
   data: BackdatedOrderInput,
 ) {
-  // Defence in depth: re-validate the same-month + before-today guard at
-  // the service layer in case any future caller bypasses the Zod edge.
+  // Defence in depth: re-validate the same guard at the service layer in
+  // case any future caller bypasses the Zod edge.
+  // 2026-08-01 — window widened: previous calendar month is admitted
+  // during the first PREV_MONTH_GRACE_DAYS (10) days of the current
+  // month (matches GSTR-1 monthly filing convention). Delegates to
+  // isBackdatedIssueDateAllowed so schema + service share ONE source.
   const todayStr = localTodayISO();
-  const now = new Date();
-  const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  if (!data.issueDate.startsWith(currentYM)) {
-    throw new BackdatedOrderError('Backdated date must be within the current calendar month', 400);
+  if (!isBackdatedIssueDateAllowed(data.issueDate)) {
+    throw new BackdatedOrderError(backdatedRejectMessage(), 400);
   }
   if (data.issueDate >= todayStr) {
     throw new BackdatedOrderError('Backdated date must be before today', 400);

@@ -316,20 +316,21 @@ describe('Item 6 — backdated driver trip service', () => {
     expect(result.orders[0].paymentRecorded).toBe(true);
   });
 
-  it('T8 — issueDate from last month → 400', async () => {
+  it('T8 — issueDate two months back → 400 (outside grace window)', async () => {
+    // 2026-08-01: last-month is now day-of-month sensitive (admitted
+    // during the first 10 days of the current month via the grace
+    // window — see backdated-prev-month-window.test.ts for the pure
+    // boundary tests). Two months back is NEVER accepted.
     const now = new Date();
-    // First of last month.
-    const y = now.getFullYear();
-    const m = now.getMonth(); // 0-indexed, so this is last month's number
-    const lastMonthDate = m === 0
-      ? `${y - 1}-12-15`
-      : `${y}-${String(m).padStart(2, '0')}-15`;
+    const twoBack = new Date(now.getFullYear(), now.getMonth() - 2, 15);
+    const outOfWindow =
+      `${twoBack.getFullYear()}-${String(twoBack.getMonth() + 1).padStart(2, '0')}-15`;
     const c1 = await makeCustomer('T8-c1', 'B2C');
     const res = await request(app)
       .post('/api/orders/backdated-trip')
       .set(auth(adminToken))
       .send({
-        issueDate: lastMonthDate,
+        issueDate: outOfWindow,
         driverId: seedData.drivers[0].id,
         vehicleId: seedData.vehicles[0].id,
         orders: [{ customerId: c1.id, items: [{ cylinderTypeId: ctId, quantity: 1 }] }],

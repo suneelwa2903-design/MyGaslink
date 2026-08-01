@@ -3,7 +3,10 @@ import {
   UserRole, PaymentMethod, OrderStatus, InvoiceStatus,
   CustomerStatus, GstMode, AccountabilityType, AccountType,
 } from '../enums/index.js';
-import { GSTIN_REGEX, IFSC_REGEX, UPI_REGEX, localTodayISO } from '../constants/index.js';
+import {
+  GSTIN_REGEX, IFSC_REGEX, UPI_REGEX, localTodayISO,
+  isBackdatedIssueDateAllowed, backdatedRejectMessage,
+} from '../constants/index.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -373,11 +376,14 @@ export const backdatedOrderSchema = z.object({
   customerId: uuid,
   issueDate: z.string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD')
-    .refine((date) => {
-      const now = new Date();
-      const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      return date.startsWith(currentYM);
-    }, 'Backdated date must be within the current calendar month')
+    // 2026-08-01 — window widened to include the previous calendar
+    // month during the first PREV_MONTH_GRACE_DAYS (10) days of the
+    // current month. Matches the CBIC monthly GSTR-1 filing deadline
+    // convention: "up to the 10th, last month is still open." See
+    // isBackdatedIssueDateAllowed in constants/index.ts.
+    .refine((date) => isBackdatedIssueDateAllowed(date), () => ({
+      message: backdatedRejectMessage(),
+    }))
     .refine((date) => {
       const todayStr = localTodayISO();
       return date < todayStr;
@@ -457,11 +463,12 @@ export type EmptiesReturnInput = z.infer<typeof emptiesReturnSchema>;
 export const backdatedTripSchema = z.object({
   issueDate: z.string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD')
-    .refine((date) => {
-      const now = new Date();
-      const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      return date.startsWith(currentYM);
-    }, 'Trip date must be within the current calendar month')
+    // 2026-08-01 — mirrors backdatedOrderSchema: previous calendar
+    // month is admitted during the first PREV_MONTH_GRACE_DAYS (10)
+    // days of the current month.
+    .refine((date) => isBackdatedIssueDateAllowed(date), () => ({
+      message: backdatedRejectMessage().replace('Backdated date', 'Trip date'),
+    }))
     .refine((date) => date < localTodayISO(), 'Trip date must be before today'),
   // Q1 merge (2026-07-09) — driver + vehicle are optional so the single-
   // customer "On-Demand" flow can go through this same endpoint without

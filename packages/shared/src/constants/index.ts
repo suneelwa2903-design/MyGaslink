@@ -181,6 +181,40 @@ export function localDateISO(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+// 2026-08-01 — backdated-invoice month-window helper. Returns true when a
+// YYYY-MM-DD `date` is eligible for a "backdated" entry given today's
+// date. Rule (matches the guard at backdatedOrderSchema +
+// backdatedOrderService):
+//   - Current calendar month: always allowed (regardless of day-of-month).
+//   - Previous calendar month: allowed ONLY when today's day-of-month is
+//     ≤ PREV_MONTH_GRACE_DAYS. Beyond that, previous-month entries must
+//     go through a corrective flow (credit note / debit note), not a
+//     retroactive new invoice.
+//   - Anything else: rejected.
+// The grace window is 10 days by default — the operator convention is
+// "GST return is filed by the 10th of the next month; up to that point
+// the previous month is still open for entry" (this matches CBIC GSTR-1
+// filing deadline for monthly filers). Change PREV_MONTH_GRACE_DAYS
+// in ONE place if the business rule shifts.
+export const PREV_MONTH_GRACE_DAYS = 10;
+
+export function isBackdatedIssueDateAllowed(dateISO: string, now: Date = new Date()): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO)) return false;
+  const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (dateISO.startsWith(currentYM)) return true;
+  // Previous month = wall-clock month before `now`, JS Date rolls Jan → Dec of previous year cleanly.
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevYM = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+  if (dateISO.startsWith(prevYM) && now.getDate() <= PREV_MONTH_GRACE_DAYS) return true;
+  return false;
+}
+
+export function backdatedRejectMessage(now: Date = new Date()): string {
+  return now.getDate() <= PREV_MONTH_GRACE_DAYS
+    ? `Backdated date must be within the current or previous calendar month (previous-month grace window closes on the ${PREV_MONTH_GRACE_DAYS}th)`
+    : `Backdated date must be within the current calendar month (previous-month grace window ended on the ${PREV_MONTH_GRACE_DAYS}th)`;
+}
+
 // Phase 5 (2026-06-12): reverse map (state name → 2-digit code) used by
 // the invoiceService when writing Invoice.placeOfSupplyCode at issue
 // time. NIC's GSTR-1 schema expects a 2-digit string code, not a name.

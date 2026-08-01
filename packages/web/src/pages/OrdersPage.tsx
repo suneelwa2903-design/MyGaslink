@@ -41,6 +41,7 @@ import {
   orderStatusVariant,
   localTodayISO,
   localDateISO,
+  PREV_MONTH_GRACE_DAYS,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectRole } from '@/stores/authStore';
@@ -929,17 +930,27 @@ function BackdatedOrderModal({
   const [selectedCustomerType, setSelectedCustomerType] = useState<'B2B' | 'B2C' | null>(null);
 
   // Local-TZ min/max for the date picker — never use toISOString().split('T')[0].
+  // 2026-08-01 — window widened. The min date is the FIRST of previous
+  // month IF today.day ≤ PREV_MONTH_GRACE_DAYS (grace-window open — see
+  // isBackdatedIssueDateAllowed in @gaslink/shared), else the first of
+  // the current month. Keeps the server + client rule in ONE place.
   const todayISO = localTodayISO();
-  const monthStart = todayISO.slice(0, 8) + '01';
+  const nowClient = new Date(todayISO + 'T12:00:00');
+  const graceOpen = nowClient.getDate() <= PREV_MONTH_GRACE_DAYS;
+  const currentMonthStart = todayISO.slice(0, 8) + '01';
+  const prevMonthStartObj = new Date(nowClient.getFullYear(), nowClient.getMonth() - 1, 1);
+  const prevMonthStart = localDateISO(prevMonthStartObj);
+  const minDateISO = graceOpen ? prevMonthStart : currentMonthStart;
   // Max date = yesterday (todayISO − 1 day). Build via Date math but
   // serialise with localDateISO so the wire string stays in local TZ.
   const maxDateObj = new Date(todayISO + 'T12:00:00');
   maxDateObj.setDate(maxDateObj.getDate() - 1);
   const maxDateISO = localDateISO(maxDateObj);
-  // Defensive: if today is the 1st of the month there's no valid backdated
-  // slot at all. The button still opens the modal so the operator sees the
-  // explanation rather than a silent no-op.
-  const noValidDates = maxDateISO < monthStart;
+  // Only true when today is the 1st AND grace window is closed — which is
+  // impossible (day 1 ≤ 10 always opens grace), so this now effectively
+  // stays false. Kept as a defensive gate so the button + submit are
+  // disabled if the future rule tightens to grace<1.
+  const noValidDates = maxDateISO < minDateISO;
 
   const {
     register, handleSubmit, control, setValue, watch, formState: { errors },
@@ -1124,15 +1135,17 @@ function BackdatedOrderModal({
                 label="Delivery Date (on-demand)"
                 type="date"
                 required
-                min={monthStart}
+                min={minDateISO}
                 max={maxDateISO}
                 error={errors.issueDate?.message}
                 {...register('issueDate')}
               />
               <p className="mt-1 text-xs text-surface-500">
                 {noValidDates
-                  ? "Today is the 1st of the month — no valid on-demand slot. Wait until tomorrow."
-                  : `Must be between ${monthStart} and ${maxDateISO} (within the current month, before today).`}
+                  ? 'No valid on-demand slot — try again tomorrow.'
+                  : graceOpen
+                    ? `Must be between ${minDateISO} and ${maxDateISO} (previous month is open until day ${PREV_MONTH_GRACE_DAYS}; before today).`
+                    : `Must be between ${minDateISO} and ${maxDateISO} (within the current month, before today).`}
               </p>
             </div>
 
@@ -2986,13 +2999,21 @@ function BackdatedTripModal({
   const queryClient = useQueryClient();
 
   // Local-TZ min/max — anti-pattern #21. Same construction as
+  // BackdatedOrderModal (kept manually mirrored; the two modals stay in
+  // one file and refactoring into a shared hook is not worth the churn).
+  // 2026-08-01 — prev-month grace window widened, same rule as
   // BackdatedOrderModal.
   const todayISO = localTodayISO();
-  const monthStart = todayISO.slice(0, 8) + '01';
+  const nowClient = new Date(todayISO + 'T12:00:00');
+  const graceOpen = nowClient.getDate() <= PREV_MONTH_GRACE_DAYS;
+  const currentMonthStart = todayISO.slice(0, 8) + '01';
+  const prevMonthStartObj = new Date(nowClient.getFullYear(), nowClient.getMonth() - 1, 1);
+  const prevMonthStart = localDateISO(prevMonthStartObj);
+  const minDateISO = graceOpen ? prevMonthStart : currentMonthStart;
   const maxDateObj = new Date(todayISO + 'T12:00:00');
   maxDateObj.setDate(maxDateObj.getDate() - 1);
   const maxDateISO = localDateISO(maxDateObj);
-  const noValidDates = maxDateISO < monthStart;
+  const noValidDates = maxDateISO < minDateISO;
 
   // Q1 merge (2026-07-09) — Multiple customers toggle.
   //   OFF (default) → single-customer On-Demand mode. driver/vehicle
@@ -3079,9 +3100,16 @@ function BackdatedTripModal({
     <Modal open={open} onClose={onClose} title="Backdated / On-Demand Delivery" size="xl">
       {noValidDates && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200">
-          It&apos;s the 1st of the month — no valid backdated slot within the current
-          calendar month. Backdated entries must be dated within the current
-          calendar month and before today.
+          No valid backdated slot right now — try again tomorrow.
+        </div>
+      )}
+      {/* 2026-08-01 — informational banner when the previous-month grace
+          window is open (day-of-month ≤ PREV_MONTH_GRACE_DAYS). Lets the
+          operator know they can pick July from the date field while
+          filing August returns. */}
+      {!noValidDates && graceOpen && (
+        <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200">
+          Grace window open — previous-month dates are accepted until day {PREV_MONTH_GRACE_DAYS} of the current month.
         </div>
       )}
       <form onSubmit={onSubmit} className="space-y-4">
@@ -3120,7 +3148,7 @@ function BackdatedTripModal({
           <Input
             label="Delivery Date"
             type="date"
-            min={monthStart}
+            min={minDateISO}
             max={maxDateISO}
             required
             error={errors.issueDate?.message}

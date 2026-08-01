@@ -96,13 +96,17 @@ describe('backdatedOrderSchema — Zod guards', () => {
     items: [{ cylinderTypeId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', quantity: 1 }],
   };
 
-  it('rejects a date from last month', () => {
+  it('rejects a date two months back (always outside grace window)', () => {
+    // 2026-08-01: previous month can be admitted during the first 10
+    // days of the current month. Two months back is NEVER accepted, so
+    // this is the deterministic "out-of-window" assertion. Grace-window
+    // boundary itself is covered in backdated-prev-month-window.test.ts.
     const today = new Date();
-    const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 15);
-    const y = lastMonth.getFullYear();
-    const m = String(lastMonth.getMonth() + 1).padStart(2, '0');
-    const lastMonthDate = `${y}-${m}-15`;
-    const r = backdatedOrderSchema.safeParse({ ...baseBody, issueDate: lastMonthDate });
+    const twoBack = new Date(today.getFullYear(), today.getMonth() - 2, 15);
+    const y = twoBack.getFullYear();
+    const m = String(twoBack.getMonth() + 1).padStart(2, '0');
+    const outOfWindow = `${y}-${m}-15`;
+    const r = backdatedOrderSchema.safeParse({ ...baseBody, issueDate: outOfWindow });
     expect(r.success).toBe(false);
   });
 
@@ -266,18 +270,21 @@ describe('createBackdatedOrder — service', () => {
     ).rejects.toThrow(/Customer not found/i);
   });
 
-  it('service-layer defence: rejects last-month date even if bypassed', async () => {
+  it('service-layer defence: rejects two-months-back even if Zod bypassed', async () => {
     if (!hasValidBackdatedSlot()) { expect(true).toBe(true); return; }
+    // 2026-08-01: two months back is always outside the grace window.
+    // (Last-month behaviour is day-of-month sensitive and the boundary
+    // is proven in backdated-prev-month-window.test.ts.)
     const customer = await makeCustomer('Backdated DiD', 'B2B');
-    const lastMonth = new Date();
-    lastMonth.setMonth(lastMonth.getMonth() - 1);
-    const stale = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}-15`;
+    const twoBack = new Date();
+    twoBack.setMonth(twoBack.getMonth() - 2);
+    const stale = `${twoBack.getFullYear()}-${String(twoBack.getMonth() + 1).padStart(2, '0')}-15`;
     await expect(
       createBackdatedOrder(D1, 'test-user', {
         customerId: customer.id, issueDate: stale,
         items: [{ cylinderTypeId: ctId, quantity: 1, emptiesCollected: 0 }],
       }),
-    ).rejects.toThrow(/within the current calendar month/i);
+    ).rejects.toThrow(/calendar month/i);
   });
 
   it('service-layer defence: rejects today and future dates', async () => {

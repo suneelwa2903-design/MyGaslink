@@ -32,7 +32,10 @@
  * caller sees a partial success with the failing customer IDs).
  */
 import { prisma } from '../lib/prisma.js';
-import { localTodayISO, type BackdatedTripInput } from '@gaslink/shared';
+import {
+  localTodayISO, isBackdatedIssueDateAllowed, backdatedRejectMessage,
+  type BackdatedTripInput,
+} from '@gaslink/shared';
 import { computeOrderTotal } from './orderService.js';
 import { getEffectivePrice } from './cylinderTypeService.js';
 import { createInvoiceFromOrder } from './invoiceService.js';
@@ -75,11 +78,15 @@ export async function createBackdatedTrip(
   // Defence in depth — same-month + before-today guard at the service
   // layer in case any future caller bypasses the Zod edge (anti-pattern
   // #21 — use localTodayISO(), never toISOString().split('T')[0]).
+  // 2026-08-01 — window widened to include the previous calendar month
+  // during the first PREV_MONTH_GRACE_DAYS (10) days of the current
+  // month. Mirrors the single-order backdated path.
   const todayStr = localTodayISO();
-  const now = new Date();
-  const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  if (!data.issueDate.startsWith(currentYM)) {
-    throw new BackdatedTripError('Trip date must be within the current calendar month', 400);
+  if (!isBackdatedIssueDateAllowed(data.issueDate)) {
+    throw new BackdatedTripError(
+      backdatedRejectMessage().replace('Backdated date', 'Trip date'),
+      400,
+    );
   }
   if (data.issueDate >= todayStr) {
     throw new BackdatedTripError('Trip date must be before today', 400);
