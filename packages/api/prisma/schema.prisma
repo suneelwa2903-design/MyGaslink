@@ -366,6 +366,17 @@ enum LedgerEntryType {
   // that would otherwise be invisible outside the daily inventory
   // summary. See docs/INVESTIGATION-JUL09-B.md item 7 follow-up.
   empties_return
+  // 2026-08-01 — deposit ledger enum values live in the DB (migration
+  // 20260731000000_deposit_ledger applied). They MUST be declared here
+  // so Prisma can deserialise rows carrying these values (the customer
+  // statement report at reportsService.ts reads all ledger rows; any
+  // customer with a deposit event otherwise breaks with
+  // "Value 'deposit_charged' not found in enum 'LedgerEntryType'"). The
+  // deposit_charged/refunded WRITE and business-logic paths live in a
+  // parked branch and are not exercised from any committed code — these
+  // values are read-only decoders until that work is un-stashed.
+  deposit_charged
+  deposit_refunded
 }
 
 enum ModificationType {
