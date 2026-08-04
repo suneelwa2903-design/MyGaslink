@@ -60,6 +60,108 @@ router.post('/validate-gstin',
   }
 );
 
+// GET /api/invoices/export?format=csv
+//
+// 2026-08-04 — bulk CSV export of the current invoice list (all pages).
+// Mirrors the /api/payments/export pattern: same filters as the on-screen
+// table (status[], customerId, irnStatus, dateFrom/dateTo, search), the
+// same tenant scoping, and the same header/quoted-value CSV shape. Column
+// set matches the on-screen table (Q2 confirmed with user 2026-08-04):
+// one row per invoice header, not per line item.
+//
+// NOTE: static-path route MUST live before `router.get('/:id', …)` — Express
+// matches routes in registration order; otherwise 'export' is interpreted
+// as an invoiceId and hits getInvoiceById.
+router.get('/export',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const format = String(req.query.format ?? 'csv').toLowerCase();
+      if (format !== 'csv') {
+        return sendError(res, "format must be 'csv'", 400);
+      }
+      // Accept status as either a single value or repeated (?status=X&status=Y).
+      const rawStatus = req.query.status;
+      const status = Array.isArray(rawStatus)
+        ? rawStatus.map(String)
+        : (typeof rawStatus === 'string' ? rawStatus : undefined);
+      const filters = {
+        status,
+        customerId: typeof req.query.customerId === 'string' ? req.query.customerId : undefined,
+        irnStatus: typeof req.query.irnStatus === 'string' ? req.query.irnStatus : undefined,
+        dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+        dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        page: 1,
+        pageSize: 10_000,
+        sortBy: 'issueDate',
+        sortOrder: 'desc',
+      };
+      const distributorId = req.user!.distributorId!;
+      const { data: rows } = await invoiceService.listInvoices(distributorId, filters);
+      const mapped = mapInvoices(rows) as Array<{
+        invoiceNumber?: string;
+        issueDate?: string;
+        customerName?: string;
+        gstin?: string | null;
+        billingState?: string | null;
+        baseAmount?: number;
+        cgstValue?: number;
+        sgstValue?: number;
+        igstValue?: number;
+        totalAmount?: number;
+        outstandingAmount?: number;
+        status?: string;
+        irn?: string | null;
+        irnStatus?: string | null;
+        ewbNo?: string | null;
+        ewbStatus?: string | null;
+        orderNumber?: string | null;
+      }>;
+      const esc = (v: unknown): string => {
+        const s = v == null ? '' : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = [
+        'Invoice #', 'Date', 'Customer', 'GSTIN', 'State',
+        'Base', 'CGST', 'SGST', 'IGST', 'Total', 'Outstanding',
+        'Status', 'IRN', 'IRN Status', 'EWB', 'EWB Status', 'Order #',
+      ];
+      const lines = [header.map(esc).join(',')];
+      for (const inv of mapped) {
+        lines.push([
+          inv.invoiceNumber ?? '',
+          inv.issueDate ? new Date(inv.issueDate).toISOString().slice(0, 10) : '',
+          inv.customerName ?? '',
+          inv.gstin ?? '',
+          inv.billingState ?? '',
+          inv.baseAmount ?? '',
+          inv.cgstValue ?? '',
+          inv.sgstValue ?? '',
+          inv.igstValue ?? '',
+          inv.totalAmount ?? '',
+          inv.outstandingAmount ?? '',
+          (inv.status ?? '').replace(/_/g, ' '),
+          inv.irn ?? '',
+          (inv.irnStatus ?? '').replace(/_/g, ' '),
+          inv.ewbNo ?? '',
+          (inv.ewbStatus ?? '').replace(/_/g, ' '),
+          inv.orderNumber ?? '',
+        ].map(esc).join(','));
+      }
+      const csv = lines.join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="invoices-${filters.dateFrom ?? 'all'}_${filters.dateTo ?? 'all'}.csv"`,
+      );
+      return res.status(200).send(csv);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
 // GET /api/invoices/:id
 router.get('/:id',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),

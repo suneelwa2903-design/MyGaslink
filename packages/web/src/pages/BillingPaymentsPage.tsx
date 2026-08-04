@@ -311,6 +311,39 @@ function InvoicesTab() {
           <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="input py-2" />
           <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="input py-2" />
         </div>
+        {/* 2026-08-04 — filter-aware CSV export of the current invoice list
+            (all pages, up to 10k rows). Same column set as the on-screen
+            table: header rows only, no line-item explosion. Filename
+            embeds the date window for downstream accountant sorting. */}
+        <div className="flex justify-end">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={async () => {
+              try {
+                const qs = new URLSearchParams({ format: 'csv' });
+                if (statusFilter) qs.set('status', statusFilter);
+                if (irnFilter) qs.set('irnStatus', irnFilter);
+                if (dateFrom) qs.set('dateFrom', dateFrom);
+                if (dateTo) qs.set('dateTo', dateTo);
+                if (search.trim()) qs.set('search', search.trim());
+                const resp = await api.get(`/invoices/export?${qs.toString()}`, {
+                  responseType: 'blob',
+                });
+                const url = window.URL.createObjectURL(resp.data);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `invoices-${dateFrom || 'all'}_${dateTo || 'all'}.csv`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+              } catch {
+                toast.error('Could not download invoices CSV');
+              }
+            }}
+          >
+            Download CSV
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (

@@ -3,6 +3,7 @@ import { requireRole } from '../middleware/auth.js';
 import { sendSuccess, sendError, sendNotFound } from '../utils/apiResponse.js';
 import { REPORTS, reportToCsv, type ReportFilters } from '../services/reportsService.js';
 import { buildTallyExport } from '../services/tallyExportService.js';
+import { buildGstFilingExport } from '../services/gstFilingExportService.js';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
 
@@ -58,6 +59,33 @@ router.get('/tally-export',
         `attachment; filename="tally-export-${fromTag}_${toTag}.xml"`,
       );
       return res.status(200).send(xml);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  });
+
+// GET /api/reports/gst-filing-export?month=YYYY-MM → xlsx attachment.
+// Multi-sheet workbook the distributor's accountant uses for monthly GSTR-1
+// preparation. Registered BEFORE the generic /:reportType handler so
+// 'gst-filing-export' is not interpreted as a REPORTS-map key. Excludes
+// cancelled invoices/orders, opening-balance invoices, and soft-deleted rows
+// — see gstFilingExportService.ts header for the full exclusion list.
+router.get('/gst-filing-export',
+  requireRole('super_admin', 'distributor_admin', 'finance'),
+  async (req, res) => {
+    try {
+      const month = typeof req.query.month === 'string' ? req.query.month : '';
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        return sendError(res, 'month query param required in YYYY-MM format (month 01–12)', 400);
+      }
+      const { buffer, filename } = await buildGstFilingExport({
+        distributorId: req.user!.distributorId!,
+        month,
+      });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', String(buffer.length));
+      return res.status(200).send(buffer);
     } catch (err) {
       return sendError(res, (err as Error).message);
     }

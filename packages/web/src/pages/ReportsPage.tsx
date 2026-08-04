@@ -7,6 +7,7 @@ import { api, apiGet, getErrorMessage } from '@/lib/api';
 import { Button, Select, Loader, EmptyState, Modal } from '@/components/ui';
 import { CustomerSearchInput } from '@/components/ui/CustomerSearchInput';
 import TallyExportPanel from '@/components/reports/TallyExportPanel';
+import GstFilingExportPanel from '@/components/reports/GstFilingExportPanel';
 import { useAuthStore, selectRole } from '@/stores/authStore';
 
 type ReportCellValue = string | number | null;
@@ -178,6 +179,12 @@ export default function ReportsPage() {
           report. Picks up dateFrom/dateTo from the same filter row.
           Hidden for mini_operator_admin (no Tally sync in v1). */}
       {!isMiniOperator && <TallyExportPanel dateFrom={dateFrom} dateTo={dateTo} />}
+
+      {/* GST Filing Export — separate from the tally + per-report selectors
+          because it's a monthly filing export (own month picker) rather than
+          a running-date-range report. Hidden for mini_operator_admin (their
+          GST return is handled outside MyGasLink today). */}
+      {!isMiniOperator && <GstFilingExportPanel />}
 
       {/* Report selector */}
       <div className="flex flex-wrap gap-2">
