@@ -204,8 +204,13 @@ jobs:
             NODE_ENV=development pnpm install --frozen-lockfile --config.confirmModulesPurge=false
             pnpm --filter @gaslink/api exec prisma generate
             pnpm --filter @gaslink/api run db:migrate:prod
-            pnpm --filter @gaslink/shared build
-            pnpm --filter @gaslink/api build
+            # 2026-08-04 — tsc's compilation graph grew past Node's default
+            # ~1.4 GB heap and OOM'd on the small EC2 instance during the
+            # deposit-ledger deploy attempt. 2 GB header room; can bump to
+            # 3 GB if the graph keeps growing. Both shared + api builds
+            # take the same bump — either tsc can trigger the OOM.
+            NODE_OPTIONS='--max-old-space-size=2048' pnpm --filter @gaslink/shared build
+            NODE_OPTIONS='--max-old-space-size=2048' pnpm --filter @gaslink/api build
             pm2 restart gaslink-api || pm2 start packages/api/dist/server.js --name gaslink-api
 
   deploy-production:
@@ -342,8 +347,12 @@ jobs:
             pnpm --filter @gaslink/api run db:migrate:prod
             # api build (tsc) consumes @gaslink/shared dist; rebuild on every
             # deploy so stale source can't ship stale types.
-            pnpm --filter @gaslink/shared build
-            pnpm --filter @gaslink/api build
+            # 2026-08-04 — 2 GB Node heap for both tsc runs; the default
+            # ~1.4 GB OOM'd on the deposit-ledger deploy. Prod EC2 has
+            # more RAM than the staging box but the tsc graph itself is
+            # the bottleneck, so both blocks get the same guard.
+            NODE_OPTIONS='--max-old-space-size=2048' pnpm --filter @gaslink/shared build
+            NODE_OPTIONS='--max-old-space-size=2048' pnpm --filter @gaslink/api build
             # Group A Step 11 — write the WhiteBooks Layer 1 env vars into
             # /etc/environment so they survive PM2 restarts AND systemd
             # resurrect on reboot. Idempotent: each line is replaced if the
