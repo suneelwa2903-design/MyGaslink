@@ -46,7 +46,7 @@ import {
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
 import { useAuthStore, selectDistributorId, selectRole } from '@/stores/authStore';
-import { Button, Input, Select, Modal, Badge, Loader, EmptyState, Pagination, SortableTh } from '@/components/ui';
+import { Button, Input, Select, Combobox, Modal, Badge, Loader, EmptyState, Pagination, SortableTh } from '@/components/ui';
 import { useSortableTable } from '@/hooks/useSortableTable';
 import { CustomerSearchInput } from '@/components/ui/CustomerSearchInput';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
@@ -54,6 +54,7 @@ import { HiOutlineMagnifyingGlass, HiOutlineXMark } from 'react-icons/hi2';
 import { CancelGstModal } from '@/components/CancelGstModal';
 import { isWithin24Hours } from '@/utils/gstWindows';
 import { cn } from '@/lib/cn';
+import { DepositLedgerModal } from '@/pages/CustomersPage';
 
 // ─── Shared constants ────────────────────────────────────────────────────────
 
@@ -108,7 +109,7 @@ function formatCurrency(n: number) {
 // ─── Main Page Component ─────────────────────────────────────────────────────
 
 export default function BillingPaymentsPage() {
-  const [tab, setTab] = useState<'invoices' | 'payments' | 'pending_approval'>('invoices');
+  const [tab, setTab] = useState<'invoices' | 'payments' | 'pending_approval' | 'deposits'>('invoices');
 
   // Mini-Operator (2026-07-16): pending-approval is driver-submitted
   // payments awaiting office verification (WI-PENDING-PAYMENTS). Mini-op
@@ -128,10 +129,15 @@ export default function BillingPaymentsPage() {
   });
   const pendingCount = pendingCountData?.count ?? 0;
 
+  // 2026-07-31 v6 (Change G): "Deposits" tab surfaces cylinder deposits
+  // + refunds in one place, with a "Record Deposit" action. Available to
+  // both distributor and mini-op tenants (both business models take
+  // cylinder deposits).
   const tabs = isMiniOperator
     ? [
         { key: 'invoices' as const, label: 'Invoices' },
         { key: 'payments' as const, label: 'Payments' },
+        { key: 'deposits' as const, label: 'Deposits' },
       ]
     : [
         { key: 'invoices' as const, label: 'Invoices' },
@@ -140,6 +146,7 @@ export default function BillingPaymentsPage() {
           key: 'pending_approval' as const,
           label: pendingCount > 0 ? `Pending Approval (${pendingCount})` : 'Pending Approval',
         },
+        { key: 'deposits' as const, label: 'Deposits' },
       ];
 
   return (
@@ -170,6 +177,7 @@ export default function BillingPaymentsPage() {
       {tab === 'invoices' && <InvoicesTab />}
       {tab === 'payments' && <PaymentsTab />}
       {tab === 'pending_approval' && <PendingApprovalTab />}
+      {tab === 'deposits' && <DepositsTab />}
     </div>
   );
 }
@@ -2317,5 +2325,282 @@ function AllocatePaymentModal({ open, onClose, payment }: { open: boolean; onClo
         )}
       </form>
     </Modal>
+  );
+}
+
+// ─── Deposits Tab (Change G — 2026-07-31 v6) ─────────────────────────────
+//
+// Cylinder deposits + refunds view. Reads `GET /api/payments/deposits`
+// which sources CustomerLedgerEntry rows where entryType IN
+// ('deposit_charged', 'deposit_refunded'). Independent from the
+// Payments tab (deposits are a separate liability, not invoice
+// receivables) — see the design conversation on 2026-07-31 v6.
+
+const DEPOSITS_PAGE_SIZE = 25;
+
+interface DepositRow {
+  id: string;
+  entryDate: string;
+  customerId: string;
+  customerName: string;
+  eventType: 'charged' | 'refunded';
+  cylinderTypeId: string | null;
+  cylinderTypeName: string | null;
+  qty: number;
+  amount: number;
+  paymentMethod: string | null;
+  referenceType: 'payment' | 'credit_note' | null;
+  referenceNumber: string | null;
+  narration: string | null;
+  // Change L v2 (2026-07-31): sequential per-distributor voucher number.
+  // Format V<CODE><FY><SEQ>, e.g. VSHD2627000001. Null on rows created
+  // before the migration OR on distributors with no docCode.
+  voucherNumber: string | null;
+}
+
+function DepositsTab() {
+  const [depositModalOpen, setDepositModalOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [customerId, setCustomerId] = useState('');
+  const [cylinderTypeId, setCylinderTypeId] = useState('');
+  const [eventType, setEventType] = useState<'all' | 'charged' | 'refunded'>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const { data: depositData, isLoading } = useQuery({
+    queryKey: ['deposits-list', page, customerId, cylinderTypeId, eventType, dateFrom, dateTo],
+    queryFn: () => apiGet<{
+      data: DepositRow[];
+      meta: { page: number; pageSize: number; total: number; totalPages: number };
+      summary: { totalHeld: number; customerCount: number; cylinderCount: number };
+    }>('/payments/deposits', {
+      page,
+      pageSize: DEPOSITS_PAGE_SIZE,
+      ...(customerId ? { customerId } : {}),
+      ...(cylinderTypeId ? { cylinderTypeId } : {}),
+      ...(eventType !== 'all' ? { eventType } : {}),
+      ...(dateFrom ? { dateFrom } : {}),
+      ...(dateTo ? { dateTo } : {}),
+    }),
+  });
+
+  // Filter dropdowns — populate cylinder type filter.
+  const { data: cylinderTypesResp } = useQuery({
+    queryKey: ['cylinder-types-for-deposits-filter'],
+    queryFn: () => apiGet<{ cylinderTypes: Array<{ cylinderTypeId: string; typeName: string; isActive: boolean }> }>(`/cylinder-types`),
+    staleTime: 60_000,
+  });
+  const cylTypes = (cylinderTypesResp?.cylinderTypes ?? []).filter((t) => t.isActive);
+
+  // Customer combobox for filter — reuse same query key as DepositLedgerModal.
+  // 2026-07-31 v6 fix: both callers MUST return the same shape (array of
+  // customer rows). Prior bug — this file returned the raw {customers, meta}
+  // object while the modal returned resp.customers directly. Whichever
+  // rendered first stamped the cache; the other crashed on .map().
+  const { data: customerOptions } = useQuery({
+    queryKey: ['customers-list-for-deposit-picker'],
+    queryFn: async () => {
+      const resp = await apiGet<{ customers: Array<{ customerId: string; customerName: string; phone: string }> }>(
+        `/customers`, { pageSize: 500, status: 'active' },
+      );
+      return resp.customers ?? [];
+    },
+    staleTime: 60_000,
+  });
+
+  const summary = depositData?.summary;
+  const rows = depositData?.data ?? [];
+
+  return (
+    <div className="space-y-6">
+      {/* Header + actions */}
+      <div className="flex justify-between items-center">
+        <div className="flex gap-6">
+          <div>
+            <div className="text-xs text-surface-500 dark:text-surface-400 uppercase tracking-wide">Deposits Held</div>
+            <div className="text-2xl font-bold text-surface-900 dark:text-white">
+              {formatCurrency(summary?.totalHeld ?? 0)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-surface-500 dark:text-surface-400 uppercase tracking-wide">Customers</div>
+            <div className="text-2xl font-bold text-surface-900 dark:text-white">{summary?.customerCount ?? 0}</div>
+          </div>
+          <div>
+            <div className="text-xs text-surface-500 dark:text-surface-400 uppercase tracking-wide">Cylinders</div>
+            <div className="text-2xl font-bold text-surface-900 dark:text-white">{summary?.cylinderCount ?? 0}</div>
+          </div>
+        </div>
+        <Button variant="primary" onClick={() => setDepositModalOpen(true)}>
+          + Record Deposit
+        </Button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 items-end">
+        {/* 2026-07-31 v7 (Change I): search-as-you-type via Combobox
+            so distributors with 100+ customers don't scroll a giant
+            select. Empty string clears the filter (matches all). */}
+        <div className="min-w-[240px]">
+          <Combobox
+            value={(customerOptions ?? []).find((c) => c.customerId === customerId)?.customerName ?? ''}
+            onChange={(label) => {
+              const c = (customerOptions ?? []).find((x) => x.customerName === label);
+              setCustomerId(c?.customerId ?? '');
+              setPage(1);
+            }}
+            placeholder="All customers — type to filter"
+            options={(customerOptions ?? []).map((c) => ({
+              value: c.customerName,
+              label: c.customerName,
+            }))}
+          />
+        </div>
+        <Select
+          value={cylinderTypeId}
+          onChange={(e) => { setCylinderTypeId(e.target.value); setPage(1); }}
+          options={[
+            { value: '', label: 'All cylinder types' },
+            ...cylTypes.map((t) => ({ value: t.cylinderTypeId, label: t.typeName })),
+          ]}
+        />
+        <Select
+          value={eventType}
+          onChange={(e) => { setEventType(e.target.value as 'all' | 'charged' | 'refunded'); setPage(1); }}
+          options={[
+            { value: 'all', label: 'All events' },
+            { value: 'charged', label: 'Charged' },
+            { value: 'refunded', label: 'Refunded' },
+          ]}
+        />
+        <Input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+          placeholder="From"
+        />
+        <Input
+          type="date"
+          value={dateTo}
+          onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+          placeholder="To"
+        />
+      </div>
+
+      {/* Table */}
+      {isLoading ? (
+        <div className="flex justify-center py-8"><Loader /></div>
+      ) : rows.length === 0 ? (
+        <EmptyState title="No deposits recorded yet" />
+      ) : (
+        <>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Voucher No</th>
+                  <th>Customer</th>
+                  <th>Event</th>
+                  <th>Cylinder</th>
+                  <th className="text-right">Qty</th>
+                  <th className="text-right">Amount</th>
+                  <th>Method</th>
+                  <th>Reference</th>
+                  <th>PDF</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td className="whitespace-nowrap">
+                      {new Date(r.entryDate).toLocaleDateString('en-IN')}
+                    </td>
+                    <td className="whitespace-nowrap font-mono text-xs text-brand-700 dark:text-brand-300">
+                      {/* Change L v2 (2026-07-31): show the sequential voucher
+                          number so the operator can quote it to a customer
+                          disputing a deposit. Legacy rows show — instead. */}
+                      {r.voucherNumber ?? '—'}
+                    </td>
+                    <td>{r.customerName}</td>
+                    <td>
+                      <Badge variant={r.eventType === 'charged' ? 'info' : 'warning'}>
+                        {r.eventType === 'charged' ? 'Deposit' : 'Refund'}
+                      </Badge>
+                    </td>
+                    <td>{r.cylinderTypeName ?? '-'}</td>
+                    <td className="text-right">{r.qty}</td>
+                    <td className="text-right font-medium text-blue-600 dark:text-blue-400">
+                      {formatCurrency(r.amount)}
+                    </td>
+                    <td className="text-surface-600 dark:text-surface-300">
+                      {(r.paymentMethod ?? '').replace(/_/g, ' ') || '-'}
+                    </td>
+                    <td className="text-surface-500 dark:text-surface-400 text-xs">
+                      {r.referenceNumber ?? '-'}
+                    </td>
+                    <td>
+                      {/* Change L (2026-07-31 v13): per-deposit voucher PDF
+                          — customer proof of deposit/refund. Downloads via
+                          the same axios instance as other blob endpoints. */}
+                      <button
+                        type="button"
+                        className="text-brand-600 hover:text-brand-700 dark:text-brand-400 text-xs underline"
+                        onClick={async () => {
+                          try {
+                            const resp = await api.get(`/payments/deposits/${r.id}/voucher.pdf`, {
+                              responseType: 'blob',
+                            });
+                            const url = window.URL.createObjectURL(resp.data);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            const kind = r.eventType === 'charged' ? 'deposit' : 'refund';
+                            a.download = `${kind}-voucher-${r.customerName.replace(/\s+/g, '-')}-${r.entryDate}.pdf`;
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                          } catch {
+                            toast.error('Could not download voucher PDF');
+                          }
+                        }}
+                      >
+                        PDF
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* Pagination */}
+          {depositData && depositData.meta.totalPages > 1 && (
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-surface-500 dark:text-surface-400">
+                Page {depositData.meta.page} of {depositData.meta.totalPages} · {depositData.meta.total} total
+              </span>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                  Prev
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setPage((p) => Math.min(depositData.meta.totalPages, p + 1))}
+                  disabled={page >= depositData.meta.totalPages}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {depositModalOpen && (
+        <DepositLedgerModal
+          open={depositModalOpen}
+          onClose={() => setDepositModalOpen(false)}
+          // No customerId → modal renders a customer combobox at the top
+        />
+      )}
+    </div>
   );
 }
