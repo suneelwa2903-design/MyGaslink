@@ -19,10 +19,22 @@ export function auditLog(action: string, entityType: string) {
         const ip = Array.isArray(req.ip) ? req.ip[0] : (req.ip || req.socket.remoteAddress || '');
         const ua = Array.isArray(req.headers['user-agent']) ? req.headers['user-agent'][0] : (req.headers['user-agent'] || '');
 
+        // Which distributor is this row FOR? For most routes it's the
+        // session tenant (req.user.distributorId). But for super_admin
+        // cross-tenant writes — e.g. POST /billing/generate with a body
+        // { distributorId } targeting a DIFFERENT tenant than the one
+        // currently selected in the header — the audit log must record
+        // the TARGET tenant, not the session tenant. Otherwise you get
+        // "Kruthee's admin generated a Vanasthali invoice" style
+        // false-positive audit rows (the bug that surfaced on 2026-08-03).
+        const bodyDistributorId = extractBodyDistributorId(req.body);
+        const targetDistributorId = bodyDistributorId ?? req.user.distributorId ?? undefined;
+        const sessionDistributorId = req.user.distributorId ?? undefined;
+
         prisma.auditLog.create({
           data: {
             userId: req.user.userId,
-            distributorId: req.user.distributorId || undefined,
+            distributorId: targetDistributorId,
             action,
             entityType,
             entityId: entityId ?? null,
@@ -37,7 +49,12 @@ export function auditLog(action: string, entityType: string) {
           entityType,
           entityId: entityId ?? undefined,
           userId: req.user.userId,
-          distributorId: req.user.distributorId || undefined,
+          distributorId: targetDistributorId,
+          // Only emit the extra field when the two disagree — keeps the
+          // 99% single-tenant case's log line unchanged.
+          ...(sessionDistributorId && targetDistributorId && sessionDistributorId !== targetDistributorId
+            ? { sessionDistributorId }
+            : {}),
           requestId: req.requestId,
         });
       }
@@ -47,6 +64,12 @@ export function auditLog(action: string, entityType: string) {
 
     next();
   };
+}
+
+function extractBodyDistributorId(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const v = (body as Record<string, unknown>).distributorId;
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
 function sanitizeForLog(body: Record<string, unknown> | undefined): Record<string, unknown> | undefined {

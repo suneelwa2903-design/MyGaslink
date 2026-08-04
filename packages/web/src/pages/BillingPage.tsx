@@ -5,15 +5,18 @@ import {
   HiOutlinePlus,
   HiOutlineCheckCircle,
   HiOutlineEye,
+  HiOutlineDocumentArrowDown,
+  HiOutlinePaperAirplane,
 } from 'react-icons/hi2';
 import {
   type BillingCycle,
   BillingStatus,
   UserRole,
 } from '@gaslink/shared';
-import { apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
+import { apiGet, apiPost, apiPut, getErrorMessage, api } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Button, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
+import { SendBillingInvoiceModal } from '@/components/SendBillingInvoiceModal';
 
 const STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
   [BillingStatus.PENDING_GENERATION]: 'neutral',
@@ -34,6 +37,24 @@ export default function BillingPage() {
   const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
   const [statusFilter, setStatusFilter] = useState('');
   const [viewCycle, setViewCycle] = useState<BillingCycle | null>(null);
+  const [emailCycle, setEmailCycle] = useState<BillingCycle | null>(null);
+
+  const handleDownload = async (cycleId: string) => {
+    try {
+      const res = await api.get(`/pricing/billing-invoice/${cycleId}`, { responseType: 'blob' });
+      const cd = res.headers['content-disposition'] as string | undefined;
+      const nameMatch = cd?.match(/filename="([^"]+)"/);
+      const filename = nameMatch?.[1] ?? `gaslink-invoice-${cycleId.slice(-6)}.pdf`;
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Failed to download invoice');
+    }
+  };
 
   const queryParams: Record<string, unknown> = {};
   if (statusFilter) queryParams.billingStatus = statusFilter;
@@ -133,6 +154,22 @@ export default function BillingPage() {
                       >
                         <HiOutlineEye className="h-4 w-4" />
                       </button>
+                      <button
+                        onClick={() => handleDownload(cycle.cycleId)}
+                        className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500"
+                        title="Download Invoice PDF"
+                      >
+                        <HiOutlineDocumentArrowDown className="h-4 w-4" />
+                      </button>
+                      {isSuperAdmin && (
+                        <button
+                          onClick={() => setEmailCycle(cycle)}
+                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500"
+                          title="Send Invoice via email"
+                        >
+                          <HiOutlinePaperAirplane className="h-4 w-4" />
+                        </button>
+                      )}
                       {isSuperAdmin && cycle.billingStatus !== BillingStatus.PAID && (
                         <button
                           onClick={() => markPaidMutation.mutate(cycle.cycleId)}
@@ -193,6 +230,13 @@ export default function BillingPage() {
           </div>
         </Modal>
       )}
+
+      <SendBillingInvoiceModal
+        open={!!emailCycle}
+        cycle={emailCycle}
+        distributorName={emailCycle?.distributorName ?? ''}
+        onClose={() => setEmailCycle(null)}
+      />
     </div>
   );
 }

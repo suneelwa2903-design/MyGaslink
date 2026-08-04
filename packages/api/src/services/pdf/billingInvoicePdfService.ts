@@ -19,6 +19,8 @@ import {
 interface BillingCycleForPdf {
   id: string;
   distributorId: string;
+  invoiceNumber: string | null;
+  invoiceDate: Date | null;
   periodStartDate: Date;
   periodEndDate: Date;
   dueDate: Date | null;
@@ -75,37 +77,10 @@ const LAYOUT = {
 
 const GASLINK_SAC = '998314';
 
-/**
- * Get the Indian financial year code for a given date, in the same
- * 4-digit form as InvoiceCounter uses. FY runs Apr 1 → Mar 31.
- * e.g. 2026-07-01 → '2627' (Apr 2026 – Mar 2027).
- */
-function saasFinancialYear(d: Date): string {
-  const y = d.getFullYear();
-  const m = d.getMonth() + 1;
-  const fyStart = m >= 4 ? y : y - 1;
-  const startTwo = String(fyStart).slice(-2);
-  const endTwo = String(fyStart + 1).slice(-2);
-  return `${startTwo}${endTwo}`;
-}
-
-/**
- * Allocate the next SaaS invoice number: `I` + `MGL` + FY(4) + seq(6),
- * e.g. IMGL2627002922. Atomic upsert-increment against
- * SaasInvoiceCounter — no race between concurrent PDF generations.
- * FY 2627 is seeded at lastSequence=2921 by the migration; first
- * allocation returns 2922.
- */
-async function allocateSaasInvoiceNumber(invoiceDate: Date): Promise<string> {
-  const fy = saasFinancialYear(invoiceDate);
-  const counter = await prisma.saasInvoiceCounter.upsert({
-    where: { financialYear: fy },
-    create: { financialYear: fy, lastSequence: 1 },
-    update: { lastSequence: { increment: 1 } },
-    select: { lastSequence: true },
-  });
-  return `IMGL${fy}${String(counter.lastSequence).padStart(6, '0')}`;
-}
+// Invoice number allocation moved to billingService (2026-08-03 —
+// migration 20260803000000_billing_invoice_number_and_date). The PDF
+// service reads cycle.invoiceNumber and cycle.invoiceDate from the row;
+// see generateBillingInvoicePdf() below for the legacy null-fallback path.
 
 const COL_DEFS = [
   { label: '#', width: 25, align: 'center' },
@@ -204,14 +179,15 @@ function drawHeader(
   doc.moveTo(leftX, lineY).lineTo(rightMargin, lineY)
     .strokeColor(T.PRIMARY).lineWidth(LAYOUT.BORDER_WIDTH).stroke();
 
-  // Meta row: Invoice Date | Period | Due Date
+  // Meta row: Invoice Date | Period | Due Date — three equal columns,
+  // each field center-aligned within its column.
   const metaY = lineY + 8;
+  const fullW = rightMargin - leftX;
+  const colW = fullW / 3;
   doc.fontSize(F.LABEL).fillColor(T.MUTED).font('Helvetica');
-  doc.text(`Invoice Date: ${meta.invoiceDate}`, leftX, metaY, { width: 150 });
-  doc.text(`Period: ${meta.period}`, leftX + 160, metaY, { width: 180 });
-  const dueText = `Due Date: ${meta.dueDate}`;
-  const dueW = doc.widthOfString(dueText);
-  doc.text(dueText, rightMargin - dueW, metaY, { width: dueW + 10 });
+  doc.text(`Invoice Date: ${meta.invoiceDate}`, leftX,             metaY, { width: colW, align: 'center' });
+  doc.text(`Period: ${meta.period}`,             leftX + colW,     metaY, { width: colW, align: 'center' });
+  doc.text(`Due Date: ${meta.dueDate}`,          leftX + colW * 2, metaY, { width: colW, align: 'center' });
 
   return metaY + 14 - startY;
 }
@@ -507,11 +483,19 @@ export async function generateBillingInvoicePdf(billingCycleId: string, distribu
 
   const dist = cycle.distributor;
 
-  // Structured invoice number: I + MGL + FY(4) + seq(6) \u2192 IMGL2627002922.
-  // Allocated from SaasInvoiceCounter (atomic upsert-increment, seeded
-  // at 2921 for FY 2627 so the first allocation returns 2922).
-  const invoiceDateObj = cycle.periodStartDate; // stable across regenerations
-  const invoiceNum = await allocateSaasInvoiceNumber(invoiceDateObj);
+  // Read invoice number + date from the row (stamped at cycle-creation
+  // time via billingService.allocateInvoiceNumberInTx). Legacy rows
+  // written before migration 20260803000000 have both fields null \u2014 the
+  // fallback below allocates once and persists, so the second download
+  // sees the same number.
+  let invoiceNumber = cycle.invoiceNumber;
+  let invoiceDateObj = cycle.invoiceDate;
+  if (!invoiceNumber || !invoiceDateObj) {
+    const { allocateAndPersistInvoiceNumber } = await import('../billingService.js');
+    const persisted = await allocateAndPersistInvoiceNumber(cycle.id);
+    invoiceNumber = persisted.invoiceNumber;
+    invoiceDateObj = persisted.invoiceDate;
+  }
 
   // Build buyer data. State code derived from buyer GSTIN (first 2
   // chars) when present; falls back to '\u2014' for URP.
@@ -526,18 +510,14 @@ export async function generateBillingInvoicePdf(billingCycleId: string, distribu
     stateCode: buyerStateCode,
   };
 
-  // Intra-state check via numeric state code from the GSTIN prefix.
   const isIntraState = determineIntraState(GASLINK.stateCode, dist.gstin, dist.state);
 
-  // Dates. Use periodStartDate as the invoice date (stable \u2014 no `new
-  // Date()` drift across regenerations). Due date = invoice date + 7
-  // days to match the "Payment due within 7 days" terms.
   const dueDateObj = new Date(invoiceDateObj);
   dueDateObj.setDate(dueDateObj.getDate() + 7);
   const invoiceDate = formatDate(invoiceDateObj);
   const period = `${formatDate(cycle.periodStartDate)} to ${formatDate(cycle.periodEndDate)}`;
   const dueDate = formatDate(dueDateObj);
-  const meta = { invoiceNum, invoiceDate, period, dueDate };
+  const meta = { invoiceNum: invoiceNumber, invoiceDate, period, dueDate };
 
   // Create PDF document
   const doc = new PDFDocument({ margin: LAYOUT.MARGIN.left, size: 'A4' });

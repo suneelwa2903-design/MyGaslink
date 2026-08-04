@@ -147,7 +147,12 @@ router.get('/billing-invoice/:cycleId',
       const cycleId = param(req.params.cycleId);
       const cycle = await prisma.billingCycle.findUnique({
         where: { id: cycleId },
-        select: { id: true, distributorId: true },
+        select: {
+          id: true,
+          distributorId: true,
+          invoiceNumber: true,
+          distributor: { select: { docCode: true } },
+        },
       });
       if (!cycle) return sendNotFound(res, 'Billing cycle not found');
       // Tenant isolation gate — same posture as Phase E verify-payment.
@@ -155,8 +160,15 @@ router.get('/billing-invoice/:cycleId',
         return sendError(res, 'Billing cycle does not belong to this distributor', 403, 'CROSS_TENANT_ACCESS');
       }
       const pdf = await generateBillingInvoicePdf(cycleId);
+      // Filename embeds distributor doc_code + invoice number so
+      // Chrome-renamed duplicates (foo (2).pdf) stay self-identifying.
+      // Falls back to the last-6-of-cycleId scheme only when either
+      // field is missing on a legacy row.
+      const filenameCore = cycle.invoiceNumber && cycle.distributor?.docCode
+        ? `${cycle.distributor.docCode}-${cycle.invoiceNumber}`
+        : cycleId.slice(-6);
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="gaslink-invoice-${cycleId.slice(-6)}.pdf"`);
+      res.setHeader('Content-Disposition', `attachment; filename="gaslink-invoice-${filenameCore}.pdf"`);
       res.send(pdf);
     } catch (err) {
       return sendError(res, (err as Error).message);

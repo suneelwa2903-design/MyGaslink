@@ -1011,6 +1011,9 @@ export interface BillingCycle {
   totalGstAmount: number;
   totalAmountInclGst: number;
   invoiceId: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  razorpayPaymentLink: string | null;
   dueDate: string | null;
   items: BillingItem[];
 }

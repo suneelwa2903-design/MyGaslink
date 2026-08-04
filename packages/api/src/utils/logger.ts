@@ -41,6 +41,10 @@ export function logBusinessEvent(event: {
   entityId?: string;
   userId?: string;
   distributorId?: string;
+  /** Set only when a super_admin's session tenant differs from the tenant
+   *  the write actually targeted (via req.body.distributorId). See
+   *  middleware/auditLog.ts for the cross-tenant capture rationale. */
+  sessionDistributorId?: string;
   details?: Record<string, unknown>;
   requestId?: string;
 }) {

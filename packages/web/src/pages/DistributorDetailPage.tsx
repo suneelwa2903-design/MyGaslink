@@ -9,6 +9,7 @@ import {
   HiOutlineCurrencyRupee,
   HiOutlineChartBarSquare,
   HiOutlineDocumentArrowDown,
+  HiOutlinePaperAirplane,
   HiOutlinePlus,
   HiOutlineShieldCheck,
 } from 'react-icons/hi2';
@@ -17,6 +18,7 @@ import { localTodayISO, localDateISO } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { api } from '@/lib/api';
 import { Badge, Button, Loader, Modal, Select } from '@/components/ui';
+import { SendBillingInvoiceModal } from '@/components/SendBillingInvoiceModal';
 
 function formatCurrency(n: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
@@ -65,6 +67,7 @@ export default function DistributorDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [emailCycle, setEmailCycle] = useState<BillingCycle | null>(null);
 
   const { data: distributor, isLoading: distLoading } = useQuery({
     queryKey: ['distributor', id],
@@ -132,8 +135,23 @@ export default function DistributorDetailPage() {
   const totalPending = billingCycles?.filter(c => c.billingStatus !== 'paid_billing').reduce((s, c) => s + c.totalAmountInclGst, 0) || 0;
   const totalUsers = Object.values(seatLimits).reduce((s, l) => s + l.used, 0);
 
+  const tenantBannerColor = tenantColor(distributor.docCode || distributor.distributorId);
+
   return (
     <div className="space-y-6">
+      {/* Tenant identification banner — prevents "which distributor am I on?"
+          confusion when navigating between tenants (bug that surfaced 2026-08-03
+          when a Vanasthali generate + Kruthee downloads were mixed up). Doc-code
+          + business-name in a deterministically-colored strip so two tabs open
+          on different tenants are visually unmistakable. */}
+      <div className="rounded-lg p-3 flex items-center gap-3" style={{ backgroundColor: tenantBannerColor.bg, color: tenantBannerColor.fg }}>
+        <div className="px-3 py-1 rounded-md font-mono font-bold text-sm" style={{ backgroundColor: tenantBannerColor.fg, color: tenantBannerColor.bg }}>
+          {distributor.docCode || 'N/A'}
+        </div>
+        <div className="flex-1 text-sm font-semibold uppercase tracking-wide">{distributor.businessName}</div>
+        <div className="text-xs opacity-80">GSTIN: {distributor.gstin || 'N/A'}</div>
+      </div>
+
       {/* Header */}
       <div className="flex items-center gap-4">
         <button onClick={() => navigate('/app/distributors')} className="p-2 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700">
@@ -259,9 +277,14 @@ export default function DistributorDetailPage() {
                     <td>{cycle.dueDate ? new Date(cycle.dueDate).toLocaleDateString('en-IN') : '-'}</td>
                     <td><Badge variant={cycle.billingStatus === 'paid_billing' ? 'success' : cycle.billingStatus === 'overdue_billing' ? 'danger' : 'warning'}>{cycle.billingStatus.replace(/_/g, ' ')}</Badge></td>
                     <td>
-                      <button onClick={() => handleDownloadInvoice(cycle.cycleId)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="Download Invoice PDF">
-                        <HiOutlineDocumentArrowDown className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => handleDownloadInvoice(cycle.cycleId)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="Download Invoice PDF">
+                          <HiOutlineDocumentArrowDown className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => setEmailCycle(cycle)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-brand-500" title="Send Invoice via email">
+                          <HiOutlinePaperAirplane className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -306,8 +329,38 @@ export default function DistributorDetailPage() {
           }}
         />
       )}
+
+      <SendBillingInvoiceModal
+        open={!!emailCycle}
+        cycle={emailCycle}
+        distributorName={distributor.businessName}
+        defaultRecipient={distributor.email ?? undefined}
+        onClose={() => setEmailCycle(null)}
+      />
     </div>
   );
+}
+
+// Deterministic fg/bg pair keyed off the distributor's doc_code (or id
+// when doc_code isn't set). Fixed palette of 8 well-contrasted swatches so
+// two tenants can't collide on the same colour unless the codes hash to
+// the same slot.
+function tenantColor(key: string): { bg: string; fg: string } {
+  const palette: Array<{ bg: string; fg: string }> = [
+    { bg: '#0a3d62', fg: '#ffffff' },
+    { bg: '#8e44ad', fg: '#ffffff' },
+    { bg: '#27ae60', fg: '#ffffff' },
+    { bg: '#d35400', fg: '#ffffff' },
+    { bg: '#c0392b', fg: '#ffffff' },
+    { bg: '#16a085', fg: '#ffffff' },
+    { bg: '#2c3e50', fg: '#ffffff' },
+    { bg: '#7d3c98', fg: '#ffffff' },
+  ];
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+  }
+  return palette[Math.abs(hash) % palette.length]!;
 }
 
 interface PricingTier {

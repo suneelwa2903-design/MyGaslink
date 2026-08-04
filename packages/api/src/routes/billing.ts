@@ -15,6 +15,8 @@ import {
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../utils/logger.js';
 import { mapBillingCycle, mapBillingCycles } from '../utils/mappers.js';
+import { generateBillingInvoicePdf } from '../services/pdf/billingInvoicePdfService.js';
+import { sendBillingInvoiceEmail } from '../utils/email.js';
 import { z } from 'zod';
 
 type ServiceError = { message: string; statusCode?: number; code?: string };
@@ -155,6 +157,123 @@ router.post('/mark-overdue',
     }
   }
 );
+
+// POST /api/billing/cycles/:cycleId/send-email — server-side SMTP send with
+// the SaaS-invoice PDF attached. Mirrors POST /api/quotations/:id/send-email:
+// response tells the client whether SMTP delivered (`sent`), silently
+// dropped due to missing config (`skipped`, client falls back to a mailto:
+// link), or errored (`failed`). Super-admin only — this is a
+// GasLink → distributor action; distributor_admin has no legitimate use
+// for pushing their own invoice.
+router.post('/cycles/:cycleId/send-email',
+  requireRole('super_admin'),
+  validate(z.object({
+    to: z.string().email().max(200),
+    cc: z.array(z.string().email().max(200)).max(10).optional(),
+    subject: z.string().min(1).max(500).optional(),
+    coverText: z.string().max(4000).optional(),
+    // Razorpay hosted payment link URL. Optional. When present, the
+    // outbound email renders a Pay Now button pointing at this URL and
+    // the same URL is persisted on the cycle row so future re-sends
+    // reuse it without re-entry. Must be a valid https:// URL when set.
+    razorpayPaymentLink: z.string().url().max(500).optional().nullable(),
+  })),
+  auditLog('send_email', 'billing_cycle'),
+  async (req, res) => {
+    try {
+      const cycleId = param(req.params.cycleId);
+      const cycle = await prisma.billingCycle.findUnique({
+        where: { id: cycleId },
+        include: {
+          distributor: { select: { businessName: true, legalName: true } },
+        },
+      });
+      if (!cycle) return sendNotFound(res, 'Billing cycle');
+      if (cycle.billingStatus === 'pending_generation') {
+        return sendError(res, 'Cannot email a cycle whose invoice has not been generated', 400, 'BAD_STATE');
+      }
+
+      // Persist the pasted payment link on the cycle so re-sends reuse
+      // it and the field survives page reload. Empty string / null both
+      // clear it. Only update when the request body explicitly carries
+      // the field so unrelated retries can't accidentally erase a link.
+      if ('razorpayPaymentLink' in req.body) {
+        await prisma.billingCycle.update({
+          where: { id: cycleId },
+          data: { razorpayPaymentLink: req.body.razorpayPaymentLink || null },
+        });
+      }
+
+      const pdf = await generateBillingInvoicePdf(cycleId);
+
+      // Re-read the row post-PDF so the number/date the fallback path may
+      // have just persisted are reflected in the email body + subject.
+      const cycleWithNumber = await prisma.billingCycle.findUniqueOrThrow({
+        where: { id: cycleId },
+        select: {
+          invoiceNumber: true,
+          invoiceDate: true,
+          dueDate: true,
+          periodStartDate: true,
+          periodEndDate: true,
+          totalAmountInclGst: true,
+          razorpayPaymentLink: true,
+        },
+      });
+
+      const distributorName = cycle.distributor.businessName || cycle.distributor.legalName;
+      const periodLabel = `${formatDateShort(cycleWithNumber.periodStartDate)} to ${formatDateShort(cycleWithNumber.periodEndDate)}`;
+      const monthLabel = formatMonth(cycleWithNumber.periodStartDate);
+      const dueDateStr = cycleWithNumber.dueDate ? formatDateShort(cycleWithNumber.dueDate) : '—';
+      const totalStr = `Rs. ${Number(cycleWithNumber.totalAmountInclGst).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+      const defaultSubject = `MyGasLink · ${distributorName} · ${monthLabel}`;
+      const paymentLine = cycleWithNumber.razorpayPaymentLink
+        ? ` Pay online: ${cycleWithNumber.razorpayPaymentLink}`
+        : '';
+      const defaultCover = `Please find attached your MyGasLink invoice for ${periodLabel}. Payment due by ${dueDateStr}.${paymentLine}`;
+
+      const result = await sendBillingInvoiceEmail({
+        to: req.body.to,
+        cc: req.body.cc,
+        subject: (req.body.subject || defaultSubject).trim(),
+        coverText: (req.body.coverText || defaultCover).trim(),
+        distributorName,
+        invoiceNumber: cycleWithNumber.invoiceNumber || cycleId.slice(-6),
+        period: periodLabel,
+        dueDate: dueDateStr,
+        totalInclGst: totalStr,
+        paymentLink: cycleWithNumber.razorpayPaymentLink,
+        pdf,
+        userId: req.user!.userId,
+      });
+
+      if (result.status === 'sent') {
+        return sendSuccess(res, { sent: true, to: req.body.to });
+      }
+      return sendSuccess(res, {
+        sent: false,
+        reason: result.status,
+        error: result.error,
+      });
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
+function formatDateShort(d: Date): string {
+  const day = String(d.getDate()).padStart(2, '0');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mon = months[d.getMonth()];
+  const yr = d.getFullYear();
+  return `${day}-${mon}-${yr}`;
+}
+
+function formatMonth(d: Date): string {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[d.getMonth()]} ${d.getFullYear()}`;
+}
 
 // ─── Phase E: Razorpay subscription payments ─────────────────────────────────
 //

@@ -2442,6 +2442,18 @@ model BillingCycle {
   totalGstAmount     Decimal           @default(0) @map("total_gst_amount") @db.Decimal(18, 4)
   totalAmountInclGst Decimal           @default(0) @map("total_amount_incl_gst") @db.Decimal(18, 4)
   invoiceId          String?           @map("invoice_id")
+  invoiceNumber      String?           @unique @map("invoice_number")
+  invoiceDate        DateTime?         @map("invoice_date") @db.Date
+  // Razorpay hosted payment link URL that super-admin pastes into the
+  // Send Invoice modal. Persisted per-cycle so re-sends reuse the same
+  // link without re-entry. Rendered as a pay-now button/link in the
+  // outbound email when non-null. Never generated server-side — this
+  // is an operator-managed field (link created manually in Razorpay
+  // dashboard, then pasted into MyGasLink). Distinct from the existing
+  // razorpayOrderId/razorpayPaymentId columns which track the Phase-E
+  // programmatic Razorpay integration (Pay Now button on the tenant's
+  // Subscription tab); the two are complementary but independent.
+  razorpayPaymentLink String?          @map("razorpay_payment_link")
   dueDate            DateTime?         @map("due_date") @db.Date
   suspendDate        DateTime?         @map("suspend_date") @db.Date
   // Phase E (2026-06-12): Razorpay subscription payments. Populated when

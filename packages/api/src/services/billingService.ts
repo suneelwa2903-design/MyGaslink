@@ -4,6 +4,61 @@ import { BILLING_GRACE_PERIOD_DAYS } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
 import * as pendingActionsService from './pendingActionsService.js';
 
+// Indian financial year in the 4-digit form SaasInvoiceCounter uses
+// (FY runs Apr 1 → Mar 31). 2026-07-01 → '2627'.
+function saasFinancialYear(d: Date): string {
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const fyStart = m >= 4 ? y : y - 1;
+  const startTwo = String(fyStart).slice(-2);
+  const endTwo = String(fyStart + 1).slice(-2);
+  return `${startTwo}${endTwo}`;
+}
+
+// Atomic per-FY sequence allocation. Called INSIDE the cycle-creation
+// transaction so a rollback rewinds the counter along with the row insert.
+// A single-column-touching upsert on a small counter table is fast enough
+// to sit inside the outer transaction without contention concerns given the
+// SaaS-billing volume (<20 distributors, one issuance per month).
+async function allocateInvoiceNumberInTx(
+  tx: Prisma.TransactionClient,
+  invoiceDate: Date,
+): Promise<string> {
+  const fy = saasFinancialYear(invoiceDate);
+  const counter = await tx.saasInvoiceCounter.upsert({
+    where: { financialYear: fy },
+    create: { financialYear: fy, lastSequence: 1 },
+    update: { lastSequence: { increment: 1 } },
+    select: { lastSequence: true },
+  });
+  return `IMGL${fy}${String(counter.lastSequence).padStart(6, '0')}`;
+}
+
+// Exported for the PDF service's null-invoiceNumber fallback path (legacy
+// rows written before migration 20260803000000). Wraps its own transaction.
+export async function allocateAndPersistInvoiceNumber(cycleId: string): Promise<{
+  invoiceNumber: string;
+  invoiceDate: Date;
+}> {
+  return prisma.$transaction(async (tx) => {
+    const cycle = await tx.billingCycle.findUnique({
+      where: { id: cycleId },
+      select: { invoiceNumber: true, invoiceDate: true, periodStartDate: true },
+    });
+    if (!cycle) throw new BillingError('Billing cycle not found', 404);
+    if (cycle.invoiceNumber && cycle.invoiceDate) {
+      return { invoiceNumber: cycle.invoiceNumber, invoiceDate: cycle.invoiceDate };
+    }
+    const invoiceDate = cycle.invoiceDate ?? cycle.periodStartDate;
+    const invoiceNumber = cycle.invoiceNumber ?? await allocateInvoiceNumberInTx(tx, invoiceDate);
+    await tx.billingCycle.update({
+      where: { id: cycleId },
+      data: { invoiceNumber, invoiceDate },
+    });
+    return { invoiceNumber, invoiceDate };
+  });
+}
+
 const billingCycleInclude = {
   distributor: { select: { id: true, businessName: true, billingTier: true } },
   items: true,
@@ -353,7 +408,12 @@ export async function generateBillingCycle(
   const totalGst = items.reduce((sum, i) => sum + toNum(i.lineGstAmount), 0);
   const totalInclGst = totalExclGst + totalGst;
 
-  const dueDate = new Date(data.periodEndDate);
+  // Invoice date = today (generation date), NOT period start. Terms
+  // are "payment due within 7 days of invoice date", so due_date is
+  // derived from invoice_date, not period_end.
+  const invoiceDate = new Date();
+  invoiceDate.setHours(0, 0, 0, 0);
+  const dueDate = new Date(invoiceDate);
   dueDate.setDate(dueDate.getDate() + BILLING_GRACE_PERIOD_DAYS);
 
   // Phase 4b (2026-06-12): derive a billingTier when the distributor only
@@ -364,21 +424,26 @@ export async function generateBillingCycle(
   const effectiveBillingTier =
     distributor.billingTier ?? deriveBillingTierFromPlan(distributor.subscriptionPlan);
 
-  return prisma.billingCycle.create({
-    data: {
-      distributorId,
-      periodType: data.periodType as $Enums.BillingPeriodType,
-      periodStartDate: new Date(data.periodStartDate),
-      periodEndDate: new Date(data.periodEndDate),
-      billingStatus: 'invoice_generated',
-      billingTier: effectiveBillingTier,
-      totalAmountExclGst: Math.round(totalExclGst * 100) / 100,
-      totalGstAmount: Math.round(totalGst * 100) / 100,
-      totalAmountInclGst: Math.round(totalInclGst * 100) / 100,
-      dueDate,
-      items: { create: items },
-    },
-    include: billingCycleInclude,
+  return prisma.$transaction(async (tx) => {
+    const invoiceNumber = await allocateInvoiceNumberInTx(tx, invoiceDate);
+    return tx.billingCycle.create({
+      data: {
+        distributorId,
+        periodType: data.periodType as $Enums.BillingPeriodType,
+        periodStartDate: new Date(data.periodStartDate),
+        periodEndDate: new Date(data.periodEndDate),
+        billingStatus: 'invoice_generated',
+        billingTier: effectiveBillingTier,
+        totalAmountExclGst: Math.round(totalExclGst * 100) / 100,
+        totalGstAmount: Math.round(totalGst * 100) / 100,
+        totalAmountInclGst: Math.round(totalInclGst * 100) / 100,
+        invoiceNumber,
+        invoiceDate,
+        dueDate,
+        items: { create: items },
+      },
+      include: billingCycleInclude,
+    });
   });
 }
 

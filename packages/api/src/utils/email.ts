@@ -45,7 +45,8 @@ type EmailLogType =
   | 'password_reset_completed'
   | 'contact_form'
   | 'smtp_test'
-  | 'quotation_sent';
+  | 'quotation_sent'
+  | 'billing_invoice_sent';
 
 type EmailLogStatus = 'sent' | 'failed' | 'skipped';
 
@@ -541,6 +542,141 @@ export async function sendQuotationEmail(input: {
   } catch (err) {
     const message = (err as Error).message;
     logger.warn(`Quotation email failed for ${input.quotationNumber}: ${message}`);
+    await writeEmailLog({ ...baseLog, status: 'failed', errorText: message });
+    return { status: 'failed', error: message };
+  }
+}
+
+// ─── SaaS billing invoice (Gaslink → distributor) ───────────────────────────
+// Sent on-demand from the SuperAdmin SaaS-billing UI (DistributorDetailPage
+// + BillingPage) when a super-admin clicks "Send Invoice" on a cycle row.
+// Same skipped/failed/sent contract as sendQuotationEmail; the route falls
+// back to mailto: on `skipped`. Uses the exact same HTML skeleton so both
+// outbound emails feel like they come from the same brand.
+export async function sendBillingInvoiceEmail(input: {
+  to: string;
+  cc?: string[];
+  subject: string;
+  coverText: string;
+  distributorName: string;
+  invoiceNumber: string;
+  period: string;
+  dueDate: string;
+  totalInclGst: string;
+  /** Optional Razorpay hosted payment link. When set, the email renders
+   *  a Pay Now button pointing at this URL, in addition to the PDF
+   *  attachment + bank details already on the PDF. */
+  paymentLink?: string | null;
+  pdf: Buffer;
+  userId?: string | null;
+}): Promise<{ status: EmailLogStatus; error?: string }> {
+  const baseLog = {
+    toEmail: input.to,
+    subject: input.subject,
+    type: 'billing_invoice_sent' as const,
+    userId: input.userId,
+  };
+
+  if (!smtpAvailable()) {
+    logger.warn('SMTP not configured — billing invoice email not sent', { to: input.to });
+    await writeEmailLog({ ...baseLog, status: 'skipped', errorText: 'SMTP not configured' });
+    return { status: 'skipped', error: 'SMTP not configured' };
+  }
+
+  const coverHtml = input.coverText
+    .split(/\n\s*\n/)
+    .map((para) => `<p style="margin:0 0 14px;font-size:14px;color:#374151;line-height:1.6;">${escapeHtml(para).replace(/\n/g, '<br/>')}</p>`)
+    .join('');
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="580" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background-color:#0a3d62;padding:20px 32px;">
+              <div style="font-size:20px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">MyGasLink</div>
+              <div style="font-size:12px;color:#c8dcee;margin-top:4px;">Tax Invoice ${escapeHtml(input.invoiceNumber)}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 32px 8px;">
+              <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Bill to</div>
+              <div style="font-size:15px;font-weight:700;color:#0a3d62;line-height:1.4;">${escapeHtml(input.distributorName)}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 32px;">
+              ${coverHtml}
+              <div style="margin-top:20px;padding:14px 16px;background:#f8fafc;border-left:3px solid #0a3d62;border-radius:4px;">
+                <div style="font-size:13px;color:#374151;line-height:1.7;">
+                  Invoice number: <strong>${escapeHtml(input.invoiceNumber)}</strong><br/>
+                  Period: <strong>${escapeHtml(input.period)}</strong><br/>
+                  Amount payable: <strong>${escapeHtml(input.totalInclGst)}</strong><br/>
+                  Due by: <strong>${escapeHtml(input.dueDate)}</strong>
+                </div>
+              </div>
+              ${input.paymentLink ? `
+              <div style="margin-top:22px;text-align:center;">
+                <a href="${escapeHtml(input.paymentLink)}"
+                   style="display:inline-block;background:#0a3d62;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 28px;border-radius:8px;">
+                  Pay ${escapeHtml(input.totalInclGst)} now
+                </a>
+                <div style="font-size:11px;color:#9ca3af;margin-top:8px;">
+                  Secure UPI · Card · Netbanking · Wallets — powered by Razorpay
+                </div>
+              </div>` : ''}
+              <p style="margin:24px 0 0;font-size:13px;color:#6b7280;">
+                Regards,<br/>
+                <strong style="color:#0a3d62;">GasLink Consulting Solutions</strong>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f9fafb;padding:14px 32px;text-align:center;border-top:1px solid #e5e7eb;">
+              <p style="margin:0;font-size:11px;color:#9ca3af;">
+                Questions? Reply to this email or write to <a href="mailto:info@mygaslink.com" style="color:#0a3d62;text-decoration:none;">info@mygaslink.com</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  try {
+    await getTransporter().sendMail({
+      from: fromHeader(),
+      to: input.to,
+      cc: input.cc && input.cc.length > 0 ? input.cc : undefined,
+      subject: input.subject,
+      html,
+      attachments: [{
+        filename: `${input.invoiceNumber}.pdf`,
+        content: input.pdf,
+        contentType: 'application/pdf',
+      }],
+    });
+    logger.info('Billing invoice email sent', {
+      to: input.to,
+      cc: input.cc,
+      invoiceNumber: input.invoiceNumber,
+      distributor: input.distributorName,
+    });
+    await writeEmailLog({ ...baseLog, status: 'sent' });
+    return { status: 'sent' };
+  } catch (err) {
+    const message = (err as Error).message;
+    logger.warn(`Billing invoice email failed for ${input.invoiceNumber}: ${message}`);
     await writeEmailLog({ ...baseLog, status: 'failed', errorText: message });
     return { status: 'failed', error: message };
   }
