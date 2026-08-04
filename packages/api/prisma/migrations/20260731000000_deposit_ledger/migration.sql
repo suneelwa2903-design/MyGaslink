@@ -32,8 +32,11 @@ ALTER TABLE "customer_ledger_entries"
     ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- Index for the per-customer, per-type deposit breakdown query.
--- Partial index — only rows with cylinder_type_id populated (deposit +
--- empties_return rows), keeps the index tiny even at scale.
+-- Mirrors schema.prisma `@@index([customerId, cylinderTypeId])` — Prisma
+-- doesn't have partial-index syntax, so if this SQL declares a partial
+-- index (WHERE cylinder_type_id IS NOT NULL), `prisma migrate dev` in CI
+-- detects drift and shadow-generates a duplicate full index → name
+-- collision on 42P07. Keep the plain full index so schema + migration
+-- stay in lock-step. Size cost is negligible on the current row count.
 CREATE INDEX "customer_ledger_entries_customer_id_cylinder_type_id_idx"
-  ON "customer_ledger_entries" ("customer_id", "cylinder_type_id")
-  WHERE "cylinder_type_id" IS NOT NULL;
+  ON "customer_ledger_entries" ("customer_id", "cylinder_type_id");
