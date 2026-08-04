@@ -4,7 +4,7 @@ import { requireRole } from '../middleware/auth.js';
 import { validate, validateQuery } from '../middleware/validate.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { sendSuccess, sendError, sendCreated, sendNotFound } from '../utils/apiResponse.js';
-import { createPaymentSchema, paymentFilterSchema } from '@gaslink/shared';
+import { createPaymentSchema, paymentFilterSchema, refundDepositSchema } from '@gaslink/shared';
 import * as paymentService from '../services/paymentService.js';
 import * as submissionService from '../services/paymentSubmissionService.js';
 import { generatePaymentRegisterPdf } from '../services/pdf/paymentRegisterPdfService.js';
@@ -132,6 +132,62 @@ router.get('/export',
   }
 );
 
+// GET /api/payments/deposits/:ledgerEntryId/voucher.pdf — Change L
+// (2026-07-31 v13). Per-deposit voucher PDF, shareable to customer as
+// proof-of-deposit or proof-of-refund. See depositVoucherPdfService for
+// layout. Same RBAC as list-deposits.
+router.get('/deposits/:ledgerEntryId/voucher.pdf',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const { generateDepositVoucherPdf } = await import('../services/pdf/depositVoucherPdfService.js');
+      const buffer = await generateDepositVoucherPdf(
+        req.user!.distributorId!,
+        param(req.params.ledgerEntryId),
+      );
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="deposit-voucher-${req.params.ledgerEntryId}.pdf"`);
+      return res.status(200).send(buffer);
+    } catch (err) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  }
+);
+
+// GET /api/payments/deposits — Change G (2026-07-31 v6): list deposits
+// for the /app/billing-payments Deposits tab. Filters + summary in one
+// round-trip. Same RBAC tier as list payments — deposit list carries
+// customer-financial data (cash movements + refundable liability), so
+// gated behind the same role set that can view PaymentTransaction rows.
+router.get('/deposits',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const q = req.query as {
+        customerId?: string; cylinderTypeId?: string;
+        eventType?: 'charged' | 'refunded' | 'all';
+        dateFrom?: string; dateTo?: string; method?: string;
+        page?: string; pageSize?: string; sortOrder?: 'asc' | 'desc';
+      };
+      const result = await paymentService.listDeposits(req.user!.distributorId!, {
+        customerId: q.customerId,
+        cylinderTypeId: q.cylinderTypeId,
+        eventType: q.eventType,
+        dateFrom: q.dateFrom,
+        dateTo: q.dateTo,
+        method: q.method,
+        page: q.page ? parseInt(q.page, 10) : undefined,
+        pageSize: q.pageSize ? parseInt(q.pageSize, 10) : undefined,
+        sortOrder: q.sortOrder,
+      });
+      return sendSuccess(res, result);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
 // POST /api/payments
 router.post('/',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
@@ -143,6 +199,33 @@ router.post('/',
         req.user!.distributorId!, req.user!.userId, req.body
       );
       return sendCreated(res, mapPayment(payment));
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  }
+);
+
+// POST /api/payments/refund-deposit/:customerId — Deposit ledger (2026-07-31).
+// Refund a cylinder deposit by cash (negative PaymentTransaction) or
+// credit_note. Emits a `deposit_refunded` ledger row + restores
+// CustomerInventoryBalance.withCustomerQty for the affected type.
+//
+// RBAC — same tier as recording a payment. Deposit refund CLEARS money
+// out; needs the same power as taking it in.
+router.post('/refund-deposit/:customerId',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'mini_operator_admin'),
+  validate(refundDepositSchema),
+  auditLog('refund_deposit', 'payment'),
+  async (req, res) => {
+    try {
+      const customerId = param(req.params.customerId);
+      const result = await paymentService.refundDeposit(
+        req.user!.distributorId!,
+        req.user!.userId,
+        { customerId, ...req.body },
+      );
+      return sendCreated(res, result);
     } catch (err: unknown) {
       const e = err as ServiceError;
       return sendError(res, e.message, e.statusCode || 500);
@@ -271,6 +354,32 @@ router.get('/ledger/:customerId',
         }
       }
 
+      // Deposit ledger (2026-07-31) — deposit_charged / deposit_refunded
+      // rows carry cylinderTypeId + qtyDelta directly. They MUTATE the
+      // per-type pending counter here (deposit paid → cylinders drop out
+      // of refill circulation; refund → they come back), matching the
+      // aggregate ledger service's behaviour so the per-row Pend E on the
+      // web ledger tab agrees with the statement PDF.
+      if (e.entryType === 'deposit_charged' && e.cylinderTypeId && (e.qtyDelta ?? 0) > 0) {
+        const cur = pendingPerType.get(e.cylinderTypeId) ?? 0;
+        const next = Math.max(0, cur - (e.qtyDelta ?? 0));
+        pendingPerType.set(e.cylinderTypeId, next);
+        perEntryPending = [...pendingPerType.values()].reduce((s, v) => s + v, 0);
+        perEntryEmptiesCost = 0;
+        for (const [tid, q] of pendingPerType) {
+          perEntryEmptiesCost += q * (emptyPriceMap.get(tid) ?? 0);
+        }
+      }
+      if (e.entryType === 'deposit_refunded' && e.cylinderTypeId && (e.qtyDelta ?? 0) > 0) {
+        const cur = pendingPerType.get(e.cylinderTypeId) ?? 0;
+        pendingPerType.set(e.cylinderTypeId, cur + (e.qtyDelta ?? 0));
+        perEntryPending = [...pendingPerType.values()].reduce((s, v) => s + v, 0);
+        perEntryEmptiesCost = 0;
+        for (const [tid, q] of pendingPerType) {
+          perEntryEmptiesCost += q * (emptyPriceMap.get(tid) ?? 0);
+        }
+      }
+
       return {
         id: e.id,
         distributorId: e.distributorId,
@@ -287,6 +396,14 @@ router.get('/ledger/:customerId',
         emptyCylsCollected: perEntryCollected,
         pendingEmptyCyls: perEntryPending,
         emptyCylsCost: Math.round(perEntryEmptiesCost * 100) / 100,
+        // Deposit ledger fields — populated on deposit_charged /
+        // deposit_refunded rows, null elsewhere. The web LedgerTab reads
+        // these to render the Dep Given column + per-row cyl breakdown.
+        cylinderTypeId: e.cylinderTypeId,
+        qtyDelta: e.qtyDelta,
+        depositAmount: (e.entryType === 'deposit_charged' || e.entryType === 'deposit_refunded')
+          ? toNum(e.amountDelta) * (e.entryType === 'deposit_refunded' ? -1 : 1)
+          : 0,
       };
     });
 

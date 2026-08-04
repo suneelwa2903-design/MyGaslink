@@ -212,11 +212,11 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
       expect(obRows).toHaveLength(2);
       const money = obRows[0];
       const empties = obRows[1];
-      expect(money.narration).toBe('Opening Balance b/f');
+      expect(money.narration).toBe('Opening Balance');
       expect(money.cylinderType).toBe('');
       expect(money.dueAmount).toBe(8500);
       expect(money.pendingEmptyCyls).toBe(0);
-      expect(empties.narration).toBe('Opening empties held');
+      expect(empties.narration).toBe('Opening Empties');
       expect(empties.cylinderType).toBe('19 KG Commercial');
       expect(empties.pendingEmptyCyls).toBe(5);
       expect(empties.dueAmount).toBe(0);
@@ -247,15 +247,15 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
       // 1 money row + 2 empties rows = 3.
       expect(obRows).toHaveLength(3);
       // Money row FIRST — narration, ₹, no Pend E, no type.
-      expect(obRows[0].narration).toBe('Opening Balance b/f');
+      expect(obRows[0].narration).toBe('Opening Balance');
       expect(obRows[0].dueAmount).toBe(3543);
       expect(obRows[0].pendingEmptyCyls).toBe(0);
       expect(obRows[0].cylinderType).toBe('');
       // Empties rows — narration "Opening empties held", ₹=0, Pend E per type.
-      expect(obRows[1].narration).toBe('Opening empties held');
+      expect(obRows[1].narration).toBe('Opening Empties');
       expect(obRows[1].cylinderType).not.toBe('');
       expect(obRows[1].dueAmount).toBe(0);
-      expect(obRows[2].narration).toBe('Opening empties held');
+      expect(obRows[2].narration).toBe('Opening Empties');
       expect(obRows[2].cylinderType).not.toBe('');
       expect(obRows[2].dueAmount).toBe(0);
       const totalPendE = obRows.reduce((s, r) => s + r.pendingEmptyCyls, 0);
@@ -264,8 +264,13 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
   });
 
   // ─────────────────────────────────────────────────────────────
-  describe('T2 — mini-op-only gate: regular distributor rejected', () => {
-    it('regular distributor_admin sending openingState → 400 (must use CSV importer)', async () => {
+  describe('T2 — 2026-07-31 v2: distributor tenants ALSO get inline opening-state', () => {
+    it('regular distributor_admin sending openingState → 201 (gate lifted)', async () => {
+      // Prior behavior (pre-2026-07-31 v2): 400 with "mini-operator only"
+      // error. Gate lifted because CSV importer UI was hidden in Change E
+      // — inline seed becomes the single canonical path for BOTH tenant
+      // types. Backend `applySeedInTx` was always tenant-agnostic; only
+      // the route-layer guard was mini-op-specific.
       const res = await request(app)
         .post('/api/customers')
         .set(auth(regular.adminToken))
@@ -278,8 +283,16 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
             openingBalance: { amount: 1500, asOfDate: TEST_DATE },
           },
         });
-      expect(res.status).toBe(400);
-      expect(res.body.error).toMatch(/mini-operator/i);
+      if (res.status !== 201) console.log('T2 error:', res.body);
+      expect(res.status).toBe(201);
+      // Response shape from createCustomerWithOpeningState: flat customer
+      // fields at data.* + a `seeded` block. The stamp lives on the
+      // customer row — verify via a DB read.
+      const seededCustomer = await prisma.customer.findUniqueOrThrow({
+        where: { id: res.body.data.customerId as string },
+        select: { openingStateSeededAt: true },
+      });
+      expect(seededCustomer.openingStateSeededAt).toBeTruthy();
     });
   });
 
@@ -441,8 +454,8 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
   });
 
   // ─────────────────────────────────────────────────────────────
-  describe('T8 — mini-op-only Edit-path: regular distributor rejected', () => {
-    it('regular distributor Edit-path POST /:id/seed-opening-state → 400', async () => {
+  describe('T8 — 2026-07-31 v2: distributor Edit-path seed also works', () => {
+    it('regular distributor Edit-path POST /:id/seed-opening-state → 200 (gate lifted)', async () => {
       const cRes = await request(app)
         .post('/api/customers')
         .set(auth(regular.adminToken))
@@ -458,8 +471,16 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
         .post(`/api/customers/${customerId}/seed-opening-state`)
         .set(auth(regular.adminToken))
         .send({ openingBalance: { amount: 700, asOfDate: TEST_DATE } });
-      expect(seedRes.status).toBe(400);
-      expect(seedRes.body.error).toMatch(/mini-operator/i);
+      if (seedRes.status !== 200) console.log('T8 error:', seedRes.body);
+      expect(seedRes.status).toBe(200);
+      // Response shape (mirrors T3 line 325-326): { data: { seeded: {...} } }
+      expect(seedRes.body.data.seeded).toBeTruthy();
+      // Confirm the seed anchor is stamped in DB.
+      const seeded = await prisma.customer.findUniqueOrThrow({
+        where: { id: customerId },
+        select: { openingStateSeededAt: true },
+      });
+      expect(seeded.openingStateSeededAt).toBeTruthy();
     });
   });
 
@@ -555,8 +576,11 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
 
   // ─────────────────────────────────────────────────────────────
   describe('T12 — PUT edit guardrails', () => {
-    it('regular distributor cannot edit → 400 (mini-op only)', async () => {
-      // A regular customer can be created without openingState.
+    it('2026-07-31 v2: regular distributor CAN edit if seeded first (never-seeded still 400)', async () => {
+      // Pre-2026-07-31 v2: distributor was blocked with "mini-op only".
+      // Now: allowed AFTER seeding. Editing an unseeded customer still
+      // throws 400 with the "seed it first" message — the openingStateSeededAt
+      // guard is intact and tenant-agnostic.
       const createRes = await request(app)
         .post('/api/customers')
         .set(auth(regular.adminToken))
@@ -568,11 +592,26 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
         });
       expect(createRes.status).toBe(201);
       const customerId = createRes.body.data.customerId as string;
-      const editRes = await request(app)
+      // Attempt edit on never-seeded → still 400 with the "seed first" message.
+      const editUnseededRes = await request(app)
         .put(`/api/customers/${customerId}/opening-state`)
         .set(auth(regular.adminToken))
         .send({ openingBalance: { amount: 100, asOfDate: TEST_DATE } });
-      expect(editRes.status).toBe(400);
+      expect(editUnseededRes.status).toBe(400);
+      expect(editUnseededRes.body.error).toMatch(/never been seeded/i);
+      // Seed it first via the seed-later path.
+      const seedRes = await request(app)
+        .post(`/api/customers/${customerId}/seed-opening-state`)
+        .set(auth(regular.adminToken))
+        .send({ openingBalance: { amount: 500, asOfDate: TEST_DATE } });
+      expect(seedRes.status).toBe(200);
+      // NOW edit → should succeed (200 OK). Confirms distributor edit path is open.
+      const editSeededRes = await request(app)
+        .put(`/api/customers/${customerId}/opening-state`)
+        .set(auth(regular.adminToken))
+        .send({ openingBalance: { amount: 800, asOfDate: TEST_DATE } });
+      if (editSeededRes.status !== 200) console.log('T12 edit-seeded error:', editSeededRes.body);
+      expect(editSeededRes.status).toBe(200);
     });
 
     it('editing never-seeded customer → 400', async () => {
@@ -623,7 +662,7 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
       expect(obRows[0].pendingEmptyCyls).toBe(4);
       expect(obRows[0].dueAmount).toBe(0);
       expect(obRows[0].cylinderType).not.toBe('');
-      expect(obRows[0].narration).toBe('Opening Balance b/f');
+      expect(obRows[0].narration).toBe('Opening Balance');
     });
   });
 
@@ -687,7 +726,7 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
       const ledger = await getCustomerLedger(miniOp.distributorId, res.body.data.customerId);
       const obRows = ledger.rows.filter((r) => r.kind === 'opening');
       expect(obRows).toHaveLength(1);
-      expect(obRows[0].narration).toBe('Opening Balance b/f');
+      expect(obRows[0].narration).toBe('Opening Balance');
       expect(obRows[0].dueAmount).toBe(4500);
       expect(obRows[0].pendingEmptyCyls).toBe(0);
       expect(obRows[0].emptyCylsCost).toBe(0);
@@ -715,7 +754,7 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
       expect(obRows).toHaveLength(1);
       // Falls back to "Opening Balance b/f" narration since there is no
       // money row to carry the label.
-      expect(obRows[0].narration).toBe('Opening Balance b/f');
+      expect(obRows[0].narration).toBe('Opening Balance');
       expect(obRows[0].pendingEmptyCyls).toBe(3);
       expect(obRows[0].emptyCylsCost).toBe(3 * 2400); // 7200
       expect(obRows[0].dueAmount).toBe(0);
@@ -742,12 +781,12 @@ describe('Opening-state seed — universal + editable + preference + PDF', () =>
       const obRows = ledger.rows.filter((r) => r.kind === 'opening');
       expect(obRows).toHaveLength(2);
       // Money row FIRST.
-      expect(obRows[0].narration).toBe('Opening Balance b/f');
+      expect(obRows[0].narration).toBe('Opening Balance');
       expect(obRows[0].dueAmount).toBe(6000);
       expect(obRows[0].pendingEmptyCyls).toBe(0);
       expect(obRows[0].emptyCylsCost).toBe(0);
       // Empties row.
-      expect(obRows[1].narration).toBe('Opening empties held');
+      expect(obRows[1].narration).toBe('Opening Empties');
       expect(obRows[1].pendingEmptyCyls).toBe(4);
       expect(obRows[1].emptyCylsCost).toBe(4 * 2400); // 9600
       expect(obRows[1].dueAmount).toBe(0);

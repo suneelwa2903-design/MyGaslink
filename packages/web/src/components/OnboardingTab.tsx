@@ -180,22 +180,19 @@ export function OnboardingTab() {
               <Button size="sm" onClick={() => setImporter('customers')}>Upload CSV</Button>
             </div>
           </div>
-          <div className="p-4 rounded-xl border border-surface-200 dark:border-surface-700">
-            <p className="font-medium text-surface-900 dark:text-white">Import opening balances</p>
-            <p className="text-xs text-surface-500 mt-1">CSV with columns: customer_name, phone, opening_balance, as_of_date, notes</p>
-            <div className="flex gap-2 mt-3">
-              <Button variant="ghost" size="sm" onClick={() => downloadCsv('opening-balances-template.csv', OPENING_BAL_TEMPLATE)}>Download template</Button>
-              <Button size="sm" onClick={() => setImporter('opening-balances')}>Upload CSV</Button>
-            </div>
-          </div>
-          <div className="p-4 rounded-xl border border-surface-200 dark:border-surface-700">
-            <p className="font-medium text-surface-900 dark:text-white">Import empty cylinders held by customers</p>
-            <p className="text-xs text-surface-500 mt-1">CSV with columns: customer_name, phone, cylinder_type, empty_quantity</p>
-            <div className="flex gap-2 mt-3">
-              <Button variant="ghost" size="sm" onClick={() => downloadCsv('empty-balances-template.csv', EMPTY_BAL_TEMPLATE)}>Download template</Button>
-              <Button size="sm" onClick={() => setImporter('empty-balances')}>Upload CSV</Button>
-            </div>
-          </div>
+          {/*
+            2026-07-31 v2: "Import opening balances" + "Import empty
+            cylinders held by customers" widgets HIDDEN in favor of the
+            inline "Opening Setup" panel on the Edit Customer modal
+            (available to distributor + mini-op admins).
+
+            Inline flow captures preferred cylinder types + per-type
+            empties held + ₹ opening balance in a single atomic
+            transaction with immutability guaranteed via
+            `openingStateSeededAt`. CSV import routes remain live on the
+            backend for any external script / integration, but not
+            exposed in the UI going forward.
+          */}
         </div>
       </div>
 

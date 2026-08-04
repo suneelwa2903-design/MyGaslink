@@ -90,8 +90,8 @@ describe('Ledger PDF consistency — Group column layout', () => {
       return m ? m[1] : '';
     });
     expect(labels).toEqual([
-      'Date', 'Property', 'Type', 'Narration', 'Del F', 'Amount',
-      'Emp C', 'Pend E', 'Emp Cost', 'Total Amt', 'Received',
+      'Date', 'Property', 'Type', 'Narration', 'Del Full', 'Amount',
+      'Coll Emp', 'Pend E', 'Pend Emp Cost', 'Total Amt', 'Received',
       'Due Amt', 'Overdue',
     ]);
   });
@@ -105,8 +105,8 @@ describe('Ledger PDF consistency — Group column layout', () => {
     const indLabels = (indMatch![1].match(/label:\s*['"]([^'"]+)['"]/g) ?? [])
       .map((s) => s.replace(/label:\s*['"]([^'"]+)['"]/, '$1'));
     expect(indLabels).toEqual([
-      'Date', 'Type', 'Narration', 'Del F', 'Amount', 'Emp C',
-      'Pend E', 'Emp Cost', 'Total Amt', 'Received', 'Due Amt', 'Overdue',
+      'Date', 'Type', 'Narration', 'Del Full', 'Amount', 'Coll Emp',
+      'Pend E', 'Pend Emp Cost', 'Total Amt', 'Received', 'Due Amt', 'Overdue',
     ]);
   });
 
@@ -122,9 +122,14 @@ describe('Ledger PDF consistency — Group column layout', () => {
     // Strip `//`-line comments before counting numbers — otherwise
     // dates and column widths embedded in the trailing docs
     // ("07-Jul-2026", "16 chars") false-match \b\d+\b.
+    // NB: no `$` anchor in the strip regex — JS regex `.` does NOT match
+    // `\r`, so on Windows CRLF sources `//.*$` fails to match at all
+    // (`.*` stops at `\r`, `$` needs end-of-string, position mismatch →
+    // whole regex fails, nothing stripped). `//.*` alone is sufficient —
+    // `.*` consumes up to the `\r` which is exactly what we want.
     const stripped = capMatch![1]
       .split('\n')
-      .map((line) => line.replace(/\/\/.*$/, ''))
+      .map((line) => line.replace(/\/\/.*/, ''))
       .join('\n');
     const nums = (stripped.match(/\b\d+\b/g) ?? []).map((n) => Number(n));
     expect(nums).toHaveLength(13);
@@ -137,7 +142,10 @@ describe('Ledger PDF consistency — Group PDF row semantics mirror individual',
     // Same case coverage — opening / payment / credit_note / debit_note
     // / adjustment / empties_return / invoice. Extract the switch body
     // and check every kind is present.
-    const gtl = src.match(/function groupTypeLabel[\s\S]*?\n\s*\}\n\s*\}/);
+    // NB: `\s` used instead of `\n` for line-boundaries so CRLF sources
+    // (Windows checkouts) don't miss the match — see the strip-comment
+    // regex fix above for the same class of bug.
+    const gtl = src.match(/function groupTypeLabel[\s\S]*?\s\}\s+\}/);
     expect(gtl).not.toBeNull();
     const body = gtl![0];
     for (const kind of [

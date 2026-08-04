@@ -428,6 +428,12 @@ function CustomerFormModal({
   // existing). Backend enforces the same gate; UI just decides which
   // API to call based on `openingStateSeededAt`.
   const isMiniOpAdmin = role === UserRole.MINI_OPERATOR_ADMIN;
+  // 2026-07-31 v2: opening-state seed is now available to distributor
+  // tenants too (mini-op gate lifted on the backend). Track a broader
+  // "opening-state allowed" flag so the panel + detail-fetch also fire
+  // for distributor admins.
+  const isDistributorAdmin = role === UserRole.DISTRIBUTOR_ADMIN;
+  const canUseOpeningState = isMiniOpAdmin || isDistributorAdmin;
   // 2026-07-21 — the `customer` prop is the LIST-shape summary from
   // GET /customers, which does NOT include the openingState detail we
   // need to prefill the panel. Fetch the full detail via GET /customers/:id
@@ -445,7 +451,7 @@ function CustomerFormModal({
   const { data: customerDetail } = useQuery({
     queryKey: ['customer-detail', customer?.customerId],
     queryFn: () => apiGet<CustomerDetail>(`/customers/${customer!.customerId}`),
-    enabled: !!customer?.customerId && isMiniOpAdmin,
+    enabled: !!customer?.customerId && canUseOpeningState,
     staleTime: 30_000,
   });
   // 2026-07-21 — DO NOT fall back to the list-shape prop for the
@@ -460,7 +466,12 @@ function CustomerFormModal({
   // Consume ONLY the detail; use the list prop for stable customerId /
   // title flag.
   const customerWithOpening = customerDetail as CustomerDetail | undefined;
-  const showOpeningSetup = isMiniOpAdmin;
+  // 2026-07-31 v2: distributor admins get the same inline "Opening
+  // Setup" panel that mini-op admins have. Backend gate lifted on
+  // seedOpeningStateOnCustomer / createCustomerWithOpeningState /
+  // updateOpeningStateOnCustomer. CSV importer UI (OnboardingTab) is
+  // being hidden in parallel; this becomes the single canonical path.
+  const showOpeningSetup = canUseOpeningState;
   // seededAt flag comes off EITHER shape (both list + detail return the
   // scalar). Use detail when available, list-shape otherwise, so the
   // title + POST/PUT routing (isEditingSeededOpening) is correct even
@@ -1470,7 +1481,7 @@ function CustomerDetailModal({
                 Download PDF
               </Button>
             </div>
-            <LedgerTab entries={ledgerEntries ?? []} loading={ledgerLoading} />
+            <LedgerTab entries={ledgerEntries ?? []} loading={ledgerLoading} customerId={customer.customerId} customerName={customer.customerName} />
           </div>
         )}
 
@@ -1496,6 +1507,12 @@ const LEDGER_TYPE_BADGE: Record<string, { variant: 'info' | 'success' | 'warning
   // label ("Empties Return") so it doesn't read as money movement in the
   // ledger table.
   empties_return: { variant: 'neutral', label: 'Empties Return' },
+  // Deposit ledger (2026-07-31) — cylinder deposit received / refunded.
+  // Metadata rows (companion to payment_entry or negative payment /
+  // credit-note). Debit/Credit render blank; Dep Given column shows the
+  // ₹ delta so the reader sees the deposit exposure change.
+  deposit_charged: { variant: 'info', label: 'Deposit Received' },
+  deposit_refunded: { variant: 'warning', label: 'Deposit Refunded' },
 };
 
 // Fix B (2026-06-11): per-customer cylinder balances view.
@@ -1677,7 +1694,15 @@ function CylinderBalancesTab({ customerId }: { customerId: string }) {
   );
 }
 
-function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: boolean }) {
+function LedgerTab({ entries, loading }: {
+  entries: LedgerEntry[];
+  loading: boolean;
+  // 2026-07-31 v6 (Change G): customerId / customerName no longer used
+  // here — deposit recording relocated to /app/billing-payments → Deposits
+  // tab. LedgerTab is READ-only now.
+  customerId?: string;
+  customerName?: string;
+}) {
   if (loading) return <div className="flex justify-center py-8"><Loader /></div>;
   if (!entries.length) return <EmptyState title="No ledger entries" />;
 
@@ -1692,18 +1717,37 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
     return new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime();
   });
 
-  const rows: Array<LedgerEntry & { debit: number | null; credit: number | null; balance: number }> = [];
+  // Deposit ledger (2026-07-31): deposit_charged / deposit_refunded rows
+  // carry amountDelta but are METADATA — the actual money is booked by
+  // the companion payment_entry (charge) or negative-payment / credit-
+  // note (refund) row in the same transaction. Including their delta in
+  // the running Dr/Cr balance would double-count (anti-pattern #24).
+  // Instead we accumulate deposit balance in a separate `depGiven` column.
+  const rows: Array<LedgerEntry & {
+    debit: number | null;
+    credit: number | null;
+    balance: number;
+    depGiven: number;
+  }> = [];
   let runningBalance = 0;
+  let runningDeposit = 0;
   for (const entry of sorted) {
-    runningBalance += entry.amountDelta;
-    const debit = entry.amountDelta > 0 ? entry.amountDelta : null;
-    const credit = entry.amountDelta < 0 ? Math.abs(entry.amountDelta) : null;
-    rows.push({ ...entry, debit, credit, balance: runningBalance });
+    const et = entry.entryType as string;
+    const isDepositRow = et === 'deposit_charged' || et === 'deposit_refunded';
+    if (isDepositRow) {
+      runningDeposit += entry.depositAmount ?? 0;
+    } else {
+      runningBalance += entry.amountDelta;
+    }
+    const debit = !isDepositRow && entry.amountDelta > 0 ? entry.amountDelta : null;
+    const credit = !isDepositRow && entry.amountDelta < 0 ? Math.abs(entry.amountDelta) : null;
+    rows.push({ ...entry, debit, credit, balance: runningBalance, depGiven: runningDeposit });
   }
 
   const totalDebits = rows.reduce((sum, r) => sum + (r.debit ?? 0), 0);
   const totalCredits = rows.reduce((sum, r) => sum + (r.credit ?? 0), 0);
   const finalBalance = runningBalance;
+  const finalDeposit = runningDeposit;
 
   return (
     <div className="space-y-4">
@@ -1714,12 +1758,13 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
               <th>Date</th>
               <th>Type</th>
               <th>Narration</th>
-              <th className="text-right">Empties Coll.</th>
-              <th className="text-right">Pending Emp.</th>
-              <th className="text-right">Empties Cost</th>
+              <th className="text-right">Coll Emp</th>
+              <th className="text-right">Pend E</th>
+              <th className="text-right">Pend Emp Cost</th>
               <th className="text-right">Debit</th>
               <th className="text-right">Credit</th>
               <th className="text-right">Balance</th>
+              <th className="text-right">Dep Given</th>
             </tr>
           </thead>
           <tbody>
@@ -1765,6 +1810,9 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
                     {formatCurrency(Math.abs(row.balance))}
                     {row.balance !== 0 && <span className="text-xs ml-1">{row.balance > 0 ? 'Dr' : 'Cr'}</span>}
                   </td>
+                  <td className="text-right font-medium text-blue-600 dark:text-blue-400">
+                    {row.depGiven > 0 ? formatCurrency(row.depGiven) : ''}
+                  </td>
                 </tr>
               );
             })}
@@ -1781,10 +1829,398 @@ function LedgerTab({ entries, loading }: { entries: LedgerEntry[]; loading: bool
                 {formatCurrency(Math.abs(finalBalance))}
                 {finalBalance !== 0 && <span className="text-xs ml-1">{finalBalance > 0 ? 'Dr' : 'Cr'}</span>}
               </td>
+              <td className="text-right font-semibold text-blue-600 dark:text-blue-400">
+                {finalDeposit > 0 ? formatCurrency(finalDeposit) : ''}
+              </td>
             </tr>
           </tfoot>
         </table>
       </div>
     </div>
+  );
+}
+
+/**
+ * Deposit ledger (2026-07-31) — Record or refund a cylinder deposit.
+ *
+ * ONE modal handles both flows via a mode toggle:
+ *   - "Charge": customer pays a deposit for N cylinders. Posts to
+ *     /api/payments with a `deposits[]` metadata array. Companion
+ *     payment_entry + deposit_charged ledger rows emitted.
+ *   - "Refund": we refund a deposit. Posts to
+ *     /api/payments/refund-deposit/:customerId. Cash path books a
+ *     negative PaymentTransaction; credit-note path issues a
+ *     CreditNote against a chosen open invoice.
+ *
+ * Auto-fills the ₹ amount from `EmptyCylinderPrice × qty` per selected
+ * cylinder type; operator can override. Uses today as the transaction
+ * date (localTodayISO for TZ safety per anti-pattern #21).
+ */
+type DepositMode = 'charge' | 'refund';
+
+interface CylinderTypeRow {
+  cylinderTypeId: string;
+  typeName: string;
+  emptyCylinderPrice: number | null;
+}
+
+interface OpenInvoiceRow {
+  id: string;
+  invoiceNumber: string;
+  outstandingAmount: number;
+}
+
+// 2026-07-31 v6 (Change G): DepositLedgerModal exported so
+// BillingPaymentsPage's new Deposits tab can reuse it. Two invocation
+// shapes:
+//   1. { customerId, customerName } — customer already known (invoked
+//      from customer detail — currently unused; kept for API stability).
+//   2. { customerId: undefined } — modal renders a customer combobox at
+//      the top. Operator picks first, then rest of the flow is identical.
+// Once the picker is set, `effectiveCustomerId` is used everywhere below.
+export function DepositLedgerModal({ open, onClose, customerId, customerName }: {
+  open: boolean;
+  onClose: () => void;
+  customerId?: string;
+  customerName?: string;
+}) {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState<DepositMode>('charge');
+  const [cylinderTypeId, setCylinderTypeId] = useState('');
+  const [qty, setQty] = useState<number | ''>('');
+  const [amount, setAmount] = useState<number | ''>('');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'upi' | 'cheque' | 'neft' | 'rtgs' | 'other'>('cash');
+  const [refundMethod, setRefundMethod] = useState<'cash' | 'credit_note'>('cash');
+  const [creditNoteInvoiceId, setCreditNoteInvoiceId] = useState('');
+  const [notes, setNotes] = useState('');
+  // 2026-07-31 v8 (Change K): editable transaction date. Defaults to
+  // today (localTodayISO — TZ-safe per anti-pattern #21). Operator can
+  // backdate for late-entered deposit slips.
+  const [transactionDate, setTransactionDate] = useState(() => localTodayISO());
+  // When customerId prop is undefined, operator picks via combobox.
+  const [pickedCustomerId, setPickedCustomerId] = useState('');
+  const [pickedCustomerName, setPickedCustomerName] = useState('');
+  const effectiveCustomerId = customerId ?? pickedCustomerId;
+  const effectiveCustomerName = customerName ?? pickedCustomerName;
+  const needsCustomerPicker = !customerId;
+
+  // Customer list for the picker (only fetched when needed).
+  const { data: customerList } = useQuery({
+    queryKey: ['customers-list-for-deposit-picker'],
+    queryFn: async () => {
+      const resp = await apiGet<{ customers: Array<{ customerId: string; customerName: string; phone: string }> }>(
+        `/customers`, { pageSize: 500, status: 'active' },
+      );
+      return resp.customers ?? [];
+    },
+    enabled: open && needsCustomerPicker,
+    staleTime: 60_000,
+  });
+
+  // Preload cylinder types + empty prices for auto-fill.
+  // Endpoint shapes:
+  //   GET /cylinder-types            → { cylinderTypes: [{ cylinderTypeId, typeName, isActive, ... }] }
+  //   GET /cylinder-types/empty-prices/list → [{ cylinderTypeId, emptyCylinderPrice }]
+  // The `/empty-prices/list` route may return an empty response for
+  // tenants that haven't set any prices yet — the `.catch` keeps the
+  // dropdown functional (auto-fill just doesn't happen, operator types
+  // the amount manually).
+  const { data: cylinderTypes } = useQuery({
+    queryKey: ['cylinder-types-with-empty-prices'],
+    queryFn: async () => {
+      const [typesResp, prices] = await Promise.all([
+        apiGet<{ cylinderTypes: Array<{ cylinderTypeId: string; typeName: string; isActive: boolean }> }>(`/cylinder-types`).catch(() => ({ cylinderTypes: [] })),
+        apiGet<Array<{ cylinderTypeId: string; emptyCylinderPrice: number }>>(`/cylinder-types/empty-prices/list`).catch(() => []),
+      ]);
+      const types = typesResp?.cylinderTypes ?? [];
+      const priceMap = new Map((prices ?? []).map((p) => [p.cylinderTypeId, p.emptyCylinderPrice]));
+      return types
+        .filter((t) => t.isActive)
+        .map((t): CylinderTypeRow => ({
+          cylinderTypeId: t.cylinderTypeId,
+          typeName: t.typeName,
+          emptyCylinderPrice: priceMap.get(t.cylinderTypeId) ?? null,
+        }));
+    },
+    enabled: open,
+  });
+
+  // Preload open invoices when refund via credit_note is selected.
+  const { data: openInvoices } = useQuery({
+    queryKey: ['customer-open-invoices', customerId],
+    queryFn: async () => {
+      const resp = await apiGet<{ invoices: OpenInvoiceRow[] }>(`/invoices`, {
+        customerId: effectiveCustomerId, status: 'issued', pageSize: 50,
+      });
+      return resp.invoices ?? [];
+    },
+    enabled: open && mode === 'refund' && refundMethod === 'credit_note' && !!effectiveCustomerId,
+  });
+
+  const selectedType = cylinderTypes?.find((t) => t.cylinderTypeId === cylinderTypeId);
+
+  // Auto-fill amount whenever qty or cylinderType changes IF the operator
+  // hasn't manually typed one. Once they type, we respect the manual value.
+  const [amountTouched, setAmountTouched] = useState(false);
+  // Auto-fill runs in a microtask so React doesn't cascade renders
+  // (react-you-might-not-need-an-effect lint rule).
+  useEffect(() => {
+    if (amountTouched) return;
+    const q = typeof qty === 'number' ? qty : 0;
+    const p = selectedType?.emptyCylinderPrice ?? 0;
+    if (q > 0 && p > 0) {
+      queueMicrotask(() => setAmount(q * p));
+    }
+  }, [qty, selectedType, amountTouched]);
+
+  const chargeMutation = useMutation({
+    mutationFn: async () => {
+      const q = Number(qty);
+      const a = Number(amount);
+      if (!effectiveCustomerId) throw new Error('Pick a customer');
+      if (!cylinderTypeId) throw new Error('Pick a cylinder type');
+      if (!(q > 0)) throw new Error('Qty must be > 0');
+      if (!(a > 0)) throw new Error('Amount must be > 0');
+      return apiPost('/payments', {
+        customerId: effectiveCustomerId,
+        amount: a,
+        paymentMethod,
+        transactionDate,
+        notes: notes || undefined,
+        deposits: [{ cylinderTypeId, qty: q, amount: a }],
+      });
+    },
+    onSuccess: () => {
+      toast.success(`Deposit charged: ${qty} × ${selectedType?.typeName ?? ''}`);
+      qc.invalidateQueries({ queryKey: ['customer-ledger', effectiveCustomerId] });
+      qc.invalidateQueries({ queryKey: ['customer-payments', effectiveCustomerId] });
+      qc.invalidateQueries({ queryKey: ['customer-inventory-balances', effectiveCustomerId] });
+      qc.invalidateQueries({ queryKey: ['deposits-list'] });
+      onClose();
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const refundMutation = useMutation({
+    mutationFn: async () => {
+      const q = Number(qty);
+      const a = Number(amount);
+      if (!effectiveCustomerId) throw new Error('Pick a customer');
+      if (!cylinderTypeId) throw new Error('Pick a cylinder type');
+      if (!(q > 0)) throw new Error('Qty must be > 0');
+      if (!(a > 0)) throw new Error('Amount must be > 0');
+      if (refundMethod === 'credit_note' && !creditNoteInvoiceId) {
+        throw new Error('Pick an invoice for the credit note');
+      }
+      return apiPost(`/payments/refund-deposit/${effectiveCustomerId}`, {
+        cylinderTypeId,
+        qty: q,
+        amount: a,
+        method: refundMethod,
+        paymentMethod: refundMethod === 'cash' ? paymentMethod : undefined,
+        creditNoteInvoiceId: refundMethod === 'credit_note' ? creditNoteInvoiceId : undefined,
+        transactionDate,
+        notes: notes || undefined,
+      });
+    },
+    onSuccess: () => {
+      toast.success(`Deposit refunded: ${qty} × ${selectedType?.typeName ?? ''}`);
+      qc.invalidateQueries({ queryKey: ['customer-ledger', effectiveCustomerId] });
+      qc.invalidateQueries({ queryKey: ['customer-payments', effectiveCustomerId] });
+      qc.invalidateQueries({ queryKey: ['customer-inventory-balances', effectiveCustomerId] });
+      qc.invalidateQueries({ queryKey: ['deposits-list'] });
+      onClose();
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const submitting = chargeMutation.isPending || refundMutation.isPending;
+
+  const modalTitle = needsCustomerPicker
+    ? 'Cylinder Deposit'
+    : `Cylinder Deposit — ${effectiveCustomerName}`;
+
+  return (
+    <Modal open={open} onClose={onClose} title={modalTitle} size="lg">
+      <div className="space-y-4">
+        {needsCustomerPicker && (
+          <div>
+            {/* 2026-07-31 v7: search-as-you-type via Combobox so
+                distributors with 100+ customers don't scroll a giant
+                select. Type 3 letters → filtered list. `strict` gates
+                selection to real customers (typing a non-match on blur
+                clears back). */}
+            <Combobox
+              label="Customer"
+              value={pickedCustomerName}
+              onChange={(label) => {
+                // Combobox reports the label the user selected/typed.
+                // Reverse-lookup the id from the label.
+                const c = (customerList ?? []).find(
+                  (x) => `${x.customerName} (${x.phone})` === label,
+                );
+                setPickedCustomerId(c?.customerId ?? '');
+                setPickedCustomerName(label);
+              }}
+              placeholder="Type customer name or phone"
+              strict
+              options={(customerList ?? []).map((c) => ({
+                value: `${c.customerName} (${c.phone})`,
+                label: `${c.customerName} (${c.phone})`,
+              }))}
+            />
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Button
+            variant={mode === 'charge' ? 'primary' : 'secondary'}
+            onClick={() => setMode('charge')}
+            type="button"
+          >
+            Charge Deposit
+          </Button>
+          <Button
+            variant={mode === 'refund' ? 'primary' : 'secondary'}
+            onClick={() => setMode('refund')}
+            type="button"
+          >
+            Refund Deposit
+          </Button>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Cylinder Type</label>
+          <Select
+            value={cylinderTypeId}
+            onChange={(e) => setCylinderTypeId(e.target.value)}
+            options={[
+              { value: '', label: '— Pick one —' },
+              ...(cylinderTypes ?? []).map((t) => ({
+                value: t.cylinderTypeId,
+                label: `${t.typeName}${t.emptyCylinderPrice != null ? ` (₹${t.emptyCylinderPrice}/cyl)` : ' — no price set'}`,
+              })),
+            ]}
+          />
+          {selectedType && selectedType.emptyCylinderPrice == null && (
+            <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+              No Empty Cylinder Price set for this type. Set one under Settings → Cylinder Prices, or enter the deposit amount manually below.
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Quantity</label>
+            <Input
+              type="number"
+              min={1}
+              value={qty === '' ? '' : String(qty)}
+              onChange={(e) => setQty(e.target.value ? Number(e.target.value) : '')}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Amount (₹)</label>
+            <Input
+              type="number"
+              min={1}
+              step="0.01"
+              value={amount === '' ? '' : String(amount)}
+              onChange={(e) => {
+                setAmountTouched(true);
+                setAmount(e.target.value ? Number(e.target.value) : '');
+              }}
+            />
+            {!amountTouched && (
+              <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">
+                Auto-filled = qty × empty cylinder price. Edit to override.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {mode === 'refund' && (
+          <div>
+            <label className="block text-sm font-medium mb-1">Refund Method</label>
+            <Select
+              value={refundMethod}
+              onChange={(e) => setRefundMethod(e.target.value as 'cash' | 'credit_note')}
+              options={[
+                { value: 'cash', label: 'Cash out (negative payment)' },
+                { value: 'credit_note', label: 'Credit note against invoice' },
+              ]}
+            />
+          </div>
+        )}
+
+        {mode === 'refund' && refundMethod === 'credit_note' && (
+          <div>
+            <label className="block text-sm font-medium mb-1">Apply Credit To Invoice</label>
+            <Select
+              value={creditNoteInvoiceId}
+              onChange={(e) => setCreditNoteInvoiceId(e.target.value)}
+              options={[
+                { value: '', label: '— Pick an open invoice —' },
+                ...(openInvoices ?? []).map((inv) => ({
+                  value: inv.id,
+                  label: `${inv.invoiceNumber} (₹${inv.outstandingAmount} outstanding)`,
+                })),
+              ]}
+            />
+          </div>
+        )}
+
+        {(mode === 'charge' || refundMethod === 'cash') && (
+          <div>
+            <label className="block text-sm font-medium mb-1">Payment Method</label>
+            <Select
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}
+              options={[
+                { value: 'cash', label: 'Cash' },
+                { value: 'upi', label: 'UPI' },
+                { value: 'cheque', label: 'Cheque' },
+                { value: 'neft', label: 'NEFT' },
+                { value: 'rtgs', label: 'RTGS' },
+                { value: 'other', label: 'Other' },
+              ]}
+            />
+          </div>
+        )}
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Transaction Date</label>
+          <Input
+            type="date"
+            value={transactionDate}
+            onChange={(e) => setTransactionDate(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+            Defaults to today. Change to backdate a late-entered deposit slip.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Notes (optional)</label>
+          <Input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g. NC — new cylinder issued"
+          />
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
+          <Button
+            variant="primary"
+            loading={submitting}
+            onClick={() => mode === 'charge' ? chargeMutation.mutate() : refundMutation.mutate()}
+            type="button"
+          >
+            {mode === 'charge' ? 'Charge Deposit' : 'Refund Deposit'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

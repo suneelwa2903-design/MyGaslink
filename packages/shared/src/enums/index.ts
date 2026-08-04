@@ -353,6 +353,11 @@ export enum LedgerEntryType {
   // docs/INVESTIGATION-JUL09-B.md item 7 follow-up + the Prisma enum
   // comment for the design constraints.
   EMPTIES_RETURN = 'empties_return',
+  // Deposit ledger (2026-07-31) — cylinder deposit received/refunded.
+  // Metadata companion rows to payment_entry / credit-note. See
+  // schema.prisma LedgerEntryType + CLAUDE.md conversation 2026-07-31.
+  DEPOSIT_CHARGED = 'deposit_charged',
+  DEPOSIT_REFUNDED = 'deposit_refunded',
 }
 
 // ─── Approval Workflow ───────────────────────────────────────────────────────

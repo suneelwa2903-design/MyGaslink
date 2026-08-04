@@ -4,6 +4,9 @@
  * Format: <TYPE 1><CODE 3><FY 4><SEQ 6> = 14 chars, e.g. ISHD2526000123.
  *   TYPE: I=invoice R=revision C=credit-note D=debit-note O=order
  *         P=purchase-entry (mini-operator, 2026-07-16)
+ *         V=deposit voucher (Change L v2, 2026-07-31 — one number per
+ *           deposit_charged/deposit_refunded ledger event, shared with
+ *           the customer as proof)
  *   CODE: the distributor's 3-letter docCode (uppercase)
  *   FY  : Indian financial year, 4 digits (Apr–Mar), e.g. 2025-26 → "2526"
  *   SEQ : per-(distributor, type, FY) sequence, zero-padded to 6
@@ -23,8 +26,8 @@
  */
 import type { Prisma } from '@prisma/client';
 
-export type DocNumberType = 'I' | 'R' | 'C' | 'D' | 'O' | 'P';
-const VALID_TYPES: ReadonlySet<string> = new Set(['I', 'R', 'C', 'D', 'O', 'P']);
+export type DocNumberType = 'I' | 'R' | 'C' | 'D' | 'O' | 'P' | 'V';
+const VALID_TYPES: ReadonlySet<string> = new Set(['I', 'R', 'C', 'D', 'O', 'P', 'V']);
 
 /**
  * Indian financial year (April start) as a 4-char string.
@@ -55,7 +58,7 @@ export async function allocateNumber(
   docCode: string,
 ): Promise<string> {
   if (!VALID_TYPES.has(type)) {
-    throw new Error(`Invalid document type '${type}' — expected one of I/R/C/D/O`);
+    throw new Error(`Invalid document type '${type}' — expected one of I/R/C/D/O/P/V`);
   }
   const code = (docCode ?? '').trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(code)) {

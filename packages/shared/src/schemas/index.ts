@@ -573,7 +573,38 @@ export const createPaymentSchema = z.object({
     invoiceId: uuid,
     amount: positiveNumber,
   })).optional(),
+  // Deposit ledger (2026-07-31): optional per-cylinder-type deposit
+  // metadata. When present, the payment service emits a companion
+  // `deposit_charged` ledger row per entry AND reduces
+  // CustomerInventoryBalance.withCustomerQty. Amount can be split
+  // freely across deposits[] + allocations[] as long as the total
+  // does not exceed `amount`.
+  deposits: z.array(z.object({
+    cylinderTypeId: uuid,
+    qty: z.number().int().positive(),
+    amount: positiveNumber,
+  })).optional(),
 });
+
+// Deposit ledger (2026-07-31): standalone refund request. Validated at
+// the /api/payments/:customerId/refund-deposit route.
+export const refundDepositSchema = z.object({
+  cylinderTypeId: uuid,
+  qty: z.number().int().positive(),
+  amount: positiveNumber,
+  method: z.enum(['cash', 'credit_note']),
+  paymentMethod: z.nativeEnum(PaymentMethod).optional(),
+  transactionDate: dateString.optional(),
+  creditNoteInvoiceId: uuid.optional(),
+  referenceNumber: z.string().max(100).optional(),
+  notes: z.string().max(500).optional(),
+}).refine(
+  (data) => data.method !== 'cash' || !!data.paymentMethod,
+  { message: 'paymentMethod is required when method=cash', path: ['paymentMethod'] },
+).refine(
+  (data) => data.method !== 'credit_note' || !!data.creditNoteInvoiceId,
+  { message: 'creditNoteInvoiceId is required when method=credit_note', path: ['creditNoteInvoiceId'] },
+);
 
 // ─── Credit / Debit Note Schemas ─────────────────────────────────────────────
 

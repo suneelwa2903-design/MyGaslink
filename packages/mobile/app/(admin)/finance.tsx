@@ -31,6 +31,7 @@ import {
   localTodayISO,
   localDateISO,
 } from '@gaslink/shared';
+import { DepositsView } from '../../src/components/DepositsView';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -250,7 +251,9 @@ function gstPillFg(status: string): string {
 
 // ─── Main Screen ────────────────────────────────────────────────────────────
 
-type TopTab = 'invoices' | 'payments';
+// 2026-07-31 v6 (Change H): "deposits" added as a 3rd Billing top-tab —
+// same UX as web /app/billing-payments Deposits tab. Shared via DepositsView.
+type TopTab = 'invoices' | 'payments' | 'deposits';
 
 export default function AdminFinanceScreen() {
   const { dark } = useTheme();
@@ -373,8 +376,9 @@ export default function AdminFinanceScreen() {
 
   const renderTopTabs = () => (
     <View style={{ flexDirection: 'row', backgroundColor: C.bg, borderBottomWidth: 1, borderBottomColor: C.divider }}>
-      {(['invoices', 'payments'] as TopTab[]).map((tab) => {
+      {(['invoices', 'payments', 'deposits'] as TopTab[]).map((tab) => {
         const active = topTab === tab;
+        const label = tab === 'invoices' ? 'Invoices' : tab === 'payments' ? 'Payments' : 'Deposits';
         return (
           <TouchableOpacity
             key={tab}
@@ -394,7 +398,7 @@ export default function AdminFinanceScreen() {
                 color: active ? ACCENT : C.textSecondary,
               }}
             >
-              {tab === 'invoices' ? 'Invoices' : 'Payments'}
+              {label}
             </Text>
           </TouchableOpacity>
         );
@@ -406,7 +410,7 @@ export default function AdminFinanceScreen() {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: C.bg }}>
       {renderTopTabs()}
 
-      {topTab === 'invoices' ? (
+      {topTab === 'invoices' && (
         <InvoicesTab
           C={C}
           dark={dark}
@@ -434,7 +438,8 @@ export default function AdminFinanceScreen() {
           setDebitNoteInvoice={setDebitNoteInvoice}
           setGenerateGstInvoice={setGenerateGstInvoice}
         />
-      ) : (
+      )}
+      {topTab === 'payments' && (
         <PaymentsTab
           C={C}
           dark={dark}
@@ -458,6 +463,7 @@ export default function AdminFinanceScreen() {
           setPaymentDetail={setPaymentDetail}
         />
       )}
+      {topTab === 'deposits' && <DepositsView />}
 
       {/* Payment detail (read-only). Shows method, reference, date,
           amount + the list of allocated invoices from pmt.allocations

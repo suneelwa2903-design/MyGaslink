@@ -9,10 +9,11 @@
  */
 
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 import { prisma } from '../../lib/prisma.js';
 import { getCustomerLedger } from '../paymentService.js';
 import { getGroupLedger } from '../customerGroupPortalService.js';
-import { formatMoney, formatDate } from './pdfLayoutUtils.js';
+import { formatMoney, formatDate, formatDateCompact } from './pdfLayoutUtils.js';
 
 // A4 landscape
 const PAGE_WIDTH = 842;
@@ -46,16 +47,28 @@ interface Col {
 // figures 15→14 chars) — the practical range on real invoices is much
 // smaller than the cap and this trade unlocks 25% more narration space.
 const COLS: Col[] = [
-  { label: 'Date', width: 64, align: 'left' },
+  // 2026-07-31 v11: Date 64→44 (short "16/7/26" format via
+  // formatDateCompact, was "16-Jul-2026"). 20pt reclaimed goes to
+  // Amount 62→82 so the bold Total row "Rs. 1,05,600.00" doesn't
+  // wrap to a second line. TABLE_WIDTH stays 762pt.
+  { label: 'Date', width: 44, align: 'left' },
   { label: 'Type', width: 50, align: 'left' },
-  { label: 'Narration', width: 108, align: 'left' },
-  { label: 'Del F', width: 30, align: 'right' },
-  { label: 'Amount', width: 68, align: 'right' },
-  { label: 'Emp C', width: 34, align: 'right' },
+  // 2026-07-31 v5: Narration trimmed 108→100 to donate 8pt to Emp Cost
+  // which was renamed "Pend Emp Cost" (needs ~78pt at caption bold to
+  // render without ellipsis). TABLE_WIDTH stays 762pt (landscape budget).
+  //
+  // 2026-07-31 v10 (Change N): Del F → "Del Full" (30→40, +10),
+  // Emp C → "Coll Emp" (34→44, +10). Borrowed 6pt from Amount, 8pt
+  // from Total Amt, 6pt from Received. All borrowed columns still fit
+  // the full "Rs. 99,99,999.00" ceiling comfortably.
+  { label: 'Narration', width: 100, align: 'left' },
+  { label: 'Del Full', width: 40, align: 'right' },
+  { label: 'Amount', width: 82, align: 'right' },
+  { label: 'Coll Emp', width: 44, align: 'right' },
   { label: 'Pend E', width: 34, align: 'right' },
-  { label: 'Emp Cost', width: 70, align: 'right' },
-  { label: 'Total Amt', width: 84, align: 'right' },
-  { label: 'Received', width: 68, align: 'right' },
+  { label: 'Pend Emp Cost', width: 78, align: 'right' },
+  { label: 'Total Amt', width: 76, align: 'right' },
+  { label: 'Received', width: 62, align: 'right' },
   { label: 'Due Amt', width: 76, align: 'right' },
   { label: 'Overdue', width: 76, align: 'right' },
 ];
@@ -84,19 +97,21 @@ function fitCell(s: string, maxChars: number): string {
 // Indexed to match the COLS array order — rebalanced alongside the width
 // change above so text no longer ellipsises at typical Indian scale.
 const COL_CHAR_CAP: number[] = [
-  11, // Date       — "07-Jul-2026" (11)
+  8,  // Date       — v11: "31/12/26" (8) via formatDateCompact
   11, // Type       — "Adjustment" (10) fits; Q3 "Empties" (7) fits.
-  20, // Narration  — Q3 (2026-07-09): "Empties: 50× 19 KG" (18) with 2-char
-      //              buffer. Invoice numbers (14) + "Page N subtotal" (15)
-      //              also fit comfortably.
-  4,  // Del F      — 0-999
-  14, // Amount     — "Rs. 9,99,999.00" (15) truncates 1 char; smaller
-      //              figures (up to Rs 9,99,999) still fit fully.
-  4,  // Emp C      — 0-999
+  18, // Narration  — 2026-07-31 v5: 20→18 alongside col width 108→100.
+      //              "Empties: 50× 19 KG" (18) exactly fits;
+      //              deposit rows already run short ("2 × 19 KG @ Rs. 195…"
+      //              → 20 chars → ellipsises 2 chars, acceptable).
+  4,  // Del Full   — 0-999 (renamed from "Del F" in v10 Change N)
+  17, // Amount     — v11: 82pt col — holds "Rs. 9,99,999.00" (15) bold on
+      //              Total row without wrap; ceiling "Rs. 99,99,999.00" (16).
+  4,  // Coll Emp   — 0-999 (renamed from "Emp C" in v10 Change N)
   4,  // Pend E     — 0-999
-  14, // Emp Cost   — same as Amount
-  16, // Total Amt  — "Rs. 99,99,999.00" (16) crore-scale cumulative running total
-  14, // Received   — same as Amount
+  16, // Emp Cost   — same as Amount
+  15, // Total Amt  — v10: 76pt col holds "Rs. 99,99,999.00" (16) with 1 char
+      //              trim; crore-scale cumulative running total.
+  13, // Received   — v10: 62pt col; "Rs. 12,852.00" (13) fits.
   16, // Due Amt    — matches Total Amt
   15, // Overdue    — "Rs. 9,99,999.00"
 ];
@@ -282,6 +297,26 @@ export async function generateCustomerLedgerPdf(
     hideCancelledInvoices: distributor.accountType === 'mini_operator',
   });
 
+  // Change M (2026-07-31 v9): scan-to-pay UPI QR — same intent format
+  // invoicePdfService uses (mini-op #6 v2 — amount-free so customer
+  // can pay any partial amount, `tn` note carries the customer id for
+  // reconciliation). Silently skipped when distributor has no UPI ID.
+  let upiQrPng: Buffer | undefined;
+  if (distributor.upiId) {
+    try {
+      const payee = encodeURIComponent(distributor.businessName || distributor.legalName || '');
+      const note = encodeURIComponent(`Statement ${customer.customerName}`);
+      const upiUrl =
+        `upi://pay?pa=${encodeURIComponent(distributor.upiId)}` +
+        `&pn=${payee}` +
+        `&cu=INR` +
+        `&tn=${note}`;
+      upiQrPng = await QRCode.toBuffer(upiUrl, { type: 'png', width: 100, margin: 1 });
+    } catch {
+      upiQrPng = undefined;
+    }
+  }
+
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: MARGIN.left });
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
@@ -315,7 +350,27 @@ export async function generateCustomerLedgerPdf(
   const title = 'Customer Statement';
   doc.text(title, rightEdge - 250, y, { width: 250, align: 'right' });
 
+  // Change M (2026-07-31 v9): scan-to-pay UPI QR — centered between
+  // the distributor block (left, ~400pt wide) and the "Customer
+  // Statement" title (right, 250pt from rightEdge). Only renders when
+  // upiId is configured — legacy statements without UPI keep the
+  // original two-column header untouched.
+  if (upiQrPng) {
+    const qrSize = 70;
+    const availableStartX = MARGIN.left + 400;
+    const availableEndX = rightEdge - 250;
+    const qrX = availableStartX + Math.max(0, (availableEndX - availableStartX - qrSize) / 2);
+    doc.image(upiQrPng, qrX, y, { fit: [qrSize, qrSize] });
+    doc.font('Helvetica').fontSize(TYPO.CAPTION - 1).fillColor(THEME.MUTED);
+    doc.text('Scan to pay', qrX - 10, y + qrSize + 2, {
+      width: qrSize + 20, align: 'center',
+    });
+  }
+
   y = Math.max(leftY, y + 36) + 4;
+  // If QR rendered, its bottom-of-caption sits at y + 70 + ~12 = 82;
+  // push the divider down if we haven't already crossed that.
+  if (upiQrPng) y = Math.max(y, MARGIN.top + 84);
   doc.moveTo(MARGIN.left, y).lineTo(rightEdge, y).strokeColor(THEME.PRIMARY).lineWidth(1).stroke();
   y += 10;
 
@@ -476,6 +531,14 @@ export async function generateCustomerLedgerPdf(
       // Q3 (2026-07-09) — 7-char label so it fits inside the Type column
       // cap of 11. The count + cyl type lives in Narration.
       case 'empties_return': return 'Empties';
+      // Deposit ledger (2026-07-31 v3): Type column stays as an event
+      // label ("Deposit" / "Refund") — same treatment as Payment /
+      // Empties / Adjustment rows. The cylinder type appears in the
+      // Narration column ("2 × 19 KG @ Rs. 1950.00") so readers see the
+      // event kind at a glance without confusing it with an invoice-
+      // type-per-row layout.
+      case 'deposit_charged': return 'Deposit';
+      case 'deposit_refunded': return 'Refund';
       case 'invoice': return row.cylinderType || 'Invoice';
       default: return row.cylinderType === '' ? 'Payment' : (row.cylinderType || 'Invoice');
     }
@@ -498,9 +561,19 @@ export async function generateCustomerLedgerPdf(
     if (kind === 'invoice') return s.replace(/^Invoice\s+/i, '');
     if (kind === 'credit_note') return s.replace(/^Credit Note\s+/i, '');
     if (kind === 'debit_note') return s.replace(/^Debit Note\s+/i, '');
-    // Payment rows: the Type column already says "Payment"; drop the
-    // "#ref-…" tail so the Narration cell is empty (cleaner alignment).
-    if (kind === 'payment') return '';
+    // Payment rows: 2026-07-31 v2 — DO show the method + ref. Pre-fix
+    // this was blank, which made mixed deposit+invoice payments look
+    // like anonymous debits. Strip only the "Payment received via "
+    // prefix so the cell reads "cash (Ref: TXN123)" or just "cash".
+    if (kind === 'payment') return s.replace(/^Payment received via\s+/i, '');
+    // 2026-07-31 v3 — Deposit rows: Type column already shows the
+    // cylinder type name, so the "Deposit received: " / "Deposit
+    // refunded: " prefix eats useful chars in the narrow Narration
+    // column. Strip it for BOTH new-format ("2 × 19 KG") and legacy
+    // rows ("Deposit received: 2 × 19 KG @ ₹1950.00") so the narration
+    // renders compactly regardless of when the row was written.
+    if (kind === 'deposit_charged') return s.replace(/^Deposit received:\s*/i, '');
+    if (kind === 'deposit_refunded') return s.replace(/^Deposit refunded:\s*/i, '');
     return s;
   }
 
@@ -543,18 +616,20 @@ export async function generateCustomerLedgerPdf(
       // cylinder price) so the reseller reads the ₹ value they're
       // carrying alongside the empties count. Blank when 0 (money-only
       // OB row or unpriced type).
-      const empCost = (row.emptyCylsCost || 0) > 0 ? formatMoney(row.emptyCylsCost) : '';
+      // v10 (Change N): "-" fallback instead of empty string.
+      const empCost = (row.emptyCylsCost || 0) > 0 ? formatMoney(row.emptyCylsCost) : '-';
+      const pendEDash = pendE || '-';
       cells = [
-        formatDate(row.orderDate),
+        formatDateCompact(row.orderDate),
         typeLabel(row),
         narration,
-        '', '', '',
-        pendE,
+        '-', '-', '-',
+        pendEDash,
         empCost,
         formatMoney(row.totalAmount),
-        '',
+        '-',
         formatMoney(row.dueAmount),
-        '',
+        '-',
       ];
       y += drawRow(doc, y, cells, { bold: true });
       // Thin separator line + small gap before the in-period rows begin
@@ -566,14 +641,17 @@ export async function generateCustomerLedgerPdf(
       continue;
     } else if (row.kind === 'payment' || row.kind === 'credit_note') {
       cells = [
-        formatDate(row.orderDate),
+        formatDateCompact(row.orderDate),
         typeLabel(row),
         narration,
-        '-', '', '', '', '',
+        // v10 (Change N): "-" in every non-applicable cell for
+        // payment/credit_note rows so no cell reads as accidentally
+        // blank (was: mix of "-" and empty strings).
+        '-', '-', '-', '-', '-',
         formatMoney(row.totalAmount),
         formatMoney(row.receivedAmount),
         formatMoney(row.dueAmount),
-        '',
+        '-',
       ];
     } else if (row.kind === 'empties_return') {
       // Q3 (2026-07-09) — stock-only row. Narration ("Empties: 50× 19 KG")
@@ -587,33 +665,55 @@ export async function generateCustomerLedgerPdf(
       // (openingSeeded + delivered − collected) subtracts standalone
       // returns — before this fix the Total over-reported by the
       // returned qty on every statement that had a standalone return.
+      //
+      // 2026-07-31 v5 (Change F) — per-type Pend E + per-type Emp Cost,
+      // matching the invoice/deposit row treatment. The row now also
+      // populates the Emp Cost cell (was hardcoded '-' before).
       if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
       cells = [
-        formatDate(row.orderDate),
+        formatDateCompact(row.orderDate),
         typeLabel(row),
         narration,
         '-', '-',
         row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-',
         row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-',
-        '-',
+        (row.emptyCylsCost ?? 0) > 0 ? formatMoney(row.emptyCylsCost) : '-',
         formatMoney(row.totalAmount),
         '-',
         formatMoney(row.dueAmount),
         '-',
       ];
     } else {
-      // invoice / debit_note / adjustment — render full detail
+      // invoice / debit_note / adjustment / deposit_charged /
+      // deposit_refunded — render full detail. Special-case handling
+      // for the Total-row accumulators:
+      //   - deposit_refunded: emptyCylsCollected shows the qty (cylinder
+      //     came back to depot, informational) but MUST NOT feed into
+      //     renderer.totalCollected. The service's per-type Emp Cost
+      //     calc deliberately excludes refunds (2026-07-31 v3 accounting:
+      //     refund reduces deposit-held, not refill-pending). Including
+      //     it here would make Pend E and Emp Cost disagree on the Total
+      //     row (bug caught 2026-07-31 v4 — Maruthi Pend E=11 vs
+      //     Emp Cost=45,750-implied-13 mismatch).
+      //   - deposit_charged: both service and renderer count it, so it
+      //     stays in totalCollected — no change.
       if (row.fullCylsDelivered > 0) totalDelivered += row.fullCylsDelivered;
-      if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
+      if (row.emptyCylsCollected > 0 && row.kind !== 'deposit_refunded') {
+        totalCollected += row.emptyCylsCollected;
+      }
       cells = [
-        formatDate(row.orderDate),
+        formatDateCompact(row.orderDate),
         typeLabel(row),
         narration,
-        row.fullCylsDelivered ? num(row.fullCylsDelivered) : '',
+        // 2026-07-31 v10 (Change N): show "-" instead of empty string
+        // when a numeric column is zero/absent — keeps every cell
+        // visually populated so no reader misreads a blank as "not
+        // applicable to this row".
+        row.fullCylsDelivered ? num(row.fullCylsDelivered) : '-',
         formatMoney(row.amount),
-        row.emptyCylsCollected ? num(row.emptyCylsCollected) : '',
-        row.pendingEmptyCyls ? num(row.pendingEmptyCyls) : '',
-        row.emptyCylsCost ? formatMoney(row.emptyCylsCost) : '',
+        row.emptyCylsCollected ? num(row.emptyCylsCollected) : '-',
+        row.pendingEmptyCyls ? num(row.pendingEmptyCyls) : '-',
+        row.emptyCylsCost ? formatMoney(row.emptyCylsCost) : '-',
         formatMoney(row.totalAmount),
         formatMoney(row.receivedAmount),
         formatMoney(row.dueAmount),
@@ -675,18 +775,54 @@ export async function generateCustomerLedgerPdf(
   ];
   y += drawRow(doc, y + 1, summaryCells, { bold: true });
 
-  // Final "Closing Balance" line so the reader sees the carry-forward figure
-  // explicitly, matching the format Suneel confirmed.
+  // v12 (2026-07-31): Closing Balance (right) and Deposits Held (left)
+  // render on the SAME row so the reader sees both money-side summary
+  // figures at a glance. Per-cylinder-type breakdown lines render
+  // below Deposits Held on the left column, still left-aligned.
   y += 4;
+  const summaryRowY = y;
+  const halfWidth = TABLE_WIDTH / 2 - 8;
+
+  // Right — Closing Balance (unchanged position).
   doc.font('Helvetica-Bold').fontSize(TYPO.H2).fillColor(THEME.PRIMARY);
   doc.text(
     `Closing Balance: ${formatMoney(s.dueAmount)} Dr`,
     MARGIN.left + TABLE_WIDTH - 250,
-    y,
+    summaryRowY,
     { width: 250, align: 'right' },
   );
+
+  // Left — Deposits Held + per-type breakdown. Only rendered when
+  // customer has any refundable deposit with us. Skipped entirely
+  // otherwise — zero visual change for customers who don't use the feature.
+  const breakdown = s.depositBreakdown ?? [];
+  const totalDeposit = breakdown.reduce((sum, b) => sum + b.amount, 0);
+  let leftBlockY = summaryRowY;
+  if (breakdown.length > 0 && totalDeposit > 0.005) {
+    doc.font('Helvetica-Bold').fontSize(TYPO.H2).fillColor(THEME.PRIMARY);
+    doc.text(
+      `Deposits Held: ${formatMoney(totalDeposit)}`,
+      MARGIN.left, summaryRowY,
+      { width: halfWidth, align: 'left' },
+    );
+    leftBlockY += 14;
+    // Per-type breakdown — left-aligned under "Deposits Held". Reads:
+    //   19.2KG METAL: 30 × Rs. 1,950.00 = Rs. 58,500.00
+    doc.font('Helvetica').fontSize(TYPO.CAPTION).fillColor(THEME.MUTED);
+    for (const b of breakdown) {
+      if (b.amount <= 0.005) continue;
+      const unitPrice = b.qty > 0 ? b.amount / b.qty : 0;
+      const line = `${b.cylinderTypeName || 'Cylinder'}: ${b.qty} × ${formatMoney(unitPrice)} = ${formatMoney(b.amount)}`;
+      doc.text(line, MARGIN.left, leftBlockY, { width: halfWidth, align: 'left' });
+      leftBlockY += 11;
+    }
+    doc.fillColor(THEME.TEXT);
+  }
+
+  // Cursor advance — push past whichever block is taller so the footer
+  // clears both.
   doc.fillColor(THEME.TEXT);
-  y += 16;
+  y = Math.max(summaryRowY + 16, leftBlockY + 4);
 
   // ── Footer ──
   // 2026-07-19: self-authorising disclaimer aligned with invoice /
@@ -730,17 +866,25 @@ export async function generateCustomerLedgerPdf(
 //     TotalAmt 76 | Received 62 | DueAmt 70 | Overdue 70  = 762pt
 
 const GROUP_COLS: Col[] = [
-  { label: 'Date', width: 64, align: 'left' },
-  { label: 'Property', width: 86, align: 'left' },
-  { label: 'Type', width: 46, align: 'left' },
-  { label: 'Narration', width: 78, align: 'left' },
-  { label: 'Del F', width: 26, align: 'right' },
-  { label: 'Amount', width: 62, align: 'right' },
-  { label: 'Emp C', width: 30, align: 'right' },
+  // v11: Date 64→44 (compact "16/7/26"); 20pt donated to Amount (62→82).
+  { label: 'Date', width: 44, align: 'left' },
+  { label: 'Property', width: 76, align: 'left' },
+  { label: 'Type', width: 44, align: 'left' },
+  // 2026-07-31 v5: Narration 78→74, Property 86→82 → 8pt donated to
+  // Emp Cost (62→70) which was renamed "Pend Emp Cost". Group PDF
+  // total width stays 762pt.
+  //
+  // 2026-07-31 v10 (Change N): Del F → "Del Full" (26→38), Emp C →
+  // "Coll Emp" (30→40). Borrowed 6pt from Property, 2pt from Type,
+  // 6pt from Narration, 6pt from Received, 2pt from Total Amt.
+  { label: 'Narration', width: 68, align: 'left' },
+  { label: 'Del Full', width: 38, align: 'right' },
+  { label: 'Amount', width: 82, align: 'right' },
+  { label: 'Coll Emp', width: 40, align: 'right' },
   { label: 'Pend E', width: 30, align: 'right' },
-  { label: 'Emp Cost', width: 62, align: 'right' },
-  { label: 'Total Amt', width: 76, align: 'right' },
-  { label: 'Received', width: 62, align: 'right' },
+  { label: 'Pend Emp Cost', width: 70, align: 'right' },
+  { label: 'Total Amt', width: 74, align: 'right' },
+  { label: 'Received', width: 56, align: 'right' },
   { label: 'Due Amt', width: 70, align: 'right' },
   { label: 'Overdue', width: 70, align: 'right' },
 ];
@@ -751,18 +895,17 @@ const GROUP_TABLE_WIDTH = GROUP_COLS.reduce((s, c) => s + c.width, 0);
 // individual PDF (14→13) — the crore-scale ceiling still fits, only
 // the pathological "Rs. 99,99,999.00" (16) truncates by one char.
 const GROUP_COL_CHAR_CAP: number[] = [
-  11, // Date         — "07-Jul-2026"
-  16, // Property     — hotel/business names, ellipsised for longer
-  9,  // Type         — "Empties" (7), "Payment" (7) fit
-  14, // Narration    — tighter than individual (20) to make room for Property
-  4,  // Del F        — 0-999
-  13, // Amount       — "Rs. 9,99,999.00" (15) truncates 2 chars, most fit
-  4,  // Emp C
+  8,  // Date         — v11: "31/12/26" compact
+  14, // Property     — v10: 82→76 to donate to Del Full / Coll Emp
+  8,  // Type         — v10: was 9; 44pt col still fits "Empties"/"Payment"
+  12, // Narration    — v10: 74→68 alongside col shrink
+  4,  // Del Full     — 0-999 (renamed v10)
+  17, // Amount       — v11: 82pt col fits Total-row bold
+  4,  // Coll Emp     — 0-999 (renamed v10)
   4,  // Pend E
   12, // Emp Cost
-  14, // Total Amt    — cumulative running balance
-  14, // Received     — 2026-07-20 bumped 12→14 so "Rs. 12,852.00" (13 chars)
-      //                stops truncating to "Rs. 12,852.…" on payment rows
+  13, // Total Amt
+  11, // Received     — v10: 62→56 to donate; "Rs. 9,999.00" (11) fits
   13, // Due Amt
   13, // Overdue
 ];
@@ -955,6 +1098,10 @@ export async function generateGroupLedgerPdf(
       case 'debit_note': return 'Debit';
       case 'adjustment': return 'Adj';
       case 'empties_return': return 'Empties';
+      // Deposit ledger (2026-07-31 v3) — event-label Type column
+      // (matches individual PDF). Cylinder type lives in Narration.
+      case 'deposit_charged': return 'Deposit';
+      case 'deposit_refunded': return 'Refund';
       case 'invoice': return row.cylinderType || 'Invoice';
       default: return row.cylinderType === '' ? 'Payment' : (row.cylinderType || 'Invoice');
     }
@@ -967,7 +1114,11 @@ export async function generateGroupLedgerPdf(
     if (kind === 'invoice') return s.replace(/^Invoice\s+/i, '');
     if (kind === 'credit_note') return s.replace(/^Credit Note\s+/i, '');
     if (kind === 'debit_note') return s.replace(/^Debit Note\s+/i, '');
-    if (kind === 'payment') return '';
+    // 2026-07-31 v2 — see individual PDF shortNarration for rationale.
+    if (kind === 'payment') return s.replace(/^Payment received via\s+/i, '');
+    // 2026-07-31 v3 — see individual PDF shortNarration.
+    if (kind === 'deposit_charged') return s.replace(/^Deposit received:\s*/i, '');
+    if (kind === 'deposit_refunded') return s.replace(/^Deposit refunded:\s*/i, '');
     return s;
   }
 
@@ -1005,20 +1156,21 @@ export async function generateGroupLedgerPdf(
       // empties in Pend E column just like the individual PDF. Just
       // the number — no "b/f" suffix (context is clear from Narration).
       totalOpeningPending += row.pendingEmptyCyls || 0;
-      const pendE = row.pendingEmptyCyls > 0 ? String(row.pendingEmptyCyls) : '';
+      const pendE = row.pendingEmptyCyls > 0 ? String(row.pendingEmptyCyls) : '-';
       // 2026-07-21 — Emp Cost carries per-type OB empty liability; see
       // the identical block on the individual PDF above.
-      const empCost = (row.emptyCylsCost || 0) > 0 ? formatMoney(row.emptyCylsCost) : '';
+      // v10 (Change N): "-" fallback instead of empty string.
+      const empCost = (row.emptyCylsCost || 0) > 0 ? formatMoney(row.emptyCylsCost) : '-';
       cells = [
-        formatDate(new Date(row.orderDate)),
+        formatDateCompact(new Date(row.orderDate)),
         property, type, narration,
-        '', '', '',
+        '-', '-', '-',
         pendE,
         empCost,
         formatMoney(row.totalAmount),
-        '',
+        '-',
         formatMoney(row.dueAmount),
-        '',
+        '-',
       ];
       y += drawGroupRow(y, cells, { bold: true });
       doc.moveTo(MARGIN.left, y + 1)
@@ -1029,9 +1181,9 @@ export async function generateGroupLedgerPdf(
       continue;
     } else if (row.kind === 'payment' || row.kind === 'credit_note') {
       cells = [
-        formatDate(new Date(row.orderDate)),
+        formatDateCompact(new Date(row.orderDate)),
         property, type, narration,
-        '-', '', '', '', '',
+        '-', '-', '-', '-', '-',
         formatMoney(row.totalAmount),
         formatMoney(row.receivedAmount),
         formatMoney(row.dueAmount),
@@ -1042,33 +1194,39 @@ export async function generateGroupLedgerPdf(
       // the returned qty into totalCollected so the group Total row's
       // Pend E rolls up correctly, and render Emp C / Pend E from the
       // row's populated values (was blank).
+      // 2026-07-31 v5 (Change F) — per-type Pend E + Emp Cost, mirroring
+      // individual PDF empties_return branch.
       if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
       cells = [
-        formatDate(new Date(row.orderDate)),
+        formatDateCompact(new Date(row.orderDate)),
         property, type, narration,
         '-', '-',
         row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-',
         row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-',
-        '-',
+        (row.emptyCylsCost ?? 0) > 0 ? formatMoney(row.emptyCylsCost) : '-',
         formatMoney(row.totalAmount),
         '-',
         formatMoney(row.dueAmount),
         '-',
       ];
     } else {
-      // invoice / debit_note / adjustment — full detail
+      // invoice / debit_note / adjustment / deposit_charged /
+      // deposit_refunded — full detail. See individual PDF for the
+      // deposit_refunded totalCollected exclusion rationale (v4 fix).
       if (row.fullCylsDelivered > 0) totalDelivered += row.fullCylsDelivered;
-      if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
+      if (row.emptyCylsCollected > 0 && row.kind !== 'deposit_refunded') {
+        totalCollected += row.emptyCylsCollected;
+      }
       cells = [
-        formatDate(new Date(row.orderDate)),
+        formatDateCompact(new Date(row.orderDate)),
         property, type, narration,
-        row.fullCylsDelivered ? num(row.fullCylsDelivered) : '0',
+        // v10 (Change N): "-" fallback everywhere (was "0" for delivered
+        // and always-numeric for collected/pending). "0" reads as
+        // meaningful zero; "-" reads as "not applicable to this row".
+        row.fullCylsDelivered ? num(row.fullCylsDelivered) : '-',
         formatMoney(row.amount),
-        // 2026-07-20 — always show 0 for empties collected (blank was
-        // ambiguous with the "no data" case); dash for empty-cost when
-        // zero so the money column reads consistently.
-        num(row.emptyCylsCollected ?? 0),
-        num(row.pendingEmptyCyls ?? 0),
+        row.emptyCylsCollected ? num(row.emptyCylsCollected) : '-',
+        row.pendingEmptyCyls ? num(row.pendingEmptyCyls) : '-',
         row.emptyCylsCost > 0 ? formatMoney(row.emptyCylsCost) : '-',
         formatMoney(row.totalAmount),
         formatMoney(row.receivedAmount),

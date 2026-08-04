@@ -434,22 +434,12 @@ export async function createCustomerWithOpeningState(
     return { customer, warnings, seeded: null };
   }
 
-  // 2026-07-21 mini-op-only gate: opening-state seed is a reseller
-  // onboarding tool. Regular distributors already have the CSV
-  // importer at Settings → Onboarding → Import opening balances;
-  // exposing this second path would duplicate/conflict with that.
-  const dist = await prisma.distributor.findUnique({
-    where: { id: distributorId },
-    select: { accountType: true },
-  });
-  if (!dist) throw new CustomerError('Distributor not found', 404);
-  if (dist.accountType !== 'mini_operator') {
-    throw new CustomerError(
-      'Opening state seed is a mini-operator feature. Regular distributors should use Settings → Onboarding → Import opening balances.',
-      400,
-    );
-  }
-
+  // 2026-07-31 v2: gate lifted. Opening-state seed is now available to
+  // both mini-operator AND regular distributor tenants. The CSV
+  // importer at Settings → Onboarding was UI-hidden in the same change
+  // (Change E) — inline seed becomes the single canonical path.
+  // `openingStateSeededAt IS NULL` guard downstream still ensures a
+  // customer can only be seeded once; second call throws atomically.
   await validateSeedCylinderTypes(distributorId, openingState);
 
   // GSTIN soft-warning (mirrors createCustomer; inlined so the whole
@@ -525,19 +515,9 @@ export async function seedOpeningStateOnCustomer(
   customerId: string,
   seed: OpeningStateSeed,
 ): Promise<OpeningStateSeedResult> {
-  // 2026-07-21 mini-op-only gate (same rationale as
-  // createCustomerWithOpeningState above).
-  const dist = await prisma.distributor.findUnique({
-    where: { id: distributorId },
-    select: { accountType: true },
-  });
-  if (!dist) throw new CustomerError('Distributor not found', 404);
-  if (dist.accountType !== 'mini_operator') {
-    throw new CustomerError(
-      'Opening state seed is a mini-operator feature. Regular distributors should use Settings → Onboarding → Import opening balances.',
-      400,
-    );
-  }
+  // 2026-07-31 v2: gate lifted (see createCustomerWithOpeningState).
+  // Opening-state seed now available to both mini-operator and
+  // distributor tenants.
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
     select: { id: true, openingStateSeededAt: true },
@@ -577,17 +557,9 @@ export async function updateOpeningStateOnCustomer(
   customerId: string,
   seed: OpeningStateSeed,
 ): Promise<OpeningStateSeedResult> {
-  const dist = await prisma.distributor.findUnique({
-    where: { id: distributorId },
-    select: { accountType: true },
-  });
-  if (!dist) throw new CustomerError('Distributor not found', 404);
-  if (dist.accountType !== 'mini_operator') {
-    throw new CustomerError(
-      'Opening state edit is a mini-operator feature. Regular distributors should use credit / debit note flows.',
-      400,
-    );
-  }
+  // 2026-07-31 v2: gate lifted (see seedOpeningStateOnCustomer).
+  // Opening-state edit-in-place now available to both mini-operator and
+  // distributor tenants.
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
     select: { id: true, openingStateSeededAt: true },

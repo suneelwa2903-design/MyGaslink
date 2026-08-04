@@ -276,9 +276,14 @@ describe('createBackdatedOrder — service', () => {
     // (Last-month behaviour is day-of-month sensitive and the boundary
     // is proven in backdated-prev-month-window.test.ts.)
     const customer = await makeCustomer('Backdated DiD', 'B2B');
-    const twoBack = new Date();
-    twoBack.setMonth(twoBack.getMonth() - 2);
-    const stale = `${twoBack.getFullYear()}-${String(twoBack.getMonth() + 1).padStart(2, '0')}-15`;
+    // Anchor construction to day 15 so setMonth(-2) can never spill into
+    // an adjacent month via day-overflow (JS Date pitfall). Combined with
+    // "two months back" this stays outside the previous-month grace
+    // window regardless of today's day-of-month.
+    const now = new Date();
+    const anchor = new Date(now.getFullYear(), now.getMonth(), 15);
+    anchor.setMonth(anchor.getMonth() - 2);
+    const stale = `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}-15`;
     await expect(
       createBackdatedOrder(D1, 'test-user', {
         customerId: customer.id, issueDate: stale,

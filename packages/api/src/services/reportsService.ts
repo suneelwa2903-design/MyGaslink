@@ -1233,8 +1233,13 @@ export async function customerStatement(distributorId: string, f: ReportFilters)
       );
 
   // Carry-forward = pre-range entries + every OB entry (even if in-range).
+  // Deposit ledger (2026-07-31) — exclude deposit_charged / deposit_refunded
+  // rows for the same reason described in the running-balance loop below:
+  // they're metadata, not money movement. Including them here would inflate
+  // the opening b/f figure for any customer with a deposit history.
   let carryForward = 0;
   for (const e of allEntries) {
+    if (e.entryType === 'deposit_charged' || e.entryType === 'deposit_refunded') continue;
     const isOB = !!(e.invoiceId && obIds.has(e.invoiceId));
     if (isOB || e.entryDate < from) carryForward += num(e.amountDelta);
   }
@@ -1268,13 +1273,28 @@ export async function customerStatement(distributorId: string, f: ReportFilters)
     // (not 0) and label the type "Empties Return" so an accountant reading
     // this doesn't parse it as a real money movement.
     const isEmptiesReturn = e.entryType === 'empties_return';
-    running += num(e.amountDelta);
+    // Deposit ledger (2026-07-31) — cylinder-deposit rows are METADATA:
+    // the actual money movement is booked in the companion
+    // payment_entry (charge) or CreditNote/negative-payment (refund)
+    // row emitted alongside. Summing amountDelta here would DOUBLE
+    // COUNT the deposit into the customer's account balance. Render
+    // debit/credit blank (like empties_return) and skip the running
+    // update. The deposit history is still visible in this report via
+    // the narration + type columns.
+    const isDepositRow = e.entryType === 'deposit_charged' || e.entryType === 'deposit_refunded';
+    if (!isDepositRow) {
+      running += num(e.amountDelta);
+    }
+    const typeLabel = isEmptiesReturn ? 'Empties Return'
+      : e.entryType === 'deposit_charged' ? 'Deposit Received'
+      : e.entryType === 'deposit_refunded' ? 'Deposit Refunded'
+      : e.entryType.replace(/_entry$/, '');
     rows.push({
       date: dayKey(new Date(e.entryDate)),
-      type: isEmptiesReturn ? 'Empties Return' : e.entryType.replace(/_entry$/, ''),
+      type: typeLabel,
       narration: e.narration ?? '',
-      debit: isEmptiesReturn ? '' : (num(e.amountDelta) > 0 ? num(e.amountDelta) : 0),
-      credit: isEmptiesReturn ? '' : (num(e.amountDelta) < 0 ? -num(e.amountDelta) : 0),
+      debit: (isEmptiesReturn || isDepositRow) ? '' : (num(e.amountDelta) > 0 ? num(e.amountDelta) : 0),
+      credit: (isEmptiesReturn || isDepositRow) ? '' : (num(e.amountDelta) < 0 ? -num(e.amountDelta) : 0),
       balance: +running.toFixed(2),
     });
   }

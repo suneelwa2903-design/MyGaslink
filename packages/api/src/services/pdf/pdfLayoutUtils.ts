@@ -28,6 +28,20 @@ export function formatDate(d: Date | string | null | undefined): string {
   return `${day}-${months[dt.getMonth()]}-${dt.getFullYear()}`;
 }
 
+/**
+ * Format date compactly as D/M/YY (e.g. "16/7/26"). Used by the
+ * customer ledger PDF where the Date column is width-constrained and
+ * "16-Jul-2026" (11 chars) crowded the row \u2014 this compact form is
+ * 6-8 chars and lets the Amount column claim the reclaimed width so
+ * "Rs. 1,05,600.00" (bold Total row) doesn't wrap.
+ */
+export function formatDateCompact(d: Date | string | null | undefined): string {
+  if (!d) return '\u2014';
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  if (Number.isNaN(dt.getTime())) return '\u2014';
+  return `${dt.getDate()}/${dt.getMonth() + 1}/${String(dt.getFullYear()).slice(-2)}`;
+}
+
 /** Format IRN for display — chunk into groups of 16 chars per line. */
 export function formatIrnForDisplay(irn: string | null | undefined): string {
   if (!irn || irn.length === 0) return '\u2014';

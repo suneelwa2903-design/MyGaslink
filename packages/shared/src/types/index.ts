@@ -789,7 +789,13 @@ export type CustomerLedgerRowKind =
   // Q3 (2026-07-09) — pure stock row for a customer empties return.
   // amountDelta = 0, running balance unchanged. Rendered with the
   // count in the empties column and no debit/credit numbers.
-  | 'empties_return';
+  | 'empties_return'
+  // Deposit ledger (2026-07-31) — cylinder deposit received / refunded.
+  // Rendered on its own row with `depositGiven` populated and no debit/
+  // credit against dueAmount (the companion payment_entry row carries
+  // the real money movement).
+  | 'deposit_charged'
+  | 'deposit_refunded';
 
 export interface CustomerLedgerRow {
   orderDate: string;
@@ -809,6 +815,11 @@ export interface CustomerLedgerRow {
   // Balance b/f" row distinctly from regular deliveries / payments.
   narration?: string;
   kind?: CustomerLedgerRowKind;
+  // Deposit ledger (2026-07-31): ₹ deposit received on this row
+  // (positive for deposit_charged, negative for deposit_refunded).
+  // Zero on every non-deposit row. Renderer accumulates a running total
+  // across rows into the "Dep Given" column.
+  depositGiven?: number;
 }
 
 export interface CustomerLedgerResponse {
@@ -829,6 +840,16 @@ export interface CustomerLedgerResponse {
     // `totalAmount` / `receivedAmount` (cumulative-through-`to`).
     periodDebited?: number;
     periodReceived?: number;
+    // Deposit ledger (2026-07-31): running deposit ₹ held per cylinder
+    // type. Drives the per-type breakdown block at the top of the
+    // ledger PDF/web view (e.g. "19.2KG METAL: 30 × ₹1,950 = ₹58,500").
+    // Sum of values = current total deposit exposure.
+    depositBreakdown?: Array<{
+      cylinderTypeId: string;
+      cylinderTypeName: string;
+      qty: number;
+      amount: number;
+    }>;
   };
 }
 
@@ -1211,6 +1232,14 @@ export interface LedgerEntry {
   emptyCylsCollected?: number;
   pendingEmptyCyls?: number;
   emptyCylsCost?: number;
+  // Deposit ledger (2026-07-31): per-row deposit metadata. Populated
+  // on entryType='deposit_charged' (positive amount) / 'deposit_refunded'
+  // (negative amount, sign flipped at the API edge). Null on non-deposit
+  // rows. The web LedgerTab renders a "Dep Given" column that shows the
+  // running deposit balance.
+  cylinderTypeId?: string | null;
+  qtyDelta?: number | null;
+  depositAmount?: number;
 }
 
 // ─── Inventory Forecast ──────────────────────────────────────────────────────

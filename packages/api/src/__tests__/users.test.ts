@@ -19,16 +19,59 @@ beforeAll(async () => {
   saToken = (await loginAsSuperAdmin()).token;
   financeToken = (await loginAsFinance()).token;
 
-  // Clean up any leftover users from prior runs
+  // Clean up any leftover users from prior runs — TEST_EMAIL constants
+  // used by this file.
   await prisma.user.deleteMany({
     where: { email: { in: [TEST_EMAIL, TEST_EMAIL_2] } },
   });
+
+  // Shared-DB contamination guard (2026-07-31): other test suites on
+  // the shared dev DB leak driver User rows on dist-001 (each Driver
+  // integration test creates its own user + never cleans up). The
+  // subscription plan caps drivers at 8; once leaks push the count
+  // past that, checkSeatAvailability rejects EVERY driver user create
+  // in this suite with 403.
+  //
+  // Safest, least-intrusive fix: bump the driver seat count on the
+  // PricingTier row this distributor uses. Restore in afterAll so the
+  // change doesn't leak out to next-run tests. Touching User rows
+  // directly cascaded FK errors across dependent tests (audit_logs,
+  // invoices with createdBy, etc.) — verified 2026-07-31 attempt.
+  const dist001 = await prisma.distributor.findUnique({
+    where: { id: 'dist-001' },
+    select: { subscriptionPlan: true },
+  });
+  if (dist001?.subscriptionPlan) {
+    await prisma.pricingTier.update({
+      where: { plan: dist001.subscriptionPlan },
+      data: { driverSeats: 9999 },
+    });
+  }
 });
+
+// Restore the seed-time driverSeats value for dist-001's plan so this
+// bump doesn't leak into subsequent test runs on the shared dev DB.
+// Values mirror packages/api/prisma/seed.ts:1267-1300.
+const SEED_DRIVER_SEATS: Record<string, number> = {
+  starter: 2, growth: 5, business: 8, enterprise: 12, ultra: 9999,
+};
 
 afterAll(async () => {
   await prisma.user.deleteMany({
     where: { email: { in: [TEST_EMAIL, TEST_EMAIL_2] } },
   });
+  // Restore driver seats on whatever plan dist-001 is using.
+  const dist001 = await prisma.distributor.findUnique({
+    where: { id: 'dist-001' },
+    select: { subscriptionPlan: true },
+  });
+  if (dist001?.subscriptionPlan) {
+    const seatVal = SEED_DRIVER_SEATS[dist001.subscriptionPlan] ?? 8;
+    await prisma.pricingTier.update({
+      where: { plan: dist001.subscriptionPlan },
+      data: { driverSeats: seatVal },
+    });
+  }
 });
 
 function auth(token: string, distId?: string) {

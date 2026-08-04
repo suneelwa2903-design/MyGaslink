@@ -190,10 +190,13 @@ describe('G1 — getCustomerLedger reads from CustomerLedgerEntry', () => {
     const first = result.rows[0];
     expect(first.kind).toBe('opening');
     // 2026-07-21 PDF fix: Type column is BLANK for OB rows; the
-    // "Opening Balance b/f" label lives in Narration to avoid the
+    // "Opening Balance" label lives in Narration to avoid the
     // "Opening Ba…" truncation in the PDF Type column.
+    // v13 (2026-07-31): shortened from "Opening Balance b/f" to
+    // "Opening Balance" (2 words) so the 18-char Narration cap doesn't
+    // truncate to "Opening Balance b...".
     expect(first.cylinderType).toBe('');
-    expect(first.narration).toBe('Opening Balance b/f');
+    expect(first.narration).toBe('Opening Balance');
     expect(first.dueAmount).toBe(15000);
     expect(first.amount).toBe(0); // b/f has no debit/credit split
     expect(result.summary.totalAmount).toBe(15000);
@@ -213,9 +216,10 @@ describe('G1 — getCustomerLedger reads from CustomerLedgerEntry', () => {
 
     expect(result.rows[0]).toMatchObject({
       // 2026-07-21 PDF fix: cylinderType blank for OB rows.
+      // v13 (2026-07-31): narration shortened for column-fit.
       kind: 'opening',
       cylinderType: '',
-      narration: 'Opening Balance b/f',
+      narration: 'Opening Balance',
     });
     expect(result.rows[0].dueAmount).toBe(15000); // carry-forward
     // No `amount` debit/credit on the b/f row — purely informational.
@@ -274,6 +278,10 @@ describe('G1 — getCustomerLedger reads from CustomerLedgerEntry', () => {
       // summary. Empty-ledger case: no in-range activity → both zero.
       periodDebited: 0,
       periodReceived: 0,
+      // Deposit ledger (2026-07-31) — empty array on customers with no
+      // deposit rows. Present unconditionally so downstream consumers
+      // (web ledger tab, PDF) always have a stable field to read.
+      depositBreakdown: [],
     });
   });
 
@@ -357,8 +365,9 @@ describe('G1 — getCustomerLedger reads from CustomerLedgerEntry', () => {
     const result = await getCustomerLedger(distributorId, customerId);
     expect(result.rows[0].kind).toBe('opening');
     // 2026-07-21 PDF fix: OB rows carry the label in Narration, not Type.
+    // v13 (2026-07-31): "Opening Balance b/f" shortened to "Opening Balance".
     expect(result.rows[0].cylinderType).toBe('');
-    expect(result.rows[0].narration).toBe('Opening Balance b/f');
+    expect(result.rows[0].narration).toBe('Opening Balance');
     expect(result.rows[0].dueAmount).toBe(15000);
     // Subsequent rows must NOT be 'opening' kind (OBs are folded above)
     expect(result.rows.slice(1).every((r) => r.kind !== 'opening')).toBe(true);

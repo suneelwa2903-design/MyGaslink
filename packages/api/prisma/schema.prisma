@@ -366,15 +366,14 @@ enum LedgerEntryType {
   // that would otherwise be invisible outside the daily inventory
   // summary. See docs/INVESTIGATION-JUL09-B.md item 7 follow-up.
   empties_return
-  // 2026-08-01 — deposit ledger enum values live in the DB (migration
-  // 20260731000000_deposit_ledger applied). They MUST be declared here
-  // so Prisma can deserialise rows carrying these values (the customer
-  // statement report at reportsService.ts reads all ledger rows; any
-  // customer with a deposit event otherwise breaks with
-  // "Value 'deposit_charged' not found in enum 'LedgerEntryType'"). The
-  // deposit_charged/refunded WRITE and business-logic paths live in a
-  // parked branch and are not exercised from any committed code — these
-  // values are read-only decoders until that work is un-stashed.
+  // Deposit ledger (2026-07-31) — cylinder deposit ₹ received / refunded.
+  // amountDelta = +ve for charged (money in), +ve on refunded is
+  // subtracted by the reader (see paymentService.getCustomerLedger). The
+  // qtyDelta + cylinderTypeId columns carry the physical breakdown so
+  // the ledger renderer can show per-type composition. Deposit rows are
+  // NEVER read as invoices/payments — the credit gate, Tally export,
+  // aging KPI, and dashboard collections KPI all filter them out via
+  // entryType clause. See docs/DEPOSIT-LEDGER.md.
   deposit_charged
   deposit_refunded
 }
@@ -1409,11 +1408,29 @@ model CustomerLedgerEntry {
   entryDate     DateTime        @map("entry_date") @db.Date
   createdBy     String?         @map("created_by")
   createdAt     DateTime        @default(now()) @map("created_at")
+  // Deposit ledger (2026-07-31): optional per-cylinder-type attribution.
+  // Populated only on entryType='deposit_charged'/'deposit_refunded'
+  // rows (drives the "Dep Given" column + per-type breakdown display)
+  // and empties_return rows (already used by the ledger renderer). NULL
+  // on invoice/payment/credit_note/debit_note/adjustment rows.
+  cylinderTypeId String?      @map("cylinder_type_id")
+  qtyDelta       Int?         @map("qty_delta")
+  // Change L v2 (2026-07-31): sequential voucher number allocated via
+  // numberingService.allocateNumber('V', ...). Populated ONLY on
+  // deposit_charged / deposit_refunded rows when the distributor has a
+  // docCode set. Format: V<CODE><FY><SEQ6>, e.g. VSHD2627000001.
+  // Unique per distributor (a leaked cross-tenant number would misroute
+  // proof-of-deposit customer disputes). Legacy rows and rows for
+  // no-docCode tenants fall back to `DEP-<uuid-prefix>` at render time.
+  voucherNumber  String?      @map("voucher_number")
 
-  customer Customer @relation(fields: [customerId], references: [id])
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id])
 
+  @@unique([distributorId, voucherNumber], map: "customer_ledger_entries_dist_voucher_key")
   @@index([distributorId, customerId, entryDate])
   @@index([referenceId])
+  @@index([customerId, cylinderTypeId])
   @@map("customer_ledger_entries")
 }
 
@@ -1445,6 +1462,7 @@ model CylinderType {
   inventorySummaries   InventorySummary[]
   customerBalances     CustomerInventoryBalance[]
   thresholds           CylinderThreshold[]
+  ledgerEntries        CustomerLedgerEntry[]
   cancelledStocks      CancelledStockEvent[]
   accountabilityLogs   AccountabilityLog[]
   stockMismatchRecords StockMismatchRecord[]

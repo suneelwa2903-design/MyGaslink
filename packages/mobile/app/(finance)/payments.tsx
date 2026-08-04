@@ -10,11 +10,14 @@ import { useTheme, formatINR } from '../../src/theme';
 import { Card, Badge, MetricCard, Button, EmptyState, SearchInput } from '../../src/components/ui';
 import type { Payment, Customer } from '@gaslink/shared';
 import { localTodayISO } from '@gaslink/shared';
+import { DepositsView } from '../../src/components/DepositsView';
 
 const PAYMENT_METHODS = ['cash', 'cheque', 'online', 'upi', 'bank_transfer'] as const;
 type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
-type ScreenTab = 'payments' | 'credit_notes';
+// 2026-07-31 v6 (Change H): "deposits" added as a 3rd tab — same UX
+// as web /app/billing-payments Deposits tab. Shared via DepositsView.
+type ScreenTab = 'payments' | 'credit_notes' | 'deposits';
 
 const METHOD_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   cash: 'cash-outline',
@@ -72,6 +75,7 @@ export default function FinancePaymentsScreen() {
   const screenTabs: { label: string; value: ScreenTab }[] = [
     { label: 'Payments', value: 'payments' },
     { label: 'Credit/Debit Notes', value: 'credit_notes' },
+    { label: 'Deposits', value: 'deposits' },
   ];
 
   return (
@@ -256,6 +260,8 @@ export default function FinancePaymentsScreen() {
           />
         </>
       )}
+
+      {screenTab === 'deposits' && <DepositsView />}
     </SafeAreaView>
   );
 }
