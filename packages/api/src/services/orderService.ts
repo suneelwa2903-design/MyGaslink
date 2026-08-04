@@ -1349,9 +1349,24 @@ export async function confirmDelivery(
     }
 
     // Auto-create invoice
+    //
+    // 2026-08-04 — anchor Invoice.issueDate to Order.deliveryDate (NOT
+    // `now()`). Rationale: GST Rule 46 says the tax point is the
+    // supply/delivery date, not the date the operator confirmed the
+    // delivery in the system. Before this fix, a driver delivering on
+    // Aug 3 and ops confirming on Aug 4 stamped the invoice with Aug 4 —
+    // wrong for GST + confusing to customers whose PDF said Aug 4 but
+    // the physical goods arrived Aug 3. All three surfaces (UI, PDF,
+    // NIC IRN payload's DocDtls.Dt) now read the same issueDate =
+    // deliveryDate. Downstream: dueDate = deliveryDate + creditPeriod,
+    // AR aging + statement lines up; late-confirmation cases (>60d gap)
+    // are logged as a warning by createInvoiceFromOrder so ops sees the
+    // NIC-window risk before the IRN attempt.
     try {
       // using static import
-      await createInvoiceFromOrder(tx, orderId, distributorId, userId);
+      await createInvoiceFromOrder(tx, orderId, distributorId, userId, {
+        issueDateOverride: order.deliveryDate,
+      });
     } catch {
       // Non-blocking - invoice creation failure must not fail delivery
     }

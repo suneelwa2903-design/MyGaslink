@@ -74,17 +74,30 @@ router.get('/:id',
 });
 
 // POST /api/invoices/from-order/:orderId
+// 2026-08-04 — anchor issueDate to Order.deliveryDate (see orderService.ts
+// mainline delivery-completion path for the full rationale). This route is
+// the manual "create invoice from an existing delivered order" button; the
+// operator may click it days after the physical delivery, so `now()` is
+// almost never the right issueDate. Pre-loads the order (tenant-scoped) to
+// grab deliveryDate before delegating to invoiceService.
 router.post('/from-order/:orderId',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
   auditLog('create_from_order', 'invoice'),
   async (req, res) => {
     try {
       const { prisma } = await import('../lib/prisma.js');
+      const orderId = param(req.params.orderId);
+      const order = await prisma.order.findFirst({
+        where: { id: orderId, distributorId: req.user!.distributorId!, deletedAt: null },
+        select: { deliveryDate: true },
+      });
+      if (!order) return sendError(res, 'Order not found', 404);
       const invoice = await invoiceService.createInvoiceFromOrder(
         prisma,
-        param(req.params.orderId),
+        orderId,
         req.user!.distributorId!,
-        req.user!.userId
+        req.user!.userId,
+        { issueDateOverride: order.deliveryDate },
       );
       return sendCreated(res, mapInvoice(invoice));
     } catch (err: unknown) {

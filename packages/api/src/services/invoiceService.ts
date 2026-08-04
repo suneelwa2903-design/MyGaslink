@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient, $Enums } from '@prisma/client';
 import { ALLOWED_GST_RATES, deriveStateCode } from '@gaslink/shared';
 import type { AllowedGstRate } from '@gaslink/shared';
 import { toNum } from '../utils/decimal.js';
+import { logger } from '../utils/logger.js';
 import { allocateNumber } from './numberingService.js';
 
 // Customer-level GST rate override (5% / 18%): resolve the rate every
@@ -200,6 +201,21 @@ export async function createInvoiceFromOrder(
   const gstFactor = effectiveGstRate / 100;
 
   const issueDate = options?.issueDateOverride ?? new Date();
+  // 2026-08-04 — late-delivery warning. When the delivery-to-invoice-
+  // creation gap exceeds LATE_DELIVERY_LAG_DAYS, log a warning so ops
+  // sees the NIC-window risk before the IRN attempt. NIC typically
+  // rejects IRN with DocDtls.Dt older than ~60 days (varies by provider
+  // policy). This is diagnostic only — the invoice still writes; ops
+  // can decide to cancel-and-re-issue with a fresh date if needed.
+  const LATE_DELIVERY_LAG_DAYS = 60;
+  const lagMs = Date.now() - issueDate.getTime();
+  const lagDays = Math.floor(lagMs / (24 * 60 * 60 * 1000));
+  if (lagDays > LATE_DELIVERY_LAG_DAYS) {
+    logger.warn('Invoice issueDate is unusually far in the past — NIC IRN may reject', {
+      orderId, distributorId, issueDate: issueDate.toISOString().slice(0, 10),
+      lagDays, lagThreshold: LATE_DELIVERY_LAG_DAYS,
+    });
+  }
   // WI-108: structured number when docCode is set, else legacy random.
   // Allocated on `tx` so it rolls back with the invoice on failure.
   // Note: allocator keys by (distributor, type, FY) — backdated issueDate

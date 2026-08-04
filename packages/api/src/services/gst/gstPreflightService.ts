@@ -1151,7 +1151,15 @@ async function ensureDraftInvoice(
         data: { deliveredQuantity: item.quantity },
       });
     }
-    await createInvoiceFromOrder(tx, orderId, distributorId, userId);
+    // 2026-08-04 — anchor issueDate to Order.deliveryDate (GST Rule 46;
+    // see orderService.ts:1354 for the full rationale). Preflight can
+    // fire at any time; a driver who dispatched yesterday with delivery
+    // set to today shouldn't get a stale issueDate. The IRN payload's
+    // DocDtls.Dt now matches deliveryDate exactly, so NIC + our UI + the
+    // customer's PDF all read one truth.
+    await createInvoiceFromOrder(tx, orderId, distributorId, userId, {
+      issueDateOverride: order.deliveryDate,
+    });
     await tx.order.update({
       where: { id: orderId },
       data: { status: previousStatus },

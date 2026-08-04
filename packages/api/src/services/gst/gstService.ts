@@ -1458,9 +1458,22 @@ export async function cancelAndRegenerateInvoice(
   });
 
   // Create new invoice from order
+  //
+  // 2026-08-04 — anchor issueDate to Order.deliveryDate (GST Rule 46;
+  // see orderService.ts:1354 for full rationale). Re-issue is the path
+  // taken when a GST invoice needs replacement (item change, wrong GSTIN,
+  // etc.); the replacement should carry the ORIGINAL supply date, not
+  // today. NIC generally accepts issueDate within a rolling window; if
+  // the delivery was long ago, createInvoiceFromOrder logs the lag.
   const { createInvoiceFromOrder } = await import('../invoiceService.js');
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, distributorId, deletedAt: null },
+    select: { deliveryDate: true },
+  });
   const newInvoice = await prisma.$transaction(async (tx) => {
-    return createInvoiceFromOrder(tx, orderId, distributorId, userId);
+    return createInvoiceFromOrder(tx, orderId, distributorId, userId, {
+      issueDateOverride: order?.deliveryDate,
+    });
   });
 
   // Process GST for new invoice
