@@ -117,7 +117,18 @@ jobs:
       # Build shared types before api tests resolve @gaslink/shared imports.
       - run: pnpm --filter @gaslink/shared build
       - run: pnpm --filter @gaslink/api run db:generate
-      - run: pnpm --filter @gaslink/api run db:migrate
+      # 2026-08-05: switched from `db:migrate` (`prisma migrate dev`) to
+      # `db:migrate:prod` (`prisma migrate deploy`) — the dev variant
+      # runs drift detection against a shadow DB, which false-positived
+      # on the 2026-07-31 deposit-ledger migration (schema.prisma vs
+      # migration.sql index-form mismatch → 42P07 duplicate-relation
+      # on shadow replay). CI test DB is spun up fresh per run, so
+      # drift detection was providing zero value here. `migrate deploy`
+      # is a strict subset of `migrate dev` (same migrations, same
+      # target, minus shadow DB + drift + client-generate). Both prod
+      # deploy paths already use it (:206 and :347). Local dev keeps
+      # `db:migrate` for schema-authoring.
+      - run: pnpm --filter @gaslink/api run db:migrate:prod
       - run: pnpm --filter @gaslink/api run db:seed
       - run: pnpm run test
 
