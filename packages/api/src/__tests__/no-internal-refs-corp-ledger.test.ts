@@ -79,6 +79,37 @@ describe('Corporation Ledger — no internal auto-numbers surfaced', () => {
     }
   });
 
+  it('STRUCTURAL — Report Builder cannot expose purchaseNumber as a field', async () => {
+    // Without this, a user could build a custom report surfacing PSHD.
+    // Client field list and server allowlist must BOTH exclude it, or the
+    // two drift and either leak or 400 on use.
+    const { readFileSync } = await import('node:fs');
+    const raw = readFileSync(
+      new URL('../services/reportBuilder/allowlist.ts', import.meta.url),
+      'utf8',
+    );
+    // Strip comments first — the file DOCUMENTS why purchaseNumber is
+    // excluded, and that prose must not be mistaken for a live entry.
+    const code = raw
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+      .join('\n');
+    expect(code).not.toMatch(/'purchaseNumber'/);
+    expect(code).toMatch(/'supplierDocumentNumber'/);
+  });
+
+  it('STRUCTURAL — purchase-ledger PDF prints the OMC ref, not PSHD', async () => {
+    const { readFileSync } = await import('node:fs');
+    const pdf = readFileSync(
+      new URL('../services/pdf/purchaseLedgerPdfService.ts', import.meta.url),
+      'utf8',
+    );
+    // The rendered row must use docNumber (OMC ref), never purchaseNumber.
+    expect(pdf).toMatch(/r\.docNumber/);
+    expect(pdf).not.toMatch(/r\.purchaseNumber/);
+  });
+
   it('STRUCTURAL — ledger reader has no `?? purchaseNumber` fallback left', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(

@@ -71,7 +71,10 @@ interface PurchaseEntryItem {
 
 interface PurchaseEntry {
   id: string;
+  // Internal auto-number (PSHD…). Kept for keys/drill-through ONLY —
+  // never rendered. The OMC's own reference is what users see.
   purchaseNumber: string;
+  supplierDocumentNumber: string | null;
   distributorId: string;
   sourceDistributorId: string | null;
   sourceDistributorName: string | null;
@@ -100,7 +103,8 @@ interface SupplierBalancesResponse {
 
 interface OutstandingEntry {
   purchaseEntryId: string;
-  purchaseNumber: string;
+  purchaseNumber: string; // internal — not rendered
+  supplierDocumentNumber: string | null;
   purchaseDate: string;
   total: Decimalish;
   amountPaid: Decimalish;
@@ -451,13 +455,13 @@ export default function PurchasesScreen() {
                 key={row.id}
                 onPress={openEdit}
                 activeOpacity={0.75}
-                accessibilityLabel={`Edit purchase ${row.purchaseNumber}`}
+                accessibilityLabel={`Edit purchase ${row.supplierDocumentNumber ?? row.purchaseDate}`}
               >
               <Card style={{ backgroundColor: cardBg }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Text style={{ fontSize: 14, fontFamily: 'monospace', color: text }}>
-                      {row.purchaseNumber}
+                      {row.supplierDocumentNumber ?? '—'}
                     </Text>
                     <Ionicons name="pencil" size={12} color={muted} />
                   </View>
@@ -797,7 +801,7 @@ function NewPurchaseModal({
             <Text style={{ fontSize: 16, color: muted }}>Cancel</Text>
           </TouchableOpacity>
           <Text style={{ fontSize: 17, fontWeight: '700', color: text }} numberOfLines={1}>
-            {isEdit ? `Edit ${editEntry?.purchaseNumber ?? 'Entry'}` : 'New Purchase Entry'}
+            {isEdit ? `Edit ${editEntry?.supplierDocumentNumber ?? 'Entry'}` : 'New Purchase Entry'}
           </Text>
           <TouchableOpacity onPress={handleSubmit} disabled={mutation.isPending} accessibilityLabel="Save">
             <Text style={{ fontSize: 16, color: mutation.isPending ? muted : '#dc2626', fontWeight: '600' }}>
@@ -1457,7 +1461,7 @@ function RecordPaymentModal({
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13, color: text, fontFamily: 'monospace' }} numberOfLines={1}>
-                      {e.purchaseNumber}
+                      {e.supplierDocumentNumber ?? '—'}
                     </Text>
                     <Text style={{ fontSize: 11, color: muted, marginTop: 2 }}>
                       {e.purchaseDate} · Owed {formatINR(toNum(e.outstanding))}

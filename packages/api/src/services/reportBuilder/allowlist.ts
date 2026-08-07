@@ -99,8 +99,12 @@ const EXPENSE_INDEXED = new Set(['distributorId', 'expenseDate', 'categoryId']);
 
 // ─── PurchaseEntry allowlist (mini-op today; wider post-F8) ───────────
 
+// 'purchaseNumber' (internal PSHD auto-number) is intentionally ABSENT.
+// It is a DB handle, never user-facing — a builder field would let a user
+// construct a report that surfaces it. Only the OMC's own reference is
+// exposed. Keep it out of this list.
 const PURCHASE_STAFF_FIELDS = [
-  'purchaseNumber', 'purchaseDate', 'notes',
+  'supplierDocumentNumber', 'purchaseDate', 'notes',
   'sourceDistributor.name', 'isOpeningBalance',
 ];
 const PURCHASE_MONEY_FIELDS = ['amountPaid'];

@@ -108,7 +108,10 @@ const FIELDS_BY_MODEL: Record<ReportBuilderModel, FieldSpec[]> = {
     { key: 'amount', label: 'Amount (₹)', type: 'number', groupable: false, aggregatable: true },
   ],
   PurchaseEntry: [
-    { key: 'purchaseNumber', label: 'Purchase Number', type: 'string', groupable: false, aggregatable: false },
+    // 'purchaseNumber' (internal PSHD auto-number) is deliberately NOT
+    // offered as a buildable field — a user could otherwise construct a
+    // report surfacing it. Only OMC-issued references are user-facing.
+    { key: 'supplierDocumentNumber', label: 'OMC Document No', type: 'string', groupable: false, aggregatable: false },
     { key: 'purchaseDate', label: 'Purchase Date', type: 'date', groupable: true, aggregatable: false },
     { key: 'notes', label: 'Notes', type: 'string', groupable: false, aggregatable: false },
     { key: 'sourceDistributor.name', label: 'Supplier', type: 'string', groupable: false, aggregatable: false },

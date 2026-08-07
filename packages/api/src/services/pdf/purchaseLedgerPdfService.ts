@@ -44,7 +44,7 @@ interface Col {
 // feedback on the Bhargavi + New Distributor ledger downloads.
 const COLS: Col[] = [
   { label: 'Date', width: 60, align: 'left' },
-  { label: 'Purchase #', width: 76, align: 'left' },
+  { label: 'Doc No', width: 76, align: 'left' },
   { label: 'Source Distributor', width: 112, align: 'left' },
   { label: 'Cylinder Type', width: 96, align: 'left' },
   { label: 'Fulls', width: 46, align: 'right' },
@@ -163,7 +163,10 @@ export async function generatePurchaseLedgerPdf(
       where,
       select: {
         id: true,
+        // Internal PSHD auto-number — NOT rendered. Selected only so the
+        // row has a stable key. The OMC's own reference is what prints.
         purchaseNumber: true,
+        supplierDocumentNumber: true,
         purchaseDate: true,
         sourceDistributorName: true,
         notes: true,
@@ -211,7 +214,9 @@ export async function generatePurchaseLedgerPdf(
   type FlatRow = {
     kind: 'purchase' | 'payment';
     date: string;
-    purchaseNumber: string;
+    /** OMC-issued document reference. Blank when none was captured —
+     *  never backfilled with our internal PSHD number. */
+    docNumber: string;
     sourceDistributorName: string;
     cylinderType: string;
     fulls: number;
@@ -229,7 +234,7 @@ export async function generatePurchaseLedgerPdf(
       rows.push({
         kind: 'purchase',
         date: entry.purchaseDate,
-        purchaseNumber: entry.purchaseNumber,
+        docNumber: entry.supplierDocumentNumber ?? '—',
         sourceDistributorName: entry.sourceDistributorName ?? '—',
         cylinderType: item.cylinderType?.typeName ?? '—',
         fulls: item.fullsReceived,
@@ -249,7 +254,7 @@ export async function generatePurchaseLedgerPdf(
     rows.push({
       kind: 'payment',
       date: p.transactionDate,
-      purchaseNumber: '', // payments have no purchase number
+      docNumber: '—', // payments carry no OMC document reference
       sourceDistributorName: p.sourceDistributorName ?? '—',
       cylinderType: `PAYMENT (${method})`,
       fulls: 0,
@@ -452,7 +457,7 @@ export async function generatePurchaseLedgerPdf(
         y,
         [
           formatDate(r.date),
-          r.purchaseNumber,
+          r.docNumber,
           r.sourceDistributorName,
           r.cylinderType,
           isPayment ? '—' : String(r.fulls),
