@@ -192,6 +192,15 @@ enum InventoryEventType {
   returns_collection
   dispatch
   reconciliation_empties_return
+  // F1 (2026-08-06) — Defective Returns
+  // customer → depot: `fullsChange=-qty, emptiesChange=0`. Feeds
+  //   InventorySummary.defectiveFullsIn (this date) and closingDefectiveFulls
+  //   (cumulative). Does NOT touch closingFulls (WI-106 zone protected).
+  defective_return_from_customer
+  // depot → OMC/corporation: `fullsChange=-qty, emptiesChange=0`. Feeds
+  //   InventorySummary.defectiveFullsOut (this date) and decrements
+  //   closingDefectiveFulls. Same WI-106 protection.
+  defective_return_to_corporation
 }
 
 enum ReplenishmentStatus {
@@ -223,9 +232,9 @@ enum PaymentAllocationStatus {
 /// migration. `uncertain` is the sane default until the operator confirms with
 /// their CA.
 enum TaxDeductibleHint {
-  capex           // capitalised — depreciate over years
-  opex            // fully deductible in the year
-  non_deductible  // eg personal expense wrongly booked
+  capex // capitalised — depreciate over years
+  opex // fully deductible in the year
+  non_deductible // eg personal expense wrongly booked
   uncertain
 }
 
@@ -355,10 +364,10 @@ enum AccountabilityStatus {
 }
 
 enum LedgerEntryType {
-  invoice_entry @map("invoice")
+  invoice_entry    @map("invoice")
   credit_note
   debit_note
-  payment_entry @map("payment")
+  payment_entry    @map("payment")
   adjustment
   // Q3 (2026-07-09) — stock-only ledger row for a customer empties
   // return. amountDelta always 0, invoiceId always null. Present so
@@ -376,6 +385,14 @@ enum LedgerEntryType {
   // entryType clause. See docs/DEPOSIT-LEDGER.md.
   deposit_charged
   deposit_refunded
+  // F1 (2026-08-06) — stock-only ledger row for a customer defective-full
+  // pickup. amountDelta ALWAYS 0, invoiceId ALWAYS null (mirrors the
+  // empties_return anti-pattern-#24 rules). The row exists so the customer
+  // statement surfaces the physical event; the financial side lands as a
+  // separate credit_note row when office clicks Raise CN. Narration format:
+  // `Defective: N× {typeName} from INV-XXXX (pending CN)`.
+  // See docs/F1-DEFECTIVE-RETURNS-DESIGN.md.
+  defective_collected
 }
 
 enum ModificationType {
@@ -535,6 +552,7 @@ model Distributor {
   stockMismatchRecords StockMismatchRecord[]
   auditLogs            AuditLog[]
   licenses             License[]
+  savedReports         SavedReport[]
   gstCredentials       GstCredential[]
   contactSubmissions   ContactSubmission[]
   gstApiUsage          GstApiUsage[]
@@ -558,9 +576,16 @@ model Distributor {
   sourceDistributors   SourceDistributor[]
   purchaseEntries      PurchaseEntry[]
   purchasePayments     PurchasePayment[]
+  // F8 (2026-08-06)
+  purchaseCreditNotes  PurchaseCreditNote[]
+  // F8 v2 (2026-08-06)
+  purchaseDebitNotes   PurchaseDebitNote[]
   expenses             Expense[]
   expenseCategories    ExpenseCategory[]
   quotations           Quotation[]
+  // F1 (2026-08-06)
+  defectiveReturns     DefectiveCylinderLedger[]
+  defectiveBatches     DefectiveReturnBatch[]
 
   @@map("distributors")
 }
@@ -582,31 +607,38 @@ model Distributor {
 /// this supplier" before the app takes over the ledger. See migration
 /// 20260723020000 for the design rationale.
 model SourceDistributor {
-  id            String    @id @default(uuid()) @map("source_distributor_id")
-  distributorId String    @map("distributor_id")
-  name          String
+  id                   String    @id @default(uuid()) @map("source_distributor_id")
+  distributorId        String    @map("distributor_id")
+  name                 String
   /// 2026-07-23 — ₹ amount ALREADY owed to this supplier at the time
   /// the operator first seeded them. Positive = we owe them. Written
   /// via seedOpeningStateOnSupplier (POST /source-distributors/:id/
   /// seed-opening-state). Zero by default so pre-existing suppliers
   /// keep their current balances calculated purely from purchase-
   /// entries and purchase-payments.
-  openingBalanceAmount   Decimal   @default(0) @map("opening_balance_amount") @db.Decimal(18, 4)
-  openingStateSeededAt   DateTime? @map("opening_state_seeded_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-  deletedAt     DateTime? @map("deleted_at")
+  openingBalanceAmount Decimal   @default(0) @map("opening_balance_amount") @db.Decimal(18, 4)
+  openingStateSeededAt DateTime? @map("opening_state_seeded_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  deletedAt            DateTime? @map("deleted_at")
 
-  distributor     Distributor              @relation(fields: [distributorId], references: [id])
-  purchaseEntries PurchaseEntry[]
+  distributor      Distributor                     @relation(fields: [distributorId], references: [id])
+  purchaseEntries  PurchaseEntry[]
   purchasePayments PurchasePayment[]
+  // F1 (2026-08-06) — defective batches returned to this corporation.
+  // Optional FK today; becomes mandatory when F8 corp-purchases lands.
+  defectiveBatches DefectiveReturnBatch[]
+  // F8 (2026-08-06) — supplier-side credit notes received
+  purchaseCreditNotes PurchaseCreditNote[]
+  // F8 v2 (2026-08-06) — supplier-side debit notes received
+  purchaseDebitNotes  PurchaseDebitNote[]
   /// 2026-07-23 — per-cylinder-type opening empties owed to this supplier
   /// at the moment we first seeded them. Mirrors CustomerInventoryBalance
   /// `openingSeedQty` but on the supplier side (empties that customer
   /// still has to physically hand back). Written by seedOpeningStateOnSupplier
   /// via `empties: [{cylinderTypeId, qty}]` argument. Zero-qty rows are
   /// not persisted.
-  emptyOpenings   SourceDistributorEmptyOpening[]
+  emptyOpenings    SourceDistributorEmptyOpening[]
 
   @@unique([distributorId, name])
   @@index([distributorId])
@@ -671,15 +703,45 @@ model PurchaseEntry {
   /// supplier ledger reader treats these rows as pre-range carry-forward
   /// (same convention as Invoice.isOpeningBalance for customer OB).
   isOpeningBalance      Boolean   @default(false) @map("is_opening_balance")
+  /// F8 (2026-08-06) — OMC's own challan / invoice number as printed on
+  /// the physical document (e.g. IOCL "NM26S-02687"). Distinct from
+  /// `purchaseNumber` (our internal auto-number). Shown as the "Doc No"
+  /// column on the supplier statement PDF so distributors can reconcile
+  /// against OMC statements using the OMC's own reference. Nullable
+  /// because pre-F8 rows and non-OMC intake (opening-balance seeds,
+  /// misc kirana purchases) may not have one.
+  supplierDocumentNumber String?  @map("supplier_document_number")
+  /// F8 (2026-08-06) — OMC-side date on the source document (yyyy-mm-dd,
+  /// local TZ, same convention as `purchaseDate`). May differ from
+  /// `purchaseDate` if we record the entry a day or two after physical
+  /// receipt. Nullable — falls back to `purchaseDate` in the supplier
+  /// statement Date column when null.
+  supplierDocumentDate  String?   @map("supplier_document_date")
+  /// F8 v2 (2026-08-06) — OMC plant/depot the goods came from (e.g.
+  /// "Kolhapur Plant", "Sanaswadi", "Cherlapally"). Free text, no master
+  /// table (per Suneel D5). Surfaces on the ledger narration column so
+  /// operators can reconcile with the OMC's plant-of-supply column.
+  plantName             String?   @map("plant_name")
+  /// F8 v2 (2026-08-06) — discriminator between a normal gas invoice and
+  /// a cylinder deposit invoice. Deposit invoices carry Nil GST + do NOT
+  /// participate in landed-cost calculation (deposit is a refundable
+  /// container fee, not a gas cost). Both types still sit in the same
+  /// PurchaseEntry table so they share numbering + payment allocation.
+  documentType          PurchaseDocumentType @default(invoice) @map("document_type")
   createdBy             String    @map("created_by")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
   deletedAt             DateTime? @map("deleted_at")
 
-  distributor       Distributor                    @relation(fields: [distributorId], references: [id])
-  sourceDistributor SourceDistributor?             @relation(fields: [sourceDistributorId], references: [id])
-  items             PurchaseEntryItem[]
+  distributor        Distributor                    @relation(fields: [distributorId], references: [id])
+  sourceDistributor  SourceDistributor?             @relation(fields: [sourceDistributorId], references: [id])
+  items              PurchaseEntryItem[]
   paymentAllocations PurchasePaymentAllocation[]
+  // F8 (2026-08-06)
+  charges            PurchaseEntryCharge[]
+  cnAllocations      PurchaseCreditNoteAllocation[]
+  // F8 v2 (2026-08-06)
+  dnAllocations      PurchaseDebitNoteAllocation[]
 
   @@index([distributorId, purchaseDate(sort: Desc)])
   @@map("purchase_entries")
@@ -698,6 +760,13 @@ model PurchaseEntryItem {
   /// entry (e.g. an empties swap). Total per line = fullsReceived *
   /// unitPrice computed at query/PDF time to keep the write path simple.
   unitPrice       Decimal  @default(0) @map("unit_price") @db.Decimal(18, 4)
+  /// F8 v2 (2026-08-06) — GST rate for this line as a percentage (5 for
+  /// domestic LPG, 18 for commercial, 0 for deposit invoices). Kept on the
+  /// LINE (not on the invoice header) because one OMC invoice can mix
+  /// DOM.LPG (5%) + COMM.LPG (18%) + FREIGHT (varies) — Confidence LC26S-01393
+  /// is the canonical example. CGST/SGST/IGST split derived at read time
+  /// from tenant state vs plant state; not stored per-line.
+  gstRate         Decimal  @default(0) @map("gst_rate") @db.Decimal(5, 2)
   createdAt       DateTime @default(now()) @map("created_at")
 
   purchaseEntry PurchaseEntry @relation(fields: [purchaseEntryId], references: [id])
@@ -713,26 +782,26 @@ model PurchaseEntryItem {
 /// share the same allocation + reverse patterns. Every payment MUST be
 /// tenant-scoped (distributorId) and source-scoped (sourceDistributorId).
 model PurchasePayment {
-  id                  String    @id @default(uuid()) @map("purchase_payment_id")
-  distributorId       String    @map("distributor_id")
-  sourceDistributorId String    @map("source_distributor_id")
+  id                    String        @id @default(uuid()) @map("purchase_payment_id")
+  distributorId         String        @map("distributor_id")
+  sourceDistributorId   String        @map("source_distributor_id")
   /// Snapshot at write time so historical rows stay readable after a
   /// rename / soft-delete of the source distributor. Same pattern as
   /// PurchaseEntry.sourceDistributorName + Invoice.customerNameSnapshot.
-  sourceDistributorName String? @map("source_distributor_name")
+  sourceDistributorName String?       @map("source_distributor_name")
   /// Local-TZ ISO date (yyyy-mm-dd, no time). Matches PurchaseEntry.
-  transactionDate     String    @map("transaction_date")
-  amount              Decimal   @db.Decimal(18, 4)
-  paymentMethod       PaymentMethod @default(cash) @map("payment_method")
-  referenceNumber     String?   @map("reference_number")
-  notes               String?
-  createdBy           String    @map("created_by")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
-  deletedAt           DateTime? @map("deleted_at")
+  transactionDate       String        @map("transaction_date")
+  amount                Decimal       @db.Decimal(18, 4)
+  paymentMethod         PaymentMethod @default(cash) @map("payment_method")
+  referenceNumber       String?       @map("reference_number")
+  notes                 String?
+  createdBy             String        @map("created_by")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+  deletedAt             DateTime?     @map("deleted_at")
 
-  distributor       Distributor                  @relation(fields: [distributorId], references: [id])
-  sourceDistributor SourceDistributor            @relation(fields: [sourceDistributorId], references: [id])
+  distributor       Distributor                 @relation(fields: [distributorId], references: [id])
+  sourceDistributor SourceDistributor           @relation(fields: [sourceDistributorId], references: [id])
   allocations       PurchasePaymentAllocation[]
 
   @@index([distributorId, sourceDistributorId, transactionDate(sort: Desc)])
@@ -759,6 +828,192 @@ model PurchasePaymentAllocation {
   @@index([paymentId])
   @@index([purchaseEntryId])
   @@map("purchase_payment_allocations")
+}
+
+// ─── F8 Supplier Ledger (2026-08-06) — Purchase-side CN + freight/charges ──
+// See docs/F8-SUPPLIER-LEDGER-DESIGN.md for the full spec.
+//
+// Unlike the customer-side CN (`CreditNote`) which the DISTRIBUTOR issues
+// to a customer, PurchaseCreditNote records CNs the DISTRIBUTOR RECEIVED
+// from a supplier (OMC). Per Suneel 2026-08-06 these are always financial
+// incentives (volume / quality / scheme / rate-diff / freight-reimb) —
+// there is no GST vs Financial toggle because OMCs do not issue GST CNs
+// against defective returns (OMC nets the defective loss into the next
+// invoice as fewer fulls). Every CN MUST be allocated to one or more
+// specific PurchaseEntry rows (no on-account state) so the supplier
+// ledger's running balance is always attributable at line level.
+
+/// F8 (2026-08-06) — freight / handling / testing / insurance line on a
+/// PurchaseEntry. Each row adds to the entry's total owed to the supplier.
+/// Freight can also be captured as a stand-alone PurchaseEntry with zero
+/// PurchaseEntryItem rows + one PurchaseEntryCharge row (for the case
+/// where a transporter bills freight separately from the OMC invoice —
+/// per Suneel Q8 both shapes must be supported).
+model PurchaseEntryCharge {
+  id              String                  @id @default(uuid()) @map("purchase_entry_charge_id")
+  purchaseEntryId String                  @map("purchase_entry_id")
+  chargeType      PurchaseEntryChargeType @map("charge_type")
+  amount          Decimal                 @db.Decimal(18, 4)
+  notes           String?
+  createdAt       DateTime                @default(now()) @map("created_at")
+
+  purchaseEntry PurchaseEntry @relation(fields: [purchaseEntryId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseEntryId])
+  @@map("purchase_entry_charges")
+}
+
+/// F8 (2026-08-06) — Credit note received from a supplier (OMC). Always a
+/// financial incentive; no GST/ITC handling. Distinct from CreditNote
+/// (customer-side, distributor-issued). `creditNoteNumber` is our internal
+/// auto-number (via numberingService with type 'X' when docCode is set;
+/// unstructured `PCN-<time36>` fallback otherwise). `supplierDocumentNumber`
+/// is the OMC's own CN reference and is the canonical identifier shown on
+/// the supplier statement PDF's "Doc No" column.
+///
+/// Allocation: every CN MUST be split across one or more
+/// PurchaseCreditNoteAllocation rows, sum(alloc.amount) == totalAmount.
+/// Enforced in service. Reverse (soft-delete) rewinds any linked
+/// PurchaseEntry-side counters INSIDE the same tx.
+model PurchaseCreditNote {
+  id                     String                         @id @default(uuid()) @map("purchase_credit_note_id")
+  distributorId          String                         @map("distributor_id")
+  sourceDistributorId    String                         @map("source_distributor_id")
+  /// Snapshot at write time so historical rows stay readable after a
+  /// supplier soft-delete / rename. Same pattern as PurchaseEntry /
+  /// PurchasePayment.
+  sourceDistributorName  String?                        @map("source_distributor_name")
+  /// Our internal number (unique per distributor, structured via
+  /// allocateNumber when docCode is set).
+  creditNoteNumber       String                         @map("credit_note_number")
+  /// OMC's own CN reference as printed on the physical document. Nullable
+  /// because some OMCs issue hand-signed CNs without a formal number.
+  supplierDocumentNumber String?                        @map("supplier_document_number")
+  /// Local-TZ ISO date (yyyy-mm-dd, no time). Matches PurchaseEntry.
+  creditNoteDate         String                         @map("credit_note_date")
+  /// When the CN physically reached us (often ≠ CN issue date). Used for
+  /// AR/AP aging on the supplier side.
+  receivedDate           String                         @map("received_date")
+  totalAmount            Decimal                        @map("total_amount") @db.Decimal(18, 4)
+  reason                 PurchaseCreditNoteReason       @default(other)
+  notes                  String?
+  createdBy              String                         @map("created_by")
+  createdAt              DateTime                       @default(now()) @map("created_at")
+  updatedAt              DateTime                       @updatedAt @map("updated_at")
+  deletedAt              DateTime?                      @map("deleted_at")
+
+  distributor       Distributor                    @relation(fields: [distributorId], references: [id])
+  sourceDistributor SourceDistributor              @relation(fields: [sourceDistributorId], references: [id])
+  allocations       PurchaseCreditNoteAllocation[]
+
+  @@unique([distributorId, creditNoteNumber])
+  @@index([distributorId, sourceDistributorId, creditNoteDate(sort: Desc)])
+  @@map("purchase_credit_notes")
+}
+
+/// F8 (2026-08-06) — Per-PurchaseEntry allocation of a PurchaseCreditNote.
+/// Same shape as PurchasePaymentAllocation. Sum of allocations MUST equal
+/// the parent CN's totalAmount (enforced in service).
+model PurchaseCreditNoteAllocation {
+  id                   String   @id @default(uuid()) @map("purchase_credit_note_allocation_id")
+  purchaseCreditNoteId String   @map("purchase_credit_note_id")
+  purchaseEntryId      String   @map("purchase_entry_id")
+  amount               Decimal  @db.Decimal(18, 4)
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  purchaseCreditNote PurchaseCreditNote @relation(fields: [purchaseCreditNoteId], references: [id], onDelete: Cascade)
+  purchaseEntry      PurchaseEntry      @relation(fields: [purchaseEntryId], references: [id])
+
+  @@index([purchaseCreditNoteId])
+  @@index([purchaseEntryId])
+  @@map("purchase_credit_note_allocations")
+}
+
+enum PurchaseEntryChargeType {
+  freight
+  handling
+  testing
+  insurance
+  other
+}
+
+enum PurchaseCreditNoteReason {
+  volume_incentive
+  quality_incentive
+  scheme_incentive
+  rate_differential
+  freight_reimbursement
+  other
+}
+
+/// F8 v2 (2026-08-06) — PurchaseEntry document-type discriminator.
+///   invoice          → normal gas invoice (LPG cylinders + freight); GST varies
+///   deposit_invoice  → cylinder deposit invoice (Nil GST, refundable, does NOT
+///                      participate in landed-cost per-cyl math). Confidence
+///                      LI026S-00290 (200×19.2KG @ ₹2,100) is the canonical
+///                      example — cyl deposit paid to OMC when new cylinders
+///                      are added to the distributor's pool.
+enum PurchaseDocumentType {
+  invoice
+  deposit_invoice
+}
+
+/// F8 v2 (2026-08-06) — Debit Note received from a supplier (OMC). Mirrors
+/// PurchaseCreditNote's shape but adds to what we OWE (Debit side of the
+/// supplier ledger) instead of reducing it. Rare in the LPG flow — OMC
+/// issues a DN for short-supply detected at the plant, damages during
+/// storage, or interest on delayed payments. Every DN MUST be allocated
+/// to one or more specific PurchaseEntry rows.
+model PurchaseDebitNote {
+  id                     String                        @id @default(uuid()) @map("purchase_debit_note_id")
+  distributorId          String                        @map("distributor_id")
+  sourceDistributorId    String                        @map("source_distributor_id")
+  sourceDistributorName  String?                       @map("source_distributor_name")
+  debitNoteNumber        String                        @map("debit_note_number")
+  supplierDocumentNumber String?                       @map("supplier_document_number")
+  debitNoteDate          String                        @map("debit_note_date")
+  receivedDate           String                        @map("received_date")
+  totalAmount            Decimal                       @map("total_amount") @db.Decimal(18, 4)
+  reason                 PurchaseDebitNoteReason       @default(other)
+  notes                  String?
+  createdBy              String                        @map("created_by")
+  createdAt              DateTime                      @default(now()) @map("created_at")
+  updatedAt              DateTime                      @updatedAt @map("updated_at")
+  deletedAt              DateTime?                     @map("deleted_at")
+
+  distributor       Distributor                   @relation(fields: [distributorId], references: [id])
+  sourceDistributor SourceDistributor             @relation(fields: [sourceDistributorId], references: [id])
+  allocations       PurchaseDebitNoteAllocation[]
+
+  @@unique([distributorId, debitNoteNumber])
+  @@index([distributorId, sourceDistributorId, debitNoteDate(sort: Desc)])
+  @@map("purchase_debit_notes")
+}
+
+/// F8 v2 (2026-08-06) — Per-PurchaseEntry allocation of a PurchaseDebitNote.
+/// Same shape as PurchaseCreditNoteAllocation. Sum of allocations MUST equal
+/// the parent DN's totalAmount (enforced in service).
+model PurchaseDebitNoteAllocation {
+  id                  String   @id @default(uuid()) @map("purchase_debit_note_allocation_id")
+  purchaseDebitNoteId String   @map("purchase_debit_note_id")
+  purchaseEntryId     String   @map("purchase_entry_id")
+  amount              Decimal  @db.Decimal(18, 4)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  purchaseDebitNote PurchaseDebitNote @relation(fields: [purchaseDebitNoteId], references: [id], onDelete: Cascade)
+  purchaseEntry     PurchaseEntry     @relation(fields: [purchaseEntryId], references: [id])
+
+  @@index([purchaseDebitNoteId])
+  @@index([purchaseEntryId])
+  @@map("purchase_debit_note_allocations")
+}
+
+enum PurchaseDebitNoteReason {
+  short_supply
+  damaged_at_plant
+  late_payment_interest
+  rate_differential
+  other
 }
 
 /// Mini-op #5 (2026-07-27) — Expense record.
@@ -789,28 +1044,28 @@ model PurchasePaymentAllocation {
 /// Renaming changes `name` only — CSV imports, integrations, and old
 /// reports keep resolving by `code`. See feedback_immutable_slug memory.
 model ExpenseCategory {
-  id                   String   @id @default(uuid()) @map("expense_category_id")
-  distributorId        String   @map("distributor_id")
-  parentId             String?  @map("parent_id")
-  code                 String   @db.VarChar(64)
-  name                 String   @db.VarChar(120)
-  isHeader             Boolean  @default(false) @map("is_header")
-  isSystem             Boolean  @default(false) @map("is_system")
-  isActive             Boolean  @default(true)  @map("is_active")
-  sortOrder            Int      @default(0)     @map("sort_order")
+  id            String  @id @default(uuid()) @map("expense_category_id")
+  distributorId String  @map("distributor_id")
+  parentId      String? @map("parent_id")
+  code          String  @db.VarChar(64)
+  name          String  @db.VarChar(120)
+  isHeader      Boolean @default(false) @map("is_header")
+  isSystem      Boolean @default(false) @map("is_system")
+  isActive      Boolean @default(true) @map("is_active")
+  sortOrder     Int     @default(0) @map("sort_order")
 
   // Progressive-reveal field config — the same knobs we used to hard-code
   // in the web JS. NULL string fields fall back to sensible defaults in
   // the client. Only meaningful when isHeader=false.
-  showVehicle          Boolean  @default(false) @map("show_vehicle")
-  vehicleRequired      Boolean  @default(false) @map("vehicle_required")
-  showDriver           Boolean  @default(false) @map("show_driver")
-  driverRequired       Boolean  @default(false) @map("driver_required")
-  vendorLabel          String?  @db.VarChar(60)  @map("vendor_label")
-  vendorPlaceholder    String?  @db.VarChar(120) @map("vendor_placeholder")
-  referenceLabel       String?  @db.VarChar(60)  @map("reference_label")
-  referencePlaceholder String?  @db.VarChar(120) @map("reference_placeholder")
-  hint                 String?  @db.VarChar(500)
+  showVehicle          Boolean @default(false) @map("show_vehicle")
+  vehicleRequired      Boolean @default(false) @map("vehicle_required")
+  showDriver           Boolean @default(false) @map("show_driver")
+  driverRequired       Boolean @default(false) @map("driver_required")
+  vendorLabel          String? @map("vendor_label") @db.VarChar(60)
+  vendorPlaceholder    String? @map("vendor_placeholder") @db.VarChar(120)
+  referenceLabel       String? @map("reference_label") @db.VarChar(60)
+  referencePlaceholder String? @map("reference_placeholder") @db.VarChar(120)
+  hint                 String? @db.VarChar(500)
 
   // v3 (2026-07-27) — "Paid to" freeform field. When set, the expense
   // form renders a text input for a person's name (helper / loader /
@@ -818,22 +1073,22 @@ model ExpenseCategory {
   // the sane default for spend that isn't tied to a specific driver
   // from the fleet table. Set on categories like helper_wages,
   // office_staff_salary, godown_rent, etc.
-  showPaidTo           Boolean  @default(false) @map("show_paid_to")
-  paidToRequired       Boolean  @default(false) @map("paid_to_required")
-  paidToLabel          String?  @db.VarChar(60)  @map("paid_to_label")
-  paidToPlaceholder    String?  @db.VarChar(120) @map("paid_to_placeholder")
+  showPaidTo        Boolean @default(false) @map("show_paid_to")
+  paidToRequired    Boolean @default(false) @map("paid_to_required")
+  paidToLabel       String? @map("paid_to_label") @db.VarChar(60)
+  paidToPlaceholder String? @map("paid_to_placeholder") @db.VarChar(120)
 
   // Reserved for future integrations — see CLAUDE.md mini-op #5 v2 notes.
-  reservedForImport    Boolean  @default(false) @map("reserved_for_import")
-  taxDeductibleHint    TaxDeductibleHint? @map("tax_deductible_hint")
+  reservedForImport Boolean            @default(false) @map("reserved_for_import")
+  taxDeductibleHint TaxDeductibleHint? @map("tax_deductible_hint")
 
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  deletedAt   DateTime? @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
-  distributor Distributor        @relation(fields: [distributorId], references: [id], onDelete: Cascade)
-  parent      ExpenseCategory?   @relation("ExpenseCategoryHierarchy", fields: [parentId], references: [id])
-  children    ExpenseCategory[]  @relation("ExpenseCategoryHierarchy")
+  distributor Distributor       @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+  parent      ExpenseCategory?  @relation("ExpenseCategoryHierarchy", fields: [parentId], references: [id])
+  children    ExpenseCategory[] @relation("ExpenseCategoryHierarchy")
   expenses    Expense[]
 
   @@unique([distributorId, code])
@@ -843,26 +1098,26 @@ model ExpenseCategory {
 }
 
 model Expense {
-  id              String          @id @default(uuid()) @map("expense_id")
-  distributorId   String          @map("distributor_id")
-  expenseDate     String          @map("expense_date") // YYYY-MM-DD local
-  categoryId      String          @map("category_id")
-  amount          Decimal         @db.Decimal(18, 4)
-  description     String          @db.VarChar(500)
-  paymentMethod   PaymentMethod   @default(cash) @map("payment_method")
-  vendorName      String?         @db.VarChar(200) @map("vendor_name")
+  id              String        @id @default(uuid()) @map("expense_id")
+  distributorId   String        @map("distributor_id")
+  expenseDate     String        @map("expense_date") // YYYY-MM-DD local
+  categoryId      String        @map("category_id")
+  amount          Decimal       @db.Decimal(18, 4)
+  description     String        @db.VarChar(500)
+  paymentMethod   PaymentMethod @default(cash) @map("payment_method")
+  vendorName      String?       @map("vendor_name") @db.VarChar(200)
   /// v3 (2026-07-27) — freeform "paid to" person (helper / landlord /
   /// office staff etc.). Distinct from vendorName so reports can slice
   /// by "who I paid" independently of vendor / business relationship.
-  paidToName      String?         @db.VarChar(200) @map("paid_to_name")
-  vehicleId       String?         @map("vehicle_id")
-  driverId        String?         @map("driver_id")
-  referenceNumber String?         @db.VarChar(100) @map("reference_number")
-  notes           String?         @db.VarChar(1000)
-  createdBy       String          @map("created_by")
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
-  deletedAt       DateTime?       @map("deleted_at")
+  paidToName      String?       @map("paid_to_name") @db.VarChar(200)
+  vehicleId       String?       @map("vehicle_id")
+  driverId        String?       @map("driver_id")
+  referenceNumber String?       @map("reference_number") @db.VarChar(100)
+  notes           String?       @db.VarChar(1000)
+  createdBy       String        @map("created_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  deletedAt       DateTime?     @map("deleted_at")
 
   distributor   Distributor     @relation(fields: [distributorId], references: [id])
   category      ExpenseCategory @relation(fields: [categoryId], references: [id])
@@ -916,60 +1171,60 @@ enum QuotationItemKind {
 }
 
 model Quotation {
-  id                    String          @id @default(uuid()) @map("quotation_id")
-  distributorId         String          @map("distributor_id")
-  quotationNumber       String          @map("quotation_number") @db.VarChar(32)
-  year                  Int             // used for per-year numbering
-  seq                   Int             // sequential within (distributor, year)
-  quotationDate         String          @map("quotation_date")   // YYYY-MM-DD (local)
-  validUntil            String          @map("valid_until")      // YYYY-MM-DD
+  id              String @id @default(uuid()) @map("quotation_id")
+  distributorId   String @map("distributor_id")
+  quotationNumber String @map("quotation_number") @db.VarChar(32)
+  year            Int // used for per-year numbering
+  seq             Int // sequential within (distributor, year)
+  quotationDate   String @map("quotation_date") // YYYY-MM-DD (local)
+  validUntil      String @map("valid_until") // YYYY-MM-DD
 
   // Recipient — either a real customer (customerId set) or freeform lead.
-  customerId            String?         @map("customer_id")
-  recipientName         String          @map("recipient_name") @db.VarChar(200)
-  recipientContactPerson String?        @map("recipient_contact_person") @db.VarChar(200)
-  recipientAddress      String?         @map("recipient_address") @db.VarChar(500)
-  recipientCity         String?         @map("recipient_city") @db.VarChar(100)
-  recipientState        String?         @map("recipient_state") @db.VarChar(100)
-  recipientPincode      String?         @map("recipient_pincode") @db.VarChar(20)
-  recipientEmail        String          @map("recipient_email") @db.VarChar(200)
+  customerId             String? @map("customer_id")
+  recipientName          String  @map("recipient_name") @db.VarChar(200)
+  recipientContactPerson String? @map("recipient_contact_person") @db.VarChar(200)
+  recipientAddress       String? @map("recipient_address") @db.VarChar(500)
+  recipientCity          String? @map("recipient_city") @db.VarChar(100)
+  recipientState         String? @map("recipient_state") @db.VarChar(100)
+  recipientPincode       String? @map("recipient_pincode") @db.VarChar(20)
+  recipientEmail         String  @map("recipient_email") @db.VarChar(200)
   /// v3 (2026-07-27): jsonb array of extra CC email addresses. Empty
   /// array by default; up to 10 entries validated at the Zod layer.
-  ccEmails              Json            @default("[]") @map("cc_emails") @db.JsonB
-  recipientPhone        String?         @map("recipient_phone") @db.VarChar(50)
-  recipientGstin        String?         @map("recipient_gstin") @db.VarChar(20)
+  ccEmails               Json    @default("[]") @map("cc_emails") @db.JsonB
+  recipientPhone         String? @map("recipient_phone") @db.VarChar(50)
+  recipientGstin         String? @map("recipient_gstin") @db.VarChar(20)
 
-  subject               String          @db.VarChar(500)
-  coverText             String          @map("cover_text") @db.VarChar(5000)
-  footerNotes           String?         @map("footer_notes") @db.VarChar(1000)
+  subject     String  @db.VarChar(500)
+  coverText   String  @map("cover_text") @db.VarChar(5000)
+  footerNotes String? @map("footer_notes") @db.VarChar(1000)
 
   // T&C are stored as jsonb array of strings so the tenant / user can tweak
   // per quote without a rigid schema.
-  terms                 Json            @db.JsonB
-  creditTerms           String          @map("credit_terms") @db.VarChar(200)
+  terms       Json   @db.JsonB
+  creditTerms String @map("credit_terms") @db.VarChar(200)
 
   // Whole-quote GST rate. Two supported values in v1 — 0.05 or 0.18. Kept
   // as Decimal so future rates land without a migration. Validator in the
   // service pins accepted values.
-  gstRate               Decimal         @map("gst_rate") @db.Decimal(5, 4)
-  mode                  QuotationMode
+  gstRate Decimal       @map("gst_rate") @db.Decimal(5, 4)
+  mode    QuotationMode
 
-  status                QuotationStatus @default(draft)
-  sentAt                DateTime?       @map("sent_at")
-  acceptedAt            DateTime?       @map("accepted_at")
+  status     QuotationStatus @default(draft)
+  sentAt     DateTime?       @map("sent_at")
+  acceptedAt DateTime?       @map("accepted_at")
 
-  duplicateFromId       String?         @map("duplicate_from_id")
+  duplicateFromId String? @map("duplicate_from_id")
 
-  createdBy             String          @map("created_by")
-  createdAt             DateTime        @default(now()) @map("created_at")
-  updatedAt             DateTime        @updatedAt @map("updated_at")
-  deletedAt             DateTime?       @map("deleted_at")
+  createdBy String    @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
-  distributor   Distributor      @relation(fields: [distributorId], references: [id])
-  customer      Customer?        @relation(fields: [customerId], references: [id])
-  createdByUser User             @relation("QuotationsCreated", fields: [createdBy], references: [id])
-  duplicateFrom Quotation?       @relation("QuotationLineage", fields: [duplicateFromId], references: [id])
-  duplicates    Quotation[]      @relation("QuotationLineage")
+  distributor   Distributor     @relation(fields: [distributorId], references: [id])
+  customer      Customer?       @relation(fields: [customerId], references: [id])
+  createdByUser User            @relation("QuotationsCreated", fields: [createdBy], references: [id])
+  duplicateFrom Quotation?      @relation("QuotationLineage", fields: [duplicateFromId], references: [id])
+  duplicates    Quotation[]     @relation("QuotationLineage")
   items         QuotationItem[]
 
   @@unique([distributorId, year, seq])
@@ -981,15 +1236,15 @@ model Quotation {
 }
 
 model QuotationItem {
-  id                    String            @id @default(uuid()) @map("quotation_item_id")
-  quotationId           String            @map("quotation_id")
-  kind                  QuotationItemKind
-  cylinderTypeId        String?           @map("cylinder_type_id")
+  id             String            @id @default(uuid()) @map("quotation_item_id")
+  quotationId    String            @map("quotation_id")
+  kind           QuotationItemKind
+  cylinderTypeId String?           @map("cylinder_type_id")
 
   // Snapshot of the cylinder type name at quote time so historical quotes
   // stay legible even if the type is renamed / soft-deleted.
-  itemName              String            @map("item_name") @db.VarChar(200)
-  hsnCode               String            @map("hsn_code") @db.VarChar(20)
+  itemName String @map("item_name") @db.VarChar(200)
+  hsnCode  String @map("hsn_code") @db.VarChar(20)
 
   // v2 (2026-07-27): all price / discount fields store GST-INCLUSIVE
   // values — the distributor enters the final rate their customer will
@@ -1000,17 +1255,17 @@ model QuotationItem {
   // Per-cylinder mode: priceInclGst + discountInclGst; capacityKg unused.
   // Per-KG mode: pricePerKgInclGst + discountPerKgInclGst; capacityKg
   // required for display in the card header ("425 KG Commercial Cyl").
-  priceInclGst          Decimal?          @map("price_incl_gst") @db.Decimal(12, 4)
-  discountInclGst       Decimal?          @map("discount_incl_gst") @db.Decimal(12, 4)
-  cylinderCapacityKg    Decimal?          @map("cylinder_capacity_kg") @db.Decimal(8, 2)
-  pricePerKgInclGst     Decimal?          @map("price_per_kg_incl_gst") @db.Decimal(12, 4)
-  discountPerKgInclGst  Decimal?          @map("discount_per_kg_incl_gst") @db.Decimal(12, 4)
+  priceInclGst         Decimal? @map("price_incl_gst") @db.Decimal(12, 4)
+  discountInclGst      Decimal? @map("discount_incl_gst") @db.Decimal(12, 4)
+  cylinderCapacityKg   Decimal? @map("cylinder_capacity_kg") @db.Decimal(8, 2)
+  pricePerKgInclGst    Decimal? @map("price_per_kg_incl_gst") @db.Decimal(12, 4)
+  discountPerKgInclGst Decimal? @map("discount_per_kg_incl_gst") @db.Decimal(12, 4)
 
-  sortOrder             Int               @default(0) @map("sort_order")
-  notes                 String?           @db.VarChar(500)
+  sortOrder Int     @default(0) @map("sort_order")
+  notes     String? @db.VarChar(500)
 
-  createdAt             DateTime          @default(now()) @map("created_at")
-  updatedAt             DateTime          @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   quotation    Quotation     @relation(fields: [quotationId], references: [id], onDelete: Cascade)
   cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id], onDelete: SetNull)
@@ -1059,38 +1314,39 @@ model User {
   deletedAt             DateTime?          @map("deleted_at")
 
   // Relations
-  distributor           Distributor?       @relation(fields: [distributorId], references: [id])
-  customer              Customer?          @relation(fields: [customerId], references: [id])
-  customerGroup         CustomerGroup?     @relation(fields: [groupId], references: [id])
-  sourceContact         CustomerContact?   @relation("HqSourceContact", fields: [sourceContactId], references: [id], onDelete: SetNull)
+  distributor                 Distributor?            @relation(fields: [distributorId], references: [id])
+  customer                    Customer?               @relation(fields: [customerId], references: [id])
+  customerGroup               CustomerGroup?          @relation(fields: [groupId], references: [id])
+  sourceContact               CustomerContact?        @relation("HqSourceContact", fields: [sourceContactId], references: [id], onDelete: SetNull)
   // Group B Part 3 — explicit Driver→User FK lives on the Driver side
   // (Driver.userId String? @unique). 1:0..1 — a driver can exist without
   // a login (orphan), and a user can exist without a driver record
   // (staff role). The reverse relation lets `prisma.user.findFirst({
   // include: { driverProfile: true } })` resolve a driver login to its
   // driver row without the phone-match dance in resolveDriverFromUser().
-  driverProfile         Driver?            @relation("DriverUser")
-  auditLogs             AuditLog[]
-  driverAssignments     DriverAssignment[] @relation("AssignedBy")
-  cancelledGstDocuments GstDocument[]      @relation("CancelledGstDocuments")
-  loginHistory          LoginHistory[]
+  driverProfile               Driver?                 @relation("DriverUser")
+  auditLogs                   AuditLog[]
+  savedReports                SavedReport[]
+  driverAssignments           DriverAssignment[]      @relation("AssignedBy")
+  cancelledGstDocuments       GstDocument[]           @relation("CancelledGstDocuments")
+  loginHistory                LoginHistory[]
   // FLOAT-001 (2026-06-17): manifests this user confirmed (admin/inventory/finance).
-  manifestsConfirmed    DVALoadManifest[]  @relation("ManifestConfirmedBy")
+  manifestsConfirmed          DVALoadManifest[]       @relation("ManifestConfirmedBy")
   // WI-PENDING-PAYMENTS: submissions this user submitted (customer/staff path) and verified (office path).
-  paymentSubmissionsSubmitted PaymentSubmission[] @relation("SubmittedByUser")
-  paymentSubmissionsVerified  PaymentSubmission[] @relation("VerifiedByUser")
+  paymentSubmissionsSubmitted PaymentSubmission[]     @relation("SubmittedByUser")
+  paymentSubmissionsVerified  PaymentSubmission[]     @relation("VerifiedByUser")
   // Mini-op #5 (2026-07-27) — expenses recorded by this user.
-  expensesCreated             Expense[]           @relation("ExpensesCreated")
+  expensesCreated             Expense[]               @relation("ExpensesCreated")
   // Mini-op #7 (2026-07-27) — quotations created by this user.
-  quotationsCreated           Quotation[]         @relation("QuotationsCreated")
+  quotationsCreated           Quotation[]             @relation("QuotationsCreated")
   // M14 v1.0 (IOS-ACCOUNT-DELETION-SPEC §3): at most ONE pending/cancelled/completed
   // deletion request per user. Auth middleware joins this on every authenticate() call.
-  accountDeletionRequest AccountDeletionRequest?
+  accountDeletionRequest      AccountDeletionRequest?
   // Item 4 (2026-07-09) — multi-device refresh sessions. Each row is one
   // logged-in device. See docs/INVESTIGATION-JUL09-B.md item 4 for the RCA
   // (single-slot User.refreshToken was causing "logged out on Device B
   // whenever Device A refreshed").
-  refreshTokenSessions RefreshTokenSession[]
+  refreshTokenSessions        RefreshTokenSession[]
 
   @@index([email])
   @@index([distributorId])
@@ -1105,15 +1361,15 @@ model User {
 // window — auth service writes both places during the compatibility phase
 // and only reads from this table.
 model RefreshTokenSession {
-  id           String   @id @default(uuid()) @map("session_id")
-  userId       String   @map("user_id")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash    String   @map("token_hash")
-  deviceLabel  String?  @map("device_label")
-  createdAt    DateTime @default(now()) @map("created_at")
-  lastUsedAt   DateTime @default(now()) @map("last_used_at")
-  expiresAt    DateTime @map("expires_at")
-  revokedAt    DateTime? @map("revoked_at")
+  id          String    @id @default(uuid()) @map("session_id")
+  userId      String    @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @map("token_hash")
+  deviceLabel String?   @map("device_label")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  lastUsedAt  DateTime  @default(now()) @map("last_used_at")
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
 
   @@index([userId])
   @@index([tokenHash])
@@ -1124,28 +1380,28 @@ model RefreshTokenSession {
 // ─── Customers ───────────────────────────────────────────────────────────────
 
 model Customer {
-  id                         String         @id @default(uuid()) @map("customer_id")
-  distributorId              String         @map("distributor_id")
-  customerName               String         @map("customer_name")
-  businessName               String?        @map("business_name")
-  gstin                      String?
-  customerType               String         @default("B2C") @map("customer_type") // B2B or B2C
-  phone                      String
-  email                      String?
-  billingAddressLine1        String?        @map("billing_address_line1")
-  billingAddressLine2        String?        @map("billing_address_line2")
-  billingCity                String?        @map("billing_city")
-  billingState               String?        @map("billing_state")
-  billingPincode             String?        @map("billing_pincode")
-  shippingAddressLine1       String?        @map("shipping_address_line1")
-  shippingAddressLine2       String?        @map("shipping_address_line2")
-  shippingCity               String?        @map("shipping_city")
-  shippingState              String?        @map("shipping_state")
-  shippingPincode            String?        @map("shipping_pincode")
-  creditPeriodDays           Int            @default(30) @map("credit_period_days")
+  id                          String         @id @default(uuid()) @map("customer_id")
+  distributorId               String         @map("distributor_id")
+  customerName                String         @map("customer_name")
+  businessName                String?        @map("business_name")
+  gstin                       String?
+  customerType                String         @default("B2C") @map("customer_type") // B2B or B2C
+  phone                       String
+  email                       String?
+  billingAddressLine1         String?        @map("billing_address_line1")
+  billingAddressLine2         String?        @map("billing_address_line2")
+  billingCity                 String?        @map("billing_city")
+  billingState                String?        @map("billing_state")
+  billingPincode              String?        @map("billing_pincode")
+  shippingAddressLine1        String?        @map("shipping_address_line1")
+  shippingAddressLine2        String?        @map("shipping_address_line2")
+  shippingCity                String?        @map("shipping_city")
+  shippingState               String?        @map("shipping_state")
+  shippingPincode             String?        @map("shipping_pincode")
+  creditPeriodDays            Int            @default(30) @map("credit_period_days")
   // Optional per-customer inward transportation charge (₹ per delivered
   // cylinder, GST-inclusive — same basis as cylinder rates). 0 = no charge.
-  transportChargePerCylinder Decimal        @default(0) @map("transport_charge_per_cylinder") @db.Decimal(18, 4)
+  transportChargePerCylinder  Decimal        @default(0) @map("transport_charge_per_cylinder") @db.Decimal(18, 4)
   // GST rate (percent) applied to this customer's invoice lines. Null = use
   // platform default 18%. Only values in ALLOWED_GST_RATES (5 | 18) are
   // accepted at the API boundary. Customer-eligibility model (not cylinder-
@@ -1154,9 +1410,9 @@ model Customer {
   // 18%. Threaded into createInvoiceFromOrder + createManualInvoice. PDF /
   // IRN / EWB read InvoiceItem.gstRate (per-line snapshot) so historic
   // invoices keep their original rate when this field is changed later.
-  gstRateOverride            Float?         @map("gst_rate_override")
-  status                     CustomerStatus @default(active)
-  stopSupply                 Boolean        @default(false) @map("stop_supply")
+  gstRateOverride             Float?         @map("gst_rate_override")
+  status                      CustomerStatus @default(active)
+  stopSupply                  Boolean        @default(false) @map("stop_supply")
   // Proof-of-collection Phase 1 (2026-07-15): when true, the driver's
   // confirm-delivery flow requires capturing a proof (signature/photo/OTP
   // per phase rollout) before the order can be marked delivered. When
@@ -1164,8 +1420,8 @@ model Customer {
   // customer toggle; typically set for B2B customers with statutory
   // delivery-record needs. Consumed by driver mobile UI, DeliveryProof
   // upsert route, and invoice PDF drawProofSection.
-  requireDeliveryVerification Boolean       @default(false) @map("require_delivery_verification")
-  preferredDriverId          String?        @map("preferred_driver_id")
+  requireDeliveryVerification Boolean        @default(false) @map("require_delivery_verification")
+  preferredDriverId           String?        @map("preferred_driver_id")
   /// 2026-07-21 opening-state seed: timestamp of when this customer's
   /// starting ledger state was seeded (allowed cylinder types +
   /// opening empties + ₹ opening balance). Nullable — never seeded
@@ -1173,14 +1429,14 @@ model Customer {
   /// ran the seed step. Set atomically inside the seed transaction;
   /// used as a one-way idempotency guard on the Edit-Customer "seed
   /// opening state" path so double-seeding is impossible.
-  openingStateSeededAt       DateTime?      @map("opening_state_seeded_at")
+  openingStateSeededAt        DateTime?      @map("opening_state_seeded_at")
   /// 2026-07-23 Mini-op order-level pricing toggle. When true, the
   /// order-creation modal renders an editable Rate ₹ input per line
   /// (defaulted to catalog price). Persisted per-line as
   /// OrderItem.unitPriceOverride. Only editable when
   /// distributor.accountType='mini_operator'; distributor tenants
   /// stay at false and see no UI change.
-  orderLevelPricingEnabled   Boolean        @default(false) @map("order_level_pricing_enabled")
+  orderLevelPricingEnabled    Boolean        @default(false) @map("order_level_pricing_enabled")
   /// 2026-07-23 Mini-op delivered-cancel: on-account credit balance.
   /// Populated when a delivered invoice is cancelled AND the operator
   /// converts the already-applied payment to a customer credit rather
@@ -1191,10 +1447,10 @@ model Customer {
   /// Distributor customers stay at 0 (no code path writes this field
   /// for accountType='distributor' — the delivered-cancel path is
   /// gated to accountType='mini_operator').
-  onAccountBalance           Decimal        @default(0) @map("on_account_balance") @db.Decimal(12, 2)
-  createdAt                  DateTime       @default(now()) @map("created_at")
-  updatedAt                  DateTime       @updatedAt @map("updated_at")
-  deletedAt                  DateTime?      @map("deleted_at")
+  onAccountBalance            Decimal        @default(0) @map("on_account_balance") @db.Decimal(12, 2)
+  createdAt                   DateTime       @default(now()) @map("created_at")
+  updatedAt                   DateTime       @updatedAt @map("updated_at")
+  deletedAt                   DateTime?      @map("deleted_at")
 
   // Relations
   distributor          Distributor                   @relation(fields: [distributorId], references: [id])
@@ -1228,6 +1484,8 @@ model Customer {
   // sub-group hierarchies.
   groupMemberships     CustomerGroupMember[]
   quotations           Quotation[]
+  // F1 (2026-08-06)
+  defectiveReturns     DefectiveCylinderLedger[]
 
   @@index([distributorId, status])
   @@index([distributorId, customerName])
@@ -1264,15 +1522,15 @@ model CustomerGroup {
 // record) — the row simply goes away when the office removes the
 // member from the group.
 model CustomerGroupMember {
-  id         String   @id @default(uuid())
-  groupId    String   @map("group_id")
-  customerId String   @map("customer_id")
-  addedAt    DateTime @default(now()) @map("added_at")
+  id          String   @id @default(uuid())
+  groupId     String   @map("group_id")
+  customerId  String   @map("customer_id")
+  addedAt     DateTime @default(now()) @map("added_at")
   /// Optional short alias shown in place of customer.customerName on
   /// every HQ portal surface (ledger Property column, property picker,
   /// payments/orders/invoices/aging/profile). Nullable — falls back to
   /// customer.customerName. Never mutates the underlying customer.
-  displayName String? @map("display_name") @db.VarChar(80)
+  displayName String?  @map("display_name") @db.VarChar(80)
 
   group    CustomerGroup @relation(fields: [groupId], references: [id])
   customer Customer      @relation(fields: [customerId], references: [id])
@@ -1295,7 +1553,7 @@ model CustomerContact {
   // contact. 0-or-more — a single contact could theoretically anchor
   // multiple HQ logins if their credentials rotate, though the common
   // case is 1. Reverse of User.sourceContact.
-  hqLogins    User[]  @relation("HqSourceContact")
+  hqLogins User[]   @relation("HqSourceContact")
 
   @@map("customer_contacts")
 }
@@ -1397,24 +1655,24 @@ model CustomerAuditTrail {
 }
 
 model CustomerLedgerEntry {
-  id            String          @id @default(uuid())
-  distributorId String          @map("distributor_id")
-  customerId    String          @map("customer_id")
-  entryType     LedgerEntryType @map("entry_type")
-  referenceId   String          @map("reference_id")
-  invoiceId     String?         @map("invoice_id")
-  amountDelta   Decimal         @map("amount_delta") @db.Decimal(18, 4)
-  narration     String?
-  entryDate     DateTime        @map("entry_date") @db.Date
-  createdBy     String?         @map("created_by")
-  createdAt     DateTime        @default(now()) @map("created_at")
+  id             String          @id @default(uuid())
+  distributorId  String          @map("distributor_id")
+  customerId     String          @map("customer_id")
+  entryType      LedgerEntryType @map("entry_type")
+  referenceId    String          @map("reference_id")
+  invoiceId      String?         @map("invoice_id")
+  amountDelta    Decimal         @map("amount_delta") @db.Decimal(18, 4)
+  narration      String?
+  entryDate      DateTime        @map("entry_date") @db.Date
+  createdBy      String?         @map("created_by")
+  createdAt      DateTime        @default(now()) @map("created_at")
   // Deposit ledger (2026-07-31): optional per-cylinder-type attribution.
   // Populated only on entryType='deposit_charged'/'deposit_refunded'
   // rows (drives the "Dep Given" column + per-type breakdown display)
   // and empties_return rows (already used by the ledger renderer). NULL
   // on invoice/payment/credit_note/debit_note/adjustment rows.
-  cylinderTypeId String?      @map("cylinder_type_id")
-  qtyDelta       Int?         @map("qty_delta")
+  cylinderTypeId String?         @map("cylinder_type_id")
+  qtyDelta       Int?            @map("qty_delta")
   // Change L v2 (2026-07-31): sequential voucher number allocated via
   // numberingService.allocateNumber('V', ...). Populated ONLY on
   // deposit_charged / deposit_refunded rows when the distributor has a
@@ -1422,7 +1680,7 @@ model CustomerLedgerEntry {
   // Unique per distributor (a leaked cross-tenant number would misroute
   // proof-of-deposit customer disputes). Legacy rows and rows for
   // no-docCode tenants fall back to `DEP-<uuid-prefix>` at render time.
-  voucherNumber  String?      @map("voucher_number")
+  voucherNumber  String?         @map("voucher_number")
 
   customer     Customer      @relation(fields: [customerId], references: [id])
   cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id])
@@ -1451,36 +1709,38 @@ model CylinderType {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  distributor          Distributor                  @relation(fields: [distributorId], references: [id])
-  providerCatalog      ProviderCatalogCylinderType? @relation(fields: [providerCatalogId], references: [id])
-  prices               CylinderPrice[]
-  emptyPrices          EmptyCylinderPrice[]
-  discounts            CustomerCylinderDiscount[]
-  orderItems           OrderItem[]
-  invoiceItems         InvoiceItem[]
-  inventoryEvents      InventoryEvent[]
-  inventorySummaries   InventorySummary[]
-  customerBalances     CustomerInventoryBalance[]
-  thresholds           CylinderThreshold[]
-  ledgerEntries        CustomerLedgerEntry[]
-  cancelledStocks      CancelledStockEvent[]
-  accountabilityLogs   AccountabilityLog[]
-  stockMismatchRecords StockMismatchRecord[]
+  distributor           Distributor                     @relation(fields: [distributorId], references: [id])
+  providerCatalog       ProviderCatalogCylinderType?    @relation(fields: [providerCatalogId], references: [id])
+  prices                CylinderPrice[]
+  emptyPrices           EmptyCylinderPrice[]
+  discounts             CustomerCylinderDiscount[]
+  orderItems            OrderItem[]
+  invoiceItems          InvoiceItem[]
+  inventoryEvents       InventoryEvent[]
+  inventorySummaries    InventorySummary[]
+  customerBalances      CustomerInventoryBalance[]
+  thresholds            CylinderThreshold[]
+  ledgerEntries         CustomerLedgerEntry[]
+  cancelledStocks       CancelledStockEvent[]
+  accountabilityLogs    AccountabilityLog[]
+  stockMismatchRecords  StockMismatchRecord[]
   // FLOAT-001 (2026-06-17): manifest rows recording per-trip loaded qty of this type.
-  dvaLoadManifests     DVALoadManifest[]
+  dvaLoadManifests      DVALoadManifest[]
   // Mini-Operator (2026-07-16): purchase-entry line items by cylinder type.
-  purchaseEntryItems   PurchaseEntryItem[]
+  purchaseEntryItems    PurchaseEntryItem[]
   /// 2026-07-21 opening-state seed: reverse of the per-customer
   /// preference table. Reads at RESTRICT delete-cylinder-type surface
   /// which customers are actively using this type.
-  allowedForCustomers  CustomerAllowedCylinderType[]
+  allowedForCustomers   CustomerAllowedCylinderType[]
   /// 2026-07-23 supplier opening empties — reverse of
   /// SourceDistributorEmptyOpening. Same RESTRICT-delete rationale.
   supplierEmptyOpenings SourceDistributorEmptyOpening[]
   /// Mini-op #7 (2026-07-27) — quotation line items may reference this
   /// cylinder type. onDelete: SetNull on the quotation_items side so
   /// deleting a type doesn't hard-error historical quotes.
-  quotationItems       QuotationItem[]
+  quotationItems        QuotationItem[]
+  // F1 (2026-08-06)
+  defectiveReturns      DefectiveCylinderLedger[]
 
   @@unique([distributorId, typeName])
   @@index([providerCatalogId])
@@ -1651,14 +1911,14 @@ model Order {
 }
 
 model OrderItem {
-  id                String  @id @default(uuid()) @map("order_item_id")
-  orderId           String  @map("order_id")
-  cylinderTypeId    String  @map("cylinder_type_id")
+  id                String   @id @default(uuid()) @map("order_item_id")
+  orderId           String   @map("order_id")
+  cylinderTypeId    String   @map("cylinder_type_id")
   quantity          Int
-  deliveredQuantity Int?    @map("delivered_quantity")
-  emptiesCollected  Int?    @map("empties_collected")
-  unitPrice         Decimal @map("unit_price") @db.Decimal(18, 4)
-  discountPerUnit   Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
+  deliveredQuantity Int?     @map("delivered_quantity")
+  emptiesCollected  Int?     @map("empties_collected")
+  unitPrice         Decimal  @map("unit_price") @db.Decimal(18, 4)
+  discountPerUnit   Decimal  @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
   /// 2026-07-23 Mini-op order-level pricing. Nullable. When present,
   /// supersedes (unitPrice − discountPerUnit) at delivery/invoice
   /// time. Only written when customer.orderLevelPricingEnabled=true
@@ -1667,7 +1927,7 @@ model OrderItem {
   /// Precedence:
   ///    effective = unitPriceOverride ?? (unitPrice − discountPerUnit)
   unitPriceOverride Decimal? @map("unit_price_override") @db.Decimal(18, 4)
-  totalPrice        Decimal @map("total_price") @db.Decimal(18, 4)
+  totalPrice        Decimal  @map("total_price") @db.Decimal(18, 4)
 
   order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
   cylinderType CylinderType @relation(fields: [cylinderTypeId], references: [id])
@@ -1766,7 +2026,7 @@ model Driver {
   cancelledStockEvents CancelledStockEvent[]
   stockMismatchRecords StockMismatchRecord[]
   // WI-PENDING-PAYMENTS: payment claims this driver submitted (cash/UPI collected at delivery).
-  paymentSubmissions   PaymentSubmission[]   @relation("SubmittedByDriver")
+  paymentSubmissions   PaymentSubmission[]       @relation("SubmittedByDriver")
   // Mini-op #5 (2026-07-27) — expenses attributed to this driver (salary,
   // reimbursements, etc). ON DELETE SET NULL on the Expense side.
   expenses             Expense[]
@@ -1798,6 +2058,8 @@ model Vehicle {
   // Mini-op #5 (2026-07-27) — expenses attributed to this vehicle
   // (fuel, maintenance). ON DELETE SET NULL on the Expense side.
   expenses             Expense[]
+  // F1 (2026-08-06)
+  defectiveBatches     DefectiveReturnBatch[]
 
   @@unique([distributorId, vehicleNumber])
   @@map("vehicles")
@@ -2047,6 +2309,10 @@ model Invoice {
   debitNotes         DebitNote[]
   gstDocuments       GstDocument[]
   revisions          InvoiceRevision[]
+  // F1 (2026-08-06) — DefectiveCylinderLedger rows whose sourceInvoice is
+  // this invoice. Named relation avoids ambiguity with any future direct
+  // relation between Invoice and DefectiveCylinderLedger.
+  defectiveReturns   DefectiveCylinderLedger[] @relation("DefectiveSource")
 
   @@index([distributorId, status, dueDate])
   @@index([distributorId, customerId, createdAt(sort: Desc)])
@@ -2080,16 +2346,16 @@ model InvoiceRevision {
 }
 
 model InvoiceItem {
-  id              String  @id @default(uuid()) @map("invoice_item_id")
-  invoiceId       String  @map("invoice_id")
-  cylinderTypeId  String? @map("cylinder_type_id")
+  id              String   @id @default(uuid()) @map("invoice_item_id")
+  invoiceId       String   @map("invoice_id")
+  cylinderTypeId  String?  @map("cylinder_type_id")
   description     String
-  hsnCode         String  @default("27111900") @map("hsn_code")
+  hsnCode         String   @default("27111900") @map("hsn_code")
   quantity        Int
-  unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
-  discountPerUnit Decimal @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
-  gstRate         Float   @default(18) @map("gst_rate")
-  totalPrice      Decimal @map("total_price") @db.Decimal(18, 4)
+  unitPrice       Decimal  @map("unit_price") @db.Decimal(18, 4)
+  discountPerUnit Decimal  @default(0) @map("discount_per_unit") @db.Decimal(18, 4)
+  gstRate         Float    @default(18) @map("gst_rate")
+  totalPrice      Decimal  @map("total_price") @db.Decimal(18, 4)
   // Phase 5 (2026-06-12): GSTR-1 HSN summary (Table 12) inputs. Nullable
   // on historical rows; populated at write time on every new item via
   // invoiceService. taxableValue is the per-line assessable amount;
@@ -2098,7 +2364,7 @@ model InvoiceItem {
   // which is NOT the correct GSTR-1 UQC for the LINE, just for the
   // product spec.
   taxableValue    Decimal? @map("taxable_value") @db.Decimal(18, 4)
-  uom             String  @default("NOS") @map("uom")
+  uom             String   @default("NOS") @map("uom")
 
   invoice      Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   cylinderType CylinderType? @relation(fields: [cylinderTypeId], references: [id])
@@ -2138,7 +2404,11 @@ model CreditNote {
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
 
-  invoice Invoice @relation(fields: [invoiceId], references: [id])
+  invoice           Invoice                   @relation(fields: [invoiceId], references: [id])
+  // F1 (2026-08-06): back-relation for DefectiveCylinderLedger rows that
+  // were compensated by this CN. N-to-1: many DR rows can share one CN when
+  // captured in the same session against the same source invoice.
+  defectiveReturns  DefectiveCylinderLedger[]
 
   @@map("credit_notes")
 }
@@ -2167,26 +2437,26 @@ model DebitNote {
 // ─── Payments ────────────────────────────────────────────────────────────────
 
 model PaymentTransaction {
-  id               String                  @id @default(uuid()) @map("payment_id")
-  distributorId    String                  @map("distributor_id")
-  customerId       String                  @map("customer_id")
-  amount           Decimal                 @db.Decimal(18, 4)
-  paymentMethod    PaymentMethod           @map("payment_method")
-  referenceNumber  String?                 @map("reference_number")
-  transactionDate  DateTime                @map("transaction_date") @db.Date
-  allocationStatus PaymentAllocationStatus @default(unallocated) @map("allocation_status")
-  receivedBy       String?                 @map("received_by")
-  notes            String?
+  id                String                  @id @default(uuid()) @map("payment_id")
+  distributorId     String                  @map("distributor_id")
+  customerId        String                  @map("customer_id")
+  amount            Decimal                 @db.Decimal(18, 4)
+  paymentMethod     PaymentMethod           @map("payment_method")
+  referenceNumber   String?                 @map("reference_number")
+  transactionDate   DateTime                @map("transaction_date") @db.Date
+  allocationStatus  PaymentAllocationStatus @default(unallocated) @map("allocation_status")
+  receivedBy        String?                 @map("received_by")
+  notes             String?
   // Phase F (2026-06-12): forensic Razorpay fields when this payment
   // came from the customer-portal Pay Now flow. NULL on manually
   // recorded payments. razorpaySignature stored for audit / dispute
   // investigation, NEVER returned in any API response.
-  razorpayOrderId   String?                @map("razorpay_order_id")
-  razorpayPaymentId String?                @map("razorpay_payment_id")
-  razorpaySignature String?                @map("razorpay_signature")
-  createdAt        DateTime                @default(now()) @map("created_at")
-  updatedAt        DateTime                @updatedAt @map("updated_at")
-  deletedAt        DateTime?               @map("deleted_at")
+  razorpayOrderId   String?                 @map("razorpay_order_id")
+  razorpayPaymentId String?                 @map("razorpay_payment_id")
+  razorpaySignature String?                 @map("razorpay_signature")
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+  deletedAt         DateTime?               @map("deleted_at")
 
   distributor Distributor         @relation(fields: [distributorId], references: [id])
   customer    Customer            @relation(fields: [customerId], references: [id])
@@ -2235,7 +2505,7 @@ model PaymentSubmission {
   customerId          String                  @map("customer_id")
   amount              Decimal                 @db.Decimal(18, 4)
   paymentMethod       PaymentMethod           @map("payment_method")
-  transactionDate     DateTime                @db.Date @map("transaction_date")
+  transactionDate     DateTime                @map("transaction_date") @db.Date
   referenceNumber     String?                 @map("reference_number")
   notes               String?
   attachmentUrl       String?                 @map("attachment_url")
@@ -2332,6 +2602,15 @@ model InventorySummary {
   manualAdjustment        Int       @default(0) @map("manual_adjustment")
   closingFulls            Int       @default(0) @map("closing_fulls")
   closingEmpties          Int       @default(0) @map("closing_empties")
+  // F1 (2026-08-06) — parallel bucket for defective full cylinders. Feeds
+  // from `defective_return_from_customer` (in) and `defective_return_to_corporation`
+  // (out) InventoryEvent types. DOES NOT participate in the closingFulls
+  // formula (WI-106 flag-critical is byte-for-byte preserved).
+  //   closingDefectiveFulls = prior day's closingDefectiveFulls
+  //                         + defectiveFullsIn - defectiveFullsOut
+  defectiveFullsIn        Int       @default(0) @map("defective_fulls_in")
+  defectiveFullsOut       Int       @default(0) @map("defective_fulls_out")
+  closingDefectiveFulls   Int       @default(0) @map("closing_defective_fulls")
   isLocked                Boolean   @default(false) @map("is_locked")
   lockedAt                DateTime? @map("locked_at")
   lockedBy                String?   @map("locked_by")
@@ -2373,6 +2652,109 @@ model CancelledStockEvent {
   @@index([vehicleId, status])
   @@index([driverId, status])
   @@map("cancelled_stock_events")
+}
+
+// ─── F1 Defective Returns (2026-08-06) ───────────────────────────────────────
+// See docs/F1-DEFECTIVE-RETURNS-DESIGN.md for the full functional spec.
+// TL;DR: office captures defective full cylinders picked up from a customer
+// (Suneel spec) → row lands here at status='collected' → office reviews
+// updated ledger → clicks Raise CN → status='cn_issued' + creditNoteId set →
+// row sits in depot's `closingDefectiveFulls` bucket until office ships to
+// corp via DefectiveReturnBatch → status='sent_to_corporation' + batchId set
+// → office marks corp credit received → status='corporation_credit_received'.
+
+enum DefectiveReturnStatus {
+  collected                    @map("collected")
+  cn_issued                    @map("cn_issued")
+  sent_to_corporation          @map("sent_to_corporation")
+  corporation_credit_received  @map("corporation_credit_received")
+  cancelled                    @map("cancelled")
+}
+
+model DefectiveCylinderLedger {
+  id                    String                @id @default(uuid()) @map("defective_id")
+  distributorId         String                @map("distributor_id")
+  customerId            String                @map("customer_id")
+  cylinderTypeId        String                @map("cylinder_type_id")
+  quantity              Int
+  // Source invoice + line — mandatory (Q4 answer). One DR row = one source
+  // invoice line. Multiple lines from the same invoice = multiple DR rows
+  // sharing a captureSessionId if we ever need to group them.
+  sourceInvoiceId       String                @map("source_invoice_id")
+  sourceInvoiceItemId   String?               @map("source_invoice_item_id")
+  // Per-cyl rate as-billed = invoiceItem.totalPrice / invoiceItem.quantity
+  // (post-discount inclusive, per anti-pattern #16 refinement — guarantees
+  // qty × perCylRate matches what the customer paid on their statement).
+  perCylRate            Decimal               @map("per_cyl_rate") @db.Decimal(12, 2)
+  cnAmount              Decimal               @map("cn_amount") @db.Decimal(12, 2)
+  reason                String?
+  notes                 String?
+  status                DefectiveReturnStatus @default(collected)
+  // N DR rows CAN share one CreditNote (many-to-one). NOT unique.
+  creditNoteId          String?               @map("credit_note_id")
+  batchId               String?               @map("batch_id")
+  collectedAt           DateTime              @default(now()) @map("collected_at")
+  collectedDate         DateTime              @map("collected_date") @db.Date
+  collectedBy           String                @map("collected_by")
+  cnRaisedAt            DateTime?             @map("cn_raised_at")
+  cnRaisedBy            String?               @map("cn_raised_by")
+  cancelledAt           DateTime?             @map("cancelled_at")
+  cancelledBy           String?               @map("cancelled_by")
+  cancelReason          String?               @map("cancel_reason")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+
+  distributor   Distributor           @relation(fields: [distributorId], references: [id])
+  customer      Customer              @relation(fields: [customerId], references: [id])
+  cylinderType  CylinderType          @relation(fields: [cylinderTypeId], references: [id])
+  sourceInvoice Invoice               @relation("DefectiveSource", fields: [sourceInvoiceId], references: [id])
+  creditNote    CreditNote?           @relation(fields: [creditNoteId], references: [id])
+  batch         DefectiveReturnBatch? @relation(fields: [batchId], references: [id])
+
+  @@index([distributorId, status])
+  @@index([distributorId, customerId, collectedAt])
+  @@index([distributorId, batchId])
+  @@index([distributorId, cylinderTypeId, status])
+  @@index([sourceInvoiceId])
+  @@map("defective_cylinder_ledger")
+}
+
+model DefectiveReturnBatch {
+  id                    String    @id @default(uuid()) @map("batch_id")
+  distributorId         String    @map("distributor_id")
+  // 'F' prefix via numberingService.allocateNumber (added to VALID_TYPES).
+  // Format: F<3-char docCode><4-char FY><6-digit seq>, e.g. FSHD2627000001.
+  batchNumber           String    @unique @map("batch_number")
+  // Corporation identity — dual field pattern (Suneel guidance 2026-08-06):
+  //   - `sourceDistributorId` is the OPTIONAL FK to SourceDistributor,
+  //     forward-compat with F8 corp-purchases. On F8 landing this becomes
+  //     mandatory and a backfill sweep upserts historical rows to a FK.
+  //   - `corporationName` is the denormalised snapshot of the corp name at
+  //     write time. Mirrors the PurchaseEntry.sourceDistributorName pattern
+  //     so historical rows survive rename/soft-delete of the parent FK row.
+  // See docs/F1-DEFECTIVE-RETURNS-DESIGN.md § Corporation identity.
+  sourceDistributorId   String?   @map("source_distributor_id")
+  corporationName       String    @map("corporation_name")
+  vehicleId             String?   @map("vehicle_id")
+  challanNumber         String?   @map("challan_number")
+  challanDate           DateTime? @map("challan_date") @db.Date
+  totalQuantity         Int       @default(0) @map("total_quantity")
+  status                String    @default("sent")
+  corpCreditAmount      Decimal?  @map("corp_credit_amount") @db.Decimal(12, 2)
+  corpCreditReceivedAt  DateTime? @map("corp_credit_received_at")
+  notes                 String?
+  createdBy             String    @map("created_by")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  distributor       Distributor              @relation(fields: [distributorId], references: [id])
+  vehicle           Vehicle?                 @relation(fields: [vehicleId], references: [id])
+  sourceDistributor SourceDistributor?       @relation(fields: [sourceDistributorId], references: [id])
+  items             DefectiveCylinderLedger[]
+
+  @@index([distributorId, createdAt])
+  @@index([distributorId, sourceDistributorId])
+  @@map("defective_return_batches")
 }
 
 // ─── GST Documents ───────────────────────────────────────────────────────────
@@ -2449,19 +2831,19 @@ model GstCredential {
 // ─── GasLink SaaS Billing ────────────────────────────────────────────────────
 
 model BillingCycle {
-  id                 String            @id @default(uuid()) @map("cycle_id")
-  distributorId      String            @map("distributor_id")
-  periodType         BillingPeriodType @map("period_type")
-  periodStartDate    DateTime          @map("period_start_date") @db.Date
-  periodEndDate      DateTime          @map("period_end_date") @db.Date
-  billingStatus      BillingStatus     @default(pending_generation) @map("billing_status")
-  billingTier        BillingTier       @map("billing_tier")
-  totalAmountExclGst Decimal           @default(0) @map("total_amount_excl_gst") @db.Decimal(18, 4)
-  totalGstAmount     Decimal           @default(0) @map("total_gst_amount") @db.Decimal(18, 4)
-  totalAmountInclGst Decimal           @default(0) @map("total_amount_incl_gst") @db.Decimal(18, 4)
-  invoiceId          String?           @map("invoice_id")
-  invoiceNumber      String?           @unique @map("invoice_number")
-  invoiceDate        DateTime?         @map("invoice_date") @db.Date
+  id                  String            @id @default(uuid()) @map("cycle_id")
+  distributorId       String            @map("distributor_id")
+  periodType          BillingPeriodType @map("period_type")
+  periodStartDate     DateTime          @map("period_start_date") @db.Date
+  periodEndDate       DateTime          @map("period_end_date") @db.Date
+  billingStatus       BillingStatus     @default(pending_generation) @map("billing_status")
+  billingTier         BillingTier       @map("billing_tier")
+  totalAmountExclGst  Decimal           @default(0) @map("total_amount_excl_gst") @db.Decimal(18, 4)
+  totalGstAmount      Decimal           @default(0) @map("total_gst_amount") @db.Decimal(18, 4)
+  totalAmountInclGst  Decimal           @default(0) @map("total_amount_incl_gst") @db.Decimal(18, 4)
+  invoiceId           String?           @map("invoice_id")
+  invoiceNumber       String?           @unique @map("invoice_number")
+  invoiceDate         DateTime?         @map("invoice_date") @db.Date
   // Razorpay hosted payment link URL that super-admin pastes into the
   // Send Invoice modal. Persisted per-cycle so re-sends reuse the same
   // link without re-entry. Rendered as a pay-now button/link in the
@@ -2471,9 +2853,9 @@ model BillingCycle {
   // razorpayOrderId/razorpayPaymentId columns which track the Phase-E
   // programmatic Razorpay integration (Pay Now button on the tenant's
   // Subscription tab); the two are complementary but independent.
-  razorpayPaymentLink String?          @map("razorpay_payment_link")
-  dueDate            DateTime?         @map("due_date") @db.Date
-  suspendDate        DateTime?         @map("suspend_date") @db.Date
+  razorpayPaymentLink String?           @map("razorpay_payment_link")
+  dueDate             DateTime?         @map("due_date") @db.Date
+  suspendDate         DateTime?         @map("suspend_date") @db.Date
   // Phase E (2026-06-12): Razorpay subscription payments. Populated when
   // the distributor pays via the Subscription tab "Pay Now" button.
   // razorpayOrderId is set at create-payment-order time; the rest land
@@ -2483,13 +2865,13 @@ model BillingCycle {
   // API response); paid_at is wall-clock capture time, NOT due_date;
   // payment_method is Razorpay's classification (`upi` | `card` |
   // `netbanking` | `wallet` | `emi`).
-  razorpayOrderId    String?           @map("razorpay_order_id")
-  razorpayPaymentId  String?           @map("razorpay_payment_id")
-  razorpaySignature  String?           @map("razorpay_signature")
-  paidAt             DateTime?         @map("paid_at")
-  paymentMethod      String?           @map("payment_method")
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
+  razorpayOrderId     String?           @map("razorpay_order_id")
+  razorpayPaymentId   String?           @map("razorpay_payment_id")
+  razorpaySignature   String?           @map("razorpay_signature")
+  paidAt              DateTime?         @map("paid_at")
+  paymentMethod       String?           @map("payment_method")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
 
   distributor Distributor   @relation(fields: [distributorId], references: [id])
   items       BillingItem[]
@@ -2526,36 +2908,36 @@ model BillingItem {
 // ─── Pricing Configuration ──────────────────────────────────────────────────
 
 model PricingTier {
-  id                   String           @id @default(uuid()) @map("tier_id")
-  plan                 SubscriptionPlan
-  volumeMin            Int              @map("volume_min")
-  volumeMax            Int?             @map("volume_max")
-  monthlyPrice         Decimal          @map("monthly_price") @db.Decimal(18, 4)
-  quarterlyDiscount    Float            @default(5) @map("quarterly_discount")
-  halfYearlyDiscount   Float            @default(10) @map("half_yearly_discount")
-  yearlyDiscount       Float            @default(15) @map("yearly_discount")
-  adminSeats           Int              @default(1) @map("admin_seats")
-  financeSeats         Int              @default(1) @map("finance_seats")
-  inventorySeats       Int              @default(1) @map("inventory_seats")
-  driverSeats          Int              @default(5) @map("driver_seats")
-  gstApiCallsIncluded  Int              @default(1500) @map("gst_api_calls_included")
-  extraSeatPriceAdmin  Decimal          @default(999) @map("extra_seat_price_admin") @db.Decimal(18, 4)
-  extraSeatPriceDriver Decimal          @default(299) @map("extra_seat_price_driver") @db.Decimal(18, 4)
+  id                      String           @id @default(uuid()) @map("tier_id")
+  plan                    SubscriptionPlan
+  volumeMin               Int              @map("volume_min")
+  volumeMax               Int?             @map("volume_max")
+  monthlyPrice            Decimal          @map("monthly_price") @db.Decimal(18, 4)
+  quarterlyDiscount       Float            @default(5) @map("quarterly_discount")
+  halfYearlyDiscount      Float            @default(10) @map("half_yearly_discount")
+  yearlyDiscount          Float            @default(15) @map("yearly_discount")
+  adminSeats              Int              @default(1) @map("admin_seats")
+  financeSeats            Int              @default(1) @map("finance_seats")
+  inventorySeats          Int              @default(1) @map("inventory_seats")
+  driverSeats             Int              @default(5) @map("driver_seats")
+  gstApiCallsIncluded     Int              @default(1500) @map("gst_api_calls_included")
+  extraSeatPriceAdmin     Decimal          @default(999) @map("extra_seat_price_admin") @db.Decimal(18, 4)
+  extraSeatPriceDriver    Decimal          @default(299) @map("extra_seat_price_driver") @db.Decimal(18, 4)
   // Phase 4a (2026-06-12): per-role addon pricing. Old schema priced every
   // overage seat at extraSeatPriceAdmin regardless of role — finance and
   // inventory teams got over-billed when seatRequestService routed through
   // that single column (Phase 4b fixes the service, this adds the columns).
-  extraSeatPriceFinance   Decimal       @default(499) @map("extra_seat_price_finance") @db.Decimal(18, 4)
-  extraSeatPriceInventory Decimal       @default(499) @map("extra_seat_price_inventory") @db.Decimal(18, 4)
-  extraSeatPriceCustomer  Decimal       @default(249) @map("extra_seat_price_customer") @db.Decimal(18, 4)
+  extraSeatPriceFinance   Decimal          @default(499) @map("extra_seat_price_finance") @db.Decimal(18, 4)
+  extraSeatPriceInventory Decimal          @default(499) @map("extra_seat_price_inventory") @db.Decimal(18, 4)
+  extraSeatPriceCustomer  Decimal          @default(249) @map("extra_seat_price_customer") @db.Decimal(18, 4)
   // Phase 4a: how many customer-portal logins each plan includes for free
   // before extraSeatPriceCustomer starts charging.
-  freeCustomerLogins      Int           @default(5) @map("free_customer_logins")
-  customerPortalPrice  Decimal          @default(49) @map("customer_portal_price") @db.Decimal(18, 4)
-  gstApiOveragePrice   Decimal          @default(2) @map("gst_api_overage_price") @db.Decimal(18, 4)
-  isActive             Boolean          @default(true) @map("is_active")
-  createdAt            DateTime         @default(now()) @map("created_at")
-  updatedAt            DateTime         @updatedAt @map("updated_at")
+  freeCustomerLogins      Int              @default(5) @map("free_customer_logins")
+  customerPortalPrice     Decimal          @default(49) @map("customer_portal_price") @db.Decimal(18, 4)
+  gstApiOveragePrice      Decimal          @default(2) @map("gst_api_overage_price") @db.Decimal(18, 4)
+  isActive                Boolean          @default(true) @map("is_active")
+  createdAt               DateTime         @default(now()) @map("created_at")
+  updatedAt               DateTime         @updatedAt @map("updated_at")
 
   @@unique([plan])
   @@map("pricing_tiers")
@@ -2725,6 +3107,58 @@ model AccountabilityLog {
   @@map("accountability_logs")
 }
 
+// ─── Report Builder (Phase 2 · 2026-08-05) ──────────────────────────────
+//
+// SavedReport: a user-defined query spec stored per-tenant, with a
+// visibility flag deciding whether other tenant users can see + run it.
+// The `spec` JSONB is validated server-side against a zod schema on
+// every save + run; the executor NEVER string-concats SQL.
+model SavedReport {
+  id            String    @id @default(uuid()) @map("saved_report_id")
+  distributorId String    @map("distributor_id")
+  ownerId       String    @map("owner_id")
+  name          String
+  description   String?
+  /// One of the allowlisted models — 'Order' | 'Invoice' |
+  /// 'PaymentTransaction' | 'CustomerLedgerEntry' | 'Expense' |
+  /// 'PurchaseEntry'. Enforced at write time.
+  model         String
+  /// The `ReportBuilderSpec` JSON — validated by zod on write + read.
+  spec          Json
+  /// 'private' = only owner sees it; 'distributor' = every user in
+  /// this tenant with a matching role sees it. Role-scoped sharing
+  /// deferred to Phase 3b per V3 doc.
+  visibility    String    @default("private")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  distributor Distributor      @relation(fields: [distributorId], references: [id])
+  owner       User             @relation(fields: [ownerId], references: [id])
+  runs        SavedReportRun[]
+
+  @@index([distributorId, ownerId])
+  @@index([distributorId, visibility])
+  @@map("saved_reports")
+}
+
+/// Audit trail — one row per execution of a SavedReport. Powers
+/// analytics ("what reports do people actually run?") and lets us
+/// throttle abusive spec patterns per-user in a follow-up.
+model SavedReportRun {
+  id            String   @id @default(uuid()) @map("saved_report_run_id")
+  savedReportId String   @map("saved_report_id")
+  runBy         String   @map("run_by")
+  ranAt         DateTime @default(now()) @map("ran_at")
+  durationMs    Int      @map("duration_ms")
+  rowCount      Int      @map("row_count")
+
+  savedReport SavedReport @relation(fields: [savedReportId], references: [id], onDelete: Cascade)
+
+  @@index([savedReportId, ranAt(sort: Desc)])
+  @@map("saved_report_runs")
+}
+
 // ─── Audit & Logging ─────────────────────────────────────────────────────────
 
 model AuditLog {
@@ -2821,20 +3255,20 @@ model TallySettings {
   tallyCompanyName String? @map("tally_company_name")
 
   // Ledger names — must match the Tally Chart of Accounts exactly.
-  ledgerSales         String @default("Sales")           @map("ledger_sales")
-  ledgerCgst          String @default("Output CGST")     @map("ledger_cgst")
-  ledgerSgst          String @default("Output SGST")     @map("ledger_sgst")
-  ledgerIgst          String @default("Output IGST")     @map("ledger_igst")
-  ledgerCash          String @default("Cash")            @map("ledger_cash")
-  ledgerBank          String @default("Bank Account")    @map("ledger_bank")
-  ledgerSundryDebtors String @default("Sundry Debtors")  @map("ledger_sundry_debtors")
-  ledgerRoundOff      String @default("Round Off")       @map("ledger_round_off")
+  ledgerSales         String @default("Sales") @map("ledger_sales")
+  ledgerCgst          String @default("Output CGST") @map("ledger_cgst")
+  ledgerSgst          String @default("Output SGST") @map("ledger_sgst")
+  ledgerIgst          String @default("Output IGST") @map("ledger_igst")
+  ledgerCash          String @default("Cash") @map("ledger_cash")
+  ledgerBank          String @default("Bank Account") @map("ledger_bank")
+  ledgerSundryDebtors String @default("Sundry Debtors") @map("ledger_sundry_debtors")
+  ledgerRoundOff      String @default("Round Off") @map("ledger_round_off")
 
   // Voucher type names — must match Tally's Voucher Types screen.
-  voucherTypeSales      String @default("Sales")       @map("voucher_type_sales")
-  voucherTypeReceipt    String @default("Receipt")     @map("voucher_type_receipt")
+  voucherTypeSales      String @default("Sales") @map("voucher_type_sales")
+  voucherTypeReceipt    String @default("Receipt") @map("voucher_type_receipt")
   voucherTypeCreditNote String @default("Credit Note") @map("voucher_type_credit_note")
-  voucherTypeDebitNote  String @default("Debit Note")  @map("voucher_type_debit_note")
+  voucherTypeDebitNote  String @default("Debit Note") @map("voucher_type_debit_note")
 
   // Inventory — Tally's Unit of Measure (UOM) for cylinder stock lines.
   // Tally's stock default is "Nos"; we capitalise to "NOS" to align with
@@ -3004,8 +3438,8 @@ model EmailLog {
   id        String   @id @default(uuid()) @map("email_log_id")
   toEmail   String   @map("to_email")
   subject   String
-  type      String   // welcome | password_reset_otp | contact_form | …
-  status    String   // sent | failed | skipped
+  type      String // welcome | password_reset_otp | contact_form | …
+  status    String // sent | failed | skipped
   errorText String?  @map("error_text")
   userId    String?  @map("user_id")
   createdAt DateTime @default(now()) @map("created_at")
@@ -3021,23 +3455,23 @@ model EmailLog {
 /// status='pending' the auth middleware blocks the user from every endpoint
 /// except cancel + status + logout.
 model AccountDeletionRequest {
-  id                       String   @id @default(uuid())
-  userId                   String   @unique @map("user_id")
+  id                    String                @id @default(uuid())
+  userId                String                @unique @map("user_id")
   /// Preserved at request time so the v1.1 worker can scope its
   /// anonymization queries even after User.distributorId is nulled mid-transform.
-  distributorId            String?  @map("distributor_id")
-  requestedAt              DateTime @default(now()) @map("requested_at")
+  distributorId         String?               @map("distributor_id")
+  requestedAt           DateTime              @default(now()) @map("requested_at")
   /// requestedAt + 30 days. The v1.1 worker only acts when now() >= this.
-  scheduledCompletionAt    DateTime @map("scheduled_completion_at")
-  completedAt              DateTime? @map("completed_at")
-  cancelledAt              DateTime? @map("cancelled_at")
-  status                   AccountDeletionStatus @default(pending)
+  scheduledCompletionAt DateTime              @map("scheduled_completion_at")
+  completedAt           DateTime?             @map("completed_at")
+  cancelledAt           DateTime?             @map("cancelled_at")
+  status                AccountDeletionStatus @default(pending)
   /// Optional free-text reason captured on the confirm screen.
-  reason                   String?  @db.Text
-  requestIp                String?  @map("request_ip")
-  requestUserAgent         String?  @map("request_user_agent") @db.Text
+  reason                String?               @db.Text
+  requestIp             String?               @map("request_ip")
+  requestUserAgent      String?               @map("request_user_agent") @db.Text
 
-  user                     User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
   @@index([status, scheduledCompletionAt])
   @@index([distributorId])

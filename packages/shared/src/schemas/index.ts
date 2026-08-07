@@ -412,6 +412,13 @@ export const backdatedOrderSchema = z.object({
   driverId: uuid.optional(),
   vehicleId: uuid.optional(),
   poNumber: z.string().max(16, 'PO Number must be at most 16 characters').optional(),
+  // 2026-08-06 (Gap 1 fix) — trip number for the historical delivery.
+  // Same-day + same-driver backdated batches share a trip; operator
+  // increments to 2/3/... for additional same-day batches. Without this,
+  // Order.tripNumber stays NULL and Vehicle Ledger collapses every
+  // backdated order into the "na" trip bucket (see reportsService
+  // vehicleLedger `_tripSet.add(o.tripNumber ?? o.id)`). Defaults to 1.
+  tripNumber: z.number().int().min(1).default(1).optional(),
   // 2026-07-29 Mini-op backdated shortcut — mini-op tenants have no
   // Driver FK, so the inline delegation from orderService.createOrder
   // passes the free-text driver name through here. Regular distributor
@@ -454,6 +461,64 @@ export const emptiesReturnSchema = z.object({
 
 export type EmptiesReturnInput = z.infer<typeof emptiesReturnSchema>;
 
+// F1 (2026-08-06) — Defective Cylinder Returns.
+// Office-entered flow. Two-step: capture defectives first, then click Raise
+// CN to fire the credit note. Collected date follows the same 90-day-past
+// rule as empties-return (mirrors anti-pattern #21).
+// See docs/F1-DEFECTIVE-RETURNS-DESIGN.md for the full contract.
+export const captureDefectiveReturnSchema = z.object({
+  customerId: uuid,
+  sourceInvoiceId: uuid,
+  collectedDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD')
+    .refine((date) => date <= localTodayISO(), 'Collected date cannot be in the future')
+    .refine((date) => {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 90);
+      const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
+      return date >= cutoffStr;
+    }, 'Collected date cannot be more than 90 days ago'),
+  items: z.array(z.object({
+    cylinderTypeId: uuid,
+    quantity: z.number().int().min(1, 'Quantity must be at least 1'),
+  })).min(1, 'At least one cylinder-type row required'),
+  reason: z.string().max(200).optional(),
+  notes: z.string().max(500).optional(),
+});
+
+export type CaptureDefectiveReturnInput = z.infer<typeof captureDefectiveReturnSchema>;
+
+// Slice 3 — Raise CN. Takes N defective IDs (typically all rows from the
+// same capture session). Service asserts they share customer + source
+// invoice + status='collected'.
+export const raiseDefectiveCnSchema = z.object({
+  defectiveIds: z.array(uuid).min(1, 'At least one defective id required'),
+  reason: z.string().min(1, 'Reason required for CN').max(500),
+});
+
+export type RaiseDefectiveCnInput = z.infer<typeof raiseDefectiveCnSchema>;
+
+// Slice 5 — Send defective batch to corporation.
+export const createDefectiveBatchSchema = z.object({
+  corporationName: z.string().min(1, 'Corporation name required').max(120),
+  sourceDistributorId: uuid.optional(),  // optional FK, forward-compat with F8
+  vehicleId: uuid.optional(),
+  challanNumber: z.string().max(60).optional(),
+  challanDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD').optional(),
+  defectiveIds: z.array(uuid).min(1, 'At least one defective id required'),
+  notes: z.string().max(500).optional(),
+});
+
+export type CreateDefectiveBatchInput = z.infer<typeof createDefectiveBatchSchema>;
+
+// Cancel a captured DR row before CN is raised. After CN, use the standard
+// CN void flow instead of cancelling the DR.
+export const cancelDefectiveReturnSchema = z.object({
+  reason: z.string().min(1, 'Cancel reason required').max(500),
+});
+
+export type CancelDefectiveReturnInput = z.infer<typeof cancelDefectiveReturnSchema>;
+
 // Item 6 (2026-07-09) — backdated driver TRIP. Same-month + before-today
 // guard as the single backdated order, but the payload carries a driver +
 // vehicle and an array of customer orders — represents a driver run that
@@ -477,6 +542,11 @@ export const backdatedTripSchema = z.object({
   // the schema no longer rejects a driver-less single-customer entry.
   driverId: uuid.optional(),
   vehicleId: uuid.optional(),
+  // 2026-08-06 (Gap 1 fix) — trip number for the historical delivery.
+  // Same as backdatedOrderSchema.tripNumber but applies to every order in
+  // the batch. Defaults to 1; operator increments for additional
+  // same-day batches by the same driver.
+  tripNumber: z.number().int().min(1).default(1).optional(),
   orders: z.array(z.object({
     customerId: uuid,
     items: z.array(z.object({
@@ -653,6 +723,22 @@ export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
 
 // ─── Inventory Schemas ───────────────────────────────────────────────────────
 
+// F8 (2026-08-06) — hoisted here so incomingFullsSchema (WI-1.4, below)
+// can reference the charge-line shape. The full CN-side schemas live
+// further down at the Purchase Credit Notes block.
+export const PURCHASE_ENTRY_CHARGE_TYPES = [
+  'freight',
+  'handling',
+  'testing',
+  'insurance',
+  'other',
+] as const;
+export const purchaseEntryChargeSchema = z.object({
+  chargeType: z.enum(PURCHASE_ENTRY_CHARGE_TYPES),
+  amount: z.number().min(0),
+  notes: z.string().max(200).optional(),
+});
+
 // WI-1.4 — Incoming Fulls modal: "Supply Type" / "Supply Reference No." /
 // "Supply Date" are display labels for documentType / documentNumber /
 // documentDate (backend columns unchanged). `amount` is the optional total
@@ -668,6 +754,21 @@ export const incomingFullsSchema = z.object({
   vehicleId: uuid.optional(),
   amount: nonNegativeNumber.optional(),
   notes: z.string().max(500).optional(),
+  // F8 (2026-08-06) — supplier + rate + charges. All optional; when
+  // sourceDistributorId is set, the service ALSO creates a PurchaseEntry
+  // so the supplier ledger reflects this incoming batch. Per Suneel Q4,
+  // caller may pass either rate/cyl (unitPrice) OR line-total (amount);
+  // service normalises. Per Suneel Q3, dropdown is hidden client-side
+  // when the tenant has exactly one providerCode (auto-picked); this
+  // schema stays permissive on the server.
+  sourceDistributorId: uuid.optional(),
+  unitPrice: nonNegativeNumber.optional(),
+  // F8 v2 (2026-08-06) — GST% for this incoming (defaults 0). When the
+  // service spawns a PurchaseEntry it stamps this on the PurchaseEntryItem.
+  gstRate: z.number().min(0).max(28).optional(),
+  // F8 v2 (2026-08-06) — free-text OMC plant/depot the goods came from.
+  plantName: z.string().max(80).optional(),
+  charges: z.array(purchaseEntryChargeSchema).optional(),
 });
 
 // WI-1.4 — Outgoing Empties modal: "Challan Type" / "Challan No." /
@@ -1060,6 +1161,20 @@ export const updateSourceDistributorSchema = createSourceDistributorSchema.parti
 // received from a source distributor on a given date. Each item may have
 // non-zero `fullsReceived`, non-zero `emptiesGivenOut`, or both; the service
 // layer rejects an entry where every item is zero (no-op guard).
+// F8 charge line enum + shape are defined earlier so `incomingFullsSchema`
+// (WI-1.4) can reference them. See PURCHASE_ENTRY_CHARGE_TYPES /
+// purchaseEntryChargeSchema above.
+
+// F8 v2 (2026-08-06) — enums exported for form option lists.
+export const PURCHASE_DOCUMENT_TYPES = ['invoice', 'deposit_invoice'] as const;
+export const PURCHASE_DEBIT_NOTE_REASONS = [
+  'short_supply',
+  'damaged_at_plant',
+  'late_payment_interest',
+  'rate_differential',
+  'other',
+] as const;
+
 export const createPurchaseEntrySchema = z.object({
   sourceDistributorId: uuid.optional(),
   // purchaseDate is a YYYY-MM-DD string (local calendar date, no time).
@@ -1068,6 +1183,16 @@ export const createPurchaseEntrySchema = z.object({
   // TZ drift for the single-user mini-operator workflow.
   purchaseDate: dateString,
   notes: z.string().max(500).optional(),
+  // F8 (2026-08-06) — OMC's own document reference on the physical
+  // challan/invoice. Nullable/optional: pre-F8 rows + non-OMC intake
+  // (opening-balance seeds, misc kirana purchases) may not have one.
+  supplierDocumentNumber: z.string().max(80).optional(),
+  supplierDocumentDate: dateString.optional(),
+  // F8 v2 (2026-08-06) — free-text OMC plant/depot label. See schema comment.
+  plantName: z.string().max(80).optional(),
+  // F8 v2 (2026-08-06) — 'invoice' (default) or 'deposit_invoice'. Deposit
+  // entries carry Nil GST + are excluded from landed-cost math.
+  documentType: z.enum(PURCHASE_DOCUMENT_TYPES).optional(),
   items: z
     .array(
       z.object({
@@ -1077,15 +1202,118 @@ export const createPurchaseEntrySchema = z.object({
         // Money per full received (INR, GST-inclusive). 0 = movement-only
         // entry (e.g. an empties swap where nothing was paid). Per-line
         // total = fullsReceived * unitPrice, computed at read time.
-        unitPrice: z.number().min(0).default(0),
+        // Kept `.optional()` (not `.default`) so RHF Resolver's input/output
+        // shapes match — DB has `@default(0)` so undefined ⇒ 0.
+        unitPrice: z.number().min(0).optional(),
+        // F8 v2 (2026-08-06) — GST rate for this line (percentage). 5 or
+        // 18 typical; 0 for deposit invoice lines. Same Resolver reason as
+        // unitPrice above — kept `.optional()` not `.default(0)`.
+        gstRate: z.number().min(0).max(28).optional(),
       }),
     )
     .min(1, 'At least one cylinder type entry is required'),
+  // F8 (2026-08-06) — optional freight/handling/testing lines. Absent =
+  // no extra charges (service treats undefined as []). Kept .optional()
+  // (not .default([])) so the react-hook-form Resolver input type matches
+  // the parsed output type verbatim — .default() would introduce an
+  // input/output mismatch and break the form's Resolver generic.
+  charges: z.array(purchaseEntryChargeSchema).optional(),
 });
+
+// F8 v2 (2026-08-06) — Purchase DEBIT Note (mirror of createPurchaseCreditNoteSchema).
+// OMC bills distributor extra (short supply, damages, interest, rate diff).
+export const purchaseDebitNoteAllocationInputSchema = z.object({
+  purchaseEntryId: uuid,
+  amount: z.number().positive('Allocation amount must be positive'),
+});
+
+export const createPurchaseDebitNoteSchema = z
+  .object({
+    sourceDistributorId: uuid,
+    // F8 v2 (2026-08-06) — OMC's DN reference as printed on their DN doc.
+    // REQUIRED — same policy as CN (Suneel: purely data-entry, no auto-gen).
+    debitNoteNumber: z.string().min(1, "OMC's DN number is required").max(80),
+    debitNoteDate: dateString,
+    receivedDate: dateString,
+    supplierDocumentNumber: z.string().max(80).optional(),
+    totalAmount: z.number().positive('Total must be positive'),
+    reason: z.enum(PURCHASE_DEBIT_NOTE_REASONS),
+    notes: z.string().max(500).optional(),
+    allocations: z
+      .array(purchaseDebitNoteAllocationInputSchema)
+      .min(1, 'At least one allocation is required'),
+  })
+  .refine(
+    (v) => {
+      const sum = v.allocations.reduce((s, a) => s + a.amount, 0);
+      return Math.abs(sum - v.totalAmount) < 0.01;
+    },
+    {
+      message: 'Sum of allocations must equal totalAmount',
+      path: ['allocations'],
+    },
+  );
+
+export type CreatePurchaseDebitNoteInput = z.infer<typeof createPurchaseDebitNoteSchema>;
 
 // Update reuses the same payload shape as create. Service delete-and-recreate
 // the items so InventoryEvent rows stay consistent — see updatePurchaseEntry.
 export const updatePurchaseEntrySchema = createPurchaseEntrySchema;
+
+// ─── F8 Supplier Ledger (2026-08-06) — Purchase Credit Notes ────────────────
+// See docs/F8-SUPPLIER-LEDGER-DESIGN.md. Simplified from the initial 2-type
+// (gst | financial) design per Suneel 2026-08-06 — every CN is treated as a
+// financial incentive (no ITC handling), reason enum distinguishes the flavour.
+
+export const PURCHASE_CREDIT_NOTE_REASONS = [
+  'volume_incentive',
+  'quality_incentive',
+  'scheme_incentive',
+  'rate_differential',
+  'freight_reimbursement',
+  'other',
+] as const;
+
+export const purchaseCreditNoteAllocationInputSchema = z.object({
+  purchaseEntryId: uuid,
+  amount: z.number().positive('Allocation amount must be positive'),
+});
+
+export const createPurchaseCreditNoteSchema = z
+  .object({
+    sourceDistributorId: uuid,
+    // F8 v2 (2026-08-06) — OMC's CN reference as printed on the physical
+    // CN doc. REQUIRED — we don't auto-generate our own. Unique per tenant
+    // (DB constraint + service pre-check). Operator types what's on the
+    // paper document.
+    creditNoteNumber: z.string().min(1, "OMC's CN number is required").max(80),
+    creditNoteDate: dateString, // OMC's CN issue date
+    receivedDate: dateString, // when it reached us
+    supplierDocumentNumber: z.string().max(80).optional(), // legacy field; usually same as creditNoteNumber
+    totalAmount: z.number().positive('Total must be positive'),
+    // Kept required (no .default) so the RHF Resolver input/output shapes
+    // match — see the analogous `charges: .optional()` note on
+    // createPurchaseEntrySchema. Caller sets an explicit default at the
+    // form/service boundary.
+    reason: z.enum(PURCHASE_CREDIT_NOTE_REASONS),
+    notes: z.string().max(500).optional(),
+    allocations: z
+      .array(purchaseCreditNoteAllocationInputSchema)
+      .min(1, 'At least one allocation is required'),
+  })
+  .refine(
+    (v) => {
+      // Sum(allocations.amount) MUST equal totalAmount (2-decimal tolerance).
+      const sum = v.allocations.reduce((s, a) => s + a.amount, 0);
+      return Math.abs(sum - v.totalAmount) < 0.01;
+    },
+    {
+      message: 'Sum of allocations must equal totalAmount',
+      path: ['allocations'],
+    },
+  );
+
+export type CreatePurchaseCreditNoteInput = z.infer<typeof createPurchaseCreditNoteSchema>;
 
 export type CreateSourceDistributorInput = z.infer<typeof createSourceDistributorSchema>;
 export type UpdateSourceDistributorInput = z.infer<typeof updateSourceDistributorSchema>;

@@ -6,7 +6,7 @@ import type {
   BillingPeriodType, BillingStatus,
   BillingTier, BillingItemType, PendingActionModule, PendingActionStatus,
   PendingActionSeverity, AccountabilityType, AccountabilityStatus,
-  LedgerEntryType, InventoryEventType, LicenseType, AccountType,
+  LedgerEntryType, InventoryEventType, LicenseType, AccountType, DefectiveReturnStatus,
 } from '../enums/index.js';
 
 // ─── API Response ────────────────────────────────────────────────────────────
@@ -744,6 +744,13 @@ export interface InventorySummary {
   manualAdjustment: number;
   closingFulls: number;
   closingEmpties: number;
+  // F1 (2026-08-06) — defective bucket balance. Parallel to closingFulls/
+  // closingEmpties; does NOT participate in either formula (WI-106 zone
+  // protected). Powered by the defective_return_from_customer /
+  // defective_return_to_corporation event pair via computeSummaryForDate.
+  defectiveFullsIn?: number;
+  defectiveFullsOut?: number;
+  closingDefectiveFulls?: number;
   thresholdWarning: number | null;
   thresholdCritical: number | null;
   isLocked: boolean;
@@ -764,9 +771,22 @@ export interface InventoryEvent {
   documentDate: string | null;
   vehicleNumber: string | null;
   driverName: string | null;
+  // 2026-08-05 — surfaced in Depot History table. Prisma Decimal
+  // serializes over the JSON wire as either `string` (default with
+  // decimal.js adapter) or `number` (some Prisma driver configs);
+  // reader must coerce via Number(amount) before math. Null when
+  // the event was recorded without a money value (most non-purchase
+  // depot events).
+  amount: string | number | null;
   notes: string | null;
   createdBy: string;
   createdAt: string;
+  // F1-FIX-18 (2026-08-06) — populated ONLY on Depot History outgoing_empties
+  // rows whose challan number matches a DefectiveReturnBatch that
+  // piggybacked in the same shipment. Value = sum of defective qty for the
+  // same cyl type on that challan. Zero (or absent) on incoming rows and
+  // on outgoing rows without a defective piggyback.
+  defectiveQty?: number;
 }
 
 export interface ProviderCatalogCylinderType {
@@ -777,6 +797,196 @@ export interface ProviderCatalogCylinderType {
   weight: number;
   hsnCode: string;
   isActive: boolean;
+}
+
+// ─── Report Catalog (2026-08-05, F2 grouping restructure) ─────────────────
+//
+// The Reports page has always been a flat row of chips — 8 slugs in
+// arbitrary order with no grouping or description. This catalog is the
+// server-side "menu" that drives the new left-nav shell: a small list
+// of buckets (7), each holding N entries. All existing report slugs
+// remain resolvable at their old URLs — this is a NAVIGATION change,
+// not a data change.
+//
+// Design principle: minimal + extensible. Every new report added in
+// later chunks (N01-N34 slots) appends one CATALOG entry. That's it.
+// No schema migration, no route surgery. See docs/NEXT-RELEASE-PROPOSAL-V3.md.
+
+export type ReportBucket =
+  | 'daily-book'
+  | 'invoicing-payments'
+  | 'inventory'
+  | 'customers'
+  // F8v2-R (2026-08-06) — Corporation bucket: reports built on the
+  // Corporation Ledger data model (Purchase Entries + Payments + CN + DN
+  // + Deposit + landed cost). Was 'suppliers-omcs' before F8v2; renamed
+  // to match the user-facing terminology in the sidebar.
+  | 'corporation'
+  | 'expenses'
+  | 'month-end';
+
+export interface ReportBucketDef {
+  key: ReportBucket;
+  /** Left-nav header text, e.g. "Daily Book" */
+  label: string;
+  /** Sort order in the left nav (1 = topmost) */
+  order: number;
+  /** One-line description shown as a subtle caption under the header */
+  description: string;
+}
+
+export interface ReportCatalogEntry {
+  /** Stable identifier — matches the URL slug at /api/reports/:slug for
+   *  inline reports, or is a synthetic id for download-only entries. */
+  slug: string;
+  /** Display name in the left nav */
+  label: string;
+  /** Which bucket this entry lives in */
+  bucket: ReportBucket;
+  /** One-liner description shown as tooltip / caption */
+  description: string;
+  /** How the frontend should render / open this entry:
+   *    'inline'   — opens on the main Reports page with filters + table
+   *    'download' — direct file download with a date-range picker
+   *    'external' — deep-link to another page (e.g. Invoices, Customers)
+   *                 where the report/PDF is actually generated
+   */
+  kind: 'inline' | 'download' | 'external';
+  /** For 'download' + 'external': the destination URL/path. Not used
+   *  for 'inline' (frontend infers /api/reports/${slug}). */
+  href?: string;
+  /** Output formats this entry can produce. Purely informational — the
+   *  underlying route decides format via query param. */
+  outputs: Array<'json' | 'csv' | 'pdf' | 'xlsx' | 'xml'>;
+  /** Whether the report requires a specific selection before it renders
+   *  (customer / driver / vehicle picker). Undefined = no requirement. */
+  requires?: 'customer' | 'driver' | 'vehicle';
+  /** Feature-gate flag — a future report that depends on F1 (defective)
+   *  or F8 (supplier ledger) can be listed with `comingSoon: true` so
+   *  the UI grays it out with a "coming soon" chip until the feature
+   *  lands. Undefined / false = live. */
+  comingSoon?: boolean;
+  /** Roles whitelisted to see this entry. Server-side filter applies
+   *  before the response is returned; frontend does no additional
+   *  gating (defense-in-depth is done in the underlying route). */
+  roles: UserRole[];
+}
+
+/** Response shape for GET /api/reports/catalog.
+ *
+ *  `entries` is ALREADY filtered server-side by the caller's role —
+ *  a driver hitting this endpoint sees only reports they're allowed
+ *  to open. Frontend does no additional gating.
+ */
+export interface ReportCatalogResponse {
+  buckets: ReportBucketDef[];
+  entries: ReportCatalogEntry[];
+}
+
+// ─── Report Builder (Phase 2 · 2026-08-05) ────────────────────────────
+//
+// User-authored query spec that goes through the safe executor.
+// Every field name / operator / aggregation is validated against a
+// server-side allowlist before Prisma runs. Never becomes SQL text.
+//
+// Design principle: users pick from dropdowns; they never type
+// anything except the report name. Every enum below is a fixed set.
+
+/** The 6 models Report Builder can query in Phase 2. Cross-model joins
+ *  are deferred to Phase 3b. Adding a model = code-review checkpoint
+ *  (allowlist rows, executor branch, test coverage). */
+export type ReportBuilderModel =
+  | 'Order'
+  | 'Invoice'
+  | 'PaymentTransaction'
+  | 'CustomerLedgerEntry'
+  | 'Expense'
+  | 'PurchaseEntry';
+
+/** 14 comparison operators + preset date shortcuts. */
+export type ReportBuilderOp =
+  | 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte'
+  | 'in' | 'not_in' | 'between'
+  | 'is_null' | 'is_not_null'
+  | 'contains' | 'starts_with'
+  | 'preset';
+
+/** Date preset shortcuts for `preset` op. */
+export type ReportBuilderDatePreset =
+  | 'today' | 'yesterday'
+  | 'this_week' | 'last_week'
+  | 'this_month' | 'last_month'
+  | 'this_quarter'
+  | 'this_fy' | 'last_fy';
+
+export type ReportBuilderAggregation =
+  | 'sum' | 'count' | 'count_distinct'
+  | 'avg' | 'min' | 'max'
+  | 'running_total';
+
+/** Discriminated filter — each variant carries only the props it needs. */
+export type ReportBuilderFilter =
+  | { field: string; op: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte'; value: string | number }
+  | { field: string; op: 'in' | 'not_in'; values: (string | number)[] }
+  | { field: string; op: 'between'; from: string | number; to: string | number }
+  | { field: string; op: 'is_null' | 'is_not_null' }
+  | { field: string; op: 'contains' | 'starts_with'; value: string }
+  | { field: string; op: 'preset'; preset: ReportBuilderDatePreset };
+
+export interface ReportBuilderAggregate {
+  /** Field to aggregate over — or 'rows' for `count` of all rows. */
+  field: string;
+  op: ReportBuilderAggregation;
+  /** Column label in the output. Defaults to `${op}(${field})` at render time. */
+  as?: string;
+}
+
+export interface ReportBuilderSpec {
+  model: ReportBuilderModel;
+  /** Fields to show in output. Ignored when `aggregates` is non-empty
+   *  (aggregated queries return only groupBy + aggregate cols). */
+  fields: string[];
+  filters: ReportBuilderFilter[];
+  /** GroupBy field(s). Empty = no grouping (row-level output). */
+  groupBy: string[];
+  /** One or more aggregations. Empty = no aggregation. Ignored if
+   *  `groupBy` is empty (aggregations require grouping). */
+  aggregates: ReportBuilderAggregate[];
+  /** Sort — always applied last. Empty = no explicit sort. */
+  orderBy: Array<{ field: string; dir: 'asc' | 'desc' }>;
+  /** Row cap — hard-capped server-side at 50,000. */
+  limit?: number;
+}
+
+export interface SavedReportDto {
+  id: string;
+  distributorId: string;
+  ownerId: string;
+  name: string;
+  description: string | null;
+  model: ReportBuilderModel;
+  spec: ReportBuilderSpec;
+  visibility: 'private' | 'distributor';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedReportRunResult {
+  /** Column definitions for the frontend renderer — matches shape used
+   *  by every other Report on `/api/reports/*`. */
+  columns: Array<{ key: string; label: string; money?: boolean }>;
+  rows: Record<string, string | number | null>[];
+  totals?: Record<string, string | number | null>;
+  meta: {
+    rowCount: number;
+    durationMs: number;
+    /** True if the row cap was hit — the client should surface a
+     *  "narrow your filters" banner. */
+    capped: boolean;
+    /** Non-null when a filter targets an unindexed column on a large
+     *  table — client renders as a warning banner. */
+    unindexedWarning?: string;
+  };
 }
 
 export type CustomerLedgerRowKind =
@@ -790,6 +1000,10 @@ export type CustomerLedgerRowKind =
   // amountDelta = 0, running balance unchanged. Rendered with the
   // count in the empties column and no debit/credit numbers.
   | 'empties_return'
+  // F1 (2026-08-06) — physical row when office captures a defective full
+  // pickup. amountDelta=0, running balance unchanged. Money side lands as
+  // a separate credit_note row when Raise CN fires.
+  | 'defective_collected'
   // Deposit ledger (2026-07-31) — cylinder deposit received / refunded.
   // Rendered on its own row with `depositGiven` populated and no debit/
   // credit against dueAmount (the companion payment_entry row carries
@@ -1242,6 +1456,92 @@ export interface LedgerEntry {
   depositAmount?: number;
 }
 
+// ─── F1 (2026-08-06) — Defective Cylinder Returns ────────────────────────────
+// See docs/F1-DEFECTIVE-RETURNS-DESIGN.md for the full contract.
+
+// The row returned by GET /api/defective-returns and by the History view.
+export interface DefectiveReturn {
+  id: string;
+  distributorId: string;
+  customerId: string;
+  customerName?: string;
+  cylinderTypeId: string;
+  cylinderTypeName?: string;
+  quantity: number;
+  sourceInvoiceId: string;
+  sourceInvoiceNumber?: string;
+  sourceInvoiceAmount?: number;
+  sourceInvoiceItemId: string | null;
+  perCylRate: number;
+  cnAmount: number;
+  reason: string | null;
+  notes: string | null;
+  status: DefectiveReturnStatus;
+  creditNoteId: string | null;
+  creditNoteNumber?: string | null;
+  batchId: string | null;
+  batchNumber?: string | null;
+  collectedAt: string;
+  collectedDate: string;
+  collectedBy: string;
+  collectedByName?: string;
+  cnRaisedAt: string | null;
+  cnRaisedBy: string | null;
+  cancelledAt: string | null;
+  cancelledBy: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// The row returned by the outgoing "Send to Corp" flow's batch table.
+export interface DefectiveReturnBatch {
+  id: string;
+  distributorId: string;
+  batchNumber: string;
+  sourceDistributorId: string | null;
+  corporationName: string;
+  vehicleId: string | null;
+  vehicleNumber?: string | null;
+  challanNumber: string | null;
+  challanDate: string | null;
+  totalQuantity: number;
+  status: string;
+  corpCreditAmount: number | null;
+  corpCreditReceivedAt: string | null;
+  notes: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  items?: DefectiveReturn[];
+}
+
+// The invoice picker row shown to office during New Entry (Step 2).
+export interface DefectiveEligibleInvoice {
+  invoiceId: string;
+  invoiceNumber: string;
+  issueDate: string;
+  totalAmount: number;
+  paymentStatus: string;
+  lines: Array<{
+    invoiceItemId: string;
+    cylinderTypeId: string;
+    cylinderTypeName: string;
+    perCylRate: number;
+    qty: number;
+    alreadyClaimedQty: number;
+    remainingQty: number;
+  }>;
+}
+
+// The depot-bucket read used by the outgoing-empties nudge banner + the
+// Send-to-Corp modal auto-populate.
+export interface DefectiveDepotBucketRow {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  qty: number;
+}
+
 // ─── Inventory Forecast ──────────────────────────────────────────────────────
 
 export interface InventoryForecast {
@@ -1273,7 +1573,33 @@ export interface PurchaseEntryItem {
   cylinderTypeName: string;
   fullsReceived: number;
   emptiesGivenOut: number;
+  // F8 (2026-08-06) — per-line rate; optional so pre-F8 rows stay valid on
+  // the wire even before the mapper backfills.
+  unitPrice?: number;
+  // F8 v2 (2026-08-06) — per-line GST % (5 for DOM.LPG, 18 for COMM.LPG,
+  // 0 for deposit invoice items). Optional on wire — treats undefined as 0.
+  gstRate?: number;
 }
+
+// F8 (2026-08-06)
+export type PurchaseEntryChargeType =
+  | 'freight'
+  | 'handling'
+  | 'testing'
+  | 'insurance'
+  | 'other';
+
+export interface PurchaseEntryCharge {
+  id: string;
+  purchaseEntryId: string;
+  chargeType: PurchaseEntryChargeType;
+  amount: number;
+  notes: string | null;
+  createdAt: string;
+}
+
+// F8 v2 (2026-08-06)
+export type PurchaseDocumentType = 'invoice' | 'deposit_invoice';
 
 export interface PurchaseEntry {
   id: string;
@@ -1285,11 +1611,126 @@ export interface PurchaseEntry {
   sourceDistributorName: string | null;
   purchaseDate: string;
   notes: string | null;
+  // F8 (2026-08-06) — OMC's own reference on the physical challan/invoice
+  supplierDocumentNumber?: string | null;
+  supplierDocumentDate?: string | null;
+  // F8 v2 (2026-08-06) — free-text plant/depot the goods came from
+  plantName?: string | null;
+  // F8 v2 (2026-08-06) — 'invoice' (default) vs 'deposit_invoice' (Nil GST,
+  // refundable, doesn't participate in landed-cost math).
+  documentType?: PurchaseDocumentType;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
   items: PurchaseEntryItem[];
+  // F8 (2026-08-06) — freight/handling/etc. lines. Absent on pre-F8 wire
+  // shapes; readers treat undefined as [].
+  charges?: PurchaseEntryCharge[];
 }
+
+// ─── F8 Supplier Ledger (2026-08-06) — Purchase Credit Notes ─────────────────
+
+export type PurchaseCreditNoteReason =
+  | 'volume_incentive'
+  | 'quality_incentive'
+  | 'scheme_incentive'
+  | 'rate_differential'
+  | 'freight_reimbursement'
+  | 'other';
+
+export interface PurchaseCreditNoteAllocation {
+  id: string;
+  purchaseCreditNoteId: string;
+  purchaseEntryId: string;
+  // Snapshot fields joined on read for UI convenience (not persisted). Absent
+  // when the reader chose not to join.
+  purchaseEntryNumber?: string;
+  purchaseEntryDate?: string;
+  amount: number;
+  createdAt: string;
+}
+
+export interface PurchaseCreditNote {
+  id: string;
+  distributorId: string;
+  sourceDistributorId: string;
+  sourceDistributorName: string | null;
+  creditNoteNumber: string;
+  supplierDocumentNumber: string | null;
+  creditNoteDate: string;
+  receivedDate: string;
+  totalAmount: number;
+  reason: PurchaseCreditNoteReason;
+  notes: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  allocations?: PurchaseCreditNoteAllocation[];
+}
+
+// ─── F8 v2 Supplier Ledger (2026-08-06) — Purchase Debit Notes ──────────────
+
+export type PurchaseDebitNoteReason =
+  | 'short_supply'
+  | 'damaged_at_plant'
+  | 'late_payment_interest'
+  | 'rate_differential'
+  | 'other';
+
+export interface PurchaseDebitNoteAllocation {
+  id: string;
+  purchaseDebitNoteId: string;
+  purchaseEntryId: string;
+  purchaseEntryNumber?: string;
+  purchaseEntryDate?: string;
+  amount: number;
+  createdAt: string;
+}
+
+export interface PurchaseDebitNote {
+  id: string;
+  distributorId: string;
+  sourceDistributorId: string;
+  sourceDistributorName: string | null;
+  debitNoteNumber: string;
+  supplierDocumentNumber: string | null;
+  debitNoteDate: string;
+  receivedDate: string;
+  totalAmount: number;
+  reason: PurchaseDebitNoteReason;
+  notes: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  allocations?: PurchaseDebitNoteAllocation[];
+}
+
+// Row shape returned by getSupplierLedgerV2 — a single interleaved ledger
+// event (opening b/f | purchase | payment | credit note | debit note |
+// deposit | erv). Consumers render chronologically; balance is running
+// (post-event) in the tenant's ₹ convention.
+export type SupplierLedgerEventType =
+  | 'opening'
+  | 'purchase'
+  | 'payment'
+  | 'credit_note'
+  | 'debit_note'
+  | 'deposit'
+  | 'erv_empties'
+  | 'erv_defective';
+
+export interface SupplierLedgerRow {
+  date: string; // YYYY-MM-DD
+  eventType: SupplierLedgerEventType;
+  documentNumber: string | null; // OMC's supplierDocumentNumber if any, else our internal
+  ourReferenceNumber: string; // our internal number (purchaseNumber / paymentId / creditNoteNumber)
+  narration: string;
+  debit: number; // ₹ we owe supplier (purchases + charges)
+  credit: number; // ₹ supplier owes us / we paid (payments + CN)
+  runningBalance: number; // signed; positive = we owe supplier
+  balanceLabel: 'Dr' | 'Cr'; // Dr = supplier owes us, Cr = we owe supplier (matches Confidence PDF convention)
+}
+
 
 // M14 v1.0 — super-admin read-only monitor for account deletion requests.
 // Row shape returned by GET /api/super-admin/deletion-requests. Status is

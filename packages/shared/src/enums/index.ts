@@ -191,6 +191,9 @@ export enum InventoryEventType {
   RETURNS_COLLECTION = 'returns_collection',
   DISPATCH = 'dispatch',
   RECONCILIATION_EMPTIES_RETURN = 'reconciliation_empties_return',
+  // F1 (2026-08-06) — defective full cylinder physical flow.
+  DEFECTIVE_RETURN_FROM_CUSTOMER = 'defective_return_from_customer',
+  DEFECTIVE_RETURN_TO_CORPORATION = 'defective_return_to_corporation',
 }
 
 export enum ReplenishmentStatus {
@@ -358,6 +361,21 @@ export enum LedgerEntryType {
   // schema.prisma LedgerEntryType + CLAUDE.md conversation 2026-07-31.
   DEPOSIT_CHARGED = 'deposit_charged',
   DEPOSIT_REFUNDED = 'deposit_refunded',
+  // F1 (2026-08-06) — physical-only ledger row when office captures a
+  // defective full pickup. amountDelta=0, invoiceId=null (same rules as
+  // EMPTIES_RETURN, mirrors anti-pattern #24 constraints). The financial
+  // credit_note fires as a separate ledger row when office clicks Raise CN.
+  // See docs/F1-DEFECTIVE-RETURNS-DESIGN.md.
+  DEFECTIVE_COLLECTED = 'defective_collected',
+}
+
+// F1 (2026-08-06) — defective return workflow status.
+export enum DefectiveReturnStatus {
+  COLLECTED = 'collected',
+  CN_ISSUED = 'cn_issued',
+  SENT_TO_CORPORATION = 'sent_to_corporation',
+  CORPORATION_CREDIT_RECEIVED = 'corporation_credit_received',
+  CANCELLED = 'cancelled',
 }
 
 // ─── Approval Workflow ───────────────────────────────────────────────────────
