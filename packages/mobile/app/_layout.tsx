@@ -8,6 +8,7 @@ import { useAuthStore } from '../src/stores/authStore';
 import { useIsDark, useThemeHasHydrated } from '../src/stores/themeStore';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { NetworkIndicator } from '../src/components/NetworkIndicator';
+import { NetworkSecurityScreen } from '../src/components/NetworkSecurityScreen';
 import { initCrashReporting, setUser as setCrashUser } from '../src/services/crashReporting';
 
 // Initialize crash reporting on app load
@@ -70,6 +71,11 @@ export default function RootLayout() {
               <Stack.Screen name="(inventory)" />
               <Stack.Screen name="(finance)" />
             </Stack>
+            {/* N4 SSL pinning — full-screen block when pin failure detected.
+                Rendered LAST so it paints above the Stack on Android (absolute
+                siblings paint in render order there; zIndex alone is flaky).
+                Renders null unless the pinning store flags interception. */}
+            <NetworkSecurityScreen />
           </View>
         </SafeAreaProvider>
       </QueryClientProvider>

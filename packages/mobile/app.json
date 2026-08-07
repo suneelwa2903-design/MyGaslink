@@ -101,7 +101,9 @@
             "minSdkVersion": 24
           }
         }
-      ]
+      ],
+      "./plugins/withDedupIntentFilters",
+      "./plugins/withSslPinning"
     ],
     "scheme": "mygaslink",
     "extra": {

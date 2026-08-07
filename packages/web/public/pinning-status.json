@@ -1,0 +1,5 @@
+{
+  "pinningAdvisory": "ok",
+  "message": null,
+  "_doc": "N4 SSL pinning advisory channel. Served unpinned via CloudFront at https://mygaslink.com/pinning-status.json; the mobile app probes it when the pinned API origin fails at the network layer to distinguish 'offline' from 'intercepted'. To broadcast an incident message to stranded users, set pinningAdvisory to 'incident' and put the user-facing text in message, then redeploy web. See docs/RUNBOOK-CERT-ROTATION.md."
+}

@@ -1,6 +1,7 @@
 import axios, { type InternalAxiosRequestConfig, type AxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import type { ApiResponse } from '@gaslink/shared';
+import { reportApiSuccess, reportApiNetworkFailure } from './pinning';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -63,9 +64,22 @@ function processQueue(err: unknown, token?: string) {
 }
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    reportApiSuccess();
+    return res;
+  },
   async (error: AxiosError<ApiResponse<null>>) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+
+    // N4 SSL pinning — a response-less failure is a network-layer failure.
+    // OS-level pin rejection surfaces exactly like this (TLS killed before
+    // any HTTP happened), so feed it to the pinning heuristic which probes
+    // an unpinned origin to distinguish "offline" from "intercepted".
+    // Any error WITH a response means TLS succeeded — never counted.
+    if (!error.response) {
+      reportApiNetworkFailure();
+    }
+
     if (original?.url?.includes('/auth/')) return Promise.reject(error);
 
     // M14 v1.0 (IOS-ACCOUNT-DELETION-SPEC §5.2): the server returns 403
