@@ -3,20 +3,36 @@
  * order, dated on the DELIVERY DATE (not today), with a full cascade
  * forward through every daily summary that carries the stock chain.
  *
- * Why: when a distributor enters a backdated order (Brief 3), the order
- * lands status='delivered' but no inventory events are written by design
- * — this service is the structured "apply" path. It writes the same
- * events a godown pickup would (`manual_adjustment` for fulls,
- * `reconciliation_empties_return` for empties), anchored to the order's
- * `deliveryDate`, and stamps the order so it can't be double-applied.
- * The `is_locked` guard inside `recalculateSummariesFromDate` protects
- * any past day the operator has already closed — locked days silently
- * skip and the cascade continues past them.
+ * ─── 2026-08-06 Gap 2 rewrite ───────────────────────────────────────
+ * The prior implementation wrote `manual_adjustment` events for the
+ * fulls debit. That kept depot stock math correct but made every
+ * backdated order invisible to physical-flow reports — Vehicle Ledger /
+ * Inventory Movement / Day-Close Summary DELIVERIES / Cylinder Rotation
+ * all filter InventoryEvents by `eventType in ('dispatch', 'delivery',
+ * 'collection', 'returns_collection', 'reconciliation_empties_return')`
+ * and skip `manual_adjustment`. Backdated activity therefore never
+ * showed up on driver / vehicle / trip attribution.
  *
- * Reference: docs/BACKDATED-INVESTIGATION-GAPS.md §5 (original locked
- * design was "today-only" — flipped 2026-07-10 per Suneel's Option-A
- * decision so backdated deliveries move stock on the delivery day, not
- * on the entry day).
+ * This rewrite emits the SAME event shape a real delivered order writes:
+ *   - `dispatch` event (fullsChange = -deliveredQty) with vehicleNumber
+ *     + driverName tags for Vehicle Ledger attribution
+ *   - `delivery` event (fullsChange = -deliveredQty) with same tags
+ *   - `collection` event (emptiesChange = +emptiesCollected) when > 0
+ *   - `reconciliation_empties_return` event (emptiesChange = +emptiesCollected)
+ *     when > 0 (feeds closing_empties via emptiesReturnedVerified)
+ *   - CustomerInventoryBalance upsert (withCustomerQty increments by
+ *     deliveredQty − emptiesCollected — same math as confirmDelivery)
+ *
+ * All events dated on `Order.deliveryDate` (Option A — Suneel 2026-07-10).
+ * Idempotency preserved via `Order.inventoryAdjustedAt` timestamp.
+ *
+ * Auto-run — `createBackdatedOrder` and `createBackdatedTrip` invoke
+ * this immediately post-commit so operators can't forget the manual
+ * step. The manual `applyBackdatedInventoryAdjustment` route stays for
+ * legacy backdated orders created before this fix (backfill script also
+ * uses it — see scripts/backfill-backdated-events.ts).
+ *
+ * See CLAUDE.md anti-pattern #26.
  */
 import { prisma } from '../lib/prisma.js';
 import { createInventoryEvent, recalculateSummariesFromDate } from './inventoryService.js';
@@ -32,25 +48,33 @@ export class BackdatedAdjustmentError extends Error {
  * Apply the inventory adjustment for a backdated order — dated on the
  * delivery day, with a full cascade forward.
  *
- * - One `manual_adjustment` event per cylinder type with
- *   `fullsChange = -deliveredQuantity`.
- * - One `reconciliation_empties_return` event per cylinder type where
- *   `emptiesCollected > 0` with `emptiesChange = +emptiesCollected`.
- * - All events dated on the ORDER's DELIVERY DATE (retro-dated per
- *   Suneel's Option-A decision on 2026-07-10). `Order.deliveryDate`
- *   is stored as a `Date` — used verbatim without any UTC-split
- *   round-trip so anti-pattern #21 is not in scope.
+ * 2026-08-06 rewrite emits the SAME event shape a real delivered order
+ * writes so all physical-flow reports (Vehicle Ledger, Inventory
+ * Movement, Day-Close Summary DELIVERIES, Cylinder Rotation) can pick
+ * up backdated activity:
+ *
+ * - Per (cyl-type, deliveredQty > 0): `dispatch` + `delivery` pair,
+ *   both `fullsChange = -deliveredQty`. Matches the godown/mini-op
+ *   confirmDelivery shape at orderService.ts:1218-1298 — for regular
+ *   flow the `dispatch` event fires at preflight, but backdated orders
+ *   never went through preflight so we write it synthetically here.
+ * - Per (cyl-type, emptiesCollected > 0): `collection` +
+ *   `reconciliation_empties_return` pair, both `emptiesChange =
+ *   +emptiesCollected`. Same pair as before this rewrite (that part was
+ *   already correct).
+ * - CustomerInventoryBalance upsert per item — `withCustomerQty +=
+ *   (deliveredQty − emptiesCollected)`. Mirrors confirmDelivery
+ *   L1301-1316. Feeds Cylinder Rotation + Empties in Transit reports.
+ * - Every event tagged with `vehicleNumber` + `driverName` when the
+ *   order has those set — Vehicle Ledger + Driver Daily Log filter on
+ *   these for per-vehicle / per-driver attribution.
+ * - All events dated on `order.deliveryDate` (Option A — Suneel
+ *   2026-07-10). `Order.deliveryDate` is a `Date` — used verbatim, no
+ *   UTC-split (anti-pattern #21).
  * - Sets `Order.inventoryAdjustedAt = now()` to block double-apply.
- *   `inventoryAdjustedAt` is a real timestamp (WHEN the operator ran
- *   the adjustment), NOT the delivery date. The two answer different
- *   questions and both are needed for the audit trail.
- * - Writes an `OrderStatusLog` audit row (delivered → delivered with
- *   a note carrying the userId + the fact that inventory was adjusted).
- * - Recalculates summaries FROM the delivery date forward. The
- *   `is_locked` guard in `recalculateSummariesFromDate` still applies —
- *   any past day the operator has already closed silently skips and
- *   the cascade continues past it (correct behaviour: closed days stay
- *   closed, everything after re-derives from the events chain).
+ * - Writes an `OrderStatusLog` audit row.
+ * - Recalculates summaries FROM the delivery date forward — locked
+ *   days silently skip (correct); everything after re-derives.
  */
 export async function applyBackdatedInventoryAdjustment(
   distributorId: string,
@@ -59,9 +83,15 @@ export async function applyBackdatedInventoryAdjustment(
 ): Promise<{ order: { id: string; orderNumber: string; inventoryAdjustedAt: Date | null }; eventsWritten: number }> {
   // Tenant-scoped load + gates. Multi-tenant rules require an explicit
   // distributorId clause on every read (anti-pattern #1 / #13).
+  // 2026-08-06 — also load driver + vehicle so the event `vehicleNumber`
+  // + `driverName` tags fire correctly (needed by Vehicle Ledger).
   const order = await prisma.order.findFirst({
     where: { id: orderId, distributorId },
-    include: { items: { select: { cylinderTypeId: true, deliveredQuantity: true, emptiesCollected: true } } },
+    include: {
+      items: { select: { cylinderTypeId: true, deliveredQuantity: true, emptiesCollected: true } },
+      driver: { select: { driverName: true } },
+      vehicle: { select: { vehicleNumber: true } },
+    },
   });
   if (!order) throw new BackdatedAdjustmentError('Order not found', 404);
   if (order.deletedAt) {
@@ -85,6 +115,10 @@ export async function applyBackdatedInventoryAdjustment(
   const orderNumber = order.orderNumber;
   const deliveryDateStr = order.deliveryDate.toISOString().slice(0, 10);
   const notes = `Backdated adjustment for order ${orderNumber} (delivered ${deliveryDateStr})`;
+  // createInventoryEvent expects `string | undefined`, not `string | null` —
+  // it converts undefined to null internally via the `|| null` fallback.
+  const vehicleNumber = order.vehicle?.vehicleNumber ?? undefined;
+  const driverName = order.driver?.driverName ?? undefined;
 
   let eventsWritten = 0;
 
@@ -92,21 +126,42 @@ export async function applyBackdatedInventoryAdjustment(
     for (const item of order.items) {
       const deliveredQty = item.deliveredQuantity ?? 0;
       const emptiesCollected = item.emptiesCollected ?? 0;
-      // Fulls debit — one event per item with delivered > 0.
+      // Fulls debit — write BOTH dispatch AND delivery events, mirroring
+      // the godown/mini-op path (orderService.ts:1228-1255). Physical
+      // reality: cylinders left depot AND arrived at customer on the
+      // same historical date. Reports filter InventoryEvent by these
+      // event types — writing `manual_adjustment` (pre-2026-08-06)
+      // silently hid backdated activity from every physical-flow report.
       if (deliveredQty > 0) {
         await createInventoryEvent(tx, {
           distributorId,
           cylinderTypeId: item.cylinderTypeId,
-          eventType: 'manual_adjustment',
+          eventType: 'dispatch',
           fullsChange: -deliveredQty,
           emptiesChange: 0,
           eventDate: adjustmentDate,
           referenceId: order.id,
           referenceType: 'backdated_inventory_adjustment',
+          vehicleNumber,
+          driverName,
+          notes: `${notes} — synthetic dispatch`,
+          createdBy: userId,
+        });
+        await createInventoryEvent(tx, {
+          distributorId,
+          cylinderTypeId: item.cylinderTypeId,
+          eventType: 'delivery',
+          fullsChange: -deliveredQty,
+          emptiesChange: 0,
+          eventDate: adjustmentDate,
+          referenceId: order.id,
+          referenceType: 'backdated_inventory_adjustment',
+          vehicleNumber,
+          driverName,
           notes,
           createdBy: userId,
         });
-        eventsWritten++;
+        eventsWritten += 2;
       }
       // Empties credit — skip when no empties came back (mirrors what
       // godown confirmDelivery does — no zero-quantity events).
@@ -114,12 +169,9 @@ export async function applyBackdatedInventoryAdjustment(
       // delivery+reconcile flow: a `collection` event (feeds the
       // "Collected Empties" display column) AND a
       // `reconciliation_empties_return` event (feeds closing_empties
-      // via emptiesReturnedVerified). Without the paired collection
-      // event the daily summary derives `emptiesOnVehicle =
-      // collectedEmpties − emptiesReturnedVerified` as NEGATIVE for the
-      // backdated qty, and "Collected Empties" underreports the day's
-      // returns. Both event rows carry the same referenceType so
-      // getBackdatedAdjustmentHistory still surfaces the audit trail.
+      // via emptiesReturnedVerified). Both event rows carry the same
+      // referenceType so getBackdatedAdjustmentHistory still surfaces
+      // the audit trail.
       if (emptiesCollected > 0) {
         await createInventoryEvent(tx, {
           distributorId,
@@ -130,6 +182,8 @@ export async function applyBackdatedInventoryAdjustment(
           eventDate: adjustmentDate,
           referenceId: order.id,
           referenceType: 'backdated_inventory_adjustment',
+          vehicleNumber,
+          driverName,
           notes,
           createdBy: userId,
         });
@@ -142,10 +196,39 @@ export async function applyBackdatedInventoryAdjustment(
           eventDate: adjustmentDate,
           referenceId: order.id,
           referenceType: 'backdated_inventory_adjustment',
+          vehicleNumber,
+          driverName,
           notes,
           createdBy: userId,
         });
         eventsWritten += 2;
+      }
+
+      // 2026-08-06 — CustomerInventoryBalance upsert. Missing before
+      // this rewrite → backdated deliveries never registered on
+      // Cylinder Rotation / Empties in Transit / customer statement's
+      // "empties held" column. Delta = delivered − emptiesReturned
+      // (positive means the customer took more fulls than they gave
+      // back, adding to their "with-customer" holding). Matches
+      // orderService.confirmDelivery L1300-1316.
+      const balanceChange = deliveredQty - emptiesCollected;
+      if (balanceChange !== 0) {
+        await tx.customerInventoryBalance.upsert({
+          where: {
+            customerId_cylinderTypeId: {
+              customerId: order.customerId,
+              cylinderTypeId: item.cylinderTypeId,
+            },
+          },
+          create: {
+            customerId: order.customerId,
+            cylinderTypeId: item.cylinderTypeId,
+            withCustomerQty: balanceChange,
+          },
+          update: {
+            withCustomerQty: { increment: balanceChange },
+          },
+        });
       }
     }
 

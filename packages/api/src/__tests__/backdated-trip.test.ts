@@ -497,11 +497,19 @@ describe('Item 6 — backdated driver trip service', () => {
     trackedDvaIds.push(res.body.data.dvaId);
   });
 
-  it('T16 — no InventoryEvent rows created by design (backdated adjustment is separate)', async () => {
+  it('T16 — InventoryEvent rows CREATED automatically (2026-08-06 Gap 2 fix)', async () => {
     if (!hasValidBackdatedSlot()) { expect(true).toBe(true); return; }
+    // 2026-08-06 rewrite: createBackdatedTrip now always runs the
+    // inventory adjustment post-commit. For each order:
+    //   deliveredQty > 0  → dispatch + delivery (2 events)
+    //   emptiesCollected > 0 → collection + reconciliation_empties_return (2 more)
+    // Previously (pre-fix) the trip service wrote ZERO inventory events
+    // by design, gated behind an `applyInventoryAdjustment` opt-in that
+    // operators forgot — leaving backdated trips invisible to Vehicle
+    // Ledger / Driver Daily Log / Inventory Movement. Auto-apply closes
+    // that hole.
     const c1 = await makeCustomer('T16-c1', 'B2C');
     const admin = await loginAsDistAdmin();
-    const before = await prisma.inventoryEvent.count({ where: { distributorId: D1 } });
     const result = await createBackdatedTrip(D1, admin.user.id, {
       issueDate: yesterdayLocalISO(),
       driverId: seedData.drivers[0].id,
@@ -511,8 +519,19 @@ describe('Item 6 — backdated driver trip service', () => {
     trackedOrderIds.push(result.orders[0].orderId);
     if (result.orders[0].invoiceId) trackedInvoiceIds.push(result.orders[0].invoiceId);
     if (result.dvaId) trackedDvaIds.push(result.dvaId);
-    const after = await prisma.inventoryEvent.count({ where: { distributorId: D1 } });
-    expect(after).toBe(before);
+    expect(result.inventoryAdjustmentsApplied).toBe(1);
+    // Scope the event assertion to this specific order's referenceId
+    // (avoid coupling to global count which drifts as other tests write).
+    const events = await prisma.inventoryEvent.findMany({
+      where: {
+        referenceId: result.orders[0].orderId,
+        referenceType: 'backdated_inventory_adjustment',
+      },
+    });
+    expect(events).toHaveLength(2); // dispatch + delivery (no empties in this test)
+    const types = new Set(events.map((e) => e.eventType));
+    expect(types.has('dispatch')).toBe(true);
+    expect(types.has('delivery')).toBe(true);
   });
 
   it('T17 — cross-tenant customer rejected (404)', async () => {

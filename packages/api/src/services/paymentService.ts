@@ -63,12 +63,18 @@ export async function listPayments(
   }
   if (filters.entryDateFrom || filters.entryDateTo) {
     where.createdAt = {};
-    if (filters.entryDateFrom) where.createdAt.gte = new Date(filters.entryDateFrom);
+    if (filters.entryDateFrom) {
+      // Anti-pattern #21: `new Date("YYYY-MM-DD")` parses as UTC midnight,
+      // but the caller means server-local midnight (TZ=Asia/Kolkata) —
+      // otherwise createdAt rows between 00:00-05:30 IST on the "From" day
+      // are silently excluded because they're still in the previous UTC day.
+      const start = new Date(filters.entryDateFrom);
+      start.setHours(0, 0, 0, 0);
+      where.createdAt.gte = start;
+    }
     if (filters.entryDateTo) {
-      // Include the entire "To" day — same convention Payment Date uses via
-      // `lte: new Date(dateTo)` (which coerces to 00:00 of that day). For
-      // createdAt (a full timestamp, not a date column) we bump to 23:59:59
-      // so the day filter is inclusive on both edges.
+      // Include the entire "To" day — bump to 23:59:59.999 in local TZ so
+      // the day filter is inclusive on both edges regardless of caller TZ.
       const end = new Date(filters.entryDateTo);
       end.setHours(23, 59, 59, 999);
       where.createdAt.lte = end;
@@ -1686,6 +1692,33 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
           emptyCylsCost: perTypeEmpCost,
           narration: entry.narration ?? 'Empties return',
           kind: 'empties_return',
+        });
+        return;
+      }
+      case 'defective_collected': {
+        // F1 (2026-08-06) — physical-only row when office captures a
+        // defective full picked up from customer. amountDelta=0 (writer
+        // enforces), invoiceId=null (writer enforces), so this branch
+        // MUST NOT touch cumulativeInvoiceAmount / cumulativeReceivedAmount.
+        // Unlike empties_return, this row does NOT decrement
+        // pendingEmptiesPerType — a defective full is a separate physical
+        // category from an "empty owed back". Suneel spec explicitly wants
+        // these tracked as different buckets. When the CN is later raised
+        // for this row, a SEPARATE `credit_note` ledger row fires with
+        // negative amountDelta — that row handles the money side.
+        if (!emit) return;
+        emitRow(entry.entryDate, {
+          orderDate: dateStr,
+          amount: 0,
+          receivedAmount: 0,
+          // No empties fields — this is defective FULL, not empty.
+          // Renderer shows "-" in Emp C / Pend E for this row.
+          emptyCylsCollected: 0,
+          pendingEmptyCyls: 0,
+          emptyCylsCost: 0,
+          cylinderType: '',
+          narration: entry.narration ?? 'Defective returned',
+          kind: 'defective_collected',
         });
         return;
       }

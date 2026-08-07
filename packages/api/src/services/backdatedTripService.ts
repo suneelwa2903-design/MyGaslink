@@ -127,7 +127,7 @@ export async function createBackdatedTrip(
         distributorId,
         driverId: data.driverId,
         assignmentDate: issueDate,
-        tripNumber: 1,
+        tripNumber: data.tripNumber ?? 1,
       },
       select: { id: true },
     });
@@ -139,7 +139,7 @@ export async function createBackdatedTrip(
         driverId: data.driverId,
         vehicleId: data.vehicleId!,
         assignmentDate: issueDate,
-        tripNumber: 1,
+        tripNumber: data.tripNumber ?? 1,
         status: 'reconciled',
         isReconciled: true,
         dispatchedAt: issueDate,
@@ -213,6 +213,11 @@ export async function createBackdatedTrip(
           poNumber: orderInput.poNumber ?? null,
           driverId: data.driverId ?? null,
           vehicleId: data.vehicleId ?? null,
+          // 2026-08-06 (Gap 1) — stamp trip number so Vehicle Ledger +
+          // Driver Daily Log attribute the delivery to the correct trip
+          // bucket. Only meaningful when driver + vehicle exist; leave
+          // null for driver-less single-customer On-Demand entries.
+          tripNumber: (data.driverId && data.vehicleId) ? (data.tripNumber ?? 1) : null,
           orderDate: issueDate,
           deliveryDate: issueDate,
           deliveredAt: issueDate,
@@ -290,28 +295,27 @@ export async function createBackdatedTrip(
     }
   }
 
-  // Q2 (2026-07-09) — inventory auto-apply. When the request flag is set,
-  // fold what was previously a manual "On-Demand Adjustments" tab step
-  // into the same submit. Per-order best-effort: an adjust failure on
-  // order N does NOT undo the orders already created — the operator can
-  // retry that single adjustment from the tab. Uses the same
-  // applyBackdatedInventoryAdjustment used by the manual tab so all
-  // downstream behaviour (event types, event-date = today, summary
-  // cascade from today, order.inventoryAdjustedAt marker) stays
-  // identical.
+  // 2026-08-06 (Gap 2 auto-apply) — inventory adjustment now runs
+  // ALWAYS, not gated on `applyInventoryAdjustment` opt-in. Before this
+  // change operators who left the "Auto-apply inventory" checkbox
+  // unchecked created backdated trips that never showed up on
+  // physical-flow reports. Auto-apply closes the operator-forgot
+  // failure mode; the `applyInventoryAdjustment` field on the request
+  // is now ignored (kept as optional in the schema for backward
+  // compatibility). Per-order best-effort: adjust failure on order N
+  // does NOT undo the orders already created — the operator can
+  // manually re-apply that single adjustment from the tab.
   let inventoryAdjustmentsApplied = 0;
-  if (data.applyInventoryAdjustment) {
-    const { applyBackdatedInventoryAdjustment } = await import('./backdatedAdjustmentService.js');
-    for (const row of createdOrders) {
-      try {
-        await applyBackdatedInventoryAdjustment(distributorId, userId, row.orderId);
-        inventoryAdjustmentsApplied += 1;
-      } catch (err) {
-        logger.warn('Backdated trip inventory adjustment failed for order (non-blocking)', {
-          orderId: row.orderId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+  const { applyBackdatedInventoryAdjustment } = await import('./backdatedAdjustmentService.js');
+  for (const row of createdOrders) {
+    try {
+      await applyBackdatedInventoryAdjustment(distributorId, userId, row.orderId);
+      inventoryAdjustmentsApplied += 1;
+    } catch (err) {
+      logger.warn('Backdated trip inventory adjustment failed for order (non-blocking)', {
+        orderId: row.orderId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

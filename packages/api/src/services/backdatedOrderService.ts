@@ -10,6 +10,7 @@ import { createPaymentInTx } from './paymentService.js';
 import { allocateNumber } from './numberingService.js';
 import { toNum } from '../utils/decimal.js';
 import { logger } from '../utils/logger.js';
+import { applyBackdatedInventoryAdjustment } from './backdatedAdjustmentService.js';
 
 // Fallback when distributor has no docCode set (matches the createOrder
 // behaviour at orderService.ts — random alphanumeric prefixed with ORD).
@@ -151,6 +152,12 @@ export async function createBackdatedOrder(
         poNumber: data.poNumber ?? null,
         driverId: data.driverId ?? null,
         vehicleId: data.vehicleId ?? null,
+        // 2026-08-06 (Gap 1) — historical trip number for Vehicle Ledger
+        // + Driver Daily Log attribution. Defaults to 1; operator can
+        // bump for additional same-day backdated batches. Only stamped
+        // when driver + vehicle are set (otherwise trip attribution is
+        // meaningless — orphan trip row).
+        tripNumber: (data.driverId && data.vehicleId) ? (data.tripNumber ?? 1) : null,
         // 2026-07-29 Mini-op tenants use a free-text driver name instead
         // of the Driver FK — matches the regular createOrder path so the
         // customer-facing order/invoice display is consistent between
@@ -217,6 +224,26 @@ export async function createBackdatedOrder(
 
     return { order, invoice };
   });
+
+  // 2026-08-06 (Gap 2 auto-apply) — inventory adjustment now runs
+  // automatically at create time. Previously it was a separate manual
+  // "Apply Adjustment" step on the Backdated Adjustments tab, which
+  // operators forgot — and forgotten adjustments left backdated orders
+  // invisible to Vehicle Ledger / Inventory Movement / Cylinder Rotation
+  // even though the order + invoice were fully created. Auto-run at
+  // create closes the operator-forgot failure mode. Non-blocking (order
+  // creation stays successful even if adjustment errors) — a manual
+  // re-apply is still possible via the backdated adjustments tab. Runs
+  // post-commit so the order row exists for the adjustment's
+  // findFirst() lookup.
+  try {
+    await applyBackdatedInventoryAdjustment(distributorId, userId, result.order.id);
+  } catch (err) {
+    logger.warn('Backdated auto-inventory-adjustment failed (non-blocking)', {
+      orderId: result.order.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   // Fire-and-forget IRN+EWB. Matches confirmDelivery's non-blocking
   // pattern (orderService.ts:1203-1207). gstService gates IRN by

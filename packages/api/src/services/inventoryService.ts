@@ -78,6 +78,11 @@ export async function computeSummaryForDate(
   manualAdjustment: number;
   closingFulls: number;
   closingEmpties: number;
+  // F1 (2026-08-06) — defective bucket. Parallel to good fulls/empties.
+  // closingFulls formula UNTOUCHED (WI-106 zone protected).
+  defectiveFullsIn: number;
+  defectiveFullsOut: number;
+  closingDefectiveFulls: number;
 }> {
   // Get opening balance from previous day's closing
   const prevSummary = await prisma.inventorySummary.findFirst({
@@ -87,7 +92,8 @@ export async function computeSummaryForDate(
       summaryDate: { lt: date },
     },
     orderBy: { summaryDate: 'desc' },
-    select: { closingFulls: true, closingEmpties: true },
+    // F1 (2026-08-06) — also carry forward defective bucket
+    select: { closingFulls: true, closingEmpties: true, closingDefectiveFulls: true },
   });
 
   const openingFulls = prevSummary?.closingFulls ?? 0;
@@ -130,6 +136,10 @@ export async function computeSummaryForDate(
   // the initial empties were silently ignored. Track them separately to avoid
   // polluting the "Collected Empties" display column.
   let initialEmpties = 0;
+  // F1 (2026-08-06) — defective bucket accumulators. Feed the parallel
+  // closingDefectiveFulls formula below. Do NOT touch fulls/empties buckets.
+  let defectiveFullsIn = 0;
+  let defectiveFullsOut = 0;
 
   for (const event of events) {
     switch (event.eventType) {
@@ -193,6 +203,20 @@ export async function computeSummaryForDate(
         // earlier double-count where the same empty incremented closing twice.
         emptiesReturnedVerified += event.emptiesChange;
         break;
+      case 'defective_return_from_customer':
+        // F1 (2026-08-06): defective full picked up from customer, arriving
+        // at depot's defective bucket. Event's fullsChange is negative (the
+        // full "left" the customer's holding — same sign convention as
+        // outgoing_empties). We track the ABSOLUTE quantity as an inbound to
+        // the defective bucket.
+        defectiveFullsIn += Math.abs(event.fullsChange);
+        break;
+      case 'defective_return_to_corporation':
+        // F1 (2026-08-06): defective full shipped from depot back to OMC.
+        // Event's fullsChange is negative. Absolute quantity leaves the
+        // defective bucket.
+        defectiveFullsOut += Math.abs(event.fullsChange);
+        break;
     }
   }
 
@@ -209,6 +233,10 @@ export async function computeSummaryForDate(
   // collection no longer does. Equivalent under the old model only when
   // verified == collected (rarely true — old formula over-credited).
   const closingEmpties = openingEmpties + emptiesReturnedVerified + initialEmpties + manualEmpties - outgoingEmpties;
+  // F1 (2026-08-06) — defective bucket closing formula. Parallel to
+  // closingFulls/closingEmpties; does NOT interact with them.
+  const openingDefectiveFulls = prevSummary?.closingDefectiveFulls ?? 0;
+  const closingDefectiveFulls = openingDefectiveFulls + defectiveFullsIn - defectiveFullsOut;
 
   return {
     openingFulls,
@@ -223,6 +251,9 @@ export async function computeSummaryForDate(
     manualAdjustment,
     closingFulls,
     closingEmpties,
+    defectiveFullsIn,
+    defectiveFullsOut,
+    closingDefectiveFulls,
   };
 }
 
@@ -310,6 +341,22 @@ export async function recalculateSummariesFromDate(
 
 /**
  * Record incoming fulls (manual entry for any corporation).
+ *
+ * F8 (2026-08-06) — when `sourceDistributorId` is supplied, ALSO creates
+ * a PurchaseEntry + PurchaseEntryItem + optional PurchaseEntryCharge rows
+ * inside the SAME transaction as the InventoryEvent. This unifies the
+ * regular-distributor incoming-fulls flow with the mini-op purchase-entry
+ * flow so both surfaces feed the supplier ledger. When
+ * `sourceDistributorId` is null/undefined the pre-F8 behaviour is
+ * preserved verbatim — only the InventoryEvent is written, no supplier
+ * ledger impact.
+ *
+ * Rate handling per Suneel Q4: caller MAY pass EITHER `unitPrice` (per-cyl
+ * rate, GST-inclusive) OR `amount` (line total). If both, `unitPrice`
+ * wins and `amount` is derived. If neither is passed, the line total is 0.
+ *
+ * Charges (freight/handling/etc.) are Suneel-Q8-optional and become
+ * PurchaseEntryCharge rows attached to the same PurchaseEntry.
  */
 export async function recordIncomingFulls(
   distributorId: string,
@@ -322,14 +369,67 @@ export async function recordIncomingFulls(
     documentDate: string;
     vehicleNumber?: string;
     driverName?: string;
+    // F8: EITHER unitPrice (rate/cyl, GST-inclusive) OR amount (line total).
+    // If both are passed, unitPrice wins. If neither, line total = 0.
+    unitPrice?: number;
     amount?: number;
     notes?: string;
+    // F8: OMC supplier this incoming batch came from. When set, this call
+    // also spawns a PurchaseEntry row so the supplier ledger picks it up.
+    // Nullable (backward-compat) — pre-F8 callers keep working.
+    sourceDistributorId?: string;
+    charges?: Array<{
+      chargeType: 'freight' | 'handling' | 'testing' | 'insurance' | 'other';
+      amount: number;
+      notes?: string;
+    }>;
+    // F8 v2 (2026-08-06) — per-line GST% + OMC plant name. Both optional;
+    // treated as 0/null when omitted. When sourceDistributorId is set,
+    // these persist onto PurchaseEntryItem.gstRate + PurchaseEntry.plantName.
+    gstRate?: number;
+    plantName?: string;
   }
 ) {
   const eventDate = new Date(data.documentDate);
 
+  // F8: rate + line-total normalisation. unitPrice wins if both are set.
+  const unitPrice =
+    typeof data.unitPrice === 'number' && data.unitPrice > 0
+      ? data.unitPrice
+      : typeof data.amount === 'number' && data.amount > 0 && data.quantity > 0
+        ? data.amount / data.quantity
+        : 0;
+  const lineTotal = unitPrice * data.quantity;
+  const chargeTotal = (data.charges ?? []).reduce((s, c) => s + Math.max(0, c.amount), 0);
+  const eventAmount = lineTotal + chargeTotal;
+
+  // F8 supplier context — fetched once so we can snapshot the name onto
+  // the PurchaseEntry (matches mini-op purchase-entry write pattern).
+  const supplier = data.sourceDistributorId
+    ? await prisma.sourceDistributor.findFirst({
+        where: { id: data.sourceDistributorId, distributorId, deletedAt: null },
+        select: { id: true, name: true },
+      })
+    : null;
+  if (data.sourceDistributorId && !supplier) {
+    // Anti-pattern #13: cross-tenant sourceDistributorId gets rejected at
+    // the write boundary, never a silent orphan.
+    throw new Error('Supplier not found or belongs to another tenant');
+  }
+
+  // F8: numbering — we need the same 'P' allocation the mini-op path uses
+  // so the supplier ledger reader can key on PurchaseEntry uniformly.
+  const distributor = supplier
+    ? await prisma.distributor.findUnique({
+        where: { id: distributorId },
+        select: { docCode: true },
+      })
+    : null;
+
+  const { allocateNumber } = await import('./numberingService.js');
+
   const event = await prisma.$transaction(async (tx) => {
-    return createInventoryEvent(tx, {
+    const inventoryEvent = await createInventoryEvent(tx, {
       distributorId,
       cylinderTypeId: data.cylinderTypeId,
       eventType: 'incoming_fulls',
@@ -341,10 +441,68 @@ export async function recordIncomingFulls(
       documentDate: eventDate,
       vehicleNumber: data.vehicleNumber,
       driverName: data.driverName,
-      amount: data.amount,
+      amount: eventAmount > 0 ? eventAmount : data.amount,
       createdBy: userId,
       notes: data.notes,
     });
+
+    // F8: also spawn a PurchaseEntry so the supplier ledger picks this up.
+    // Kept OUT of the createInventoryEvent path so pre-F8 callers that
+    // don't pass sourceDistributorId land in the exact same code path
+    // they always did — zero regression risk.
+    if (supplier) {
+      const purchaseNumber = distributor?.docCode
+        ? await allocateNumber(tx, distributorId, 'P', eventDate, distributor.docCode)
+        : `P-${Date.now().toString(36).toUpperCase()}`;
+
+      const purchaseDateStr = data.documentDate.slice(0, 10); // yyyy-mm-dd
+
+      await tx.purchaseEntry.create({
+        data: {
+          purchaseNumber,
+          distributorId,
+          sourceDistributorId: supplier.id,
+          sourceDistributorName: supplier.name,
+          purchaseDate: purchaseDateStr,
+          supplierDocumentNumber: data.documentNumber || null,
+          supplierDocumentDate: purchaseDateStr,
+          // F8 v2 (2026-08-06) — plant + documentType. This code path is
+          // the single-line "quick" entry from the Inventory modal; always
+          // a gas invoice (deposit invoices come through the multi-line
+          // Corporation Ledger Add Entry → Deposit flow).
+          plantName: data.plantName?.trim() || null,
+          documentType: 'invoice',
+          notes: data.notes ?? null,
+          createdBy: userId,
+          items: {
+            create: [
+              {
+                cylinderTypeId: data.cylinderTypeId,
+                fullsReceived: data.quantity,
+                emptiesGivenOut: 0,
+                unitPrice,
+                // F8 v2 (2026-08-06) — GST rate per line
+                gstRate: data.gstRate ?? 0,
+              },
+            ],
+          },
+          charges:
+            (data.charges ?? []).length > 0
+              ? {
+                  create: (data.charges ?? [])
+                    .filter((c) => c.amount > 0)
+                    .map((c) => ({
+                      chargeType: c.chargeType,
+                      amount: c.amount,
+                      notes: c.notes ?? null,
+                    })),
+                }
+              : undefined,
+        },
+      });
+    }
+
+    return inventoryEvent;
   });
 
   // Recalculate AFTER the transaction commits: recalculateSummariesFromDate
@@ -1160,6 +1318,11 @@ export async function getOnboardingStock(distributorId: string) {
 /**
  * Get depot history: paginated incoming_fulls and outgoing_empties events.
  */
+// Depot History = physical challan events at the depot boundary. Kept
+// strictly to incoming_fulls + outgoing_empties per Suneel — defective
+// flow is visible in Daily Summary (Defective In/Out/Closing columns) and
+// in the Defective Returns modal's History tab. F1-FIX-16 tried to add
+// defective rows here; F1-FIX-17 (2026-08-06) reverts that.
 export async function getDepotHistory(
   distributorId: string,
   filters: {
@@ -1202,8 +1365,54 @@ export async function getDepotHistory(
     prisma.inventoryEvent.count({ where }),
   ]);
 
+  // F1-FIX-18 (2026-08-06) — for outgoing_empties rows, correlate with
+  // DefectiveReturnBatch by matching challan number, then sum defective
+  // qty per (challan, cylinderType). Attaches `defectiveQty` (number)
+  // to each event — non-zero only on outgoing rows whose challan
+  // matches a batch that piggybacked in the same shipment.
+  //
+  // Correlation contract: OutgoingEmpties modal writes its challan to
+  // InventoryEvent.documentNumber; the piggybacked defective batch is
+  // created with DefectiveReturnBatch.challanNumber = same value (see
+  // OutgoingEmptiesModal.onSubmit chain in InventoryPage.tsx). So a
+  // simple string match on those two fields per (distributorId,
+  // cylinderTypeId) is safe and O(few) per page.
+  const outgoingChallans = new Set<string>();
+  for (const ev of events) {
+    if (ev.eventType === 'outgoing_empties' && ev.documentNumber) {
+      outgoingChallans.add(ev.documentNumber);
+    }
+  }
+  const defectiveCorrelation = new Map<string, number>(); // key: `${challan}|${cylTypeId}` → qty
+  if (outgoingChallans.size > 0) {
+    const batches = await prisma.defectiveReturnBatch.findMany({
+      where: {
+        distributorId,
+        challanNumber: { in: [...outgoingChallans] },
+      },
+      select: {
+        challanNumber: true,
+        items: { select: { cylinderTypeId: true, quantity: true } },
+      },
+    });
+    for (const b of batches) {
+      if (!b.challanNumber) continue;
+      for (const it of b.items) {
+        const key = `${b.challanNumber}|${it.cylinderTypeId}`;
+        defectiveCorrelation.set(key, (defectiveCorrelation.get(key) ?? 0) + it.quantity);
+      }
+    }
+  }
+  const eventsWithDefective = events.map((ev) => {
+    const key = ev.eventType === 'outgoing_empties' && ev.documentNumber
+      ? `${ev.documentNumber}|${ev.cylinderTypeId}`
+      : null;
+    const defectiveQty = key ? (defectiveCorrelation.get(key) ?? 0) : 0;
+    return Object.assign(ev, { defectiveQty });
+  });
+
   return {
-    events,
+    events: eventsWithDefective,
     meta: {
       page,
       pageSize,

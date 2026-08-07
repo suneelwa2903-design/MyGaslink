@@ -196,15 +196,23 @@ describe('createBackdatedOrder — service', () => {
     expect(inv.issueDate.toISOString().slice(0, 10)).toBe(issueDate);
     expect(inv.orderId).toBe(order.id);
 
-    // No inventory events were written for this order.
-    const events = await prisma.inventoryEvent.count({ where: { referenceId: order.id } });
-    expect(events).toBe(0);
+    // 2026-08-06 Gap 2 rewrite — inventory adjustment now runs
+    // automatically at create time. Expect the 2-event bundle (dispatch
+    // + delivery) since emptiesCollected=0. And CustomerInventoryBalance
+    // is upserted at withCustomerQty = deliveredQty − emptiesCollected = 2.
+    const events = await prisma.inventoryEvent.findMany({
+      where: { referenceId: order.id, referenceType: 'backdated_inventory_adjustment' },
+    });
+    expect(events).toHaveLength(2);
+    const types = new Set(events.map((e) => e.eventType));
+    expect(types.has('dispatch')).toBe(true);
+    expect(types.has('delivery')).toBe(true);
 
-    // CustomerInventoryBalance unchanged for this customer.
+    // CustomerInventoryBalance created for this customer at qty=2.
     const balance = await prisma.customerInventoryBalance.findFirst({
       where: { customerId: customer.id, cylinderTypeId: ctId },
     });
-    expect(balance).toBeNull();
+    expect(balance?.withCustomerQty).toBe(2);
   });
 
   it('records payment in same transaction when payment provided', async () => {
