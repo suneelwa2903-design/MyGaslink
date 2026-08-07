@@ -32,6 +32,9 @@ import {
   createSourceDistributorSchema,
   type CreatePurchaseEntryInput,
   type CreateSourceDistributorInput,
+  createPurchaseCreditNoteSchema,
+  type CreatePurchaseCreditNoteInput,
+  PURCHASE_CREDIT_NOTE_REASONS,
   localTodayISO,
   localDateISO,
 } from '@gaslink/shared';
@@ -446,6 +449,8 @@ function SourcesTab() {
   const [editingSupplier, setEditingSupplier] = useState<SourceDistributor | null>(null);
   // Mini-op #5 (2026-07-27) — Record Purchase Payment modal state.
   const [payingSupplier, setPayingSupplier] = useState<SourceDistributor | null>(null);
+  // F8 (2026-08-06) — Record Credit Note flow.
+  const [creditingSupplier, setCreditingSupplier] = useState<SourceDistributor | null>(null);
 
   const createMutation = useMutation({
     mutationFn: async (payload: CreateSourceDistributorInput) => {
@@ -602,6 +607,14 @@ function SourcesTab() {
                           <Button
                             type="button"
                             size="sm"
+                            variant="ghost"
+                            onClick={() => setCreditingSupplier(s)}
+                          >
+                            Record CN
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
                             onClick={() => setPayingSupplier(s)}
                           >
                             Record Payment
@@ -639,6 +652,19 @@ function SourcesTab() {
             queryClient.invalidateQueries({ queryKey: ['supplier-balances'] });
             queryClient.invalidateQueries({ queryKey: ['purchase-payments'] });
             setPayingSupplier(null);
+          }}
+        />
+      )}
+
+      {creditingSupplier && (
+        <RecordPurchaseCreditNoteModal
+          supplier={creditingSupplier}
+          onClose={() => setCreditingSupplier(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ['source-distributors'] });
+            queryClient.invalidateQueries({ queryKey: ['supplier-balances'] });
+            queryClient.invalidateQueries({ queryKey: ['purchase-credit-notes'] });
+            setCreditingSupplier(null);
           }}
         />
       )}
@@ -1143,6 +1169,227 @@ function PurchaseEntryModal({ open, onClose, mode, entry }: PurchaseEntryModalPr
           </Button>
           <Button type="submit" loading={mutation.isPending}>
             {isEdit ? 'Save Changes' : 'Record Purchase'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── F8 (2026-08-06) — Record Purchase Credit Note Modal ────────────────────
+// Supplier CN received from OMC. All CNs are financial incentives (per
+// Suneel 2026-08-06 — GST vs Financial toggle dropped). Must be allocated
+// against one or more of that supplier's PurchaseEntry rows; sum(alloc) ==
+// totalAmount enforced client-side + server-side.
+
+interface PurchaseEntryOutstanding {
+  purchaseEntryId: string;
+  purchaseNumber: string;
+  purchaseDate: string;
+  // Wire uses `total` (renamed from schema `totalAmount`) — kept intact so
+  // this contract matches mobile purchases.tsx OutstandingEntriesResponse.
+  total: number;
+  amountPaid: number;
+  outstanding: number;
+  // F8 additions — see purchasePaymentService.ts OutstandingEntryRow.
+  supplierDocumentNumber?: string | null;
+  totalCreditNotes?: number;
+  amountRemaining?: number;
+}
+
+function RecordPurchaseCreditNoteModal({
+  supplier,
+  onClose,
+  onSaved,
+}: {
+  supplier: SourceDistributor;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const today = localTodayISO();
+  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<CreatePurchaseCreditNoteInput>({
+    resolver: zodResolver(createPurchaseCreditNoteSchema),
+    defaultValues: {
+      sourceDistributorId: supplier.id,
+      creditNoteDate: today,
+      receivedDate: today,
+      totalAmount: 0,
+      reason: 'volume_incentive',
+      allocations: [],
+    },
+  });
+  const { fields, append, remove, update } = useFieldArray({
+    control,
+    name: 'allocations',
+  });
+
+  // Outstanding purchase-entry list for this supplier — the operator picks
+  // one or more rows and types an amount against each. Uses the existing
+  // /purchase-payments/outstanding/:sourceId endpoint which returns
+  // per-entry amountRemaining (F8), so we don't duplicate the FIFO logic.
+  // Wire shape mirrors mobile purchases.tsx OutstandingEntriesResponse —
+  // { entries: [...] }.
+  const { data: outstandingResp } = useQuery({
+    queryKey: ['purchase-outstanding', supplier.id],
+    queryFn: () => apiGet<{ entries: PurchaseEntryOutstanding[] }>(`/purchase-payments/outstanding/${supplier.id}`),
+  });
+  const outstanding = outstandingResp?.entries ?? [];
+
+  const mutation = useMutation({
+    mutationFn: (data: CreatePurchaseCreditNoteInput) => apiPost('/purchase-credit-notes', data),
+    onSuccess: () => {
+      toast.success(`Credit note recorded — ${supplier.name}`);
+      onSaved();
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const allocSum = fields.reduce((s, _, i) => {
+    const raw = (fields[i] as unknown as { amount?: number }).amount;
+    return s + (typeof raw === 'number' && Number.isFinite(raw) ? raw : 0);
+  }, 0);
+
+  return (
+    <Modal open onClose={onClose} title={`Record Credit Note — ${supplier.name}`} size="lg">
+      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="OMC's CN Number"
+            placeholder="e.g. HPCL-CN-2026-042"
+            error={errors.supplierDocumentNumber?.message}
+            {...register('supplierDocumentNumber')}
+          />
+          <Select
+            label="Reason"
+            options={PURCHASE_CREDIT_NOTE_REASONS.map((r) => ({
+              value: r,
+              label: r.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+            }))}
+            required
+            error={errors.reason?.message}
+            {...register('reason')}
+          />
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Input label="CN Date (OMC)" type="date" required error={errors.creditNoteDate?.message} {...register('creditNoteDate')} />
+          <Input label="Received On" type="date" required error={errors.receivedDate?.message} {...register('receivedDate')} />
+          <Input
+            label="Total Amount (₹)"
+            type="number"
+            min={0}
+            step="0.01"
+            required
+            error={errors.totalAmount?.message}
+            {...register('totalAmount', { valueAsNumber: true })}
+          />
+        </div>
+        <Input label="Notes (optional)" placeholder="Free-form" {...register('notes')} />
+
+        <div className="space-y-2 border-t border-slate-200 pt-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-slate-700">Allocate to Purchase Invoices</label>
+              <p className="text-xs text-slate-500">
+                Sum of allocations must equal the CN total. Only invoices with outstanding balance shown.
+              </p>
+            </div>
+            <div className="text-xs text-slate-600">
+              Allocated: <span className="font-medium">₹{allocSum.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {outstanding.length === 0 ? (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {supplier.name} has no outstanding purchase invoices to offset against. Record a purchase entry first.
+            </p>
+          ) : (
+            <div className="max-h-72 overflow-y-auto rounded-md border border-slate-200">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-xs uppercase text-slate-600">
+                  <tr>
+                    <th className="p-2 text-left">Include</th>
+                    <th className="p-2 text-left">Invoice</th>
+                    <th className="p-2 text-left">Date</th>
+                    <th className="p-2 text-right">Outstanding</th>
+                    <th className="p-2 text-right">Allocate ₹</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {outstanding.map((row) => {
+                    const idx = fields.findIndex(
+                      (f) => (f as unknown as { purchaseEntryId?: string }).purchaseEntryId === row.purchaseEntryId,
+                    );
+                    const included = idx >= 0;
+                    return (
+                      <tr key={row.purchaseEntryId} className="border-t border-slate-200">
+                        <td className="p-2">
+                          <input
+                            type="checkbox"
+                            checked={included}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                append({
+                                  purchaseEntryId: row.purchaseEntryId,
+                                  amount: (row.amountRemaining ?? row.outstanding),
+                                });
+                              } else if (idx >= 0) {
+                                remove(idx);
+                              }
+                            }}
+                          />
+                        </td>
+                        <td className="p-2">
+                          {/* OMC reference only. The internal PSHD auto-number
+                              is not user-facing anywhere. */}
+                          <div className="font-medium">{row.supplierDocumentNumber ?? '—'}</div>
+                        </td>
+                        <td className="p-2 text-slate-600">{row.purchaseDate}</td>
+                        <td className="p-2 text-right">₹{(row.amountRemaining ?? row.outstanding).toFixed(2)}</td>
+                        <td className="p-2 text-right">
+                          {included ? (
+                            <input
+                              type="number"
+                              min={0}
+                              max={(row.amountRemaining ?? row.outstanding)}
+                              step="0.01"
+                              className="w-28 rounded border border-slate-300 px-2 py-1 text-right"
+                              defaultValue={
+                                (fields[idx] as unknown as { amount?: number }).amount ?? (row.amountRemaining ?? row.outstanding)
+                              }
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                update(idx, {
+                                  purchaseEntryId: row.purchaseEntryId,
+                                  amount: Number.isFinite(v) ? v : 0,
+                                });
+                                // Force the useForm state to see the update.
+                                setValue(`allocations.${idx}.amount`, Number.isFinite(v) ? v : 0, {
+                                  shouldDirty: true,
+                                });
+                              }}
+                            />
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {errors.allocations?.message && (
+            <p className="text-xs text-red-600">{errors.allocations.message as string}</p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={mutation.isPending} disabled={outstanding.length === 0}>
+            Record Credit Note
           </Button>
         </div>
       </form>

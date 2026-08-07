@@ -42,9 +42,22 @@ const supplierOpeningStateSchema = z.object({
 // resource router.
 const router = Router();
 
+// F8 (2026-08-06) — widened from mini_operator_admin only. Regular
+// distributors now use SourceDistributor rows too (auto-seeded from
+// providerCodes on tenant creation + admin can manually add local
+// depots / private marketers). Opening-state seed routes stay reachable
+// to distributor_admin because a fresh regular tenant may want to seed
+// what they owed the OMC at go-live (same shape as mini-op seed).
+// super_admin auto-passes via requireRole's built-in bypass.
+const SUPPLIER_ROLES = [
+  'mini_operator_admin',
+  'distributor_admin',
+  'finance',
+] as const;
+
 // GET /api/source-distributors
 router.get('/',
-  requireRole('mini_operator_admin'),
+  requireRole(...SUPPLIER_ROLES),
   async (req, res) => {
     try {
       const rows = await sourceDistributorService.listSourceDistributors(
@@ -59,7 +72,7 @@ router.get('/',
 
 // POST /api/source-distributors
 router.post('/',
-  requireRole('mini_operator_admin'),
+  requireRole(...SUPPLIER_ROLES),
   validate(createSourceDistributorSchema),
   auditLog('create', 'source_distributor'),
   async (req, res) => {
@@ -82,7 +95,7 @@ router.post('/',
 // One-shot: seeds the ₹ opening balance owed to the supplier. Refuses
 // with 400 ALREADY_SEEDED on second call.
 router.post('/:id/seed-opening-state',
-  requireRole('mini_operator_admin'),
+  requireRole(...SUPPLIER_ROLES),
   validate(supplierOpeningStateSchema),
   auditLog('seed_opening_state', 'source_distributor'),
   async (req, res) => {
@@ -110,7 +123,7 @@ router.post('/:id/seed-opening-state',
 // Edit path — updates the ₹ balance in place. Refuses reduction below
 // amountPaid on the underlying OB purchase entry.
 router.put('/:id/opening-state',
-  requireRole('mini_operator_admin'),
+  requireRole(...SUPPLIER_ROLES),
   validate(supplierOpeningStateSchema),
   auditLog('update_opening_state', 'source_distributor'),
   async (req, res) => {
@@ -135,7 +148,7 @@ router.put('/:id/opening-state',
 
 // DELETE /api/source-distributors/:id
 router.delete('/:id',
-  requireRole('mini_operator_admin'),
+  requireRole(...SUPPLIER_ROLES),
   auditLog('delete', 'source_distributor'),
   async (req, res) => {
     try {

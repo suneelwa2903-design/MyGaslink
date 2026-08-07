@@ -72,6 +72,15 @@ type PurchaseItemInput = {
   /// Per-unit price (INR, GST-inclusive). Defaults to 0 when the client
   /// omits it — old clients still work, existing rows keep their default.
   unitPrice?: number;
+  /// F8 v2 (2026-08-06) — GST rate for this line (%). One OMC invoice can
+  /// mix DOM.LPG (5%) + COMM.LPG (18%) + FREIGHT — per-line rate is required.
+  gstRate?: number;
+};
+
+type PurchaseChargeInput = {
+  chargeType: 'freight' | 'handling' | 'testing' | 'insurance' | 'other';
+  amount: number;
+  notes?: string;
 };
 
 export type CreatePurchaseEntryData = {
@@ -79,6 +88,13 @@ export type CreatePurchaseEntryData = {
   purchaseDate: string;
   notes?: string;
   items: PurchaseItemInput[];
+  // F8 v2 (2026-08-06) — OMC's own doc ref + plant + doc type + charges.
+  // All optional so pre-v2 mini-op callers keep working.
+  supplierDocumentNumber?: string;
+  supplierDocumentDate?: string;
+  plantName?: string;
+  documentType?: 'invoice' | 'deposit_invoice';
+  charges?: PurchaseChargeInput[];
 };
 
 export type UpdatePurchaseEntryData = CreatePurchaseEntryData;
@@ -196,17 +212,14 @@ export async function createPurchaseEntry(
   }
 
   // Fetch docCode for structured numbering — allocate inside the tx.
+  // F8 v2 (2026-08-06) — docCode is now OPTIONAL. Regular distributors
+  // without a code set land on unstructured `P-<time36>` fallback rather
+  // than a hard 400 so operators can start using Corporations without an
+  // ops-tier setup step.
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
     select: { docCode: true },
   });
-  if (!distributor?.docCode) {
-    throw new PurchaseEntryError(
-      'Distributor has no docCode configured — set one under Distributor settings before recording purchases',
-      400,
-      'NO_DOC_CODE',
-    );
-  }
 
   const purchaseDateObj = new Date(data.purchaseDate);
   if (Number.isNaN(purchaseDateObj.getTime())) {
@@ -214,13 +227,9 @@ export async function createPurchaseEntry(
   }
 
   return prisma.$transaction(async (tx) => {
-    const purchaseNumber = await allocateNumber(
-      tx,
-      distributorId,
-      'P',
-      purchaseDateObj,
-      distributor.docCode!,
-    );
+    const purchaseNumber = distributor?.docCode
+      ? await allocateNumber(tx, distributorId, 'P', purchaseDateObj, distributor.docCode)
+      : `P-${Date.now().toString(36).toUpperCase()}`;
 
     const created = await tx.purchaseEntry.create({
       data: {
@@ -230,6 +239,11 @@ export async function createPurchaseEntry(
         sourceDistributorName,
         purchaseDate: data.purchaseDate,
         notes: data.notes?.trim() || null,
+        // F8 v2 (2026-08-06) — OMC-side reference + plant + document type.
+        supplierDocumentNumber: data.supplierDocumentNumber?.trim() || null,
+        supplierDocumentDate: data.supplierDocumentDate ?? null,
+        plantName: data.plantName?.trim() || null,
+        documentType: data.documentType ?? 'invoice',
         createdBy,
         items: {
           create: data.items.map((i) => ({
@@ -237,8 +251,24 @@ export async function createPurchaseEntry(
             fullsReceived: Math.max(0, Math.floor(i.fullsReceived ?? 0)),
             emptiesGivenOut: Math.max(0, Math.floor(i.emptiesGivenOut ?? 0)),
             unitPrice: Math.max(0, Number(i.unitPrice ?? 0)),
+            // F8 v2 (2026-08-06)
+            gstRate: Math.max(0, Number(i.gstRate ?? 0)),
           })),
         },
+        // F8 v2 (2026-08-06) — freight/handling/etc. rows on the same
+        // invoice. Skipped when caller passes empty/absent.
+        charges:
+          (data.charges ?? []).length > 0
+            ? {
+                create: (data.charges ?? [])
+                  .filter((c) => c.amount > 0)
+                  .map((c) => ({
+                    chargeType: c.chargeType,
+                    amount: c.amount,
+                    notes: c.notes ?? null,
+                  })),
+              }
+            : undefined,
       },
       select: purchaseEntrySelect,
     });

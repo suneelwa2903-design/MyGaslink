@@ -122,6 +122,68 @@ router.post('/empties-return',
   }
 );
 
+// GET /api/inventory/empties-return-history — F1-FIX-9b (2026-08-06)
+// Empties Return modal gets a "History" tab paralleling the tabbed
+// Defective Returns / Adjust Stock modals. Reads InventoryEvent rows
+// where referenceType='empties_return', joins customer + cyl type name.
+// Empties returns emit paired events (returns_collection +
+// reconciliation_empties_return with the same referenceId); we filter to
+// ONE of them (returns_collection is the display-facing audit row per
+// emptiesReturnService.ts:60-71) so history is deduped.
+router.get('/empties-return-history',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const { prisma } = await import('../lib/prisma.js');
+      const distributorId = req.user!.distributorId!;
+      const limit = Math.min(200, Math.max(10, Number(req.query.limit ?? 100)));
+      const events = await prisma.inventoryEvent.findMany({
+        where: {
+          distributorId,
+          referenceType: 'empties_return',
+          eventType: 'returns_collection', // audit-side row (paired with reconciliation_empties_return; skip that one to dedupe)
+        },
+        orderBy: { eventDate: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          eventDate: true,
+          cylinderTypeId: true,
+          emptiesChange: true,
+          referenceId: true,
+          notes: true,
+          createdAt: true,
+          cylinderType: { select: { typeName: true } },
+        },
+      });
+      // Attach customer name via the referenceId (which is customerId for
+      // empties_return per emptiesReturnService.ts:68).
+      const customerIds = [...new Set(events.map((e) => e.referenceId).filter((s): s is string => !!s))];
+      const customers = customerIds.length
+        ? await prisma.customer.findMany({
+            where: { distributorId, id: { in: customerIds } },
+            select: { id: true, customerName: true },
+          })
+        : [];
+      const nameMap = new Map(customers.map((c) => [c.id, c.customerName]));
+      const rows = events.map((e) => ({
+        id: e.id,
+        returnDate: e.eventDate.toISOString().slice(0, 10),
+        customerId: e.referenceId,
+        customerName: e.referenceId ? nameMap.get(e.referenceId) ?? '—' : '—',
+        cylinderTypeId: e.cylinderTypeId,
+        cylinderTypeName: e.cylinderType?.typeName ?? '—',
+        quantity: e.emptiesChange,
+        notes: e.notes,
+        createdAt: e.createdAt.toISOString(),
+      }));
+      return sendSuccess(res, rows);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  }
+);
+
 // POST /api/inventory/initial-balance — onboarding-time opening-stock entry
 //
 // Group 2 (2026-06-11): the body now accepts an optional `replaceExisting`

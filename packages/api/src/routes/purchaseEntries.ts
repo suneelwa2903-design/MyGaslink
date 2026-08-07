@@ -24,6 +24,16 @@ import { generatePurchaseLedgerPdf } from '../services/pdf/purchaseLedgerPdfServ
 // resource router.
 const router = Router();
 
+// F8 (2026-08-06) — widened from mini_operator_admin only to include
+// distributor_admin + finance so regular distributors can also manage
+// their OMC purchase entries. super_admin auto-passes via requireRole's
+// built-in bypass.
+const PURCHASE_ENTRY_ROLES = [
+  'mini_operator_admin',
+  'distributor_admin',
+  'finance',
+] as const;
+
 const listQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -34,7 +44,7 @@ const listQuerySchema = z.object({
 
 // GET /api/purchase-entries
 router.get('/',
-  requireRole('mini_operator_admin'),
+  requireRole(...PURCHASE_ENTRY_ROLES),
   validateQuery(listQuerySchema),
   async (req, res) => {
     try {
@@ -52,7 +62,7 @@ router.get('/',
 
 // POST /api/purchase-entries
 router.post('/',
-  requireRole('mini_operator_admin'),
+  requireRole(...PURCHASE_ENTRY_ROLES),
   validate(createPurchaseEntrySchema),
   auditLog('create', 'purchase_entry'),
   async (req, res) => {
@@ -86,7 +96,7 @@ const ledgerQuerySchema = z.object({
 });
 
 router.get('/ledger.pdf',
-  requireRole('mini_operator_admin'),
+  requireRole(...PURCHASE_ENTRY_ROLES),
   validateQuery(ledgerQuerySchema),
   async (req, res) => {
     try {
@@ -106,7 +116,7 @@ router.get('/ledger.pdf',
 
 // GET /api/purchase-entries/:id
 router.get('/:id',
-  requireRole('mini_operator_admin'),
+  requireRole(...PURCHASE_ENTRY_ROLES),
   async (req, res) => {
     try {
       const entry = await purchaseEntryService.getPurchaseEntry(
@@ -125,7 +135,7 @@ router.get('/:id',
 // Delete-and-recreate items + reverse-and-re-emit InventoryEvent rows so
 // downstream stock calculations stay accurate. See updatePurchaseEntry.
 router.put('/:id',
-  requireRole('mini_operator_admin'),
+  requireRole(...PURCHASE_ENTRY_ROLES),
   validate(updatePurchaseEntrySchema),
   auditLog('update', 'purchase_entry'),
   async (req, res) => {
@@ -149,7 +159,7 @@ router.put('/:id',
 
 // DELETE /api/purchase-entries/:id
 router.delete('/:id',
-  requireRole('mini_operator_admin'),
+  requireRole(...PURCHASE_ENTRY_ROLES),
   auditLog('delete', 'purchase_entry'),
   async (req, res) => {
     try {

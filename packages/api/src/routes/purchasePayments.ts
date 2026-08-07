@@ -27,12 +27,22 @@ import { auditLog } from '../middleware/auditLog.js';
 import { param } from '../utils/params.js';
 import { sendSuccess, sendCreated, sendError } from '../utils/apiResponse.js';
 import * as service from '../services/purchasePaymentService.js';
+// F8 (2026-08-06) — Confidence-format portrait A4 supplier statement.
+import { generateSupplierLedgerPdf } from '../services/pdf/supplierLedgerPdfService.js';
+// F8 v2 (2026-08-06) — landed cost per cyl type per month.
+import { computeLandedCost, computeAverageLandedCost } from '../services/landedCostService.js';
 
 const router = Router();
 
 // Every route is mini_operator_admin only. Applied at the router level so
 // a future GET can't accidentally leak.
-router.use(requireRole('mini_operator_admin'));
+// F8 (2026-08-06) — widened from mini_operator_admin only to include
+// distributor_admin + finance so regular distributors can also manage
+// their OMC supplier ledgers. super_admin auto-passes via requireRole's
+// built-in bypass. inventory role INTENTIONALLY excluded — recording a
+// payment against an OMC touches money, which stays with the finance +
+// admin tier (same policy as /api/payments).
+router.use(requireRole('mini_operator_admin', 'distributor_admin', 'finance'));
 
 const createSchema = z.object({
   sourceDistributorId: z.string().uuid(),
@@ -128,6 +138,73 @@ router.get('/supplier-ledger/:sourceId',
     }
   },
 );
+
+// ─── GET /supplier-ledger/:sourceId/statement.pdf ────────────────────────
+// F8 (2026-08-06) — Confidence-format supplier statement PDF (portrait
+// A4, 8-col Date/Type/Doc No/Narration/Debit/Credit/Balance/Dr/Cr).
+// Registered BEFORE any other :sourceId sub-route so the .pdf suffix
+// doesn't get eaten by a wildcard.
+router.get(
+  '/supplier-ledger/:sourceId/statement.pdf',
+  validateQuery(ledgerQuerySchema),
+  async (req, res) => {
+    try {
+      const sourceId = param(req.params.sourceId);
+      const q = (req.validated?.query ?? req.query) as z.infer<typeof ledgerQuerySchema>;
+      const pdf = await generateSupplierLedgerPdf(
+        req.user!.distributorId!,
+        sourceId,
+        q,
+      );
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="supplier-statement-${sourceId.slice(0, 8)}-${q.from ?? 'beginning'}-${q.to ?? 'today'}.pdf"`,
+      );
+      return res.send(pdf);
+    } catch (err) {
+      if (err instanceof service.PurchasePaymentError) {
+        return sendError(res, err.message, err.statusCode, err.code);
+      }
+      return sendError(res, (err as Error).message);
+    }
+  },
+);
+
+// ─── GET /landed-cost — F8 v2 (2026-08-06) ───────────────────────────────
+// Optional sourceDistributorId narrows to one OMC; from/to narrow the
+// window. Returns per-cyl-type per-month rows + summary.
+const landedCostQuerySchema = z.object({
+  sourceDistributorId: z.string().uuid().optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+router.get('/landed-cost', validateQuery(landedCostQuerySchema), async (req, res) => {
+  try {
+    const q = (req.validated?.query ?? req.query) as z.infer<typeof landedCostQuerySchema>;
+    const result = await computeLandedCost(req.user!.distributorId!, q);
+    return sendSuccess(res, result);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
+
+// ─── GET /landed-cost/avg/:sourceId — chip for corp ledger header ────────
+router.get('/landed-cost/avg/:sourceId', async (req, res) => {
+  try {
+    const sourceId = param(req.params.sourceId);
+    const days = Number(req.query.days ?? 30);
+    const result = await computeAverageLandedCost(
+      req.user!.distributorId!,
+      sourceId,
+      Number.isFinite(days) ? days : 30,
+    );
+    return sendSuccess(res, result);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
 
 // ─── GET /outstanding/:sourceId — per-entry outstanding list ─────────────
 router.get('/outstanding/:sourceId', async (req, res) => {

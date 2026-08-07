@@ -48,6 +48,61 @@ export async function listSourceDistributors(distributorId: string) {
   });
 }
 
+/**
+ * F8 (2026-08-06) — Seed one SourceDistributor row per code in the tenant's
+ * `Distributor.providerCodes[]` array. Idempotent (case-insensitive dedup
+ * on name; re-seeding a tenant whose supplier list already contains the
+ * same OMC name is a no-op). Used in two contexts:
+ *   1. createDistributor hook — invoked from the same transaction so the
+ *      tenant lands with its OMC supplier rows already visible on
+ *      Purchases page.
+ *   2. Backfill script (scripts/f8-backfill-supplier-seed.ts) — one-shot
+ *      to catch up existing distributors (Sharma, Bhargava, Vanasthali)
+ *      whose providerCodes[] pre-dates F8.
+ *   3. updateDistributor hook — when super_admin adds a new provider code
+ *      after tenant creation, the new supplier row is auto-created.
+ *
+ * Provider codes with no meaningful supplier name (empty string, whitespace)
+ * are skipped. Returns the list of newly-created SourceDistributor names
+ * (excluding ones that were already present) so the caller can log the
+ * side-effect.
+ */
+export async function seedSuppliersFromProviderCodes(
+  distributorId: string,
+  providerCodes: readonly string[],
+  tx?: Prisma.TransactionClient,
+): Promise<string[]> {
+  const client = tx ?? prisma;
+  const cleaned = Array.from(
+    new Set(
+      providerCodes
+        .map((c) => (c ?? '').trim().toUpperCase())
+        .filter((c) => c.length > 0),
+    ),
+  );
+  if (cleaned.length === 0) return [];
+
+  // Case-insensitive existing-supplier lookup so re-runs stay idempotent
+  // even if a manual admin later renamed the row (e.g. "iocl" → "IOCL").
+  const existing = await client.sourceDistributor.findMany({
+    where: {
+      distributorId,
+      deletedAt: null,
+      name: { in: cleaned, mode: 'insensitive' },
+    },
+    select: { name: true },
+  });
+  const existingUpper = new Set(existing.map((r) => r.name.toUpperCase()));
+  const missing = cleaned.filter((c) => !existingUpper.has(c));
+  if (missing.length === 0) return [];
+
+  await client.sourceDistributor.createMany({
+    data: missing.map((name) => ({ distributorId, name })),
+    skipDuplicates: true,
+  });
+  return missing;
+}
+
 export async function createSourceDistributor(
   distributorId: string,
   data: { name: string },

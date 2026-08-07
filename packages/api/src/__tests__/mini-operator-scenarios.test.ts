@@ -445,21 +445,32 @@ describe('Mini-Operator — CP2 Scenarios', () => {
   // ─── S6 — Cross-tenant + cross-role isolation ────────────────────────────
 
   describe('S6 — Cross-tenant + cross-role isolation', () => {
-    it('distributor_admin gets 403 on POST /api/source-distributors', async () => {
+    // F8 (2026-08-06) — role gates were widened so regular distributor
+    // admins can also manage supplier lists + purchases. These assertions
+    // flipped from "403" to "not 403" (the exact happy-path status varies
+    // per endpoint: 201 create, 200 list, 409 dupe — all confirm the
+    // gate is out of the way). Cross-tenant isolation (next test) is the
+    // real invariant that must hold.
+    it('distributor_admin CAN POST /api/source-distributors (F8 widen)', async () => {
       const distAdmin = await loginAsDistAdmin();
+      const uniqueName = `F8-MINI-SCENARIO-${Date.now()}`;
       const res = await request(app)
         .post('/api/source-distributors')
         .set(auth(distAdmin.token))
-        .send({ name: 'Should not work' });
-      expect(res.status).toBe(403);
+        .send({ name: uniqueName });
+      expect(res.status).not.toBe(403);
+      // Clean up so re-runs stay idempotent.
+      if (res.body?.data?.id) {
+        await prisma.sourceDistributor.delete({ where: { id: res.body.data.id } });
+      }
     });
 
-    it('distributor_admin gets 403 on GET /api/purchase-entries', async () => {
+    it('distributor_admin CAN GET /api/purchase-entries (F8 widen)', async () => {
       const distAdmin = await loginAsDistAdmin();
       const res = await request(app)
         .get('/api/purchase-entries')
         .set(auth(distAdmin.token));
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
     });
 
     it("a mini_operator_admin cannot see another tenant's source distributors", async () => {

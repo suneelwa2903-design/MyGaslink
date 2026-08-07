@@ -57,9 +57,19 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Sum a PurchaseEntry's lines to get the total money owed for goods received. */
-function entryTotal(entry: { items: Array<{ unitPrice: Prisma.Decimal | number; fullsReceived: number }> }): number {
-  return entry.items.reduce((s, it) => s + toNum(it.unitPrice) * it.fullsReceived, 0);
+/** Sum a PurchaseEntry's lines to get the total money owed for goods received.
+ *
+ * F8 (2026-08-06): also folds in `charges` (freight/handling/testing/insurance/
+ * other) when the caller selected them. `charges` is defaulted to [] so
+ * pre-F8 readers that don't select the field see identical behaviour to the
+ * pre-F8 implementation. */
+function entryTotal(entry: {
+  items: Array<{ unitPrice: Prisma.Decimal | number; fullsReceived: number }>;
+  charges?: Array<{ amount: Prisma.Decimal | number }>;
+}): number {
+  const items = entry.items.reduce((s, it) => s + toNum(it.unitPrice) * it.fullsReceived, 0);
+  const charges = (entry.charges ?? []).reduce((s, c) => s + toNum(c.amount), 0);
+  return items + charges;
 }
 
 export interface AllocationInput {
@@ -421,13 +431,37 @@ export async function reversePurchasePayment(
 
 export interface SupplierLedgerRow {
   entryDate: string;
-  kind: 'purchase' | 'payment';
+  // F8 v2 (2026-08-06) — extended kind union with 'debit_note',
+  // 'deposit', 'erv_empties', 'erv_defective'. ERV rows carry zero
+  // money — they surface physical activity on the same timeline for the
+  // "one place" corp view Suneel asked for.
+  kind:
+    | 'purchase'
+    | 'payment'
+    | 'credit_note'
+    | 'debit_note'
+    | 'deposit'
+    | 'erv_empties'
+    | 'erv_defective';
   documentId: string;
   documentNumber: string | null;
+  // F8 (2026-08-06) — OMC's own reference (supplier_document_number) when
+  // available, else null. Falls back to `documentNumber` (our internal) on
+  // the PDF's "Doc No" column.
+  supplierDocumentNumber?: string | null;
   narration: string;
   debit: number;
   credit: number;
   balance: number;
+  // F8 v2 (2026-08-06) — physical qty on ERV rows (empties or defective).
+  // Zero on money rows. Optional to keep the wire compact for money-only
+  // consumers (statement PDF ignores this field).
+  physicalQty?: number;
+  cylinderTypeName?: string;
+  // F8 v2 (2026-08-06) — plant name on purchase / deposit rows so the
+  // ledger narration can read "PURCHASE INVOICE — Sanaswadi" without
+  // the reader forcing plant lookup from a join.
+  plantName?: string | null;
 }
 
 export interface SupplierLedgerResponse {
@@ -436,6 +470,15 @@ export interface SupplierLedgerResponse {
   summary: {
     totalPurchased: number;
     totalPaid: number;
+    // F8 (2026-08-06) — supplier CNs reduce what we owe, so treat them the
+    // same as payments in the netOutstanding calc: total owed = purchased,
+    // total settled = paid + CN offsets.
+    totalCreditNotes: number;
+    // F8 v2 (2026-08-06) — DNs add to what we owe; deposits are tracked
+    // separately (own summary field) because they're refundable + should
+    // NOT net into gas-account outstanding.
+    totalDebitNotes: number;
+    totalDeposits: number;
     netOutstanding: number;
   };
   filters: { from: string | null; to: string | null };
@@ -465,7 +508,7 @@ export async function getSupplierLedger(
     );
   }
 
-  const [entries, payments] = await Promise.all([
+  const [entries, payments, creditNotes, debitNotes, ervEvents] = await Promise.all([
     prisma.purchaseEntry.findMany({
       where: { distributorId, sourceDistributorId, deletedAt: null },
       select: {
@@ -473,7 +516,18 @@ export async function getSupplierLedger(
         purchaseNumber: true,
         purchaseDate: true,
         createdAt: true,
-        items: { select: { unitPrice: true, fullsReceived: true } },
+        supplierDocumentNumber: true,
+        plantName: true,
+        documentType: true,
+        items: {
+          select: {
+            unitPrice: true,
+            fullsReceived: true,
+            cylinderType: { select: { typeName: true } },
+          },
+        },
+        // F8 (2026-08-06) — freight/handling/etc. add to the entry's debit.
+        charges: { select: { amount: true } },
       },
     }),
     prisma.purchasePayment.findMany({
@@ -488,12 +542,100 @@ export async function getSupplierLedger(
         createdAt: true,
       },
     }),
+    // F8 (2026-08-06) — supplier-side CNs reduce what we owe.
+    prisma.purchaseCreditNote.findMany({
+      where: { distributorId, sourceDistributorId, deletedAt: null },
+      select: {
+        id: true,
+        creditNoteNumber: true,
+        supplierDocumentNumber: true,
+        creditNoteDate: true,
+        totalAmount: true,
+        reason: true,
+        createdAt: true,
+      },
+    }),
+    // F8 v2 (2026-08-06) — supplier-side DNs add to what we owe.
+    prisma.purchaseDebitNote.findMany({
+      where: { distributorId, sourceDistributorId, deletedAt: null },
+      select: {
+        id: true,
+        debitNoteNumber: true,
+        supplierDocumentNumber: true,
+        debitNoteDate: true,
+        totalAmount: true,
+        reason: true,
+        createdAt: true,
+      },
+    }),
+    // F8 v2 (2026-08-06) — Empties Return Voucher (ERV) physical rows.
+    // Pulled from InventoryEvent (outgoing_empties + defective_return_to_
+    // corporation event types). Filtered by documentNumber convention —
+    // outgoing empties destined for THIS supplier's plant carry the ERV
+    // challan number. We can't join InventoryEvent to SourceDistributor
+    // directly (event schema pre-dates supplier linkage) so we scope by
+    // date + distributor + type; the Corp Ledger UI adds a supplier
+    // filter dropdown when a tenant has multiple OMCs.
+    prisma.inventoryEvent.findMany({
+      where: {
+        distributorId,
+        eventType: {
+          in: ['outgoing_empties', 'defective_return_to_corporation'],
+        },
+      },
+      select: {
+        id: true,
+        eventDate: true,
+        eventType: true,
+        emptiesChange: true,
+        fullsChange: true,
+        documentNumber: true,
+        vehicleNumber: true,
+        driverName: true,
+        createdAt: true,
+        cylinderType: { select: { typeName: true } },
+      },
+    }),
   ]);
 
+  // F8v2-FIX (2026-08-06 later) — defective outgoing rows land here with
+  // documentNumber = the F1 auto batch number (e.g. "FSHD26270000002").
+  // Suneel: never surface our internally-generated batch number on the
+  // ledger — show only what the user physically wrote on the OMC return
+  // challan (DefectiveReturnBatch.challanNumber). If the operator didn't
+  // record one, the Doc No column reads "—" for that row.
+  const defectiveBatchNumbers = ervEvents
+    .filter((ev) => ev.eventType === 'defective_return_to_corporation' && ev.documentNumber)
+    .map((ev) => ev.documentNumber as string);
+  const defectiveBatches = defectiveBatchNumbers.length
+    ? await prisma.defectiveReturnBatch.findMany({
+        where: { distributorId, batchNumber: { in: defectiveBatchNumbers } },
+        select: { batchNumber: true, challanNumber: true },
+      })
+    : [];
+  const challanByBatch = new Map(
+    defectiveBatches.map((b) => [b.batchNumber, b.challanNumber ?? null]),
+  );
+
   // Build the all-time totals BEFORE date-range filtering.
-  const totalPurchased = round2(entries.reduce((s, e) => s + entryTotal(e), 0));
+  // F8 v2: split entries by documentType — deposits track separately + do
+  // NOT net into gas-outstanding (they're refundable container fees).
+  const invoiceEntries = entries.filter((e) => e.documentType !== 'deposit_invoice');
+  const depositEntries = entries.filter((e) => e.documentType === 'deposit_invoice');
+  const totalPurchased = round2(invoiceEntries.reduce((s, e) => s + entryTotal(e), 0));
+  const totalDeposits = round2(depositEntries.reduce((s, e) => s + entryTotal(e), 0));
   const totalPaid = round2(payments.reduce((s, p) => s + toNum(p.amount), 0));
-  const netOutstanding = round2(totalPurchased - totalPaid);
+  const totalCreditNotes = round2(creditNotes.reduce((s, c) => s + toNum(c.totalAmount), 0));
+  const totalDebitNotes = round2(debitNotes.reduce((s, d) => s + toNum(d.totalAmount), 0));
+  // Gas-only outstanding: DNs add, CNs + payments subtract. Deposits are
+  // a separate pool (their own summary field) — payments made against a
+  // deposit invoice DO count in `totalPaid` however since we don't tag
+  // payments by target document today. This is a known simplification;
+  // in v2.1 we can introduce PurchasePaymentAllocation.documentType to
+  // separate deposit-payments from gas-payments if needed.
+  const netOutstanding = round2(
+    totalPurchased + totalDebitNotes - totalPaid - totalCreditNotes,
+  );
 
   const inRange = (d: string): boolean => {
     if (filters?.from && d < filters.from) return false;
@@ -505,11 +647,22 @@ export async function getSupplierLedger(
   // insert order — matches the customer-side ledger convention.
   type Merged =
     | { kind: 'purchase'; sortDate: string; createdAt: Date; row: (typeof entries)[number]; total: number }
-    | { kind: 'payment'; sortDate: string; createdAt: Date; row: (typeof payments)[number] };
+    | { kind: 'deposit'; sortDate: string; createdAt: Date; row: (typeof entries)[number]; total: number }
+    | { kind: 'payment'; sortDate: string; createdAt: Date; row: (typeof payments)[number] }
+    | { kind: 'credit_note'; sortDate: string; createdAt: Date; row: (typeof creditNotes)[number] }
+    | { kind: 'debit_note'; sortDate: string; createdAt: Date; row: (typeof debitNotes)[number] }
+    | { kind: 'erv'; sortDate: string; createdAt: Date; row: (typeof ervEvents)[number] };
 
   const merged: Merged[] = [
-    ...entries.map((e): Merged => ({
+    ...invoiceEntries.map((e): Merged => ({
       kind: 'purchase',
+      sortDate: e.purchaseDate,
+      createdAt: e.createdAt,
+      row: e,
+      total: round2(entryTotal(e)),
+    })),
+    ...depositEntries.map((e): Merged => ({
+      kind: 'deposit',
       sortDate: e.purchaseDate,
       createdAt: e.createdAt,
       row: e,
@@ -521,11 +674,45 @@ export async function getSupplierLedger(
       createdAt: p.createdAt,
       row: p,
     })),
+    ...creditNotes.map((c): Merged => ({
+      kind: 'credit_note',
+      sortDate: c.creditNoteDate,
+      createdAt: c.createdAt,
+      row: c,
+    })),
+    ...debitNotes.map((d): Merged => ({
+      kind: 'debit_note',
+      sortDate: d.debitNoteDate,
+      createdAt: d.createdAt,
+      row: d,
+    })),
+    ...ervEvents.map((ev): Merged => ({
+      kind: 'erv',
+      // eventDate is a DateTime; convert to yyyy-mm-dd for chronological
+      // interleaving with the yyyy-mm-dd string columns from the money side.
+      sortDate: ev.eventDate.toISOString().slice(0, 10),
+      createdAt: ev.createdAt,
+      row: ev,
+    })),
   ];
   merged.sort((a, b) => {
     if (a.sortDate !== b.sortDate) return a.sortDate.localeCompare(b.sortDate);
     return a.createdAt.getTime() - b.createdAt.getTime();
   });
+
+  // F8v2-FIX (2026-08-06) — build a compact "N× type" cyl summary for
+  // invoice + deposit rows so the narration + Physical Activity table
+  // show what actually came in. Single-line: "100× 19 KG"; multi-line:
+  // "100× 19 KG + 50× 5 KG".
+  function cylSummary(items: Array<{ fullsReceived: number; cylinderType: { typeName: string } | null }>): string {
+    return items
+      .filter((it) => it.fullsReceived > 0)
+      .map((it) => `${it.fullsReceived}× ${it.cylinderType?.typeName ?? '?'}`)
+      .join(' + ');
+  }
+  function totalQty(items: Array<{ fullsReceived: number }>): number {
+    return items.reduce((s, it) => s + (it.fullsReceived || 0), 0);
+  }
 
   let running = 0;
   const rows: SupplierLedgerRow[] = [];
@@ -533,17 +720,69 @@ export async function getSupplierLedger(
     if (m.kind === 'purchase') {
       running = round2(running + m.total);
       if (!inRange(m.sortDate)) continue;
+      // F8v2-FIX (2026-08-06 final) — Doc No column shows ONLY what the
+      // operator typed from the OMC document (supplierDocumentNumber).
+      // Our internal PurchaseEntry auto-number (PSHD…) is never surfaced
+      // to the ledger — same principle as the defective batch FSHD fix:
+      // Suneel wants nothing invented. The internal number stays as
+      // documentId for click-through / drill-down; the user-facing Doc
+      // No is blank when no OMC ref was captured.
+      const docNoShown = m.row.supplierDocumentNumber ?? null;
+      // NOTHING invented, anywhere — Doc No column AND narration. An earlier
+      // pass fixed only the column and left the narration falling back to
+      // the internal PSHD auto-number, so it kept leaking. If the operator
+      // captured no OMC reference, the narration simply carries none.
+      const refSuffix = docNoShown ? ` · ${docNoShown}` : '';
+      const plantSuffix = m.row.plantName ? ` · ${m.row.plantName}` : '';
+      const summary = cylSummary(m.row.items);
+      const qty = totalQty(m.row.items);
+      const cylLabel =
+        m.row.items.filter((it) => it.fullsReceived > 0).length === 1
+          ? (m.row.items.find((it) => it.fullsReceived > 0)?.cylinderType?.typeName ?? '—')
+          : `${m.row.items.length} lines`;
       rows.push({
         entryDate: m.sortDate,
         kind: 'purchase',
         documentId: m.row.id,
-        documentNumber: m.row.purchaseNumber,
-        narration: `Goods received (${m.row.purchaseNumber})`,
+        documentNumber: docNoShown,
+        supplierDocumentNumber: m.row.supplierDocumentNumber ?? null,
+        plantName: m.row.plantName ?? null,
+        narration: `PURCHASE INVOICE${summary ? ' — ' + summary : ''}${plantSuffix}${refSuffix}`,
         debit: m.total,
         credit: 0,
         balance: running,
+        physicalQty: qty,
+        cylinderTypeName: cylLabel,
       });
-    } else {
+    } else if (m.kind === 'deposit') {
+      if (!inRange(m.sortDate)) continue;
+      // Same principle as purchase rows — only OMC's deposit-invoice ref
+      // is user-facing. Internal PSHD auto-number stays as documentId.
+      const docNoShown = m.row.supplierDocumentNumber ?? null;
+      // Same rule as purchase rows — no internal PSHD in the narration either.
+      const refSuffix = docNoShown ? ` · ${docNoShown}` : '';
+      const plantSuffix = m.row.plantName ? ` · ${m.row.plantName}` : '';
+      const summary = cylSummary(m.row.items);
+      const qty = totalQty(m.row.items);
+      const cylLabel =
+        m.row.items.filter((it) => it.fullsReceived > 0).length === 1
+          ? (m.row.items.find((it) => it.fullsReceived > 0)?.cylinderType?.typeName ?? '—')
+          : `${m.row.items.length} lines`;
+      rows.push({
+        entryDate: m.sortDate,
+        kind: 'deposit',
+        documentId: m.row.id,
+        documentNumber: docNoShown,
+        supplierDocumentNumber: m.row.supplierDocumentNumber ?? null,
+        plantName: m.row.plantName ?? null,
+        narration: `CYLINDER DEPOSIT${summary ? ' — ' + summary : ''}${plantSuffix}${refSuffix}`,
+        debit: m.total,
+        credit: 0,
+        balance: running, // unchanged — deposit doesn't affect gas balance
+        physicalQty: qty,
+        cylinderTypeName: cylLabel,
+      });
+    } else if (m.kind === 'payment') {
       running = round2(running - toNum(m.row.amount));
       if (!inRange(m.sortDate)) continue;
       const method = String(m.row.paymentMethod).replace(/_/g, ' ');
@@ -553,10 +792,95 @@ export async function getSupplierLedger(
         kind: 'payment',
         documentId: m.row.id,
         documentNumber: null,
-        narration: `Payment (${method})${ref}`,
+        supplierDocumentNumber: null,
+        narration: `PAYMENT (${method})${ref}`,
         debit: 0,
         credit: toNum(m.row.amount),
         balance: running,
+      });
+    } else if (m.kind === 'credit_note') {
+      const cnAmount = toNum(m.row.totalAmount);
+      running = round2(running - cnAmount);
+      if (!inRange(m.sortDate)) continue;
+      const reasonLabel = String(m.row.reason)
+        .split('_')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+      // F8v2-FIX (2026-08-06 final) — CN/DN modals already require the
+      // operator to type the OMC's own number into `creditNoteNumber` /
+      // `debitNoteNumber` at record time. That IS the OMC reference —
+      // there's no separate internal number to hide. Fine to expose.
+      // `supplierDocumentNumber` is a legacy dupe field kept for wire
+      // compat; when both are set we prefer supplierDocumentNumber.
+      const docNoShown = m.row.supplierDocumentNumber ?? m.row.creditNoteNumber;
+      rows.push({
+        entryDate: m.sortDate,
+        kind: 'credit_note',
+        documentId: m.row.id,
+        documentNumber: docNoShown,
+        supplierDocumentNumber: m.row.supplierDocumentNumber ?? null,
+        narration: `CREDIT NOTE — ${reasonLabel} · ${docNoShown}`,
+        debit: 0,
+        credit: cnAmount,
+        balance: running,
+      });
+    } else if (m.kind === 'debit_note') {
+      // F8 v2 — supplier DN adds to what we owe.
+      const dnAmount = toNum(m.row.totalAmount);
+      running = round2(running + dnAmount);
+      if (!inRange(m.sortDate)) continue;
+      const reasonLabel = String(m.row.reason)
+        .split('_')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+      const docNoShown = m.row.supplierDocumentNumber ?? m.row.debitNoteNumber;
+      rows.push({
+        entryDate: m.sortDate,
+        kind: 'debit_note',
+        documentId: m.row.id,
+        documentNumber: docNoShown,
+        supplierDocumentNumber: m.row.supplierDocumentNumber ?? null,
+        narration: `DEBIT NOTE — ${reasonLabel} · ${docNoShown}`,
+        debit: dnAmount,
+        credit: 0,
+        balance: running,
+      });
+    } else {
+      // F8 v2 — ERV physical row. No money impact — running balance
+      // unchanged. Debit/Credit both zero; UI reads `physicalQty` +
+      // `cylinderTypeName` to render "12× 47.5KG empty return".
+      if (!inRange(m.sortDate)) continue;
+      const isDefective = m.row.eventType === 'defective_return_to_corporation';
+      const qty = Math.abs(isDefective ? m.row.fullsChange : m.row.emptiesChange);
+      const cylName = m.row.cylinderType?.typeName ?? '—';
+      const truck = m.row.vehicleNumber ? ` · ${m.row.vehicleNumber}` : '';
+      // F8v2-FIX (2026-08-06 final) — Doc No column shows ONLY what the
+      // operator physically wrote on the OMC's challan/document. Never
+      // our internally-generated batch/reference:
+      //   • outgoing_empties event: documentNumber = user-typed challan
+      //     (from OutgoingEmptiesModal) — show as-is.
+      //   • defective_return_to_corporation event: documentNumber is F1's
+      //     auto batch number (FSHD…). Suneel doesn't want it. Look up
+      //     the batch's user-typed challan (DefectiveReturnBatch.challanNumber)
+      //     and show that instead. Falls back to "—" when the operator
+      //     didn't record a challan on the batch.
+      const docShown = isDefective
+        ? (m.row.documentNumber ? challanByBatch.get(m.row.documentNumber) ?? null : null)
+        : m.row.documentNumber ?? null;
+      rows.push({
+        entryDate: m.sortDate,
+        kind: isDefective ? 'erv_defective' : 'erv_empties',
+        documentId: m.row.id,
+        documentNumber: docShown,
+        supplierDocumentNumber: null,
+        narration: isDefective
+          ? `OUTGOING (DEFECTIVE) — ${qty}× ${cylName}${truck}`
+          : `OUTGOING EMPTIES — ${qty}× ${cylName}${truck}`,
+        debit: 0,
+        credit: 0,
+        balance: running,
+        physicalQty: qty,
+        cylinderTypeName: cylName,
       });
     }
   }
@@ -564,7 +888,14 @@ export async function getSupplierLedger(
   return {
     source,
     rows,
-    summary: { totalPurchased, totalPaid, netOutstanding },
+    summary: {
+      totalPurchased,
+      totalPaid,
+      totalCreditNotes,
+      totalDebitNotes,
+      totalDeposits,
+      netOutstanding,
+    },
     filters: { from: filters?.from ?? null, to: filters?.to ?? null },
   };
 }
@@ -579,6 +910,14 @@ export interface SupplierBalanceRow {
   name: string;
   totalPurchased: number;
   totalPaid: number;
+  // F8 (2026-08-06) — total supplier CNs, reduces `outstanding` alongside
+  // `totalPaid`. Defaulted to 0 for tenants with no CN activity so the
+  // pre-F8 UI reads keep working without any client change.
+  totalCreditNotes: number;
+  // F8 v2 (2026-08-06) — DN adds to outstanding; deposits track separately
+  // (own field) since they're refundable and shouldn't net into gas debt.
+  totalDebitNotes: number;
+  totalDeposits: number;
   outstanding: number;
   lastPurchaseDate: string | null;
   lastPaymentDate: string | null;
@@ -596,20 +935,44 @@ export async function listSupplierBalances(
         where: { deletedAt: null },
         select: {
           purchaseDate: true,
+          documentType: true,
           items: { select: { unitPrice: true, fullsReceived: true } },
+          charges: { select: { amount: true } },
         },
       },
       purchasePayments: {
         where: { deletedAt: null },
         select: { transactionDate: true, amount: true },
       },
+      // F8 (2026-08-06) — supplier CN totals net into outstanding.
+      purchaseCreditNotes: {
+        where: { deletedAt: null },
+        select: { totalAmount: true },
+      },
+      // F8 v2 (2026-08-06) — supplier DN totals add to outstanding.
+      purchaseDebitNotes: {
+        where: { deletedAt: null },
+        select: { totalAmount: true },
+      },
     },
   });
   return sources
     .map((s): SupplierBalanceRow => {
-      const totalPurchased = round2(s.purchaseEntries.reduce((sum, e) => sum + entryTotal(e), 0));
+      // F8 v2: split gas vs deposit entries.
+      const invoiceEntries = s.purchaseEntries.filter(
+        (e) => e.documentType !== 'deposit_invoice',
+      );
+      const depositEntries = s.purchaseEntries.filter(
+        (e) => e.documentType === 'deposit_invoice',
+      );
+      const totalPurchased = round2(invoiceEntries.reduce((sum, e) => sum + entryTotal(e), 0));
+      const totalDeposits = round2(depositEntries.reduce((sum, e) => sum + entryTotal(e), 0));
       const totalPaid = round2(s.purchasePayments.reduce((sum, p) => sum + toNum(p.amount), 0));
-      const outstanding = round2(totalPurchased - totalPaid);
+      const totalCreditNotes = round2(s.purchaseCreditNotes.reduce((sum, c) => sum + toNum(c.totalAmount), 0));
+      const totalDebitNotes = round2(s.purchaseDebitNotes.reduce((sum, d) => sum + toNum(d.totalAmount), 0));
+      const outstanding = round2(
+        totalPurchased + totalDebitNotes - totalPaid - totalCreditNotes,
+      );
       const lastPurchaseDate = s.purchaseEntries.length
         ? s.purchaseEntries.map((e) => e.purchaseDate).sort().at(-1) ?? null
         : null;
@@ -621,6 +984,9 @@ export async function listSupplierBalances(
         name: s.name,
         totalPurchased,
         totalPaid,
+        totalCreditNotes,
+        totalDebitNotes,
+        totalDeposits,
         outstanding,
         lastPurchaseDate,
         lastPaymentDate,
@@ -645,6 +1011,12 @@ export interface OutstandingEntryRow {
   total: number;
   amountPaid: number;
   outstanding: number;
+  // F8 (2026-08-06) — OMC's own reference (shown as canonical id in
+  // the Record CN modal picker) + CN offsets so callers can pick
+  // truly-remaining outstanding invoices (payment + CN both reduce it).
+  supplierDocumentNumber?: string | null;
+  totalCreditNotes?: number;
+  amountRemaining?: number;
 }
 
 export async function listOutstandingEntries(
@@ -669,7 +1041,15 @@ export async function listOutstandingEntries(
       purchaseNumber: true,
       purchaseDate: true,
       amountPaid: true,
+      supplierDocumentNumber: true,
       items: { select: { unitPrice: true, fullsReceived: true } },
+      // F8 (2026-08-06) — freight/handling/etc. counted into the entry total.
+      charges: { select: { amount: true } },
+      // F8 (2026-08-06) — CN offsets already applied to this entry.
+      cnAllocations: {
+        where: { purchaseCreditNote: { deletedAt: null } },
+        select: { amount: true },
+      },
     },
     orderBy: [{ purchaseDate: 'asc' }, { createdAt: 'asc' }],
   });
@@ -677,6 +1057,8 @@ export async function listOutstandingEntries(
     .map((e): OutstandingEntryRow => {
       const total = round2(entryTotal(e));
       const paid = round2(toNum(e.amountPaid));
+      const cn = round2(e.cnAllocations.reduce((s, a) => s + toNum(a.amount), 0));
+      const remaining = round2(total - paid - cn);
       return {
         purchaseEntryId: e.id,
         purchaseNumber: e.purchaseNumber,
@@ -684,7 +1066,10 @@ export async function listOutstandingEntries(
         total,
         amountPaid: paid,
         outstanding: round2(total - paid),
+        supplierDocumentNumber: e.supplierDocumentNumber,
+        totalCreditNotes: cn,
+        amountRemaining: remaining,
       };
     })
-    .filter((e) => e.outstanding > 0.005);
+    .filter((e) => (e.amountRemaining ?? e.outstanding) > 0.005);
 }
