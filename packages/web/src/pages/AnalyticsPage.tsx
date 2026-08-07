@@ -291,11 +291,17 @@ export default function AnalyticsPage() {
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Analytics</h1>
           <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Business insights and reports</p>
         </div>
-        <div className="flex items-center gap-2">
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input py-2 text-xs" />
-          <span className="text-surface-400 text-sm">to</span>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input py-2 text-xs" />
-        </div>
+        {/* Analytics-level date picker feeds Dashboard + Overview widgets.
+            2026-08-06 — hidden on the Reports tab because each report has
+            its own per-report From/To below, and having two competing date
+            pickers on screen (one that does nothing) misled users. */}
+        {tab !== 'reports' && (
+          <div className="flex items-center gap-2">
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input py-2 text-xs" />
+            <span className="text-surface-400 text-sm">to</span>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input py-2 text-xs" />
+          </div>
+        )}
       </div>
 
       {/* Mini-Operator setup checklist — no-op for other roles. */}

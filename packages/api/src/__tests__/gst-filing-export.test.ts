@@ -199,7 +199,14 @@ describe('GET /api/reports/gst-filing-export', () => {
 
     const wb = await parseXlsx(res.body as Buffer);
     const names = wb.worksheets.map((w) => w.name);
-    expect(names).toEqual(['GST_Summary', 'Invoices', 'InvoiceLines', 'Customers', 'Payments', 'CylinderBalances']);
+    // Fixed sheets at the start (3) and end (3); one dynamic per-cylinder-type
+    // sheet is inserted between them for every SKU with activity — the fixture
+    // uses one cylinder type so we expect exactly 7 sheets total here.
+    expect(names.slice(0, 3)).toEqual(['GST_Summary', 'Invoices', 'InvoiceLines']);
+    expect(names.slice(-3)).toEqual(['Customers', 'Payments', 'CylinderBalances']);
+    expect(names.length).toBe(7);
+    // The dynamic sheet's name equals the cylinder type's typeName.
+    expect(names[3]).toBe(type1.typeName);
 
     expect(headers(wb.getWorksheet('GST_Summary')!)).toEqual([
       'Cylinder Type', 'HSN', 'UOM', 'Qty', 'Taxable Value', 'CGST ₹', 'SGST ₹', 'IGST ₹', 'Total Invoice Value',
@@ -207,6 +214,16 @@ describe('GET /api/reports/gst-filing-export', () => {
     expect(headers(wb.getWorksheet('Invoices')!)).toContain('Invoice No');
     expect(headers(wb.getWorksheet('InvoiceLines')!)).toContain('Cylinder Type');
     expect(headers(wb.getWorksheet('Customers')!)).toContain('GSTIN');
+    // Per-cylinder sheet mirrors the InvoiceLines schema minus the "Cylinder
+    // Type" column (implied by the sheet name), plus a Business Name column
+    // and a trailing "Total (incl GST)" mirror.
+    const perTypeSheet = wb.getWorksheet(type1.typeName)!;
+    expect(headers(perTypeSheet)).toContain('Customer Name');
+    expect(headers(perTypeSheet)).toContain('Business Name');
+    expect(headers(perTypeSheet)).toContain('HSN');
+    // Footer row (last row) is a bold TOTAL row — customer cell says "TOTAL".
+    const lastRow = perTypeSheet.getRow(perTypeSheet.rowCount);
+    expect(String(lastRow.getCell(4).value ?? '')).toBe('TOTAL');
     expect(headers(wb.getWorksheet('Payments')!)).toContain('Method');
     expect(headers(wb.getWorksheet('CylinderBalances')!)).toContain('Delivered This Month');
   });

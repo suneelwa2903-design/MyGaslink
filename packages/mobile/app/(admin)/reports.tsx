@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { localTodayISO, localDateISO } from '@gaslink/shared';
+import { localTodayISO, localDateISO, type ReportBucketDef, type ReportCatalogEntry } from '@gaslink/shared';
 
 import { api, getErrorMessage } from '../../src/lib/api';
 import { useApiQuery } from '../../src/hooks/useApi';
@@ -137,6 +137,17 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
   const def = visibleReports.find((r) => r.key === reportKey) ?? visibleReports[0]!;
   const needsCustomer = !!def.customerRequired && !customerId;
 
+  // ─── Catalog for the bucketed report picker (F2 2026-08-05) ───────────
+  // Same /api/reports/catalog endpoint the web left-nav consumes. Mobile
+  // doesn't have room for a full left nav, so we render the entries as
+  // a single bucketed SelectField with "Bucket · Report" prefixed labels.
+  // Falls back to the local REPORTS array if the catalog is still loading
+  // or unavailable — preserves existing behavior in offline scenarios.
+  const { data: catalog } = useApiQuery<{
+    buckets: ReportBucketDef[];
+    entries: ReportCatalogEntry[];
+  }>(['reports-catalog'], '/reports/catalog');
+
   // ─── Filter option data ─────────────────────────────────────────────────
   const { data: customersResp } = useApiQuery<{
     customers: { customerId: string; customerName: string }[];
@@ -240,9 +251,39 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
     );
   };
 
-  // ─── Report-type picker shows every report. Per-report filter rows below
-  // appear conditionally based on `def.filters`.
-  const reportOptions = visibleReports.map((r) => ({ value: r.key, label: r.label }));
+  // ─── Report-type picker: bucketed labels when catalog is loaded, plain
+  // labels as fallback while it's fetching. Only inline-kind entries are
+  // shown — download-kind (Tally XML, GST filing xlsx, Driver Statement
+  // PDF) are best generated from the web where the download UX is
+  // richer; mobile users get told to open web for those.
+  //
+  // Options are sorted by bucket.order first (so "Daily Book" entries
+  // appear before "Month-End"), then by declaration order within a
+  // bucket. Labels use "Bucket · Report" prefix so users read the
+  // group at a glance.
+  const reportOptions = useMemo(() => {
+    if (!catalog) {
+      return visibleReports.map((r) => ({ value: r.key, label: r.label }));
+    }
+    const bucketByKey = new Map(catalog.buckets.map((b) => [b.key, b]));
+    const inlineEntries = catalog.entries.filter((e) => e.kind === 'inline');
+    // Optional allowlist gate — inventory route group ships a smaller list.
+    const gated = allowedKeys
+      ? inlineEntries.filter((e) => allowedKeys.includes(e.slug))
+      : inlineEntries;
+    // Sort by bucket order (defined once in REPORT_BUCKETS on the server),
+    // ties broken by entry declaration order in catalog.entries.
+    const sorted = [...gated].sort((a, b) => {
+      const aOrder = bucketByKey.get(a.bucket)?.order ?? 99;
+      const bOrder = bucketByKey.get(b.bucket)?.order ?? 99;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return catalog.entries.indexOf(a) - catalog.entries.indexOf(b);
+    });
+    return sorted.map((e) => ({
+      value: e.slug,
+      label: `${bucketByKey.get(e.bucket)?.label ?? e.bucket} · ${e.label}`,
+    }));
+  }, [catalog, visibleReports, allowedKeys]);
   const customerOptions = [
     { value: '', label: 'Select customer' },
     ...customers.map((c) => ({ value: c.customerId, label: c.customerName })),

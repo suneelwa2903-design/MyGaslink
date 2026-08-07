@@ -405,6 +405,142 @@ export async function buildGstFilingExport(
   }
   styleHeader(lines, lines.columns.length);
 
+  // ── Per-cylinder-type sheets (one sheet per SKU with July activity).
+  //
+  // Auditor's cross-check view: the client's historical May-2026 .xlsm had
+  // one sheet per KG (19KG / 35KG / 47.5KG / 425KG / 5KG). Their GST
+  // consultant ties the HSN summary back to physical stock movement by
+  // reading these per-SKU sheets. Rows are grouped by customer (their
+  // "customer-wise cylinder-wise split" ask) then chronological within
+  // each customer, with a bold TOTAL footer.
+  //
+  // Only cylinder-type-backed items get their own sheet — service lines
+  // like "Inward Transportation Charges" already live in InvoiceLines +
+  // GST_Summary.
+  type PerTypeLine = {
+    inv: (typeof activeInvoices)[number];
+    it: (typeof activeInvoices)[number]['items'][number];
+    invIsInterState: boolean;
+  };
+  const perTypeLines = new Map<string, { typeName: string; hsn: string; rows: PerTypeLine[] }>();
+  for (const inv of activeInvoices) {
+    const invIsInterState = n(inv.igstValue) > 0;
+    for (const it of inv.items) {
+      if (!it.cylinderTypeId || !it.cylinderType) continue; // skip service lines
+      const key = it.cylinderTypeId;
+      const bucket = perTypeLines.get(key) ?? {
+        typeName: it.cylinderType.typeName,
+        hsn: it.hsnCode ?? it.cylinderType.hsnCode ?? '27111900',
+        rows: [] as PerTypeLine[],
+      };
+      bucket.rows.push({ inv, it, invIsInterState });
+      perTypeLines.set(key, bucket);
+    }
+  }
+  // Deterministic sheet order: alphabetical by type name so 5 KG / 19 KG /
+  // 47.5 LOT / 47.5 VOT always land in the same tab positions across months.
+  const orderedTypes = [...perTypeLines.entries()].sort((a, b) =>
+    a[1].typeName.localeCompare(b[1].typeName),
+  );
+  for (const [, bucket] of orderedTypes) {
+    // Excel sheet-name cap = 31 chars; strip disallowed characters. Cylinder
+    // type names in this codebase are short + safe but guard anyway.
+    const safeName = bucket.typeName.replace(/[\\/?*[\]]/g, ' ').slice(0, 31);
+    const ws = wb.addWorksheet(safeName);
+    ws.columns = [
+      { header: 'Sl No', key: 'sl', width: 6 },
+      { header: 'Invoice No', key: 'no', width: 18 },
+      { header: 'Invoice Date', key: 'date', width: 12 },
+      { header: 'Customer Name', key: 'cust', width: 30 },
+      { header: 'Business Name', key: 'biz', width: 26 },
+      { header: 'GSTIN', key: 'gstin', width: 18 },
+      { header: 'HSN', key: 'hsn', width: 12 },
+      { header: 'UOM', key: 'uom', width: 8 },
+      { header: 'Qty', key: 'qty', width: 8 },
+      { header: 'Rate (incl GST)', key: 'rate', width: 14, style: { numFmt: '#,##0.00' } },
+      { header: 'Discount/unit', key: 'disc', width: 12, style: { numFmt: '#,##0.00' } },
+      { header: 'Line Total (incl GST)', key: 'lineTot', width: 16, style: { numFmt: '#,##0.00' } },
+      { header: 'Taxable Value', key: 'taxable', width: 14, style: { numFmt: '#,##0.00' } },
+      { header: 'GST %', key: 'rate%', width: 7 },
+      { header: 'CGST ₹', key: 'cgst', width: 12, style: { numFmt: '#,##0.00' } },
+      { header: 'SGST ₹', key: 'sgst', width: 12, style: { numFmt: '#,##0.00' } },
+      { header: 'IGST ₹', key: 'igst', width: 12, style: { numFmt: '#,##0.00' } },
+      { header: 'Total (incl GST)', key: 'lineTot2', width: 16, style: { numFmt: '#,##0.00' } },
+    ];
+    // Sort by (customer name, invoice date, invoice number) so a reader
+    // scanning the sheet sees each customer's block together.
+    bucket.rows.sort((a, b) => {
+      const cn = (a.inv.customer?.customerName ?? '').localeCompare(b.inv.customer?.customerName ?? '');
+      if (cn !== 0) return cn;
+      const dt = a.inv.issueDate.getTime() - b.inv.issueDate.getTime();
+      if (dt !== 0) return dt;
+      return a.inv.invoiceNumber.localeCompare(b.inv.invoiceNumber);
+    });
+    let totalQty = 0, totalTaxable = 0, totalCgst = 0, totalSgst = 0, totalIgst = 0, totalLineTot = 0;
+    bucket.rows.forEach((r, idx) => {
+      const gstRate = n(r.it.gstRate);
+      const lineTot = n(r.it.totalPrice);
+      const taxable = n(r.it.taxableValue) || lineTot / (1 + gstRate / 100);
+      const gstAmt = lineTot - taxable;
+      const cgstV = r.invIsInterState ? 0 : r2(gstAmt / 2);
+      const sgstV = r.invIsInterState ? 0 : r2(gstAmt / 2);
+      const igstV = r.invIsInterState ? r2(gstAmt) : 0;
+      ws.addRow({
+        sl: idx + 1,
+        no: r.inv.invoiceNumber,
+        date: d(r.inv.issueDate),
+        cust: r.inv.customer?.customerName ?? '',
+        biz: r.inv.customer?.businessName ?? '',
+        gstin: r.inv.customerGstinSnapshot ?? r.inv.customer?.gstin ?? '',
+        hsn: r.it.hsnCode ?? r.it.cylinderType?.hsnCode ?? bucket.hsn,
+        uom: r.it.uom,
+        qty: r.it.quantity,
+        rate: r2(n(r.it.unitPrice)),
+        disc: r2(n(r.it.discountPerUnit)),
+        lineTot: r2(lineTot),
+        taxable: r2(taxable),
+        'rate%': gstRate,
+        cgst: cgstV,
+        sgst: sgstV,
+        igst: igstV,
+        lineTot2: r2(lineTot),
+      });
+      totalQty += r.it.quantity;
+      totalTaxable += taxable;
+      totalCgst += cgstV;
+      totalSgst += sgstV;
+      totalIgst += igstV;
+      totalLineTot += lineTot;
+    });
+    if (bucket.rows.length > 0) {
+      const totalRow = ws.addRow({
+        sl: '',
+        no: '',
+        date: '',
+        cust: 'TOTAL',
+        biz: '',
+        gstin: '',
+        hsn: '',
+        uom: '',
+        qty: totalQty,
+        rate: '',
+        disc: '',
+        lineTot: r2(totalLineTot),
+        taxable: r2(totalTaxable),
+        'rate%': '',
+        cgst: r2(totalCgst),
+        sgst: r2(totalSgst),
+        igst: r2(totalIgst),
+        lineTot2: r2(totalLineTot),
+      });
+      totalRow.font = { bold: true };
+      totalRow.eachCell((c) => {
+        c.border = { top: { style: 'thin', color: { argb: 'FF6B7280' } } };
+      });
+    }
+    styleHeader(ws, ws.columns.length);
+  }
+
   // ── Sheet 4: Customers (master; only those with activity).
   const custSheet = wb.addWorksheet('Customers');
   custSheet.columns = [

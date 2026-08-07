@@ -23,14 +23,20 @@ const SupportAppPage = lazy(() => import('@/pages/SupportAppPage'));
 // Admin pages
 const OrdersPage = lazy(() => import('@/pages/OrdersPage'));
 const InventoryPage = lazy(() => import('@/pages/InventoryPage'));
+// F1 (2026-08-06) — Defective Cylinder Returns. Separate page under the
+// Inventory group; office-entered flow mirrors Empties Return.
+const DefectiveReturnsPage = lazy(() => import('@/pages/DefectiveReturnsPage'));
 // Mini-Operator (2026-07-16): purchase entries + source distributors.
 const PurchasesPage = lazy(() => import('@/pages/PurchasesPage'));
+// F8 v2 (2026-08-06): Regular-distributor Corporation Ledger page.
+const CorporationLedgerPage = lazy(() => import('@/pages/CorporationLedgerPage'));
 const ExpensesPage = lazy(() => import('@/pages/ExpensesPage'));
 const QuotationsPage = lazy(() => import('@/pages/QuotationsPage'));
 const CustomersPage = lazy(() => import('@/pages/CustomersPage'));
 const BillingPaymentsPage = lazy(() => import('@/pages/BillingPaymentsPage'));
 const FleetPage = lazy(() => import('@/pages/FleetPage'));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'));
+const ReportBuilderPage = lazy(() => import('@/pages/ReportBuilderPage'));
 const CollectionsPage = lazy(() => import('@/pages/CollectionsPage'));
 const PendingActionsPage = lazy(() => import('@/pages/PendingActionsPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
@@ -159,19 +165,69 @@ export function AppRoutes() {
             <Route index element={<InventoryPage />} />
           </Route>
 
+          {/* F1 (2026-08-06) — Defective Cylinder Returns. Same role gate
+              as Inventory; raise-CN button is server-side-gated to finance-tier. */}
+          <Route
+            path="defective-returns"
+            element={
+              <ProtectedRoute
+                allowedRoles={[
+                  UserRole.SUPER_ADMIN,
+                  UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
+                  UserRole.INVENTORY,
+                  UserRole.MINI_OPERATOR_ADMIN,
+                ]}
+                requireDistributor
+              />
+            }
+          >
+            <Route index element={<DefectiveReturnsPage />} />
+          </Route>
+
           {/* Mini-Operator (2026-07-16): purchase entries + source
-              distributors. Only mini_operator_admin (and super_admin via
-              the built-in bypass) reach this page. */}
+              distributors. F8 (2026-08-06) — widened to include
+              distributor_admin + finance so regular distributors also
+              manage OMC supplier accounts + record CNs from their portal. */}
+          {/* F8 v2 (2026-08-06) — /app/purchases stays for mini_operator_admin
+              (their kirana-depot supplier flow). Regular distributor tenants
+              use /app/corporations (redirected from sidebar); they can still
+              reach /app/purchases directly if they type the URL, but the
+              CorporationLedgerPage is the primary surface for them. */}
           <Route
             path="purchases"
             element={
               <ProtectedRoute
-                allowedRoles={[UserRole.MINI_OPERATOR_ADMIN]}
+                allowedRoles={[
+                  UserRole.MINI_OPERATOR_ADMIN,
+                  UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
+                ]}
                 requireDistributor
               />
             }
           >
             <Route index element={<PurchasesPage />} />
+          </Route>
+
+          {/* F8 v2 (2026-08-06) — Corporation Ledger for regular distributor
+              tenants. Single view: money ledger + physical activity + landed
+              cost + deposits. Sidebar link + landing routing handled in v2-8. */}
+          <Route
+            path="corporations"
+            element={
+              <ProtectedRoute
+                allowedRoles={[
+                  UserRole.SUPER_ADMIN,
+                  UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
+                ]}
+                requireDistributor
+              />
+            }
+          >
+            <Route index element={<CorporationLedgerPage />} />
+            <Route path=":corpId" element={<CorporationLedgerPage />} />
           </Route>
 
           {/* Mini-op #5 (2026-07-27): Expenses — available to both
@@ -327,6 +383,29 @@ export function AppRoutes() {
           </Route>
           {/* Reports live inside the Analytics page (Reports tab), not a standalone route. */}
           <Route path="reports" element={<Navigate to="/app/analytics" replace />} />
+
+          {/* Phase 2 Report Builder — a standalone full-page editor for
+              user-authored custom reports. Route accepts either / for
+              new or /:id for editing an existing SavedReport. Gated to
+              the same 5 staff roles the Builder allowlist permits. */}
+          <Route
+            path="report-builder"
+            element={
+              <ProtectedRoute
+                allowedRoles={[
+                  UserRole.SUPER_ADMIN,
+                  UserRole.DISTRIBUTOR_ADMIN,
+                  UserRole.FINANCE,
+                  UserRole.INVENTORY,
+                  UserRole.MINI_OPERATOR_ADMIN,
+                ]}
+                requireDistributor
+              />
+            }
+          >
+            <Route index element={<ReportBuilderPage />} />
+            <Route path=":id" element={<ReportBuilderPage />} />
+          </Route>
 
           <Route
             path="settings"

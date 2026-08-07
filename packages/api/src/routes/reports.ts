@@ -1,7 +1,8 @@
 import { Router, type Request } from 'express';
 import { requireRole } from '../middleware/auth.js';
 import { sendSuccess, sendError, sendNotFound } from '../utils/apiResponse.js';
-import { REPORTS, reportToCsv, type ReportFilters } from '../services/reportsService.js';
+import { REPORTS, reportToCsv, type ReportFilters, getReportCatalog } from '../services/reportsService.js';
+import type { UserRole } from '@gaslink/shared';
 import { buildTallyExport } from '../services/tallyExportService.js';
 import { buildGstFilingExport } from '../services/gstFilingExportService.js';
 
@@ -36,6 +37,17 @@ function parseFilters(q: Request['query']): ReportFilters {
       : q.statusFilter === 'overdue' ? 'overdue'
       : q.statusFilter === 'all' ? 'all'
       : undefined,
+    // N18 Customer Profitability — editable AR interest rate (annual %).
+    // Server clamps to [0, 50] inside the service; missing / non-numeric →
+    // service default of 12%. Accepted as a plain query-string number.
+    arInterestRatePct: (() => {
+      if (typeof q.arInterestRatePct !== 'string') return undefined;
+      const n = Number(q.arInterestRatePct);
+      return Number.isFinite(n) ? n : undefined;
+    })(),
+    // F8v2-R (2026-08-06) — Corporation-bucket reports filter to one OMC.
+    sourceDistributorId:
+      typeof q.sourceDistributorId === 'string' ? q.sourceDistributorId : undefined,
   };
 }
 
@@ -123,6 +135,29 @@ router.get('/delivery-performance/driver/:driverId/pdf',
       const e = err as ServiceError;
       if (e.message === 'Driver not found') return sendNotFound(res, 'Driver');
       return sendError(res, e.message, 500);
+    }
+  });
+
+// GET /api/reports/catalog → { buckets: ReportBucketDef[], entries: ReportCatalogEntry[] }
+//
+// The reports menu — 7 bucket definitions + every entry the caller's
+// role is allowed to see. Server-side role filter is authoritative;
+// the frontend does no additional gating.
+//
+// Registered BEFORE the /:reportType handler so express doesn't treat
+// "catalog" as a report slug and 404.
+//
+// Tenant-agnostic: every distributor sees the same platform menu.
+// Per-tenant customization (custom reports built via the future Report
+// Builder in Chunks 6-10) is layered ON TOP of this base catalog.
+router.get('/catalog',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const catalog = getReportCatalog(req.user!.role as UserRole);
+      return sendSuccess(res, catalog);
+    } catch (err: unknown) {
+      return sendError(res, (err as Error).message, 500);
     }
   });
 

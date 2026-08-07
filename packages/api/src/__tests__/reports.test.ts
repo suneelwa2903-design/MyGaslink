@@ -38,7 +38,13 @@ describe('GET /api/reports/:reportType', () => {
     });
   }
 
-  it('vehicle-ledger returns the movement envelope plus a Corporation secondary table', async () => {
+  // 2026-08-05 F3 — Corporation Loads Received (secondary table) removed
+  // from vehicle-ledger. It lives on Inventory → Depot History exclusively.
+  // The display column list was also trimmed (emptiesReturnedVerified /
+  // emptiesGap / cancelledReturns are still on each row but no longer
+  // exposed via columns). See reports-vehicle-ledger-shape.test.ts for
+  // the strict column-list wire-shape guard.
+  it('vehicle-ledger returns the trimmed movement envelope (F3: no Corporation secondary)', async () => {
     const res = await request(app)
       .get('/api/reports/vehicle-ledger')
       .query({ dateFrom: '2026-05-01', dateTo: '2026-05-31', groupBy: 'day' })
@@ -47,14 +53,13 @@ describe('GET /api/reports/:reportType', () => {
     const keys = res.body.data.columns.map((c: ReportColumn) => c.key);
     expect(keys).toContain('vehicleNumber');
     expect(keys).toContain('fullsDispatched');
-    expect(keys).toContain('emptiesReturnedVerified');
-    expect(keys).toContain('emptiesGap');
-    // secondary Corporation table is always present (may have empty rows).
-    expect(res.body.data.secondary).toBeTruthy();
-    expect(res.body.data.secondary.title).toMatch(/Corporation/);
-    const corporationKeys = res.body.data.secondary.columns.map((c: ReportColumn) => c.key);
-    expect(corporationKeys).toContain('documentNumber');
-    expect(corporationKeys).toContain('quantity');
+    expect(keys).toContain('fullsDelivered');
+    expect(keys).toContain('returnedFulls');
+    expect(keys).toContain('emptiesCollected');
+    expect(keys).toContain('outstandingEmpties');
+    // F3: secondary corporation table is gone; the field must NOT be
+    // emitted at all (undefined, not empty object).
+    expect(res.body.data.secondary).toBeUndefined();
   });
 
   it('vehicle-ledger groupBy=trip is accepted and returns rows', async () => {

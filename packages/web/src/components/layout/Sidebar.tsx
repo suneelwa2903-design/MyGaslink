@@ -143,6 +143,21 @@ const adminMenuItems: MenuItem[] = [
       UserRole.FINANCE,
     ],
   },
+  // F8 v2 (2026-08-06) — "Corporations" replaces the F8 v1 "Purchases"
+  // link for regular distributor tenants. Points to Corporation Ledger
+  // (unified money + physical + landed-cost view). Mini-op keeps the
+  // separate "Purchases" entry inside its dedicated menu items list.
+  // Excludes INVENTORY role — CN/DN/Payment recording is admin+finance.
+  {
+    label: 'Corporations',
+    path: '/app/corporations',
+    icon: HiOutlineShoppingCart,
+    roles: [
+      UserRole.SUPER_ADMIN,
+      UserRole.DISTRIBUTOR_ADMIN,
+      UserRole.FINANCE,
+    ],
+  },
   {
     label: 'Settings',
     labelKey: 'nav.settings',
@@ -267,10 +282,12 @@ const miniOperatorMenuItems: MenuItem[] = [
     roles: [UserRole.MINI_OPERATOR_ADMIN],
   },
   {
+    // F8 (2026-08-06) — Purchases is no longer mini-op-only. Regular
+    // distributors also manage supplier accounts (Slice 3 role widen).
     label: 'Purchases',
     path: '/app/purchases',
     icon: HiOutlineShoppingCart,
-    roles: [UserRole.MINI_OPERATOR_ADMIN],
+    roles: [UserRole.MINI_OPERATOR_ADMIN, UserRole.DISTRIBUTOR_ADMIN, UserRole.FINANCE],
   },
   {
     label: 'Customers',
@@ -387,6 +404,10 @@ export function Sidebar({ isOpen, onClose, collapsed, onToggleCollapse }: Sideba
     enabled: canSeePendingBadge,
   });
   const pendingCount = pendingCountData?.count ?? 0;
+
+  // F1 sidebar chip removed 2026-08-06 pm per Suneel — the Defective
+  // Returns menu item moved to a button on Inventory > Daily Summary.
+  // Pending count now surfaces inline on that button (see InventoryPage).
 
   const visibleItems = menuItems.filter((item) => {
     if (!userRole) return false;

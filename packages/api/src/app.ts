@@ -22,11 +22,13 @@ import customerRoutes from './routes/customers.js';
 import cylinderTypeRoutes from './routes/cylinderTypes.js';
 import orderRoutes from './routes/orders.js';
 import inventoryRoutes from './routes/inventory.js';
+import defectiveReturnsRoutes from './routes/defectiveReturns.js';
 import invoiceRoutes from './routes/invoices.js';
 import paymentRoutes from './routes/payments.js';
 import { driverRouter, vehicleRouter } from './routes/driversVehicles.js';
 import analyticsRoutes from './routes/analytics.js';
 import reportsRoutes from './routes/reports.js';
+import savedReportsRoutes from './routes/savedReports.js';
 import settingsRoutes from './routes/settings.js';
 import pendingActionsRoutes from './routes/pendingActions.js';
 import billingRoutes from './routes/billing.js';
@@ -54,6 +56,10 @@ import devUploadsRoutes from './routes/devUploads.js';
 import sourceDistributorsRoutes from './routes/sourceDistributors.js';
 import purchaseEntriesRoutes from './routes/purchaseEntries.js';
 import purchasePaymentsRoutes from './routes/purchasePayments.js';
+// F8 Supplier Ledger (2026-08-06)
+import purchaseCreditNotesRoutes from './routes/purchaseCreditNotes.js';
+// F8 v2 (2026-08-06)
+import purchaseDebitNotesRoutes from './routes/purchaseDebitNotes.js';
 import expensesRoutes from './routes/expenses.js';
 import expenseCategoriesRoutes from './routes/expenseCategories.js';
 import quotationsRoutes from './routes/quotations.js';
@@ -164,12 +170,14 @@ export function createApp() {
   app.use('/api/cylinder-types', authenticate, resolveDistributor, requireDistributor, cylinderTypeRoutes);
   app.use('/api/orders', authenticate, resolveDistributor, requireDistributor, orderRoutes);
   app.use('/api/inventory', authenticate, resolveDistributor, requireDistributor, inventoryRoutes);
+  app.use('/api/defective-returns', authenticate, resolveDistributor, requireDistributor, defectiveReturnsRoutes);
   app.use('/api/invoices', authenticate, resolveDistributor, requireDistributor, invoiceRoutes);
   app.use('/api/payments', authenticate, resolveDistributor, requireDistributor, paymentRoutes);
   app.use('/api/drivers', authenticate, resolveDistributor, requireDistributor, driverRouter);
   app.use('/api/vehicles', authenticate, resolveDistributor, requireDistributor, vehicleRouter);
   app.use('/api/analytics', authenticate, resolveDistributor, requireDistributor, analyticsRoutes);
   app.use('/api/reports', authenticate, resolveDistributor, requireDistributor, reportsRoutes);
+  app.use('/api/saved-reports', authenticate, resolveDistributor, requireDistributor, savedReportsRoutes);
   // settings + pending-actions GET / handlers gracefully return an empty
   // response when super_admin has no distributor selected; other handlers in
   // these routers guard distributorId inline. See WI-002 pattern.
@@ -202,6 +210,11 @@ export function createApp() {
   // Mini-Operator 2026-07-19: money-out to source distributors. Same
   // middleware chain as /purchase-entries so tenant scoping is uniform.
   app.use('/api/purchase-payments', authenticate, resolveDistributor, requireDistributor, purchasePaymentsRoutes);
+  // F8 (2026-08-06) — supplier credit notes received from OMCs. Same
+  // middleware chain + widened role gate at the route level.
+  app.use('/api/purchase-credit-notes', authenticate, resolveDistributor, requireDistributor, purchaseCreditNotesRoutes);
+  // F8 v2 (2026-08-06) — supplier debit notes received from OMCs
+  app.use('/api/purchase-debit-notes', authenticate, resolveDistributor, requireDistributor, purchaseDebitNotesRoutes);
   // Mini-op #5 (2026-07-27): Expenses. Available to both distributor and
   // mini-op tenants — the route layer role-gates on distributor_admin /
   // finance / mini_operator_admin / super_admin.
