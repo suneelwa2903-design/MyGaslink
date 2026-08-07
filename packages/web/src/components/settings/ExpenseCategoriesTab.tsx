@@ -77,7 +77,8 @@ export function ExpenseCategoriesTab() {
     queryKey: ['expense-categories'],
     queryFn: () => apiGet<CategoriesResponse>('/expense-categories'),
   });
-  const categories = query.data?.categories ?? [];
+  // 2026-08-06: memoise fallback so downstream useMemos don't re-run every render.
+  const categories = useMemo(() => query.data?.categories ?? [], [query.data?.categories]);
   const tree = useMemo(() => buildTree(categories), [categories]);
   const activeHeaders = useMemo(
     () => categories.filter((c) => c.isHeader && c.isActive && c.categoryId !== '__orphans__'),

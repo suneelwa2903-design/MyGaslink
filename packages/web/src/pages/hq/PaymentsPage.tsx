@@ -73,7 +73,8 @@ export default function HqPaymentsPage() {
   // Scoped to the CURRENT PAGE of payments (matches what the user
   // sees on the table); the paginated total is shown separately in
   // the page footer so the two never disagree.
-  const payments = data?.payments ?? [];
+  // 2026-08-06: memoise fallback so the summary useMemo doesn't re-run every render.
+  const payments = useMemo(() => data?.payments ?? [], [data?.payments]);
   const summary = useMemo(() => {
     const total = payments.reduce((s, p) => s + p.amount, 0);
     const byMethod = new Map<string, { count: number; amount: number }>();

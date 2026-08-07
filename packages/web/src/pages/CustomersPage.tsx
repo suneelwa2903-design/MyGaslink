@@ -1507,6 +1507,10 @@ const LEDGER_TYPE_BADGE: Record<string, { variant: 'info' | 'success' | 'warning
   // label ("Empties Return") so it doesn't read as money movement in the
   // ledger table.
   empties_return: { variant: 'neutral', label: 'Empties Return' },
+  // F1 (2026-08-06) — defective full cylinder pickup. Neutral variant like
+  // empties (no money movement); the CN that follows lands as a separate
+  // credit_note row when raised.
+  defective_collected: { variant: 'warning', label: 'Defective Return' },
   // Deposit ledger (2026-07-31) — cylinder deposit received / refunded.
   // Metadata rows (companion to payment_entry or negative payment /
   // credit-note). Debit/Credit render blank; Dep Given column shows the

@@ -141,7 +141,8 @@ export default function ExpensesPage() {
     queryKey: ['expense-categories'],
     queryFn: () => apiGet<CategoriesResponse>('/expense-categories'),
   });
-  const categories = categoriesQuery.data?.categories ?? [];
+  // 2026-08-06: memoise fallback so downstream useMemo doesn't re-run every render.
+  const categories = useMemo(() => categoriesQuery.data?.categories ?? [], [categoriesQuery.data?.categories]);
   const groupedOptions = useMemo(() => buildGroupedOptions(categories), [categories]);
 
   const listQuery = useQuery({
@@ -380,12 +381,16 @@ function DownloadReportModal({
   const [downloading, setDownloading] = useState(false);
 
   // Reset defaults once categories load.
+  /* eslint-disable react-hooks/set-state-in-effect --
+   * Init-once picker defaults after the categories query resolves.
+   * Guarded by the `!headerId` / `!categoryId` checks so it fires
+   * exactly once (idempotent) when data first lands.
+   */
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!headerId && headers[0]) setHeaderId(headers[0].categoryId);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!categoryId && groups[0]?.leaves[0]) setCategoryId(groups[0].leaves[0].id);
   }, [headers, groups, headerId, categoryId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleDownload = async () => {
     setDownloading(true);

@@ -44,7 +44,12 @@ beforeAll(async () => {
   if (dist001?.subscriptionPlan) {
     await prisma.pricingTier.update({
       where: { plan: dist001.subscriptionPlan },
-      data: { driverSeats: 9999 },
+      // 2026-08-06: also bump inventory_seats. `starter` caps inventory at
+      // 1 and the seeded fixture already has 1 inventory user on dist-001,
+      // so the Group B Part 2 welcome-email test (which creates another
+      // inventory user) was throwing SeatLimitError → 500. Restored in
+      // afterAll.
+      data: { driverSeats: 9999, inventorySeats: 9999 },
     });
   }
 });
@@ -55,21 +60,27 @@ beforeAll(async () => {
 const SEED_DRIVER_SEATS: Record<string, number> = {
   starter: 2, growth: 5, business: 8, enterprise: 12, ultra: 9999,
 };
+// 2026-08-06: mirror the seed-time inventory caps (schema defaults in
+// packages/api/prisma/schema.prisma:pricing_tiers).
+const SEED_INVENTORY_SEATS: Record<string, number> = {
+  starter: 1, growth: 1, business: 2, enterprise: 3, ultra: 9999,
+};
 
 afterAll(async () => {
   await prisma.user.deleteMany({
     where: { email: { in: [TEST_EMAIL, TEST_EMAIL_2] } },
   });
-  // Restore driver seats on whatever plan dist-001 is using.
+  // Restore driver + inventory seats on whatever plan dist-001 is using.
   const dist001 = await prisma.distributor.findUnique({
     where: { id: 'dist-001' },
     select: { subscriptionPlan: true },
   });
   if (dist001?.subscriptionPlan) {
-    const seatVal = SEED_DRIVER_SEATS[dist001.subscriptionPlan] ?? 8;
+    const driverVal = SEED_DRIVER_SEATS[dist001.subscriptionPlan] ?? 8;
+    const invVal = SEED_INVENTORY_SEATS[dist001.subscriptionPlan] ?? 2;
     await prisma.pricingTier.update({
       where: { plan: dist001.subscriptionPlan },
-      data: { driverSeats: seatVal },
+      data: { driverSeats: driverVal, inventorySeats: invVal },
     });
   }
 });
@@ -231,6 +242,15 @@ describe('Users — Create / update / delete (CRUD with ownership)', () => {
 // already proved POST /api/users returns 201 with SMTP unconfigured.
 describe('Users — Welcome email + audit log (Group B Part 2)', () => {
   const TEST_EMAIL_3 = 'welcome-test@example.com';
+
+  // 2026-08-06 baseline-flake fix — mirror the parent describe's pre-clean.
+  // Prior runs that crash / timeout in the middle of afterAll leave a stale
+  // row behind; POST /api/users then 500s on the unique-email constraint
+  // and cascades a `findFirstOrThrow` failure into the second test.
+  beforeAll(async () => {
+    await prisma.emailLog.deleteMany({ where: { toEmail: TEST_EMAIL_3 } });
+    await prisma.user.deleteMany({ where: { email: TEST_EMAIL_3 } });
+  });
 
   afterAll(async () => {
     // emailLog rows cascade away when we drop the user, but the FK is

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { validate } from '../middleware/validate.js';
 import { sendError, sendCreated } from '../utils/apiResponse.js';
 import { contactFormSchema } from '@gaslink/shared';
@@ -7,6 +8,27 @@ import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
+
+// The contact form is PUBLIC and unauthenticated: it writes a
+// `contact_submissions` row and fires a notification email per request.
+// Without a dedicated limiter it inherited only the global 1000-per-15-min
+// app-wide budget, which is a usable inbox-flood / DB-growth vector.
+// Every other sensitive public route (login, refresh, forgot-password,
+// verify-reset-otp) already carries its own tighter limiter — this brings
+// the contact form in line with that convention. Dev keeps a loose cap so
+// manual testing and the integration suite aren't throttled.
+const contactLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 5 : 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    data: null,
+    error: 'Too many contact requests. Please try again later.',
+    code: 'RATE_LIMITED',
+  },
+});
 
 function escapeHtml(str: string): string {
   return str
@@ -19,6 +41,7 @@ function escapeHtml(str: string): string {
 
 // POST /api/contact - public contact form
 router.post('/',
+  contactLimiter,
   validate(contactFormSchema),
   async (req, res) => {
     try {

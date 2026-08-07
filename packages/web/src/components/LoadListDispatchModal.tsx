@@ -97,7 +97,9 @@ export function LoadListDispatchModal(props: LoadListDispatchModalProps) {
     enabled: open && !!assignmentId,
     staleTime: 30_000,
   });
-  const existingRows = existing?.manifest ?? [];
+  // 2026-08-06: memoise the `?? []` fallback so downstream useMemos don't
+  // re-run every render (react-hooks/exhaustive-deps).
+  const existingRows = useMemo(() => existing?.manifest ?? [], [existing?.manifest]);
   const existingByType = useMemo(
     () => new Map(existingRows.map((m) => [m.cylinderTypeId, m])),
     [existingRows],

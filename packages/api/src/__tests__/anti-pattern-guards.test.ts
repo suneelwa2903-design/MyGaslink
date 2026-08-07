@@ -844,22 +844,28 @@ describe('Guard 11 — driver /orders response has customerHasPortalAccess boole
 // resource routers so a future refactor can't silently drop or rename fields
 // without CI screaming.
 describe('Guard 10 — Mini-operator wire shapes + role escalation', () => {
-  it('distributor_admin cannot POST /api/source-distributors (403, not silent success)', async () => {
+  // F8 (2026-08-06) — Purchases + Source-distributors + Purchase-payments
+  // routes were widened from mini_operator_admin-only to also allow
+  // distributor_admin + finance so regular distributors can manage their
+  // OMC supplier ledgers. Guards flipped from "403" to "200/201" to reflect
+  // the deliberate policy change. `inventory` is still 403 (see the CN
+  // route's ROLE tuple in purchaseCreditNotes.ts).
+  it('distributor_admin CAN POST /api/source-distributors (F8 widen)', async () => {
     const res = await request(app)
       .post('/api/source-distributors')
       .set('Authorization', `Bearer ${dist1AdminToken}`)
-      .send({ name: 'ATTEMPT' });
-    expect(res.status).toBe(403);
-    // Row must not exist — belt-and-braces against a future accidental
-    // downgrade of the requireRole gate.
-    const leaked = await prisma.sourceDistributor.findFirst({
-      where: { name: 'ATTEMPT' },
-      select: { id: true },
-    });
-    expect(leaked).toBeNull();
+      .send({ name: `F8-GUARD-DIST-${Date.now()}` });
+    expect(res.status).toBe(201);
+    // Cleanup — leave no test-only supplier behind.
+    if (res.body?.data?.id) {
+      await prisma.sourceDistributor.delete({ where: { id: res.body.data.id } });
+    }
   });
 
-  it('distributor_admin cannot POST /api/purchase-entries (403)', async () => {
+  it('distributor_admin CAN POST /api/purchase-entries (F8 widen)', async () => {
+    // Cross-tenant cylinder ID triggers a service-layer 400 — proves the
+    // requireRole gate is out of the way (would 403 before F8). No row
+    // written; nothing to clean up.
     const res = await request(app)
       .post('/api/purchase-entries')
       .set('Authorization', `Bearer ${dist1AdminToken}`)
@@ -867,10 +873,10 @@ describe('Guard 10 — Mini-operator wire shapes + role escalation', () => {
         purchaseDate: '2099-12-31',
         items: [{ cylinderTypeId: '00000000-0000-0000-0000-000000000000', fullsReceived: 1, emptiesGivenOut: 0 }],
       });
-    expect(res.status).toBe(403);
+    expect(res.status).not.toBe(403);
   });
 
-  it('finance cannot POST /api/purchase-entries (403)', async () => {
+  it('finance CAN POST /api/purchase-entries (F8 widen)', async () => {
     const res = await request(app)
       .post('/api/purchase-entries')
       .set('Authorization', `Bearer ${dist1FinanceToken}`)
@@ -878,7 +884,7 @@ describe('Guard 10 — Mini-operator wire shapes + role escalation', () => {
         purchaseDate: '2099-12-31',
         items: [{ cylinderTypeId: '00000000-0000-0000-0000-000000000000', fullsReceived: 1, emptiesGivenOut: 0 }],
       });
-    expect(res.status).toBe(403);
+    expect(res.status).not.toBe(403);
   });
 
   it('GET /api/distributors response carries accountType (never undefined)', async () => {

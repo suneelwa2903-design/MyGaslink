@@ -4,7 +4,7 @@ import { createApp } from '../app.js';
 import { generateToken, loginAsDistAdmin } from './helpers.js';
 import { prisma } from '../lib/prisma.js';
 import { computeCustomerOverdue } from '../services/paymentService.js';
-import { UserRole } from '@gaslink/shared';
+import { UserRole, localDateISO } from '@gaslink/shared';
 import type { Express } from 'express';
 
 // WI-122 — payment commitment system.
@@ -115,7 +115,10 @@ function placeOrder(body: Record<string, unknown>) {
     .post('/api/customer-portal/orders')
     .set(auth(customerToken))
     .send({
-      deliveryDate: tomorrow.toISOString().split('T')[0],
+      // Anti-pattern #21 — the UTC form made "tomorrow" resolve to TODAY
+      // between 00:00 and 05:30 IST, which the customer-portal order API
+      // rejects (same-day delivery), failing this test in that window only.
+      deliveryDate: localDateISO(tomorrow),
       items: [{ cylinderTypeId, quantity: 1 }],
       ...body,
     });

@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 import { loginAsDistAdmin, loginAsFinance, today } from './helpers.js';
+import { localDateISO } from '@gaslink/shared';
 import type { Express } from 'express';
 
 let app: Express;
@@ -264,7 +265,8 @@ describe('Driver-Vehicle Assignment — happy path', () => {
     // assignments which use today's date.
     const future = new Date();
     future.setFullYear(future.getFullYear() + 1);
-    const futureStr = future.toISOString().split('T')[0];
+    // Anti-pattern #21 — local-TZ date string, not the UTC calendar date.
+    const futureStr = localDateISO(future);
 
     const res = await request(app)
       .post('/api/drivers/assignments')

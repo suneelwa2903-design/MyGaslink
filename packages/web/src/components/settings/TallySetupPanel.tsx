@@ -200,7 +200,8 @@ export default function TallySetupPanel() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
 
-  const cylinderTypes = data?.cylinderTypes ?? [];
+  // 2026-08-06: memoise fallback so downstream useMemo doesn't re-run every render.
+  const cylinderTypes = useMemo(() => data?.cylinderTypes ?? [], [data?.cylinderTypes]);
 
   // Build the cylinderStockItems map for PUT. Only persist entries the user
   // typed AND that differ from the typeName fallback — saving the fallback

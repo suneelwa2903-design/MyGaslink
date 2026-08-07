@@ -154,6 +154,13 @@ export async function createDistributor(data: {
   // pre-existing; miss for any tenant onboarded after). Seeding at
   // creation-time closes that gap forever.
   const { seedSystemExpenseCategoriesForDistributor } = await import('./expenseCategoryService.js');
+  // F8 (2026-08-06) — auto-seed one SourceDistributor row per providerCode
+  // so the tenant's Purchases page lands with their OMC suppliers already
+  // visible. Idempotent + safe for both mini-op and regular distributor
+  // account types. Only runs in the create-transaction; edits to
+  // providerCodes flow through updateDistributor which invokes the same
+  // helper.
+  const { seedSuppliersFromProviderCodes } = await import('./sourceDistributorService.js');
 
   return prisma.$transaction(async (tx) => {
     const created = await tx.distributor.create({
@@ -194,6 +201,7 @@ export async function createDistributor(data: {
       select: distributorSelect,
     });
     await seedSystemExpenseCategoriesForDistributor(created.id, tx);
+    await seedSuppliersFromProviderCodes(created.id, data.providerCodes ?? [], tx);
     return created;
   });
 }
@@ -295,11 +303,26 @@ export async function updateDistributor(id: string, data: Partial<{
     const ifsc = data.ifscCode.trim().toUpperCase();
     writeData.ifscCode = ifsc || null;
   }
-  return prisma.distributor.update({
+  // F8 (2026-08-06) — when super_admin adds a new provider code post-
+  // creation, auto-create the matching SourceDistributor row. Idempotent
+  // via case-insensitive dedup; a re-save with the same codes is a no-op.
+  // Runs OUTSIDE the update to keep the tenant-update tx atomic on its
+  // own; a supplier-seed failure MUST NOT roll back the distributor edit.
+  const updated = await prisma.distributor.update({
     where: { id },
     data: writeData as Prisma.DistributorUpdateInput,
     select: distributorSelect,
   });
+  if (Array.isArray(data.providerCodes) && data.providerCodes.length > 0) {
+    const { seedSuppliersFromProviderCodes } = await import('./sourceDistributorService.js');
+    try {
+      await seedSuppliersFromProviderCodes(id, data.providerCodes);
+    } catch {
+      // Non-fatal — the tenant edit already succeeded. Manual reseed via
+      // scripts/f8-backfill-supplier-seed.ts covers a failure here.
+    }
+  }
+  return updated;
 }
 
 export async function getDistributorSettings(distributorId: string) {

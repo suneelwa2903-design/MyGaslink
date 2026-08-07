@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 import type { $Enums } from '@prisma/client';
-import { GSTIN_REGEX, INDIAN_STATE_NAMES } from '@gaslink/shared';
+import { GSTIN_REGEX, INDIAN_STATE_NAMES, localTodayISO } from '@gaslink/shared';
 
 // Group D2 (2026-06-11): case-insensitive lookup so a CSV value like
 // "telangana" or "TELANGANA" matches "Telangana" without a warning.
@@ -1644,8 +1644,13 @@ export async function importOpeningBalances(
   const skippedCustomers: string[] = [];
   let imported = 0;
   let skipped = 0;
+  // `today` stays a Date — it's the fallback entry/issue date below.
   const today = new Date();
-  const todayIso = today.toISOString().split('T')[0];
+  // Anti-pattern #21 (two-line form): this was
+  // `today.toISOString().split('T')[0]`, which yields the UTC calendar
+  // date — so an operator importing opening balances between 00:00 and
+  // 05:30 IST stamped YESTERDAY into the invoice note.
+  const todayIso = localTodayISO();
   const replace = opts.replaceExisting === true;
 
   // Group 5 (2026-06-11): when the distributor has a goLiveDate set, OB

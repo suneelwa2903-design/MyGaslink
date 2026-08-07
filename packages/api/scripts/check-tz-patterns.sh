@@ -18,13 +18,15 @@
 # Lines that are pure comments are excluded so historical doc references
 # to the anti-pattern don't trip the guard.
 #
-# Patterns derived from a *mutated* `new Date()` (e.g. `d.toISOString()`
-# where `d` was constructed via `new Date()` then mutated) are NOT
-# matched by these regexes — they're equally buggy, but eliminating them
-# requires variable-level analysis. The current sweep replaced every one
-# we could find by hand; future regressions in that form are left to
-# code review. Bare-`new Date()` (the most common form) is the high-
-# leverage chokepoint covered here.
+# Patterns derived from a *mutated* / two-statement `new Date()` (e.g.
+#     const d = new Date();
+#     const s = d.toISOString().split('T')[0];
+# ) are NOT matched by the line-oriented regexes below — they need
+# variable-level analysis. That gap was left "to code review" and it bit
+# for real: customerService.importOpeningBalances shipped exactly that
+# shape. It is now covered by check-tz-twoline.mjs, invoked at the end of
+# this script (Node, because `grep -P` backreferences are unavailable in
+# the Git Bash build on the dev machines).
 #
 # Exit 0 = clean. Exit 1 = pattern found.
 
@@ -80,6 +82,11 @@ done
 
 if [ "$fail" -eq 0 ]; then
   echo "TZ pattern check: clean."
+fi
+
+# Second pass — the two-statement form this script's regexes cannot see.
+if ! node "$ROOT_DIR/packages/api/scripts/check-tz-twoline.mjs"; then
+  fail=1
 fi
 
 exit "$fail"
