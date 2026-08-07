@@ -531,6 +531,10 @@ export async function generateCustomerLedgerPdf(
       // Q3 (2026-07-09) — 7-char label so it fits inside the Type column
       // cap of 11. The count + cyl type lives in Narration.
       case 'empties_return': return 'Empties';
+      // F1 (2026-08-06) — 9-char label fits inside the Type column cap.
+      // "Def Ret" reads as "Defective Return" — narration carries the
+      // full context ("Defective: 1× 19 KG from INV-XXX (pending CN)").
+      case 'defective_collected': return 'Def Ret';
       // Deposit ledger (2026-07-31 v3): Type column stays as an event
       // label ("Deposit" / "Refund") — same treatment as Payment /
       // Empties / Adjustment rows. The cylinder type appears in the
@@ -678,6 +682,38 @@ export async function generateCustomerLedgerPdf(
         row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-',
         row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-',
         (row.emptyCylsCost ?? 0) > 0 ? formatMoney(row.emptyCylsCost) : '-',
+        formatMoney(row.totalAmount),
+        '-',
+        formatMoney(row.dueAmount),
+        '-',
+      ];
+    } else if (row.kind === 'defective_collected') {
+      // F1 (2026-08-06) — physical-only defective full pickup row.
+      // Narration carries context ("Defective: 1× 19 KG from INV-XXX
+      // (pending CN)"). Del Full renders as a NEGATIVE quantity so the
+      // reader sees "1 full went back" — Suneel spec (2026-08-06):
+      // "shouldn't [it] be deducted from fulls?". Money side (Amount)
+      // stays "-" because the actual money lands as a separate
+      // credit_note row when Raise CN fires. Coll Emp / Pend E stay "-"
+      // because defective fulls are a different category from empties
+      // owed — they don't feed the pending-empties counter. Total /
+      // Due carry forward unchanged from the previous row.
+      // Parse the qty out of the narration ("Defective: N× ...").
+      const defQty = (() => {
+        const m = /^Defective:\s*(\d+)/.exec(narration);
+        return m ? parseInt(m[1], 10) : 0;
+      })();
+      // F1-FIX-7 (2026-08-06): defective deduction must flow into the
+      // Del Full subtotal too — otherwise Page/Total subtotals over-report
+      // by the defective qty. Subtract from totalDelivered so the sum
+      // reflects "fulls that stayed with customer this period".
+      if (defQty > 0) totalDelivered -= defQty;
+      cells = [
+        formatDateCompact(row.orderDate),
+        typeLabel(row),
+        narration,
+        defQty > 0 ? `-${defQty}` : '-',
+        '-', '-', '-', '-',
         formatMoney(row.totalAmount),
         '-',
         formatMoney(row.dueAmount),
@@ -1098,6 +1134,8 @@ export async function generateGroupLedgerPdf(
       case 'debit_note': return 'Debit';
       case 'adjustment': return 'Adj';
       case 'empties_return': return 'Empties';
+      // F1 (2026-08-06) — mirrors individual PDF label.
+      case 'defective_collected': return 'Def Ret';
       // Deposit ledger (2026-07-31 v3) — event-label Type column
       // (matches individual PDF). Cylinder type lives in Narration.
       case 'deposit_charged': return 'Deposit';
@@ -1204,6 +1242,30 @@ export async function generateGroupLedgerPdf(
         row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-',
         row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-',
         (row.emptyCylsCost ?? 0) > 0 ? formatMoney(row.emptyCylsCost) : '-',
+        formatMoney(row.totalAmount),
+        '-',
+        formatMoney(row.dueAmount),
+        '-',
+      ];
+    } else if (row.kind === 'defective_collected') {
+      // F1 (2026-08-06) — group PDF mirror of individual PDF branch.
+      // Del Full shows negative qty ("-N") so reader sees fulls went
+      // back to depot. Money side (Amount) stays "-" because CN posts
+      // separately when raised.
+      const defQty = (() => {
+        const m = /^Defective:\s*(\d+)/.exec(narration);
+        return m ? parseInt(m[1], 10) : 0;
+      })();
+      // F1-FIX-7 (2026-08-06): defective deduction must flow into the
+      // Del Full subtotal too — otherwise Page/Total subtotals over-report
+      // by the defective qty. Subtract from totalDelivered so the sum
+      // reflects "fulls that stayed with customer this period".
+      if (defQty > 0) totalDelivered -= defQty;
+      cells = [
+        formatDateCompact(new Date(row.orderDate)),
+        property, type, narration,
+        defQty > 0 ? `-${defQty}` : '-',
+        '-', '-', '-', '-',
         formatMoney(row.totalAmount),
         '-',
         formatMoney(row.dueAmount),

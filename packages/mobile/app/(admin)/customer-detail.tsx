@@ -627,6 +627,11 @@ export default function AdminCustomerDetailScreen() {
     // doesn't misread as "+₹0.00" in red (the `positive = >= 0` branch
     // would otherwise flag it as a debit).
     const isEmptiesReturn = (item.entryType as string) === 'empties_return';
+    // F1 (2026-08-06) — defective full pickup. Same render treatment as
+    // empties_return (amount as "—", label distinct). The CN that follows
+    // lands as a credit_note row later when Raise CN fires.
+    const isDefectiveCollected = (item.entryType as string) === 'defective_collected';
+    const isStockOnlyRow = isEmptiesReturn || isDefectiveCollected;
     // Phase 8 (2026-06-12): opening-balance rows get muted/italic
     // styling + the "Opening Balance b/f" label (matches the PDF
     // statement convention) so they're visually distinct from
@@ -678,13 +683,13 @@ export default function AdminCustomerDetailScreen() {
         <View style={styles.rowBetween}>
           <View style={{ flex: 1, paddingRight: 8 }}>
             <Text style={[styles.cardTitle, { color: C.text }]}>
-              {isEmptiesReturn ? 'Empties Return' : item.entryType.replace(/_/g, ' ')}
+              {isEmptiesReturn ? 'Empties Return' : isDefectiveCollected ? 'Defective Return' : item.entryType.replace(/_/g, ' ')}
             </Text>
             <Text style={[styles.metaLine, { color: C.textMuted }]}>
               {new Date(item.entryDate).toLocaleDateString('en-IN')}
             </Text>
           </View>
-          {isEmptiesReturn ? (
+          {isStockOnlyRow ? (
             <Text
               style={{
                 fontSize: 15,

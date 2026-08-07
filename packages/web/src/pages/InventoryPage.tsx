@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useWatch } from 'react-hook-form';
+import { useForm, useWatch, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
 import {
@@ -33,6 +33,8 @@ import {
   type EmptiesReturnInput,
   localTodayISO,
   localDateISO,
+  type DefectiveEligibleInvoice,
+  type DefectiveReturn,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState, CustomerSearchInput } from '@/components/ui';
@@ -157,6 +159,20 @@ interface BackdatedHistoryRow {
   deliveryDate: string | null;
 }
 
+// 2026-08-05 — Depot History Amount column formatter. Accepts both
+// string and number (Prisma Decimal wire shape varies by adapter).
+// Returns '-' for null / empty / non-numeric.
+function formatDepotAmount(raw: string | number | null | undefined): string {
+  if (raw == null || raw === '') return '-';
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return '-';
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
 export default function InventoryPage() {
   const queryClient = useQueryClient();
   // Mini-Operator (2026-07-16): drives the header rename (Godown), tab
@@ -181,6 +197,8 @@ export default function InventoryPage() {
   const [adjustOpen, setAdjustOpen] = useState(false);
   // Item 7 (2026-07-09) — lightweight customer empties return.
   const [emptiesReturnOpen, setEmptiesReturnOpen] = useState(false);
+  // F1 (2026-08-06) — customer defective full pickup + inline CN raise.
+  const [defectiveReturnOpen, setDefectiveReturnOpen] = useState(false);
   // 2026-07-19: Vehicles-in-transit quick view (button beside Empties Return).
   const [vehiclesInTransitOpen, setVehiclesInTransitOpen] = useState(false);
   // Mini-Operator (2026-07-16): opening-stock modal state, opened from the
@@ -410,6 +428,15 @@ export default function InventoryPage() {
               <Button variant="secondary" size="sm" onClick={() => setEmptiesReturnOpen(true)}>
                 <HiOutlinePlus className="h-4 w-4" />Empties Return
               </Button>
+              {/* F1 (2026-08-06) — Defective Return button + modal, sibling
+                  to Empties Return. Suneel spec: "should be a button
+                  similar to empties return in daily summary". Modal
+                  captures + fires CN inline; History / Send to Corp are
+                  on the dedicated /app/defective-returns page (accessible
+                  via the "View history" link inside the modal, or by
+                  direct URL). Sidebar entry was removed by Suneel — the
+                  pending-count chip lives on this button instead. */}
+              <DefectiveReturnButton onClick={() => setDefectiveReturnOpen(true)} />
               {/* 2026-07-19 — Vehicles: quick view of DVAs currently on
                   the road + those reconciled today. Read-only. */}
               <Button variant="secondary" size="sm" onClick={() => setVehiclesInTransitOpen(true)}>
@@ -565,6 +592,12 @@ export default function InventoryPage() {
                       <th>Type</th>
                       <th>Cylinder Type</th>
                       <th>Qty</th>
+                      {/* F1-FIX-18 (2026-08-06) — piggybacked defective count.
+                          Populated only on outgoing rows whose challan matches
+                          a DefectiveReturnBatch. Blank on incoming rows and on
+                          outgoing rows with no defective piggyback. */}
+                      <th className="text-right">Defective</th>
+                      <th className="text-right">Amount</th>
                       <th>Vehicle No</th>
                       <th>Driver</th>
                       <th>Doc Type</th>
@@ -574,24 +607,31 @@ export default function InventoryPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {depotEvents.map((ev) => (
-                      <tr key={ev.eventId}>
-                        <td className="whitespace-nowrap">{new Date(ev.eventDate).toLocaleDateString('en-IN')}</td>
-                        <td>
-                          <Badge variant={ev.eventType === 'incoming_fulls' ? 'success' : 'warning'}>
-                            {ev.eventType === 'incoming_fulls' ? 'Incoming' : 'Outgoing'}
-                          </Badge>
-                        </td>
-                        <td className="font-medium">{ev.cylinderTypeName}</td>
-                        <td>{ev.eventType === 'incoming_fulls' ? ev.quantity : ev.quantity}</td>
-                        <td>{ev.vehicleNumber || '-'}</td>
-                        <td>{ev.driverName || '-'}</td>
-                        <td>{ev.documentType || '-'}</td>
-                        <td>{ev.documentNumber || '-'}</td>
-                        <td className="whitespace-nowrap">{ev.documentDate ? new Date(ev.documentDate).toLocaleDateString('en-IN') : '-'}</td>
-                        <td className="max-w-[200px] truncate">{ev.notes || '-'}</td>
-                      </tr>
-                    ))}
+                    {depotEvents.map((ev) => {
+                      const defQ = ev.defectiveQty ?? 0;
+                      return (
+                        <tr key={ev.eventId}>
+                          <td className="whitespace-nowrap">{new Date(ev.eventDate).toLocaleDateString('en-IN')}</td>
+                          <td>
+                            <Badge variant={ev.eventType === 'incoming_fulls' ? 'success' : 'warning'}>
+                              {ev.eventType === 'incoming_fulls' ? 'Incoming' : 'Outgoing'}
+                            </Badge>
+                          </td>
+                          <td className="font-medium">{ev.cylinderTypeName}</td>
+                          <td>{ev.quantity}</td>
+                          <td className={`text-right tabular-nums ${defQ > 0 ? 'text-amber-700 dark:text-amber-300 font-medium' : 'text-surface-400 text-xs'}`}>
+                            {defQ > 0 ? `+${defQ}` : '—'}
+                          </td>
+                          <td className="text-right tabular-nums">{formatDepotAmount(ev.amount)}</td>
+                          <td>{ev.vehicleNumber || '-'}</td>
+                          <td>{ev.driverName || '-'}</td>
+                          <td>{ev.documentType || '-'}</td>
+                          <td>{ev.documentNumber || '-'}</td>
+                          <td className="whitespace-nowrap">{ev.documentDate ? new Date(ev.documentDate).toLocaleDateString('en-IN') : '-'}</td>
+                          <td className="max-w-[200px] truncate">{ev.notes || '-'}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -990,6 +1030,17 @@ export default function InventoryPage() {
         />
       )}
 
+      {/* F1 (2026-08-06) — Defective Return Modal. Sibling to Empties Return
+          on Daily Summary. Compact 4-step flow inside a modal: customer →
+          invoice + qty → confirm capture → raise CN. History + Send to
+          Corp live on /app/defective-returns. */}
+      {defectiveReturnOpen && (
+        <DefectiveReturnModal
+          open={defectiveReturnOpen}
+          onClose={() => setDefectiveReturnOpen(false)}
+        />
+      )}
+
       {/* 2026-07-19 — Vehicles In Transit modal. Read-only quick view of
           every DVA currently on the road plus those reconciled today. */}
       {vehiclesInTransitOpen && (
@@ -1025,12 +1076,12 @@ export default function InventoryPage() {
 
 type ColGroup = 'CORPORATION' | 'OPENING' | 'ON VEHICLE' | 'AT CUSTOMER' | 'ADJUSTMENTS' | 'CLOSING';
 type ColKey =
-  | 'corp_in' | 'corp_out'
+  | 'corp_in' | 'corp_out' | 'corp_dr_out'
   | 'open_f' | 'open_e'
   | 'veh_f' | 'veh_e'
-  | 'cust_d' | 'cust_c'
+  | 'cust_d' | 'cust_c' | 'cust_dr_in'
   | 'adj_r' | 'adj_m'
-  | 'close_f' | 'close_e';
+  | 'close_f' | 'close_e' | 'close_dr';
 
 const GROUPS_ORDER: ColGroup[] = ['CORPORATION', 'OPENING', 'ON VEHICLE', 'AT CUSTOMER', 'ADJUSTMENTS', 'CLOSING'];
 
@@ -1074,12 +1125,45 @@ interface ColDef {
 const COLS: ColDef[] = [
   { key: 'corp_in', group: 'CORPORATION', label: 'Incoming Fulls', render: (i) => i.incomingFulls > 0 ? `+${i.incomingFulls}` : '0', cellClass: 'text-blue-700 dark:text-blue-300' },
   { key: 'corp_out', group: 'CORPORATION', label: 'Outgoing Empties', render: (i) => i.outgoingEmpties > 0 ? `${i.outgoingEmpties}` : '0', cellClass: 'text-blue-700 dark:text-blue-300' },
+  // F1-FIX-15 (2026-08-06) — defective fulls shipped back to OMC today.
+  // Sourced from InventorySummary.defectiveFullsOut (computed by the
+  // Aug-6 aggregator extension). Amber to distinguish from the blue
+  // regular-outgoing-empties column and match the CLOSING > Defective
+  // colour. Non-zero rendered with a leading `−` so office reads it
+  // as "left the depot".
+  {
+    key: 'corp_dr_out',
+    group: 'CORPORATION',
+    label: 'Defective Out',
+    render: (i) => {
+      const n = (i as { defectiveFullsOut?: number }).defectiveFullsOut ?? 0;
+      return n > 0 ? `−${n}` : '0';
+    },
+    cellClass: (i) => ((i as { defectiveFullsOut?: number }).defectiveFullsOut ?? 0) > 0
+      ? 'text-amber-700 dark:text-amber-300 font-medium'
+      : 'text-surface-400 text-xs',
+  },
   { key: 'open_f', group: 'OPENING', label: 'Fulls', render: (i) => i.openingFulls },
   { key: 'open_e', group: 'OPENING', label: 'Empties', render: (i) => i.openingEmpties },
   { key: 'veh_f', group: 'ON VEHICLE', label: 'Fulls', render: (i) => i.inFlightFulls ?? 0, cellClass: 'text-amber-700 dark:text-amber-300 font-medium' },
   { key: 'veh_e', group: 'ON VEHICLE', label: 'Empties', render: (i) => i.emptiesOnVehicle ?? 0, cellClass: 'text-amber-700 dark:text-amber-300' },
   { key: 'cust_d', group: 'AT CUSTOMER', label: 'Delivered Fulls', render: (i) => i.deliveredQty > 0 ? `${i.deliveredQty}` : '0', cellClass: 'text-teal-700 dark:text-teal-300' },
   { key: 'cust_c', group: 'AT CUSTOMER', label: 'Collected Empties', render: (i) => i.collectedEmpties, cellClass: 'text-teal-700 dark:text-teal-300' },
+  // F1-FIX-15 (2026-08-06) — defective fulls picked up from customers
+  // today. Sourced from InventorySummary.defectiveFullsIn. Leading `+`
+  // signals inbound to depot's defective bucket.
+  {
+    key: 'cust_dr_in',
+    group: 'AT CUSTOMER',
+    label: 'Defective In',
+    render: (i) => {
+      const n = (i as { defectiveFullsIn?: number }).defectiveFullsIn ?? 0;
+      return n > 0 ? `+${n}` : '0';
+    },
+    cellClass: (i) => ((i as { defectiveFullsIn?: number }).defectiveFullsIn ?? 0) > 0
+      ? 'text-amber-700 dark:text-amber-300 font-medium'
+      : 'text-surface-400 text-xs',
+  },
   { key: 'adj_r', group: 'ADJUSTMENTS', label: 'Returned', render: (i) => i.cancelledStockQty, cellClass: 'text-flame-600 dark:text-flame-400' },
   {
     key: 'adj_m', group: 'ADJUSTMENTS', label: 'Manual',
@@ -1088,6 +1172,21 @@ const COLS: ColDef[] = [
   },
   { key: 'close_f', group: 'CLOSING', label: 'Fulls', render: (i) => i.closingFulls, cellClass: 'font-semibold' },
   { key: 'close_e', group: 'CLOSING', label: 'Empties', render: (i) => i.closingEmpties, cellClass: 'font-semibold' },
+  // F1-FIX-13 (2026-08-06) — Defective bucket depot balance column. Per
+  // Suneel: "now where can I see in daily summary defective items?".
+  // Value from InventorySummary.closingDefectiveFulls, populated by the
+  // Aug-6 computeSummaryForDate extension. Amber tint so it reads as
+  // "attention needed" but not "critical". Falls back to 0 for tenants
+  // that have never had a defective row.
+  {
+    key: 'close_dr',
+    group: 'CLOSING',
+    label: 'Defective',
+    render: (i) => (i as { closingDefectiveFulls?: number }).closingDefectiveFulls ?? 0,
+    cellClass: (i) => ((i as { closingDefectiveFulls?: number }).closingDefectiveFulls ?? 0) > 0
+      ? 'font-semibold text-amber-700 dark:text-amber-300'
+      : 'text-surface-400 text-xs',
+  },
 ];
 
 const COL_PREF_KEY = 'gaslink_inventory_col_prefs';
@@ -1769,7 +1868,11 @@ function AdjustStockModal({
 
 // ─── Incoming Fulls Modal ────────────────────────────────────────────────────
 
-function IncomingFullsModal({
+// F8v2-FIX-A (2026-08-06) — exported so CorporationLedgerPage's Add Entry
+// dropdown opens the SAME modal (Suneel's "no need to redirect just open
+// the same" ask). Callers pass their own cylinderTypes/vehicles/drivers
+// arrays so the modal stays a pure prop-driven component.
+export function IncomingFullsModal({
   open,
   onClose,
   cylinderTypes,
@@ -1787,7 +1890,18 @@ function IncomingFullsModal({
   const queryClient = useQueryClient();
   const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<IncomingFullsInput>({
     resolver: zodResolver(incomingFullsSchema),
-    defaultValues: { cylinderTypeId: '', quantity: 1, documentType: '', documentNumber: '', documentDate: date },
+    defaultValues: {
+      cylinderTypeId: '',
+      quantity: 1,
+      documentType: '',
+      documentNumber: '',
+      documentDate: date,
+      charges: [],
+    },
+  });
+  const { fields: chargeFields, append: appendCharge, remove: removeCharge } = useFieldArray({
+    control,
+    name: 'charges',
   });
 
   const mutation = useMutation({
@@ -1795,14 +1909,55 @@ function IncomingFullsModal({
     onSuccess: () => {
       toast.success('Incoming fulls recorded');
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      // F8: also refresh supplier ledger + purchase list downstream consumers.
+      queryClient.invalidateQueries({ queryKey: ['source-distributors'] });
+      queryClient.invalidateQueries({ queryKey: ['purchase-entries'] });
       onClose();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  // F8 (2026-08-06) — supplier list for the Source (OMC) picker. Fetched
+  // only when the modal is open. On tenants with a single supplier the
+  // picker is hidden and sourceDistributorId is auto-set (per Suneel Q3).
+  const { data: suppliers } = useQuery({
+    queryKey: ['source-distributors'],
+    queryFn: () => apiGet<Array<{ id: string; name: string }>>('/source-distributors'),
+    enabled: open,
+  });
+  const activeSuppliers = suppliers ?? [];
+  const singleSupplier = activeSuppliers.length === 1 ? activeSuppliers[0] : null;
+  useEffect(() => {
+    if (singleSupplier) {
+      setValue('sourceDistributorId', singleSupplier.id, { shouldDirty: false });
+    }
+  }, [singleSupplier, setValue]);
+
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
+  const supplierOptions = activeSuppliers.map((s) => ({ value: s.id, label: s.name }));
   const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
   const driverOptions = drivers.map((d) => ({ value: d.driverName, label: d.driverName }));
+
+  // F8 (2026-08-06) — bidirectional rate ↔ amount binding (per Suneel Q4).
+  // Editing Rate/cyl auto-fills Amount = rate × qty. Editing Amount auto-fills
+  // Rate = amount ÷ qty. Editing Qty rebalances Amount from the current Rate
+  // (Rate is treated as the "source of truth" for the recompute when both
+  // are dirty). Uses shouldDirty:false on the derived side so the mutation
+  // in the counterpart doesn't fight the user's typing.
+  const rate = useWatch({ control, name: 'unitPrice' });
+  const amount = useWatch({ control, name: 'amount' });
+  const qty = useWatch({ control, name: 'quantity' });
+  const [lastEdited, setLastEdited] = useState<'rate' | 'amount' | null>(null);
+  useEffect(() => {
+    if (!qty || qty <= 0) return;
+    if (lastEdited === 'rate' && typeof rate === 'number' && rate > 0) {
+      const derived = Number((rate * qty).toFixed(2));
+      if (derived !== amount) setValue('amount', derived, { shouldDirty: false });
+    } else if (lastEdited === 'amount' && typeof amount === 'number' && amount > 0) {
+      const derived = Number((amount / qty).toFixed(4));
+      if (derived !== rate) setValue('unitPrice', derived, { shouldDirty: false });
+    }
+  }, [rate, amount, qty, lastEdited, setValue]);
 
   // Vehicle and Driver are dropdowns — no free-text duplicates. Picking a
   // vehicle copies its plate to the persisted `vehicleNumber` field and
@@ -1831,6 +1986,23 @@ function IncomingFullsModal({
   return (
     <Modal open={open} onClose={onClose} title="Record Incoming Fulls">
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
+        {/* F8 (2026-08-06) — Source (OMC) picker. Suneel Q3: hidden when the
+            tenant has exactly one licensed supplier; a small read-only label
+            confirms which supplier the entry is being recorded against. */}
+        {singleSupplier ? (
+          <div className="rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            Source: <span className="font-medium">{singleSupplier.name}</span>
+          </div>
+        ) : activeSuppliers.length > 1 ? (
+          <Select
+            label="Source (OMC)"
+            options={supplierOptions}
+            placeholder="Select supplier"
+            required
+            error={errors.sourceDistributorId?.message}
+            {...register('sourceDistributorId')}
+          />
+        ) : null}
         <Select label="Cylinder Type" options={cylinderOptions} placeholder="Select type" required error={errors.cylinderTypeId?.message} {...register('cylinderTypeId')} />
         <Input label="Quantity" type="number" min={1} required error={errors.quantity?.message} {...register('quantity', { valueAsNumber: true })} />
         {/* WI-1.4: Document* labels renamed to Supply* in the UI; backend
@@ -1841,15 +2013,77 @@ function IncomingFullsModal({
         <Input label="Supply Date" type="date" required error={errors.documentDate?.message} {...register('documentDate')} />
         <Select label="Vehicle" options={vehicleOptions} placeholder="Select vehicle (optional)" {...register('vehicleId')} />
         <Select label="Driver" options={driverOptions} placeholder="Select driver (optional)" {...register('driverName')} />
-        <Input
-          label="Amount (₹)"
-          type="number"
-          min={0}
-          step="0.01"
-          placeholder="Total invoice value from the corporation (optional)"
-          error={errors.amount?.message}
-          {...register('amount', { setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v) })}
-        />
+        {/* F8 (2026-08-06) — Rate ↔ Amount bidirectional pair (Suneel Q4). */}
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Rate / cyl (₹, GST-incl)"
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="Per-cyl price"
+            error={errors.unitPrice?.message}
+            {...register('unitPrice', {
+              setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v),
+              onChange: () => setLastEdited('rate'),
+            })}
+          />
+          <Input
+            label="Amount (₹, total)"
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="Line total"
+            error={errors.amount?.message}
+            {...register('amount', {
+              setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v),
+              onChange: () => setLastEdited('amount'),
+            })}
+          />
+        </div>
+        {/* F8 (2026-08-06) — optional freight / handling / other charges
+            (Suneel Q8). Each row becomes a PurchaseEntryCharge on the same
+            PurchaseEntry the service auto-spawns when supplier is set. */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-slate-700">Charges (freight, handling, etc.)</label>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => appendCharge({ chargeType: 'freight', amount: 0 })}
+            >
+              + Add charge
+            </Button>
+          </div>
+          {chargeFields.length === 0 ? (
+            <p className="text-xs text-slate-500">No extra charges. Freight / handling can be added if the OMC billed them separately or on the same challan.</p>
+          ) : (
+            <div className="space-y-2">
+              {chargeFields.map((f, i) => (
+                <div key={f.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                  <Select
+                    label={i === 0 ? 'Type' : undefined}
+                    options={[
+                      { value: 'freight', label: 'Freight' },
+                      { value: 'handling', label: 'Handling' },
+                      { value: 'testing', label: 'Testing' },
+                      { value: 'insurance', label: 'Insurance' },
+                      { value: 'other', label: 'Other' },
+                    ]}
+                    {...register(`charges.${i}.chargeType` as const)}
+                  />
+                  <Input
+                    label={i === 0 ? 'Amount (₹)' : undefined}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    {...register(`charges.${i}.amount` as const, { valueAsNumber: true })}
+                  />
+                  <Button type="button" variant="secondary" onClick={() => removeCharge(i)}>Remove</Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
@@ -1861,8 +2095,11 @@ function IncomingFullsModal({
 }
 
 // ─── Outgoing Empties Modal ──────────────────────────────────────────────────
+// F8v2-FIX-A (2026-08-06) — exported for CorporationLedgerPage reuse (same
+// modal opens from both Inventory + Corp surfaces). Contains F1 defective-
+// return-inclusion flow so Corp's Add Entry → Outgoing Empties gets it too.
 
-function OutgoingEmptiesModal({
+export function OutgoingEmptiesModal({
   open,
   onClose,
   cylinderTypes,
@@ -1878,20 +2115,21 @@ function OutgoingEmptiesModal({
   date: string;
 }) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<OutgoingEmptiesInput>({
+  const { register, handleSubmit, control, setValue, formState: { errors }, getValues } = useForm<OutgoingEmptiesInput>({
     resolver: zodResolver(outgoingEmptiesSchema),
     defaultValues: { cylinderTypeId: '', quantity: 1, documentType: '', documentNumber: '', documentDate: date },
   });
 
-  const mutation = useMutation({
-    mutationFn: (data: OutgoingEmptiesInput) => apiPost('/inventory/outgoing-empties', data),
-    onSuccess: () => {
-      toast.success('Outgoing empties recorded');
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      onClose();
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
+  // F1-FIX-12 (2026-08-06) — include-defectives section state. When user
+  // ticks the box, per-cyl-type checkboxes show below with the CN-issued
+  // rows ready to ship (Suneel spec: "checkbox to add defective cylinders
+  // — then show how many defective per cyl type from collected defectives
+  // and once added in outgoing corp loads they get moved to sent to
+  // corporation"). Server call is chained after the empties record so
+  // office sees them as one operation.
+  const [includeDefectives, setIncludeDefectives] = useState(false);
+  const [selectedDefectiveIds, setSelectedDefectiveIds] = useState<Set<string>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
 
   const cylinderOptions = cylinderTypes.map((ct) => ({ value: ct.cylinderTypeId, label: ct.typeName }));
   const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
@@ -1918,9 +2156,88 @@ function OutgoingEmptiesModal({
     }
   }, [selectedVehicleId, vehicles, drivers, setValue]);
 
+  // F1-FIX-12 (2026-08-06) — depot bucket + CN-issued rows for the
+  // include-defectives section. Fetched only when modal is open.
+  const { data: defectiveBucket } = useQuery({
+    queryKey: ['defective-depot-bucket'],
+    queryFn: () => apiGet<Array<{ cylinderTypeId: string; cylinderTypeName: string; qty: number }>>('/defective-returns/depot-bucket'),
+    enabled: open,
+  });
+  const { data: readyDefectives } = useQuery({
+    queryKey: ['defective-returns-history', 'cn_issued'],
+    queryFn: () => apiGet<DefectiveReturn[]>('/defective-returns', { status: 'cn_issued' }),
+    enabled: open,
+  });
+  const defectiveTotalQty = (defectiveBucket ?? []).reduce((s, b) => s + b.qty, 0);
+  const selectedDefectiveQty = useMemo(() => {
+    if (!readyDefectives) return 0;
+    return readyDefectives.filter((r) => selectedDefectiveIds.has(r.id)).reduce((s, r) => s + r.quantity, 0);
+  }, [readyDefectives, selectedDefectiveIds]);
+
+  // Group ready defective rows by cyl type for the checkbox UI.
+  const defectivesByType = useMemo(() => {
+    const m = new Map<string, { cylTypeName: string; rows: DefectiveReturn[] }>();
+    for (const r of readyDefectives ?? []) {
+      const key = r.cylinderTypeId;
+      const existing = m.get(key);
+      if (existing) {
+        existing.rows.push(r);
+      } else {
+        m.set(key, { cylTypeName: r.cylinderTypeName ?? '—', rows: [r] });
+      }
+    }
+    return m;
+  }, [readyDefectives]);
+
+  // Combined submit: empties record, then (if requested) defective batch.
+  // Empties failure blocks entirely. Defective failure produces a WARNING
+  // toast — the empties record still landed.
+  const onSubmit = handleSubmit(async (data) => {
+    setSubmitting(true);
+    try {
+      await apiPost('/inventory/outgoing-empties', data);
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+      setSubmitting(false);
+      return;
+    }
+
+    // Empties succeeded. If defectives were ticked, fire the batch.
+    if (includeDefectives && selectedDefectiveIds.size > 0) {
+      try {
+        const batch = await apiPost<{ batchNumber: string; totalQuantity: number }>('/defective-returns/batches', {
+          // Corporation name defaults from the outgoing empties documentType
+          // (freeform) — Suneel spec says the corp identity isn't a hard
+          // requirement here. Fall back to 'IOCL' if user didn't type
+          // anything indicative.
+          corporationName: (getValues('documentType') || 'IOCL').slice(0, 60),
+          challanNumber: getValues('documentNumber') || undefined,
+          challanDate: getValues('documentDate') || undefined,
+          defectiveIds: Array.from(selectedDefectiveIds),
+          notes: `Piggybacked on outgoing empties challan ${getValues('documentNumber') ?? ''}`.trim(),
+        });
+        queryClient.invalidateQueries({ queryKey: ['defective-depot-bucket'] });
+        queryClient.invalidateQueries({ queryKey: ['defective-returns-history'] });
+        queryClient.invalidateQueries({ queryKey: ['defective-returns-pending-count'] });
+        // No internal FSHD batch number in operator-facing copy.
+        toast.success(`Recorded — empties + ${batch.totalQuantity} defective cyl sent`);
+      } catch (err) {
+        toast.error(`Empties recorded but defective batch failed: ${getErrorMessage(err)}. Defectives still in bucket — retry from Outgoing Empties.`, { duration: 10_000 });
+      }
+    } else {
+      toast.success('Outgoing empties recorded');
+    }
+
+    setSubmitting(false);
+    setIncludeDefectives(false);
+    setSelectedDefectiveIds(new Set());
+    onClose();
+  });
+
   return (
     <Modal open={open} onClose={onClose} title="Record Outgoing Empties">
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4">
         <Select label="Cylinder Type" options={cylinderOptions} placeholder="Select type" required error={errors.cylinderTypeId?.message} {...register('cylinderTypeId')} />
         <Input label="Quantity" type="number" min={1} required error={errors.quantity?.message} {...register('quantity', { valueAsNumber: true })} />
         {/* WI-1.4: Document* labels renamed to Challan* in the UI; backend
@@ -1952,9 +2269,72 @@ function OutgoingEmptiesModal({
           {...register('condition')}
         />
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
+
+        {/* F1-FIX-12 (2026-08-06) — Include defective fulls in this
+            shipment. Only rendered when depot has CN-issued defective
+            rows ready to ship. Per-cyl-type checkbox with count; ticked
+            rows are shipped alongside the empties record in one submit. */}
+        {defectiveTotalQty > 0 && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-600 p-3 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeDefectives}
+                onChange={(e) => {
+                  setIncludeDefectives(e.target.checked);
+                  if (!e.target.checked) setSelectedDefectiveIds(new Set());
+                }}
+                className="h-4 w-4"
+              />
+              <span className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                Also include defective fulls
+                <span className="ml-2 text-xs text-amber-700 dark:text-amber-300">
+                  ({defectiveTotalQty} pending at depot)
+                </span>
+              </span>
+            </label>
+            {includeDefectives && (
+              <div className="pl-6 space-y-2">
+                {[...defectivesByType.entries()].map(([cylTypeId, { cylTypeName, rows }]) => {
+                  const rowsSelected = rows.filter((r) => selectedDefectiveIds.has(r.id));
+                  const allTicked = rowsSelected.length === rows.length && rows.length > 0;
+                  const qty = rowsSelected.reduce((s, r) => s + r.quantity, 0);
+                  const totalQty = rows.reduce((s, r) => s + r.quantity, 0);
+                  return (
+                    <label key={cylTypeId} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allTicked}
+                        onChange={(e) => {
+                          const next = new Set(selectedDefectiveIds);
+                          if (e.target.checked) rows.forEach((r) => next.add(r.id));
+                          else rows.forEach((r) => next.delete(r.id));
+                          setSelectedDefectiveIds(next);
+                        }}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-amber-900 dark:text-amber-200">
+                        {cylTypeName}: <span className="font-semibold">{totalQty}</span> defective ready
+                      </span>
+                      {qty > 0 && qty < totalQty && (
+                        <span className="text-xs text-amber-700 dark:text-amber-300">({qty} selected)</span>
+                      )}
+                    </label>
+                  );
+                })}
+                {selectedDefectiveQty > 0 && (
+                  <div className="text-xs text-amber-800 dark:text-amber-300 pt-1 border-t border-amber-200 dark:border-amber-700">
+                    Total to ship: <span className="font-semibold">{selectedDefectiveQty} defective cyl(s)</span> — will move to &ldquo;sent to corporation&rdquo; on submit
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" loading={mutation.isPending}>Record</Button>
+          <Button type="submit" loading={submitting}>Record</Button>
         </div>
       </form>
     </Modal>
@@ -2000,8 +2380,13 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
   // Capture "now" once via a lazy initializer so render stays pure (no impure
   // Date.now() call during render). Day-granularity display tolerates this.
   const [now] = useState(() => Date.now());
-  const daysSince = (d?: string | null): number | null =>
-    d ? Math.floor((now - new Date(d).getTime()) / 86400000) : null;
+  // 2026-08-06: hoisted into useCallback so it can be safely used inside the
+  // rows useMemo without triggering react-hooks/exhaustive-deps.
+  const daysSince = useCallback(
+    (d?: string | null): number | null =>
+      d ? Math.floor((now - new Date(d).getTime()) / 86400000) : null,
+    [now],
+  );
   const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
   const rows = useMemo(() => {
@@ -2032,7 +2417,7 @@ function CustomerBalancesTab({ balances }: { balances: CustomerInventoryBalance[
       }
     });
     return mapped;
-  }, [balances, onlyOutstanding, search, typeFilter, sortKey, sortDir]);
+  }, [balances, onlyOutstanding, search, typeFilter, sortKey, sortDir, daysSince]);
 
   const totalQty = rows.reduce((s, r) => s + r.withCustomerQty, 0);
   const totalCost = rows.reduce((s, r) => s + (r.emptyCost ?? 0), 0);
@@ -2236,6 +2621,22 @@ function VehiclesInTransitModal({ open, onClose }: { open: boolean; onClose: () 
   );
 }
 
+// F1-FIX-9b (2026-08-06) — Empties Return modal, tabbed like Defective /
+// Adjust Stock. Per Suneel: "hope you will do same for empties modal too".
+// Tabs: New Return | History. Same size + layout convention.
+
+interface EmptiesHistoryRow {
+  id: string;
+  returnDate: string;
+  customerId: string | null;
+  customerName: string;
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  quantity: number;
+  notes: string | null;
+  createdAt: string;
+}
+
 function EmptiesReturnModal({
   open,
   onClose,
@@ -2244,6 +2645,37 @@ function EmptiesReturnModal({
   open: boolean;
   onClose: () => void;
   cylinderTypes: CylinderType[];
+}) {
+  const [tab, setTab] = useState<'new' | 'history'>('new');
+  return (
+    <Modal open={open} onClose={onClose} title="Empties Return" size="xl">
+      <div className="min-w-[720px] min-h-[560px]">
+        <div className="flex border-b border-surface-200 dark:border-surface-700 mb-4">
+          <TabHeaderButton active={tab === 'new'} onClick={() => setTab('new')}>
+            New Return
+          </TabHeaderButton>
+          <TabHeaderButton active={tab === 'history'} onClick={() => setTab('history')}>
+            History
+          </TabHeaderButton>
+        </div>
+        {tab === 'new' && (
+          <EmptiesNewReturnTab
+            cylinderTypes={cylinderTypes}
+            onDone={() => setTab('history')}
+          />
+        )}
+        {tab === 'history' && <EmptiesHistoryTab />}
+      </div>
+    </Modal>
+  );
+}
+
+function EmptiesNewReturnTab({
+  cylinderTypes,
+  onDone,
+}: {
+  cylinderTypes: CylinderType[];
+  onDone: () => void;
 }) {
   const queryClient = useQueryClient();
   const cylinderOptions = useMemo(() =>
@@ -2273,8 +2705,9 @@ function EmptiesReturnModal({
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['customer-balances'] });
       queryClient.invalidateQueries({ queryKey: ['inventory-events'] });
+      queryClient.invalidateQueries({ queryKey: ['empties-return-history'] });
       reset();
-      onClose();
+      onDone();
     },
     onError: (err: unknown) => {
       toast.error(getErrorMessage(err));
@@ -2289,15 +2722,17 @@ function EmptiesReturnModal({
   }, []);
 
   return (
-    <Modal open={open} onClose={onClose} title="Empties Return from Customer">
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
-        <CustomerSearchInput
-          value={customerId}
-          onChange={(id) => setValue('customerId', id, { shouldValidate: true })}
-          label="Customer"
-          required
-          error={errors.customerId?.message}
-        />
+    <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
+      {/* Row 1 — customer full width */}
+      <CustomerSearchInput
+        value={customerId}
+        onChange={(id) => setValue('customerId', id, { shouldValidate: true })}
+        label="Customer"
+        required
+        error={errors.customerId?.message}
+      />
+      {/* Row 2 — cyl type + qty */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Select
           label="Cylinder Type"
           options={cylinderOptions}
@@ -2314,6 +2749,9 @@ function EmptiesReturnModal({
           error={errors.quantity?.message}
           {...register('quantity', { valueAsNumber: true })}
         />
+      </div>
+      {/* Row 3 — date + notes */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Input
           label="Return Date"
           type="date"
@@ -2324,16 +2762,551 @@ function EmptiesReturnModal({
           {...register('returnDate')}
         />
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
-        <p className="text-xs text-surface-500 dark:text-surface-400">
-          The daily summary will be recalculated from the return date forward.
-          Locked days between the return date and today are skipped in the
-          cascade — unlock them first if you need those days recomputed.
-        </p>
-        <div className="flex justify-end gap-3 pt-4">
-          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" loading={mutation.isPending}>Record</Button>
+      </div>
+      <p className="text-xs text-surface-500 dark:text-surface-400">
+        The daily summary will be recalculated from the return date forward.
+        Locked days between the return date and today are skipped in the
+        cascade — unlock them first if you need those days recomputed.
+      </p>
+      <div className="flex justify-end gap-3 pt-2">
+        <Button type="submit" loading={mutation.isPending}>Record</Button>
+      </div>
+    </form>
+  );
+}
+
+function EmptiesHistoryTab() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['empties-return-history'],
+    queryFn: () => apiGet<EmptiesHistoryRow[]>('/inventory/empties-return-history', { limit: 100 }),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="text-sm text-surface-500 dark:text-surface-400">
+        {data ? `${data.length} row${data.length === 1 ? '' : 's'} · latest 100` : ''}
+      </div>
+      {isLoading && <div className="text-center py-6"><Loader /></div>}
+      {!isLoading && (!data || data.length === 0) && (
+        <EmptyState title="No empties returns yet" description="Recorded returns will appear here." />
+      )}
+      {!isLoading && data && data.length > 0 && (
+        <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white dark:bg-slate-900">
+              <tr className="border-b border-surface-200 dark:border-surface-700 text-left text-xs text-surface-500 dark:text-surface-400 uppercase">
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Customer</th>
+                <th className="py-2 pr-3">Cyl Type</th>
+                <th className="py-2 pr-3 text-right">Qty</th>
+                <th className="py-2 pr-3">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((row) => (
+                <tr key={row.id} className="border-b border-surface-100 dark:border-surface-800/50">
+                  <td className="py-2 pr-3">{row.returnDate}</td>
+                  <td className="py-2 pr-3 font-medium">{row.customerName}</td>
+                  <td className="py-2 pr-3">{row.cylinderTypeName}</td>
+                  <td className="py-2 pr-3 text-right font-medium">{row.quantity}</td>
+                  <td className="py-2 pr-3 text-xs text-surface-500 dark:text-surface-400">{row.notes ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </form>
+      )}
+    </div>
+  );
+}
+
+// ─── F1 (2026-08-06) — Defective Return button with inline pending-CN chip ──
+// Replaces the sidebar chip (removed per Suneel 2026-08-06 pm). Same 60s
+// refetch cadence as the payments pending-count badge on Billing.
+
+function DefectiveReturnButton({ onClick }: { onClick: () => void }) {
+  const { data } = useQuery({
+    queryKey: ['defective-returns-pending-count'],
+    queryFn: () => apiGet<{ count: number }>('/defective-returns/pending-count'),
+    refetchInterval: 60_000,
+  });
+  const pending = data?.count ?? 0;
+  return (
+    <Button variant="secondary" size="sm" onClick={onClick}>
+      <HiOutlinePlus className="h-4 w-4" />Defective Return
+      {pending > 0 && (
+        <span
+          className="ml-1 inline-flex items-center justify-center min-w-[18px] h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold"
+          aria-label={`${pending} defective row(s) with pending CN`}
+          title={`${pending} defective row(s) captured, CN not yet raised — click to review from History`}
+        >
+          {pending > 99 ? '99+' : pending}
+        </span>
+      )}
+    </Button>
+  );
+}
+
+// ─── F1-FIX-9 (2026-08-06) — Defective Return Modal, redesigned ─────────────
+// Modelled after AdjustStockModal: xl size, min 720×560, tabbed strip at the
+// top (New Return | History | Send to Corp). Suneel spec: "design it like
+// [adjust stock] modal", "want it all in same modal", cleaner layout.
+//
+// TABS:
+//   1. New Return — customer picker → invoice Select dropdown → per-line
+//      quantity grid → one-shot Record & Raise CN button.
+//   2. History — table with all past defective returns, per-row Raise CN
+//      (if status='collected') / Cancel actions.
+//   3. Send to Corp — depot bucket cards + checkbox picker of ready rows +
+//      record shipment (F-prefixed batch number allocated server-side).
+//
+// The standalone /app/defective-returns page is kept for URL-based access
+// but the sidebar entry is deleted and everything real happens here.
+
+function DefectiveReturnModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [tab, setTab] = useState<'new' | 'history'>('new');
+
+  // F1-FIX-11 (2026-08-06) — Send-to-Corp tab REMOVED per Suneel. Shipping
+  // defective back to corp now happens inline in Record Outgoing Empties
+  // modal (see the DefectivesToShipSection in OutgoingEmptiesModal below).
+  // Two tabs left: New Return + History. Poll pending-CN count for the
+  // History-tab badge.
+  const { data: pendingData } = useQuery({
+    queryKey: ['defective-returns-pending-count'],
+    queryFn: () => apiGet<{ count: number }>('/defective-returns/pending-count'),
+    enabled: open,
+    refetchInterval: open ? 30_000 : false,
+  });
+  const pendingCount = pendingData?.count ?? 0;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Defective Returns" size="xl">
+      <div className="min-w-[720px] min-h-[560px]">
+        <div className="flex border-b border-surface-200 dark:border-surface-700 mb-4">
+          <TabHeaderButton active={tab === 'new'} onClick={() => setTab('new')}>
+            New Return
+          </TabHeaderButton>
+          <TabHeaderButton
+            active={tab === 'history'}
+            onClick={() => setTab('history')}
+            badge={pendingCount || undefined}
+          >
+            History
+          </TabHeaderButton>
+        </div>
+
+        {tab === 'new' && <DefectiveNewTab onDone={() => setTab('history')} />}
+        {tab === 'history' && <DefectiveHistoryTab />}
+      </div>
     </Modal>
   );
 }
+
+function TabHeaderButton({
+  active, onClick, badge, children,
+}: { active: boolean; onClick: () => void; badge?: number; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${
+        active
+          ? 'border-brand-500 text-brand-600 dark:text-brand-400'
+          : 'border-transparent text-surface-500 hover:text-surface-700 dark:hover:text-surface-300'
+      }`}
+    >
+      {children}
+      {badge != null && badge > 0 && (
+        <span className="inline-flex items-center justify-center min-w-[18px] h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ─── Tab 1 — New Return ─────────────────────────────────────────────────────
+
+function DefectiveNewTab({ onDone }: { onDone: () => void }) {
+  const queryClient = useQueryClient();
+  const [customerId, setCustomerId] = useState('');
+  const [chosenInvoiceId, setChosenInvoiceId] = useState('');
+  const [selectedQtys, setSelectedQtys] = useState<Record<string, number>>({});
+  const [reason, setReason] = useState('');
+  const [notes, setNotes] = useState('');
+  const [collectedDate, setCollectedDate] = useState(() => localTodayISO());
+  const [busy, setBusy] = useState(false);
+
+  const { data: invoices, isLoading: invLoading } = useQuery({
+    queryKey: ['defective-eligible-invoices', customerId],
+    queryFn: () => apiGet<DefectiveEligibleInvoice[]>('/defective-returns/eligible-invoices', { customerId }),
+    enabled: !!customerId,
+  });
+
+  const chosenInvoice = invoices?.find((i) => i.invoiceId === chosenInvoiceId);
+  const previewAmount = useMemo(() => {
+    if (!chosenInvoice) return 0;
+    return Object.entries(selectedQtys).reduce((sum, [cylTypeId, qty]) => {
+      const line = chosenInvoice.lines.find((l) => l.cylinderTypeId === cylTypeId);
+      return sum + (line ? qty * line.perCylRate : 0);
+    }, 0);
+  }, [chosenInvoice, selectedQtys]);
+  const hasAnyQty = Object.values(selectedQtys).some((q) => q > 0);
+
+  const resetForm = () => {
+    setCustomerId(''); setChosenInvoiceId('');
+    setSelectedQtys({}); setReason(''); setNotes('');
+    setCollectedDate(localTodayISO());
+    setBusy(false);
+  };
+
+  const submit = async () => {
+    if (!chosenInvoice) return;
+    const items = Object.entries(selectedQtys)
+      .filter(([, q]) => q > 0)
+      .map(([cylTypeId, quantity]) => ({ cylinderTypeId: cylTypeId, quantity }));
+    if (items.length === 0) { toast.error('Enter at least one defective quantity'); return; }
+    setBusy(true);
+    let cap: { defectiveIds: string[]; cnAmountPreview: number } | null = null;
+    try {
+      cap = await apiPost<{ defectiveIds: string[]; cnAmountPreview: number }>('/defective-returns', {
+        customerId, sourceInvoiceId: chosenInvoiceId, collectedDate, items,
+        reason: reason.trim() || undefined,
+        notes: notes.trim() || undefined,
+      });
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+      setBusy(false);
+      return;
+    }
+    try {
+      const cn = await apiPost<{ creditNoteId: string; cnNumber: string; cnAmount: number }>(
+        `/defective-returns/${cap.defectiveIds[0]}/raise-cn`,
+        { defectiveIds: cap.defectiveIds, reason: 'Defective cylinder return' },
+      );
+      queryClient.invalidateQueries({ queryKey: ['defective-returns-pending-count'] });
+      queryClient.invalidateQueries({ queryKey: ['defective-returns-history'] });
+      queryClient.invalidateQueries({ queryKey: ['defective-depot-bucket'] });
+      queryClient.invalidateQueries({ queryKey: ['defective-eligible-invoices', customerId] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['customer-balances'] });
+      toast.success(`✓ Defective recorded + CN ${cn.cnNumber} raised for ₹${cn.cnAmount.toLocaleString('en-IN')}`);
+      resetForm();
+      onDone();
+    } catch (err) {
+      queryClient.invalidateQueries({ queryKey: ['defective-returns-pending-count'] });
+      queryClient.invalidateQueries({ queryKey: ['defective-returns-history'] });
+      toast.error(
+        `Defective captured but CN raise failed: ${getErrorMessage(err)}. ` +
+        `Fix and click "Raise CN" from History tab.`,
+        { duration: 10_000 },
+      );
+      setBusy(false);
+      onDone();
+    }
+  };
+
+  // Invoice picker as a Select dropdown (cleaner than radio grid).
+  const invoiceOptions = (invoices ?? []).map((inv) => ({
+    value: inv.invoiceId,
+    label: `${inv.invoiceNumber} · ${inv.issueDate} · ₹${inv.totalAmount.toLocaleString('en-IN')} · ${inv.paymentStatus}`,
+  }));
+
+  return (
+    <div className="space-y-4">
+      {/* Row 1 — Customer + Invoice */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="label">Customer</label>
+          <CustomerSearchInput
+            value={customerId}
+            onChange={(id) => {
+              setCustomerId(id);
+              setChosenInvoiceId('');
+              setSelectedQtys({});
+            }}
+            placeholder="Search customer by name or phone..."
+          />
+        </div>
+        <div>
+          <label className="label">Source Invoice (last 90 days)</label>
+          {!customerId ? (
+            <div className="text-xs text-surface-400 dark:text-surface-500 py-2">
+              Pick a customer first
+            </div>
+          ) : invLoading ? (
+            <div className="py-2"><Loader /></div>
+          ) : !invoices || invoices.length === 0 ? (
+            <div className="text-xs text-surface-500 dark:text-surface-400 py-2">
+              No invoices in the last 90 days.
+            </div>
+          ) : (
+            <Select
+              value={chosenInvoiceId}
+              onChange={(e) => { setChosenInvoiceId(e.target.value); setSelectedQtys({}); }}
+              placeholder="Select invoice..."
+              options={invoiceOptions}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Row 2 — Per-line quantity grid (only when invoice chosen) */}
+      {chosenInvoice && (
+        <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-3">
+          <div className="text-xs font-medium text-surface-700 dark:text-surface-300 mb-2">
+            Defective quantities (invoice: {chosenInvoice.invoiceNumber})
+          </div>
+          <div className="space-y-2">
+            <div className="grid grid-cols-[1fr_100px_120px_120px] gap-2 text-xs text-surface-500 dark:text-surface-400 pb-1 border-b border-surface-200 dark:border-surface-700">
+              <div>Cylinder</div>
+              <div className="text-right">Rate</div>
+              <div className="text-right">Defective qty</div>
+              <div className="text-right">Line total</div>
+            </div>
+            {chosenInvoice.lines.map((line) => {
+              const curr = selectedQtys[line.cylinderTypeId] ?? 0;
+              return (
+                <div key={line.invoiceItemId} className="grid grid-cols-[1fr_100px_120px_120px] gap-2 items-center text-sm">
+                  <div>
+                    <div className="font-medium text-surface-900 dark:text-surface-100">{line.cylinderTypeName}</div>
+                    <div className="text-xs text-surface-500 dark:text-surface-400">
+                      avail {line.remainingQty}/{line.qty}
+                    </div>
+                  </div>
+                  <div className="text-right text-surface-700 dark:text-surface-300">
+                    ₹{line.perCylRate.toLocaleString('en-IN')}
+                  </div>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={line.remainingQty}
+                    value={curr}
+                    onChange={(e) => {
+                      const v = Math.max(0, Math.min(line.remainingQty, Number(e.target.value) || 0));
+                      setSelectedQtys((prev) => ({ ...prev, [line.cylinderTypeId]: v }));
+                    }}
+                    disabled={line.remainingQty === 0}
+                  />
+                  <div className="text-right font-medium text-surface-900 dark:text-surface-100">
+                    ₹{(curr * line.perCylRate).toLocaleString('en-IN')}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Row 3 — Date / Reason / Notes */}
+      {chosenInvoice && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="label">Collected Date</label>
+            <Input type="date" value={collectedDate} onChange={(e) => setCollectedDate(e.target.value)} max={localTodayISO()} />
+          </div>
+          <div>
+            <label className="label">Reason (optional)</label>
+            <Select
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="— none —"
+              options={[
+                { value: 'Leaky valve', label: 'Leaky valve' },
+                { value: 'Bad seal', label: 'Bad seal' },
+                { value: 'Low weight', label: 'Low weight' },
+                { value: 'Damaged body', label: 'Damaged body' },
+                { value: 'Other', label: 'Other' },
+              ]}
+            />
+          </div>
+          <div>
+            <label className="label">Notes (optional)</label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Extra context..." />
+          </div>
+        </div>
+      )}
+
+      {/* Bottom bar — preview + submit */}
+      {chosenInvoice && (
+        <div className="bg-surface-100 dark:bg-surface-800 rounded-lg p-3 flex items-center justify-between border border-surface-200 dark:border-surface-700">
+          <div>
+            <div className="text-xs text-surface-500 dark:text-surface-400 uppercase tracking-wide">
+              CN Preview
+            </div>
+            <div className="text-xl font-semibold text-surface-900 dark:text-surface-100">
+              ₹{previewAmount.toLocaleString('en-IN')}
+            </div>
+          </div>
+          <Button
+            onClick={submit}
+            disabled={!hasAnyQty || busy}
+            loading={busy}
+          >
+            Record Defective Return &amp; Raise CN
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab 2 — History ────────────────────────────────────────────────────────
+
+function DefectiveHistoryTab() {
+  const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState('');
+  const { data, isLoading } = useQuery({
+    queryKey: ['defective-returns-history', statusFilter],
+    queryFn: () => apiGet<DefectiveReturn[]>('/defective-returns', statusFilter ? { status: statusFilter } : undefined),
+  });
+
+  const raiseMut = useMutation({
+    mutationFn: (drId: string) =>
+      apiPost<{ creditNoteId: string; cnNumber: string; cnAmount: number }>(
+        `/defective-returns/${drId}/raise-cn`,
+        { defectiveIds: [drId], reason: 'Defective cylinder return' },
+      ),
+    onSuccess: (d) => {
+      queryClient.invalidateQueries({ queryKey: ['defective-returns-history'] });
+      queryClient.invalidateQueries({ queryKey: ['defective-returns-pending-count'] });
+      queryClient.invalidateQueries({ queryKey: ['defective-depot-bucket'] });
+      toast.success(`CN ${d.cnNumber} raised for ₹${d.cnAmount.toLocaleString('en-IN')}`);
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+  const cancelMut = useMutation({
+    mutationFn: (drId: string) => apiPost(`/defective-returns/${drId}/cancel`, { reason: 'Cancelled from History tab' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['defective-returns-history'] });
+      queryClient.invalidateQueries({ queryKey: ['defective-returns-pending-count'] });
+      toast.success('Cancelled — customer balance restored');
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-surface-500 dark:text-surface-400">
+          {data ? `${data.length} row${data.length === 1 ? '' : 's'}` : ''}
+        </div>
+        <Select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          placeholder="All statuses"
+          className="w-52"
+          options={[
+            { value: 'collected', label: 'CN pending' },
+            { value: 'cn_issued', label: 'CN issued' },
+            { value: 'sent_to_corporation', label: 'Sent to corp' },
+            { value: 'corporation_credit_received', label: 'Corp credit rec.' },
+            { value: 'cancelled', label: 'Cancelled' },
+          ]}
+        />
+      </div>
+      {isLoading && <div className="text-center py-6"><Loader /></div>}
+      {!isLoading && (!data || data.length === 0) && (
+        <EmptyState title="No defective returns yet" description="Recorded returns will appear here." />
+      )}
+      {!isLoading && data && data.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-surface-200 dark:border-surface-700 text-left text-xs text-surface-500 dark:text-surface-400 uppercase">
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Customer</th>
+                <th className="py-2 pr-3">Src Inv</th>
+                <th className="py-2 pr-3">Cyl</th>
+                <th className="py-2 pr-3 text-right">Qty</th>
+                <th className="py-2 pr-3">CN #</th>
+                <th className="py-2 pr-3 text-right">CN Amt</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2 pr-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((row) => {
+                const isBusy =
+                  (raiseMut.isPending && raiseMut.variables === row.id) ||
+                  (cancelMut.isPending && cancelMut.variables === row.id);
+                return (
+                  <tr key={row.id} className="border-b border-surface-100 dark:border-surface-800/50">
+                    <td className="py-2 pr-3">{row.collectedDate}</td>
+                    <td className="py-2 pr-3 font-medium">{row.customerName}</td>
+                    <td className="py-2 pr-3">{row.sourceInvoiceNumber ?? '—'}</td>
+                    <td className="py-2 pr-3">{row.cylinderTypeName}</td>
+                    <td className="py-2 pr-3 text-right font-medium">{row.quantity}</td>
+                    <td className="py-2 pr-3">{row.creditNoteNumber ?? '—'}</td>
+                    <td className="py-2 pr-3 text-right">₹{row.cnAmount.toLocaleString('en-IN')}</td>
+                    <td className="py-2 pr-3"><DrStatusBadge status={row.status} /></td>
+                    <td className="py-2 pr-3">
+                      {row.status === 'collected' ? (
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            className="text-xs px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                            onClick={() => {
+                              if (window.confirm(`Raise CN of ₹${row.cnAmount.toLocaleString('en-IN')} for ${row.customerName}?`)) {
+                                raiseMut.mutate(row.id);
+                              }
+                            }}
+                            disabled={isBusy}
+                          >
+                            Raise CN
+                          </button>
+                          <button
+                            type="button"
+                            className="text-xs px-2 py-1 rounded border border-surface-300 dark:border-surface-600 hover:bg-surface-100 dark:hover:bg-surface-800 disabled:opacity-50"
+                            onClick={() => {
+                              if (window.confirm(`Cancel this defective row? Customer's ${row.cylinderTypeName} holding will be restored.`)) {
+                                cancelMut.mutate(row.id);
+                              }
+                            }}
+                            disabled={isBusy}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-surface-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DrStatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    collected: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+    cn_issued: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
+    sent_to_corporation: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300',
+    corporation_credit_received: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+    cancelled: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400',
+  };
+  const label: Record<string, string> = {
+    collected: 'CN pending',
+    cn_issued: 'CN issued',
+    sent_to_corporation: 'Sent to corp',
+    corporation_credit_received: 'Corp credit rec.',
+    cancelled: 'Cancelled',
+  };
+  return (
+    <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${styles[status] ?? styles.collected}`}>
+      {label[status] ?? status}
+    </span>
+  );
+}
+
+// F1-FIX-11 (2026-08-06) — DefectiveSendTab component REMOVED. Shipping
+// defective back to corp now piggybacks on the Record Outgoing Empties
+// modal (see the "Include defective fulls" section there). Suneel spec:
+// "dont need send to corp".
+
