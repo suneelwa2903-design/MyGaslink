@@ -10,18 +10,62 @@ prior doc's claims). Status: `DONE` · `PARTIAL` (gap noted) · `PENDING` (not
 started) · `PARKED` (intentionally deferred) · `NOT APPLICABLE`.
 Priority: `critical` · `high` · `medium` · `low`.
 
-## Summary (post-audit)
+## 2026-08-06 status refresh
+
+Verified against current codebase + commits since 2026-05-23 audit. Items
+moved to DONE since May are called out below; the per-item entries further
+down are NOT rewritten (kept for history) — trust the status refresh below
+for the current picture. Items #DDL-5 through #DDL-12 are new (backdated
+audit, this session).
+
+**Now DONE (since May 2026 audit):**
+- **#14** — EAS production build + App Store submission. `eas.json` has
+  `submit.production.ios = { ascAppId: '6783034856', appleId }`. iOS app
+  in production per Suneel 2026-08-06 confirmation. Play Store push still
+  pending per #14 residual.
+- **iOS Account Deletion v1.0** — `packages/api/src/routes/accountDeletionRoutes.ts`
+  ships the queue + auth gate + cancel path (commit 592174b). Mobile has
+  4 screens (f62b581). Super-admin monitor (fdba77a). Apple §5.1.1(v)
+  compliant per queued-deletion clause. v1.1 cron worker for actual
+  anonymization is the residual.
+- **SaaS billing (partial ship-blockers)** — Send Invoice email + Razorpay
+  link + stable IMGL numbers (e4162fc). Phase E Razorpay subscription
+  payments distributor→GasLink (7797a88). Phase F Razorpay
+  customer→distributor (0fa1145). Distributor Razorpay settings section
+  (0dc5396). billingCron.ts exists.
+- **Anti-pattern #21 UTC date drift sweep** — cross-package fix (193ae48).
+- **Backdated / on-demand order+invoice (Brief 3)** — commit ae5476a. Then
+  refined 2026-08-06 (this session) — auto-inventory-adjustment now fires,
+  events are proper `dispatch`+`delivery`+`collection`+`reconciliation_empties_return`
+  (Gap 2 fix). See CLAUDE.md anti-pattern #26.
+- **Godown pickup** — Order.isGodownPickup flag + transaction discipline (7d1fc37).
+- **Distributor accountType + GST-activation guard + Purchase numbering** (090a9e3).
+- **Customer-portal statement download + NaN fix** (97193bc).
+- **Suspend/reactivate user action** (912a68e).
+- **Mini-op set (7 modules)** — expenses (13-category taxonomy), quotations
+  (SMTP + PDF), supplier ledger, order-level pricing, delivered-cancel,
+  UPI QR on invoice, backdated shortcut. Series of commits `feat(mini-op)`.
+
+**Still PENDING (verified 2026-08-06):**
+- #3, #5, #8, #10, #15/#23, #16, #18, #21, #22, #24, #27, #28, #29-36
+  residuals, #37, #47, #48 (push).
+- **#13 WhatsApp** — no Twilio/WhatsApp code in api/services (grep confirms
+  zero matches). Full stub. Blocks #39 (dispute push).
+- **Bundle B new gaps (this session)** — DDL-5 through DDL-12 added below.
+
+## Summary (post-refresh 2026-08-06)
 
 | Status | Count | Items |
 |--------|-------|-------|
-| DONE | 3 | #6, #7, #9 |
-| PARTIAL | 8 | #1, #2, #4, #12, #13, #14, #19, #20 |
-| PENDING | 11 | #3, #5, #8, #10, #15, #16, #18, #21, #22, #23, #24 |
-| PARKED | 1 | #17 |
+| DONE | 5 | #6, #7, #9, #14 (partial→done for iOS), Account-Deletion-v1.0 |
+| PARTIAL | 6 | #1, #2, #4, #12, #13, #19, #20 |
+| PENDING | 12 | #3, #5, #8, #10, #15, #16, #18, #21, #22, #24, #37, #47 |
+| PENDING (super-critical) | 1 | #48 push notifications |
+| PARKED | 8 | #17, #25, #38, #39, #40, #41, #42-#45, #46 |
 | NOT APPLICABLE | 1 | #11 |
-| **Total** | **24** | |
+| NEW (Bundle B audit) | 8 | DDL-5 to DDL-12 (see bottom) |
 
-> #23 is a duplicate ID of #15 (over-delivery guard) — same item, both PENDING.
+> Bundle B gaps DDL-5..12 documented at the bottom of this file (2026-08-06 addition).
 
 ---
 
