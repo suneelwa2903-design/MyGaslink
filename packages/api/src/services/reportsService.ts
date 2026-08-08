@@ -1426,20 +1426,9 @@ export async function deliveryPerformanceStatement(
   const usable = orders.filter((o) => o.invoice && o.invoice.status !== 'cancelled');
   const invoiceIds = usable.map((o) => o.invoice!.id);
 
-  // Load customer pending empties for every (customer, cyl) pair this
-  // driver served in the range, so each row can show the customer's
-  // cumulative pending count for that cylinder type.
-  const customerIds = [...new Set(usable.map((o) => o.customerId))];
-  const balances = customerIds.length
-    ? await prisma.customerInventoryBalance.findMany({
-        where: { customerId: { in: customerIds } },
-        select: { customerId: true, cylinderTypeId: true, withCustomerQty: true },
-      })
-    : [];
-  const pendingByCustCyl = new Map<string, number>();
-  for (const b of balances) {
-    pendingByCustCyl.set(`${b.customerId}|${b.cylinderTypeId}`, b.withCustomerQty);
-  }
+  // (2026-08-08) The per-customer pending-empties lookup that fed the old
+  // "E Pend" column was removed with that column — Suneel dropped E Pend
+  // from the Driver Statement modal + Excel to de-congest the view.
 
   // Money-received per invoice.
   const allocations = invoiceIds.length
@@ -1463,9 +1452,9 @@ export async function deliveryPerformanceStatement(
     customerId: string;
     customerName: string;
     cylinders: string;
+    emptiesSplit: string;
     fullsDelivered: number;
     emptiesCollected: number;
-    pendingEmpties: number;
     amount: number;
     creditDays: number;
     status: InvoiceStatus;
@@ -1480,10 +1469,12 @@ export async function deliveryPerformanceStatement(
     const inv = o.invoice!;
     // Aggregate cylinder-type mix across this invoice's line items.
     // Multiple items of the same cyl type collapse into one entry.
-    const cylMix = new Map<string, { name: string; qty: number }>();
+    // Track BOTH fulls delivered and empties collected per cyl type so the
+    // report can show a Fulls Split and a parallel Empties Split (Suneel
+    // 2026-08-08 — empties were previously only a flat total).
+    const cylMix = new Map<string, { name: string; qty: number; empties: number }>();
     let totalFulls = 0;
     let totalEmpties = 0;
-    let maxPending = 0;
     for (const it of o.items) {
       const key = it.cylinderTypeId ?? '__unknown__';
       const name = it.cylinderType?.typeName ?? '—';
@@ -1491,16 +1482,21 @@ export async function deliveryPerformanceStatement(
       const empties = it.emptiesCollected ?? 0;
       totalFulls += qty;
       totalEmpties += empties;
-      const cur = cylMix.get(key) ?? { name, qty: 0 };
+      const cur = cylMix.get(key) ?? { name, qty: 0, empties: 0 };
       cur.qty += qty;
+      cur.empties += empties;
       cylMix.set(key, cur);
-      const pending = pendingByCustCyl.get(`${o.customerId}|${key}`) ?? 0;
-      if (pending > maxPending) maxPending = pending;
     }
-    const cylinders = [...cylMix.values()]
+    const sortedMix = [...cylMix.values()].sort((a, b) => a.name.localeCompare(b.name));
+    // Fulls Split (was "Cylinders"): "5×19 KG, 2×47.5 LOT".
+    const cylinders = sortedMix
       .filter((c) => c.qty > 0)
-      .sort((a, b) => a.name.localeCompare(b.name))
       .map((c) => `${c.qty}×${c.name}`)
+      .join(', ');
+    // Empties Split: same shape, only cyl types where empties were collected.
+    const emptiesSplit = sortedMix
+      .filter((c) => c.empties > 0)
+      .map((c) => `${c.empties}×${c.name}`)
       .join(', ');
 
     // Item-8 fix: derive Overdue live from `issueDate + creditPeriodDays`
@@ -1534,9 +1530,9 @@ export async function deliveryPerformanceStatement(
       customerId: o.customerId,
       customerName: o.customer?.customerName ?? 'Unknown',
       cylinders,
+      emptiesSplit,
       fullsDelivered: totalFulls,
       emptiesCollected: totalEmpties,
-      pendingEmpties: maxPending,
       amount: num(inv.totalAmount),
       creditDays,
       status,
@@ -1566,10 +1562,10 @@ export async function deliveryPerformanceStatement(
       { key: 'date', label: 'Date' },
       { key: 'invoiceNumber', label: 'Invoice #' },
       { key: 'customerName', label: 'Customer' },
-      { key: 'cylinders', label: 'Cylinders' },
+      { key: 'cylinders', label: 'Fulls Split' },
+      { key: 'emptiesSplit', label: 'Empties Split' },
       { key: 'fullsDelivered', label: 'F Del' },
       { key: 'emptiesCollected', label: 'E Coll' },
-      { key: 'pendingEmpties', label: 'E Pend' },
       { key: 'amount', label: 'Amount', money: true },
       { key: 'creditDays', label: 'Cr Days' },
       { key: 'status', label: 'Status' },
@@ -1581,9 +1577,9 @@ export async function deliveryPerformanceStatement(
       invoiceNumber: `${rows.length} invoice${rows.length === 1 ? '' : 's'}`,
       customerName: '',
       cylinders: '',
+      emptiesSplit: '',
       fullsDelivered: totalsFulls,
       emptiesCollected: totalsEmpties,
-      pendingEmpties: '',
       amount: +totalsAmount.toFixed(2),
       creditDays: '',
       status: '',

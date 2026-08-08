@@ -203,7 +203,9 @@ describe('deliveryPerformanceStatement — service', () => {
     expect(r.rows.every((row) => row.type === 'statement_row')).toBe(true);
     // Columns present + labels match spec
     const labels = r.columns.map((c) => c.label);
-    expect(labels).toEqual(['Date', 'Invoice #', 'Customer', 'Cylinders', 'F Del', 'E Coll', 'E Pend', 'Amount', 'Cr Days', 'Status', 'Balance Due']);
+    // 2026-08-08: 'Cylinders' → 'Fulls Split', new 'Empties Split' after it,
+    // 'E Pend' column dropped (Suneel — de-congest modal + Excel).
+    expect(labels).toEqual(['Date', 'Invoice #', 'Customer', 'Fulls Split', 'Empties Split', 'F Del', 'E Coll', 'Amount', 'Cr Days', 'Status', 'Balance Due']);
   });
 
   it('7. Cancelled invoices are excluded from the driver statement', async () => {
@@ -313,6 +315,21 @@ describe('deliveryPerformanceStatement — service', () => {
     expect(r.rows[0].cylinders).toMatch(/×/);
     expect(r.rows[0].cylinders).toMatch(/,/);
     expect(r.rows[0].fullsDelivered).toBe(5); // 3 + 2 combined
+    // 2026-08-08 — Empties Split mirrors the Fulls Split shape, per cyl type.
+    expect(r.rows[0].emptiesSplit).toMatch(/×/);
+    expect(r.rows[0].emptiesSplit).toMatch(/,/);
+    expect(r.rows[0].emptiesCollected).toBe(5); // 3 + 2 empties combined
+  });
+
+  it('12. emptiesSplit omits cyl types with zero empties collected', async () => {
+    const d = await mkDriver('svc7', '9922000007');
+    const cust = await mkCustomer('DStmt ZeroEmpty');
+    // fulls delivered but NO empties collected → emptiesSplit must be blank.
+    await mkOrderInvoice({ driverId: d.driverId, customerId: cust, cylinderTypeId: cyl19, fulls: 4, empties: 0 });
+    const r = await deliveryPerformanceStatement(D1, d.driverId, RANGE_FROM, RANGE_TO, 'all');
+    expect(r.rows[0].cylinders).toMatch(/4×/);
+    expect(r.rows[0].emptiesSplit).toBe('');
+    expect(r.rows[0].emptiesCollected).toBe(0);
   });
 });
 

@@ -138,6 +138,10 @@ interface InvoiceForPdf {
   order:
     | {
         isGodownPickup: boolean;
+        items: Array<{
+          emptiesCollected: number;
+          cylinderType: { typeName: string } | null;
+        }>;
         deliveryProof: {
           proofType: 'signature' | 'photo' | 'otp';
           s3Key: string | null;
@@ -606,6 +610,7 @@ function drawTotals(
   grandTotal: number,
   startY: number,
   _isIntraState: boolean,
+  emptiesSummary: string,
 ): number {
   const T = LAYOUT.THEME;
   const F = LAYOUT.TYPO;
@@ -655,6 +660,15 @@ function drawTotals(
   doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
   doc.text(`Amount in words: ${numberToWords(grandTotal)}`, tableX + 5, cursorY, { width: tableWidth - 10 });
   cursorY += 14;
+
+  // Empties-collected summary (Suneel 2026-08-08) — single grey line, per
+  // cylinder type, comma-separated. Rendered only when at least one empty
+  // was collected on the underlying order.
+  if (emptiesSummary) {
+    doc.fontSize(F.CAPTION).fillColor(T.MUTED).font('Helvetica');
+    doc.text(`Empties collected: ${emptiesSummary}`, tableX + 5, cursorY, { width: tableWidth - 10 });
+    cursorY += 14;
+  }
 
   return cursorY - startY;
 }
@@ -1056,6 +1070,15 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
       order: {
         select: {
           isGodownPickup: true,
+          // Empties collected live on the ORDER items, not the invoice
+          // items — needed for the empties-summary line under the total
+          // (Suneel 2026-08-08).
+          items: {
+            select: {
+              emptiesCollected: true,
+              cylinderType: { select: { typeName: true } },
+            },
+          },
           deliveryProof: {
             select: {
               proofType: true,
@@ -1194,8 +1217,22 @@ export async function generateInvoicePdf(invoiceId: string, distributorId: strin
   const tableH = drawItemsTable(doc, computedItems, cursorY, isIntraState);
   cursorY = tableStartY + tableH;
 
+  // Empties-collected summary per cyl type (Suneel 2026-08-08). Sourced
+  // from the ORDER items (invoice items don't carry empties). Manual
+  // invoices with no parent order → empty string → line not rendered.
+  const emptiesByType = new Map<string, number>();
+  for (const it of invoice.order?.items ?? []) {
+    if (!it.emptiesCollected) continue;
+    const name = it.cylinderType?.typeName ?? '—';
+    emptiesByType.set(name, (emptiesByType.get(name) ?? 0) + it.emptiesCollected);
+  }
+  const emptiesSummary = [...emptiesByType.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, qty]) => `${qty}× ${name}`)
+    .join(', ');
+
   // Totals
-  const totalsH = drawTotals(doc, computedItems, storedCgst, storedSgst, storedIgst, grandTotal, cursorY, isIntraState);
+  const totalsH = drawTotals(doc, computedItems, storedCgst, storedSgst, storedIgst, grandTotal, cursorY, isIntraState, emptiesSummary);
   const tableEndY = cursorY + totalsH;
 
   // Draw border around table + totals
