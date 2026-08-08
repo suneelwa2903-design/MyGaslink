@@ -20,7 +20,7 @@ import { Badge, Button, EmptyState, MetricCard } from '../../src/components/ui';
 import { DateRangeFilter, last30Days } from '../../src/components/DateRangeFilter';
 import { useTheme, ACCENT, formatINR, formatDate } from '../../src/theme';
 import { apiPost, getErrorMessage } from '../../src/lib/api';
-import { localTodayISO } from '@gaslink/shared';
+import { localTodayISO, formatDisplayDate } from '@gaslink/shared';
 import type { Payment } from '@gaslink/shared';
 
 const PAYMENT_METHOD_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -208,7 +208,7 @@ export default function CustomerPaymentsScreen() {
                 />
               </View>
               <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-                {s.paymentMethod.replace(/_/g, ' ')} · {new Date(s.transactionDate).toLocaleDateString('en-IN')}
+                {s.paymentMethod.replace(/_/g, ' ')} · {formatDisplayDate(s.transactionDate)}
                 {s.referenceNumber ? ` · Ref: ${s.referenceNumber}` : ''}
               </Text>
               {s.status === 'rejected' && s.rejectionReason && (

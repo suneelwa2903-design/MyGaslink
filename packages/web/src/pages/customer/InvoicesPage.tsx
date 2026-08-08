@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { HiOutlineEye, HiOutlineDocumentArrowDown } from 'react-icons/hi2';
 import toast from 'react-hot-toast';
 import type { Invoice, PaginationMeta } from '@gaslink/shared';
-import { InvoiceStatus, invoiceStatusLabel, invoiceStatusVariant } from '@gaslink/shared';
+import { InvoiceStatus, invoiceStatusLabel, invoiceStatusVariant, formatDisplayDate } from '@gaslink/shared';
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Select, Modal, Badge, Loader, EmptyState, Input } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -235,8 +235,8 @@ export default function CustomerInvoicesPage() {
                 {invoices.map((inv) => (
                   <tr key={inv.invoiceId}>
                     <td className="font-medium text-surface-900 dark:text-white">{inv.invoiceNumber}</td>
-                    <td>{new Date(inv.issueDate).toLocaleDateString('en-IN')}</td>
-                    <td>{new Date(inv.dueDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(inv.issueDate))}</td>
+                    <td>{formatDisplayDate(new Date(inv.dueDate))}</td>
                     <td className="font-medium">{formatCurrency(inv.totalAmount)}</td>
                     <td>{formatCurrency(inv.amountPaid)}</td>
                     <td className={cn('font-medium', inv.outstandingAmount > 0 && 'text-red-500')}>
@@ -386,8 +386,8 @@ export default function CustomerInvoicesPage() {
         <Modal open={!!viewInvoice} onClose={() => setViewInvoice(null)} title={t('customerPortal.invoices.viewModal.title', { invoiceNumber: viewInvoice.invoiceNumber })} size="lg">
           <div className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.issueDate')}</p><p className="text-sm font-medium">{new Date(viewInvoice.issueDate).toLocaleDateString('en-IN')}</p></div>
-              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.dueDate')}</p><p className="text-sm font-medium">{new Date(viewInvoice.dueDate).toLocaleDateString('en-IN')}</p></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.issueDate')}</p><p className="text-sm font-medium">{formatDisplayDate(new Date(viewInvoice.issueDate))}</p></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.dueDate')}</p><p className="text-sm font-medium">{formatDisplayDate(new Date(viewInvoice.dueDate))}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.status')}</p><Badge variant={invoiceStatusVariant(viewInvoice.status)}>{invoiceStatusLabel(viewInvoice.status)}</Badge></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.invoices.viewModal.outstanding')}</p><p className="text-sm font-bold text-red-500">{formatCurrency(viewInvoice.outstandingAmount)}</p></div>
             </div>

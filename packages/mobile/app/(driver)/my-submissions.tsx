@@ -19,6 +19,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
+import { formatDisplayDate, formatDisplayDateTime } from '@gaslink/shared';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { useTheme, ACCENT, formatINR } from '../../src/theme';
@@ -128,7 +129,7 @@ export default function DriverMySubmissionsScreen() {
                   {formatINR(s.amount)} · {s.paymentMethod.replace(/_/g, ' ')}
                 </Text>
                 <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                  {new Date(s.transactionDate).toLocaleDateString('en-IN')}
+                  {formatDisplayDate(s.transactionDate)}
                 </Text>
               </View>
               {s.status === 'rejected' && s.rejectionReason && (
@@ -196,7 +197,7 @@ export default function DriverMySubmissionsScreen() {
                 <Text style={{ color: colors.text }}>{selected.paymentMethod.replace(/_/g, ' ')}</Text>
               </DetailRow>
               <DetailRow label="Date">
-                <Text style={{ color: colors.text }}>{new Date(selected.transactionDate).toLocaleDateString('en-IN')}</Text>
+                <Text style={{ color: colors.text }}>{formatDisplayDate(selected.transactionDate)}</Text>
               </DetailRow>
               {selected.referenceNumber && (
                 <DetailRow label="Reference">
@@ -210,7 +211,7 @@ export default function DriverMySubmissionsScreen() {
               )}
               <DetailRow label="Submitted">
                 <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                  {new Date(selected.createdAt).toLocaleString('en-IN')}
+                  {formatDisplayDateTime(selected.createdAt)}
                 </Text>
               </DetailRow>
 

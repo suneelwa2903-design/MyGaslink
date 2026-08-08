@@ -24,7 +24,7 @@ import {
   HiOutlineBanknotes,
   HiOutlineArchiveBox,
 } from 'react-icons/hi2';
-import { localTodayISO, localDateISO } from '@gaslink/shared';
+import { localTodayISO, localDateISO, formatDisplayDate } from '@gaslink/shared';
 import { apiGet } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Loader, EmptyState, Badge, Input, Button } from '@/components/ui';
@@ -74,7 +74,7 @@ function formatCurrency(n: number) {
 
 function formatDate(iso: string | null) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-IN');
+  return formatDisplayDate(new Date(iso));
 }
 
 function firstOfMonth(): string {

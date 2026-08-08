@@ -14,7 +14,7 @@ import {
   HiOutlineShieldCheck,
 } from 'react-icons/hi2';
 import type { Distributor, BillingCycle } from '@gaslink/shared';
-import { localTodayISO, localDateISO } from '@gaslink/shared';
+import { localTodayISO, localDateISO, formatDisplayDate } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { api } from '@/lib/api';
 import { Badge, Button, Loader, Modal, Select } from '@/components/ui';
@@ -269,12 +269,12 @@ export default function DistributorDetailPage() {
                 {billingCycles.map((cycle) => (
                   <tr key={cycle.cycleId}>
                     <td><Badge variant="neutral">{cycle.periodType}</Badge></td>
-                    <td>{new Date(cycle.periodStartDate).toLocaleDateString('en-IN')}</td>
-                    <td>{new Date(cycle.periodEndDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(cycle.periodStartDate))}</td>
+                    <td>{formatDisplayDate(new Date(cycle.periodEndDate))}</td>
                     <td>{formatCurrency(cycle.totalAmountExclGst)}</td>
                     <td>{formatCurrency(cycle.totalGstAmount)}</td>
                     <td className="font-medium">{formatCurrency(cycle.totalAmountInclGst)}</td>
-                    <td>{cycle.dueDate ? new Date(cycle.dueDate).toLocaleDateString('en-IN') : '-'}</td>
+                    <td>{cycle.dueDate ? formatDisplayDate(new Date(cycle.dueDate)) : '-'}</td>
                     <td><Badge variant={cycle.billingStatus === 'paid_billing' ? 'success' : cycle.billingStatus === 'overdue_billing' ? 'danger' : 'warning'}>{cycle.billingStatus.replace(/_/g, ' ')}</Badge></td>
                     <td>
                       <div className="flex items-center gap-1">
@@ -674,7 +674,7 @@ function GenerateInvoiceModal({ distributorId, distributor, lastCycleEndDate, on
               <div><p className="text-surface-500">Distributor</p><p className="font-medium text-surface-900 dark:text-white">{distributor.businessName}</p></div>
               <div><p className="text-surface-500">Plan</p><p className="font-medium text-surface-900 dark:text-white capitalize">{plan}</p></div>
               <div><p className="text-surface-500">Period</p><p className="font-medium text-surface-900 dark:text-white capitalize">{periodType.replace('_', ' ')}</p></div>
-              <div><p className="text-surface-500">Duration</p><p className="font-medium text-surface-900 dark:text-white">{new Date(startDate).toLocaleDateString('en-IN')} — {new Date(endDate).toLocaleDateString('en-IN')}</p></div>
+              <div><p className="text-surface-500">Duration</p><p className="font-medium text-surface-900 dark:text-white">{formatDisplayDate(new Date(startDate))} — {formatDisplayDate(new Date(endDate))}</p></div>
             </div>
             {addOns.length > 0 && (
               <div>

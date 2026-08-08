@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import type { Customer } from '@gaslink/shared';
-import { CustomerStatus } from '@gaslink/shared';
+import { CustomerStatus, formatDisplayDate } from '@gaslink/shared';
 import { apiGet, apiPut, getErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Button, Input, Badge, Loader, EmptyState } from '@/components/ui';
@@ -84,7 +84,7 @@ export default function CustomerAccountPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
           <div><p className="text-xs text-surface-400">GSTIN</p><p className="font-medium text-surface-900 dark:text-white">{customer.gstin || 'N/A'}</p></div>
           <div><p className="text-xs text-surface-400">Credit Period</p><p className="font-medium">{customer.creditPeriodDays} days</p></div>
-          <div><p className="text-xs text-surface-400">Customer Since</p><p className="font-medium">{new Date(customer.createdAt).toLocaleDateString('en-IN')}</p></div>
+          <div><p className="text-xs text-surface-400">Customer Since</p><p className="font-medium">{formatDisplayDate(new Date(customer.createdAt))}</p></div>
           <div><p className="text-xs text-surface-400">User Email</p><p className="font-medium">{user?.email}</p></div>
         </div>
       </div>

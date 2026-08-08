@@ -60,6 +60,7 @@ import {
   type Payment,
   type LedgerEntry,
   type StatusVariant,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
@@ -558,7 +559,7 @@ export default function AdminCustomerDetailScreen() {
         <View style={{ flex: 1, paddingRight: 8 }}>
           <Text style={[styles.cardTitle, { color: C.text }]}>{item.invoiceNumber}</Text>
           <Text style={[styles.metaLine, { color: C.textMuted }]}>
-            Issued {new Date(item.issueDate).toLocaleDateString('en-IN')}
+            Issued {formatDisplayDate(item.issueDate)}
           </Text>
         </View>
         <Badge
@@ -596,7 +597,7 @@ export default function AdminCustomerDetailScreen() {
             {formatINR(item.amount)}
           </Text>
           <Text style={[styles.metaLine, { color: C.textMuted }]}>
-            {new Date(item.transactionDate).toLocaleDateString('en-IN')}
+            {formatDisplayDate(item.transactionDate)}
           </Text>
         </View>
         <Badge variant="neutral" label={item.paymentMethod} />
@@ -660,7 +661,7 @@ export default function AdminCustomerDetailScreen() {
                 Opening Balance b/f
               </Text>
               <Text style={[styles.metaLine, { color: C.textMuted }]}>
-                {new Date(item.entryDate).toLocaleDateString('en-IN')}
+                {formatDisplayDate(item.entryDate)}
               </Text>
             </View>
             <Text
@@ -686,7 +687,7 @@ export default function AdminCustomerDetailScreen() {
               {isEmptiesReturn ? 'Empties Return' : isDefectiveCollected ? 'Defective Return' : item.entryType.replace(/_/g, ' ')}
             </Text>
             <Text style={[styles.metaLine, { color: C.textMuted }]}>
-              {new Date(item.entryDate).toLocaleDateString('en-IN')}
+              {formatDisplayDate(item.entryDate)}
             </Text>
           </View>
           {isStockOnlyRow ? (

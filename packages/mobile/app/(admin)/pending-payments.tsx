@@ -30,6 +30,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
+import { formatDisplayDate } from '@gaslink/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
@@ -153,7 +154,7 @@ export default function PendingPaymentsScreen() {
                 <Badge variant="neutral" label={s.paymentMethod.replace(/_/g, ' ')} />
                 <Badge
                   variant="neutral"
-                  label={new Date(s.transactionDate).toLocaleDateString('en-IN')}
+                  label={formatDisplayDate(s.transactionDate)}
                 />
               </View>
 

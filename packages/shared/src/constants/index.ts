@@ -181,6 +181,62 @@ export function localDateISO(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+// ── DISPLAY formatters (2026-08-08, docs/DATE-FORMAT-AUDIT.md) ──────────────
+// The ONE canonical way to render a date/time for humans, app-wide:
+// dd/MM/yyyy. Every web/mobile/PDF surface routes through these so the UI
+// can never drift into the ~13 ad-hoc formats the audit found.
+//
+// DISPLAY-ONLY: these take an ISO string / Date and RETURN a string for
+// rendering. They must NEVER be parsed back into a date, and are completely
+// separate from the storage/wire helpers (localTodayISO/localDateISO) and
+// from the regulatory formatters (GST payloadBuilders, Tally, GST-filing),
+// which stay exactly as they are. Invalid/empty input renders as an em dash.
+const DISPLAY_DASH = '—';
+
+/** Human display date → `dd/MM/yyyy` (e.g. `12/08/2026`). Local-TZ safe:
+ *  a bare `YYYY-MM-DD` string is split directly (never `new Date(str)`),
+ *  so it can't roll a day across the UTC/IST boundary (anti-pattern #21). */
+export function formatDisplayDate(input: string | Date | null | undefined): string {
+  if (input === null || input === undefined || input === '') return DISPLAY_DASH;
+  let y: number;
+  let m: number;
+  let d: number;
+  if (typeof input === 'string') {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(input);
+    if (iso) {
+      y = Number(iso[1]);
+      m = Number(iso[2]);
+      d = Number(iso[3]);
+    } else {
+      const dt = new Date(input);
+      if (Number.isNaN(dt.getTime())) return DISPLAY_DASH;
+      y = dt.getFullYear();
+      m = dt.getMonth() + 1;
+      d = dt.getDate();
+    }
+  } else {
+    if (Number.isNaN(input.getTime())) return DISPLAY_DASH;
+    y = input.getFullYear();
+    m = input.getMonth() + 1;
+    d = input.getDate();
+  }
+  return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+}
+
+/** Human display date + time → `dd/MM/yyyy, h:mm am/pm` (e.g.
+ *  `12/08/2026, 10:30 am`). For real timestamps (createdAt etc.). */
+export function formatDisplayDateTime(input: string | Date | null | undefined): string {
+  if (input === null || input === undefined || input === '') return DISPLAY_DASH;
+  const dt = typeof input === 'string' ? new Date(input) : input;
+  if (Number.isNaN(dt.getTime())) return DISPLAY_DASH;
+  const datePart = `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
+  let h = dt.getHours();
+  const min = String(dt.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'pm' : 'am';
+  h = h % 12 || 12;
+  return `${datePart}, ${h}:${min} ${ampm}`;
+}
+
 // 2026-08-01 — backdated-invoice month-window helper. Returns true when a
 // YYYY-MM-DD `date` is eligible for a "backdated" entry given today's
 // date. Rule (matches the guard at backdatedOrderSchema +

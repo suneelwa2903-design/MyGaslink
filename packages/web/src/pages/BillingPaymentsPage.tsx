@@ -42,6 +42,8 @@ import {
   type StatusVariant,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
+  formatDisplayDateTime,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { formatNoteCountLabel } from '@/utils/noteBadge';
@@ -415,8 +417,8 @@ function InvoicesTab() {
                       )}
                     </td>
                     <td>{inv.customerName || 'N/A'}</td>
-                    <td>{new Date(inv.issueDate).toLocaleDateString('en-IN')}</td>
-                    <td>{new Date(inv.dueDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(inv.issueDate))}</td>
+                    <td>{formatDisplayDate(new Date(inv.dueDate))}</td>
                     <td className="font-medium">{formatCurrency(inv.totalAmount)}</td>
                     <td className={cn('font-medium', inv.outstandingAmount > 0 && 'text-red-500')}>
                       {formatCurrency(inv.outstandingAmount)}
@@ -771,7 +773,7 @@ function PaymentsTab() {
                   const bulkAllocCount = allocs.length > 1 ? allocs.length : 0;
                   return (
                   <tr key={payment.paymentId}>
-                    <td>{new Date(payment.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(payment.transactionDate))}</td>
                     <td className="text-xs text-surface-600 dark:text-surface-400">
                       {/* 2026-07-17: Entered On = createdAt (data-entry
                           timestamp). Spread through mapPayment.renameId()
@@ -780,7 +782,7 @@ function PaymentsTab() {
                           createdAt (shouldn't happen; every Prisma row
                           has it). */}
                       {(payment as { createdAt?: string }).createdAt
-                        ? new Date((payment as { createdAt?: string }).createdAt!).toLocaleDateString('en-IN')
+                        ? formatDisplayDate(new Date((payment as { createdAt?: string }).createdAt!))
                         : '-'}
                     </td>
                     <td className="font-medium text-surface-900 dark:text-white">{payment.customerName}</td>
@@ -830,7 +832,7 @@ function PaymentsTab() {
                     </td>
                     <td className="text-xs">
                       {singleAlloc?.invoiceIssueDate
-                        ? new Date(singleAlloc.invoiceIssueDate).toLocaleDateString('en-IN')
+                        ? formatDisplayDate(new Date(singleAlloc.invoiceIssueDate))
                         : bulkAllocCount > 0
                           ? 'Various'
                           : '-'}
@@ -904,7 +906,7 @@ function PaymentsTab() {
               <div><p className="text-xs text-surface-400">Customer</p><p className="text-sm font-medium text-surface-900 dark:text-white">{viewPayment.customerName}</p></div>
               <div><p className="text-xs text-surface-400">Total Amount</p><p className="text-sm font-bold">{formatCurrency(viewPayment.amount)}</p></div>
               <div><p className="text-xs text-surface-400">Method</p><p className="text-sm font-medium">{viewPayment.paymentMethod}</p></div>
-              <div><p className="text-xs text-surface-400">Date</p><p className="text-sm font-medium">{new Date(viewPayment.transactionDate).toLocaleDateString('en-IN')}</p></div>
+              <div><p className="text-xs text-surface-400">Date</p><p className="text-sm font-medium">{formatDisplayDate(new Date(viewPayment.transactionDate))}</p></div>
             </div>
 
             {viewPayment.allocations.length === 0 ? (
@@ -918,7 +920,7 @@ function PaymentsTab() {
                       <tr key={alloc.allocationId}>
                         <td className="font-medium">{alloc.invoiceNumber}</td>
                         <td>{formatCurrency(alloc.allocatedAmount)}</td>
-                        <td>{new Date(alloc.createdAt).toLocaleDateString('en-IN')}</td>
+                        <td>{formatDisplayDate(new Date(alloc.createdAt))}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1030,7 +1032,7 @@ function PendingApprovalTab() {
                     </td>
                     <td className="font-medium">{formatCurrency(s.amount)}</td>
                     <td><Badge variant="neutral">{s.paymentMethod.replace(/_/g, ' ')}</Badge></td>
-                    <td>{new Date(s.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(s.transactionDate))}</td>
                     <td className="text-xs">{s.referenceNumber || '-'}</td>
                     <td className="text-xs">
                       {new Date(s.createdAt).toLocaleString('en-IN', {
@@ -1170,7 +1172,7 @@ function ApproveSubmissionModal({
           <div><p className="text-xs text-surface-400">Customer</p><p className="font-medium">{submission.customerName}</p></div>
           <div><p className="text-xs text-surface-400">Amount</p><p className="font-bold">{formatCurrency(submission.amount)}</p></div>
           <div><p className="text-xs text-surface-400">Method</p><p>{submission.paymentMethod.replace(/_/g, ' ')}</p></div>
-          <div><p className="text-xs text-surface-400">Date</p><p>{new Date(submission.transactionDate).toLocaleDateString('en-IN')}</p></div>
+          <div><p className="text-xs text-surface-400">Date</p><p>{formatDisplayDate(new Date(submission.transactionDate))}</p></div>
           <div><p className="text-xs text-surface-400">Submitted by</p><p>{submitterLabel}</p></div>
           <div><p className="text-xs text-surface-400">Reference</p><p>{submission.referenceNumber || '-'}</p></div>
         </div>
@@ -1371,8 +1373,8 @@ function InvoiceDetailModal({
       <div className="space-y-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div><p className="text-xs text-surface-400">Customer</p><p className="text-sm font-medium text-surface-900 dark:text-white">{invoice.customerName}</p></div>
-          <div><p className="text-xs text-surface-400">Issue Date</p><p className="text-sm font-medium">{new Date(invoice.issueDate).toLocaleDateString('en-IN')}</p></div>
-          <div><p className="text-xs text-surface-400">Due Date</p><p className="text-sm font-medium">{new Date(invoice.dueDate).toLocaleDateString('en-IN')}</p></div>
+          <div><p className="text-xs text-surface-400">Issue Date</p><p className="text-sm font-medium">{formatDisplayDate(new Date(invoice.issueDate))}</p></div>
+          <div><p className="text-xs text-surface-400">Due Date</p><p className="text-sm font-medium">{formatDisplayDate(new Date(invoice.dueDate))}</p></div>
           <div><p className="text-xs text-surface-400">Status</p><Badge variant={INVOICE_STATUS_VARIANTS[invoice.status] || 'neutral'}>{invoiceStatusLabel(invoice.status)}</Badge></div>
         </div>
 
@@ -1425,7 +1427,7 @@ function InvoiceDetailModal({
                     <p className="text-xs text-surface-400">Acknowledgement No.</p>
                     <p className="text-sm font-medium text-surface-700 dark:text-surface-300">{invoice.ackNo}</p>
                     {invoice.ackDate && (
-                      <p className="text-xs text-surface-400 mt-0.5">Ack Date: {new Date(invoice.ackDate).toLocaleDateString('en-IN')}</p>
+                      <p className="text-xs text-surface-400 mt-0.5">Ack Date: {formatDisplayDate(new Date(invoice.ackDate))}</p>
                     )}
                   </div>
                 )}
@@ -1560,12 +1562,12 @@ function InvoiceDetailModal({
                             {doc.irn && <div><span className="text-surface-400">IRN:</span> <span className="font-mono break-all">{doc.irn.slice(0, 20)}...</span></div>}
                             {doc.ackNo && <div><span className="text-surface-400">AckNo:</span> {doc.ackNo}</div>}
                             {doc.ewbNo && <div><span className="text-surface-400">EWB:</span> {doc.ewbNo}</div>}
-                            {doc.ewbValidTill && <div><span className="text-surface-400">Valid Till:</span> {new Date(doc.ewbValidTill).toLocaleDateString('en-IN')}</div>}
+                            {doc.ewbValidTill && <div><span className="text-surface-400">Valid Till:</span> {formatDisplayDate(new Date(doc.ewbValidTill))}</div>}
                           </div>
                           {doc.errorMessage && (
                             <p className="mt-1 text-xs text-red-500">{doc.errorCode}: {doc.errorMessage}</p>
                           )}
-                          <p className="text-xs text-surface-400 mt-1">Created: {new Date(doc.createdAt).toLocaleString('en-IN')}</p>
+                          <p className="text-xs text-surface-400 mt-1">Created: {formatDisplayDateTime(doc.createdAt)}</p>
                         </div>
                       ))}
                     </div>
@@ -1824,7 +1826,7 @@ function NoteList({
                   </p>
                 )}
                 <p className="mt-1 text-xs text-surface-400">
-                  Created: {new Date(r.createdAt).toLocaleString('en-IN')}
+                  Created: {formatDisplayDateTime(r.createdAt)}
                 </p>
               </div>
             );
@@ -2514,7 +2516,7 @@ function DepositsTab() {
                 {rows.map((r) => (
                   <tr key={r.id}>
                     <td className="whitespace-nowrap">
-                      {new Date(r.entryDate).toLocaleDateString('en-IN')}
+                      {formatDisplayDate(new Date(r.entryDate))}
                     </td>
                     <td className="whitespace-nowrap font-mono text-xs text-brand-700 dark:text-brand-300">
                       {/* Change L v2 (2026-07-31): show the sequential voucher

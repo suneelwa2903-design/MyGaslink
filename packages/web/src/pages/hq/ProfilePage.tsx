@@ -7,6 +7,7 @@
  * Customers > Groups tab.
  */
 import { useQuery } from '@tanstack/react-query';
+import { formatDisplayDate } from '@gaslink/shared';
 import { apiGet } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Loader, Badge } from '@/components/ui';
@@ -53,7 +54,7 @@ export default function HqProfilePage() {
               <div>
                 <p className="text-xs text-surface-500 dark:text-surface-400">Created</p>
                 <p className="text-sm text-surface-700 dark:text-surface-300">
-                  {new Date(data.group.createdAt).toLocaleDateString('en-IN')}
+                  {formatDisplayDate(new Date(data.group.createdAt))}
                 </p>
               </div>
               <div>

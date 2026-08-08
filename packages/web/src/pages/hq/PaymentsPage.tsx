@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { localTodayISO, localDateISO } from '@gaslink/shared';
+import { localTodayISO, localDateISO, formatDisplayDate } from '@gaslink/shared';
 import { apiGet } from '@/lib/api';
 import { Loader, EmptyState, Input, Button } from '@/components/ui';
 
@@ -158,7 +158,7 @@ export default function HqPaymentsPage() {
                   <tr key={p.paymentId}>
                     <td>
                       <span className="text-sm text-surface-600 dark:text-surface-400">
-                        {new Date(p.transactionDate).toLocaleDateString('en-IN')}
+                        {formatDisplayDate(new Date(p.transactionDate))}
                       </span>
                     </td>
                     <td>

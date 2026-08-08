@@ -18,6 +18,7 @@ import {
   type CreatePaymentInput,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -140,10 +141,10 @@ export default function PaymentsPage() {
                   const bulkAllocCount = allocs.length > 1 ? allocs.length : 0;
                   return (
                   <tr key={payment.paymentId}>
-                    <td>{new Date(payment.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(payment.transactionDate))}</td>
                     <td className="text-xs text-surface-600 dark:text-surface-400">
                       {(payment as { createdAt?: string }).createdAt
-                        ? new Date((payment as { createdAt?: string }).createdAt!).toLocaleDateString('en-IN')
+                        ? formatDisplayDate(new Date((payment as { createdAt?: string }).createdAt!))
                         : '-'}
                     </td>
                     <td className="font-medium text-surface-900 dark:text-white">{payment.customerName}</td>
@@ -178,7 +179,7 @@ export default function PaymentsPage() {
                     </td>
                     <td className="text-xs">
                       {singleAlloc?.invoiceIssueDate
-                        ? new Date(singleAlloc.invoiceIssueDate).toLocaleDateString('en-IN')
+                        ? formatDisplayDate(new Date(singleAlloc.invoiceIssueDate))
                         : bulkAllocCount > 0
                           ? 'Various'
                           : '-'}
@@ -231,7 +232,7 @@ export default function PaymentsPage() {
               <div><p className="text-xs text-surface-400">Customer</p><p className="text-sm font-medium text-surface-900 dark:text-white">{viewPayment.customerName}</p></div>
               <div><p className="text-xs text-surface-400">Total Amount</p><p className="text-sm font-bold">{formatCurrency(viewPayment.amount)}</p></div>
               <div><p className="text-xs text-surface-400">Method</p><p className="text-sm font-medium">{viewPayment.paymentMethod}</p></div>
-              <div><p className="text-xs text-surface-400">Date</p><p className="text-sm font-medium">{new Date(viewPayment.transactionDate).toLocaleDateString('en-IN')}</p></div>
+              <div><p className="text-xs text-surface-400">Date</p><p className="text-sm font-medium">{formatDisplayDate(new Date(viewPayment.transactionDate))}</p></div>
             </div>
 
             {viewPayment.allocations.length === 0 ? (
@@ -245,7 +246,7 @@ export default function PaymentsPage() {
                       <tr key={alloc.allocationId}>
                         <td className="font-medium">{alloc.invoiceNumber}</td>
                         <td>{formatCurrency(alloc.allocatedAmount)}</td>
-                        <td>{new Date(alloc.createdAt).toLocaleDateString('en-IN')}</td>
+                        <td>{formatDisplayDate(new Date(alloc.createdAt))}</td>
                       </tr>
                     ))}
                   </tbody>

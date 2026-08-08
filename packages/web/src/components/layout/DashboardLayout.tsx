@@ -10,7 +10,7 @@ import {
 } from 'react-icons/hi2';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
 import { apiGet } from '@/lib/api';
-import { UserRole } from '@gaslink/shared';
+import { UserRole, formatDisplayDate } from '@gaslink/shared';
 import { cn } from '@/lib/cn';
 import { Sidebar } from './Sidebar';
 import { ThemeToggle } from './ThemeToggle';
@@ -198,7 +198,7 @@ export function DashboardLayout() {
                               <p className="text-xs font-medium text-surface-900 dark:text-white leading-snug">{action.description}</p>
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-700 text-surface-500 capitalize">{action.module}</span>
-                                <span className="text-[10px] text-surface-400">{new Date(action.createdAt).toLocaleDateString('en-IN')}</span>
+                                <span className="text-[10px] text-surface-400">{formatDisplayDate(new Date(action.createdAt))}</span>
                               </div>
                             </div>
                           </div>

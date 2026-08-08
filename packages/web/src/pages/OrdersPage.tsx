@@ -41,6 +41,8 @@ import {
   orderStatusVariant,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
+  formatDisplayDateTime,
   PREV_MONTH_GRACE_DAYS,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
@@ -409,7 +411,7 @@ export default function OrdersPage() {
                     </td>
                     <td className="font-medium text-surface-900 dark:text-white">{order.orderNumber}</td>
                     <td>{order.customerName}</td>
-                    <td>{new Date(order.deliveryDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(order.deliveryDate))}</td>
                     <td>
                       {order.status === 'modified_delivered' ? (
                         <div className="flex flex-col">
@@ -1340,16 +1342,16 @@ function OrderDetailModal({
         {order.isBackdated && (
           order.inventoryAdjustedAt ? (
             <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-xs text-green-800 dark:border-green-500/50 dark:bg-green-500/10 dark:text-green-300">
-              <p className="font-semibold">On-Demand — delivery recorded for {new Date(order.deliveryDate).toLocaleDateString('en-IN')}.</p>
+              <p className="font-semibold">On-Demand — delivery recorded for {formatDisplayDate(new Date(order.deliveryDate))}.</p>
               <p className="mt-1">
-                Inventory adjusted on {new Date(order.inventoryAdjustedAt).toLocaleString('en-IN')}. Entered on: {new Date(order.createdAt).toLocaleString('en-IN')}.
+                Inventory adjusted on {formatDisplayDateTime(order.inventoryAdjustedAt)}. Entered on: {formatDisplayDateTime(order.createdAt)}.
               </p>
             </div>
           ) : (
             <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-300">
-              <p className="font-semibold">On-Demand — delivery recorded for {new Date(order.deliveryDate).toLocaleDateString('en-IN')}.</p>
+              <p className="font-semibold">On-Demand — delivery recorded for {formatDisplayDate(new Date(order.deliveryDate))}.</p>
               <p className="mt-1">
-                Inventory not yet adjusted — run it from Inventory → On-Demand Adjustments. Entered on: {new Date(order.createdAt).toLocaleString('en-IN')}.
+                Inventory not yet adjusted — run it from Inventory → On-Demand Adjustments. Entered on: {formatDisplayDateTime(order.createdAt)}.
               </p>
             </div>
           )
@@ -1372,7 +1374,7 @@ function OrderDetailModal({
           <div>
             <p className="text-xs uppercase tracking-wide text-surface-500">Delivery Date</p>
             <p className="font-medium">
-              {order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString('en-IN') : '—'}
+              {order.deliveryDate ? formatDisplayDate(new Date(order.deliveryDate)) : '—'}
             </p>
           </div>
           <div>
@@ -2494,7 +2496,7 @@ function AssignmentsTab() {
                   </td>
                   <td className="font-medium font-mono text-surface-900 dark:text-white">{order.orderNumber}</td>
                   <td>{order.customerName}</td>
-                  <td>{order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString('en-IN') : '—'}</td>
+                  <td>{order.deliveryDate ? formatDisplayDate(new Date(order.deliveryDate)) : '—'}</td>
                   <td className="font-medium">{formatCurrency(order.totalAmount ?? 0)}</td>
                   <td className="min-w-[200px]">
                     <Select

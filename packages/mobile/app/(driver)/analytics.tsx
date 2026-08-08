@@ -8,7 +8,7 @@ import { Card, MetricCard, DateInput, MIN_DATE_FLOOR, todayLocalIso, Button } fr
 import { useTheme, ACCENT, formatINR } from '../../src/theme';
 import type { Order } from '@gaslink/shared';
 import { Badge } from '../../src/components/ui';
-import { orderStatusLabel, orderStatusVariant, localDateISO } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant, localDateISO, formatDisplayDate } from '@gaslink/shared';
 
 // WI-PENDING-PAYMENTS post-smoke FIX-C: wire shape returned by
 // GET /api/drivers/me/payment-submissions for the recent-submissions
@@ -231,7 +231,7 @@ export default function DriverAnalyticsScreen() {
                     {s.customer?.customerName ?? s.customerName ?? 'Customer'}
                   </Text>
                   <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                    {formatINR(s.amount)} · {s.paymentMethod.replace(/_/g, ' ')} · {new Date(s.transactionDate).toLocaleDateString('en-IN')}
+                    {formatINR(s.amount)} · {s.paymentMethod.replace(/_/g, ' ')} · {formatDisplayDate(s.transactionDate)}
                   </Text>
                   {s.status === 'rejected' && s.rejectionReason && (
                     <Text style={{ fontSize: 11, color: ACCENT.red, marginTop: 2 }}>

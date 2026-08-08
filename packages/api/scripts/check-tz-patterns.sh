@@ -89,4 +89,10 @@ if ! node "$ROOT_DIR/packages/api/scripts/check-tz-twoline.mjs"; then
   fail=1
 fi
 
+# DATE-FORMAT-AUDIT (2026-08-08) — ban ad-hoc display date formatting
+# (standard is dd/MM/yyyy via @gaslink/shared formatDisplayDate/DateTime).
+if ! node "$ROOT_DIR/packages/api/scripts/check-display-dates.mjs"; then
+  fail=1
+fi
+
 exit "$fail"

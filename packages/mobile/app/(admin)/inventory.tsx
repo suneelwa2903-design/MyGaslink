@@ -18,7 +18,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
-import { localTodayISO, localDateISO } from '@gaslink/shared';
+import { localTodayISO, localDateISO, formatDisplayDate } from '@gaslink/shared';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { apiGet, apiPost, getErrorMessage } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores/authStore';
@@ -225,8 +225,7 @@ function addDays(dateStr: string, days: number): string {
 }
 
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDisplayDate(dateStr);
 }
 
 function formatDateShort(dateStr: string): string {

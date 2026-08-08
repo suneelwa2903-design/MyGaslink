@@ -41,7 +41,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { UserRole, type PendingAction } from '@gaslink/shared';
+import { UserRole, formatDisplayDate, formatDisplayDateTime, type PendingAction } from '@gaslink/shared';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { useTheme, formatINR } from '../../src/theme';
 import { useAuthStore } from '../../src/stores/authStore';
@@ -347,7 +347,7 @@ export default function AdminCollectionsScreen() {
             <Text style={[styles.metaLine, { color: C.textMuted }]}>
               Credit period: {item.creditPeriodDays}d
               {item.lastPaymentDate
-                ? ` · Last paid ${new Date(item.lastPaymentDate).toLocaleDateString('en-IN')}`
+                ? ` · Last paid ${formatDisplayDate(item.lastPaymentDate)}`
                 : ''}
             </Text>
           </View>
@@ -417,7 +417,7 @@ export default function AdminCollectionsScreen() {
         {item.description}
       </Text>
       <Text style={[styles.metaLine, { color: C.textMuted }]}>
-        Requested {new Date(item.createdAt).toLocaleString('en-IN')}
+        Requested {formatDisplayDateTime(item.createdAt)}
       </Text>
       {canApprove && (
         <View style={styles.actionRow}>

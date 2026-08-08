@@ -24,7 +24,7 @@ import { useAuthStore } from '../../src/stores/authStore';
 import { api, getErrorMessage } from '../../src/lib/api';
 import { Badge, DateInput } from '../../src/components/ui';
 import { LoadListDispatchModal } from '../../src/components/LoadListDispatchModal';
-import { orderStatusLabel, orderStatusVariant, localTodayISO, localDateISO } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant, localTodayISO, localDateISO, formatDisplayDate } from '@gaslink/shared';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -207,11 +207,7 @@ function formatCurrency(amount: number): string {
 function formatDate(dateStr: string): string {
   if (!dateStr) return '';
   try {
-    return new Date(dateStr).toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
+    return formatDisplayDate(dateStr);
   } catch {
     return dateStr;
   }
@@ -2911,8 +2907,8 @@ function OrderDetailModal({
                   On-demand order
                 </Text>
                 <Text style={{ color: '#065f46', fontSize: 11, marginTop: 2 }}>
-                  Delivery recorded for {formatDate(order.deliveryDate)}. Inventory adjusted on {new Date(order.inventoryAdjustedAt).toLocaleDateString('en-IN')}.
-                  {order.createdAt ? ` Entered on ${new Date(order.createdAt).toLocaleDateString('en-IN')}.` : ''}
+                  Delivery recorded for {formatDate(order.deliveryDate)}. Inventory adjusted on {formatDisplayDate(order.inventoryAdjustedAt)}.
+                  {order.createdAt ? ` Entered on ${formatDisplayDate(order.createdAt)}.` : ''}
                 </Text>
               </View>
             ) : (
@@ -2922,7 +2918,7 @@ function OrderDetailModal({
                 </Text>
                 <Text style={{ color: '#92400e', fontSize: 11, marginTop: 2 }}>
                   Delivery recorded for {formatDate(order.deliveryDate)}. Inventory not yet adjusted — run it from Inventory → On-Demand Adjustments.
-                  {order.createdAt ? ` Entered on ${new Date(order.createdAt).toLocaleDateString('en-IN')}.` : ''}
+                  {order.createdAt ? ` Entered on ${formatDisplayDate(order.createdAt)}.` : ''}
                 </Text>
               </View>
             )

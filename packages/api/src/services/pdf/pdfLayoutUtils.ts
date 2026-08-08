@@ -18,28 +18,45 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Format date as DD-MMM-YYYY (e.g. 24-Jan-2025). */
+/** Canonical app-wide display date \u2192 dd/MM/yyyy (docs/DATE-FORMAT-AUDIT.md).
+ *  TZ-safe: a bare YYYY-MM-DD string is split directly (never new Date(str))
+ *  so it can't roll a day across the UTC/IST boundary. */
+function ddmmyyyy(d: Date | string): string {
+  let y: number;
+  let m: number;
+  let day: number;
+  if (typeof d === 'string') {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+    if (iso) {
+      y = Number(iso[1]); m = Number(iso[2]); day = Number(iso[3]);
+    } else {
+      const dt = new Date(d);
+      if (Number.isNaN(dt.getTime())) return '\u2014';
+      y = dt.getFullYear(); m = dt.getMonth() + 1; day = dt.getDate();
+    }
+  } else {
+    if (Number.isNaN(d.getTime())) return '\u2014';
+    y = d.getFullYear(); m = d.getMonth() + 1; day = d.getDate();
+  }
+  return `${String(day).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+}
+
+/** Format date as dd/MM/yyyy (e.g. 24/01/2025) \u2014 the one app-wide format. */
 export function formatDate(d: Date | string | null | undefined): string {
   if (!d) return '\u2014';
-  const dt = typeof d === 'string' ? new Date(d) : d;
-  if (Number.isNaN(dt.getTime())) return '\u2014';
-  const day = String(dt.getDate()).padStart(2, '0');
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${day}-${months[dt.getMonth()]}-${dt.getFullYear()}`;
+  return ddmmyyyy(d);
 }
 
 /**
- * Format date compactly as D/M/YY (e.g. "16/7/26"). Used by the
- * customer ledger PDF where the Date column is width-constrained and
- * "16-Jul-2026" (11 chars) crowded the row \u2014 this compact form is
- * 6-8 chars and lets the Amount column claim the reclaimed width so
- * "Rs. 1,05,600.00" (bold Total row) doesn't wrap.
+ * Historically a compact D/M/YY form for the width-constrained customer
+ * ledger Date column. Now unified to dd/MM/yyyy (DATE-FORMAT-AUDIT 2026-08-08)
+ * so every customer-facing document shows one format. Kept as a named export
+ * so existing callers don't change; the customer-ledger column width was
+ * verified to fit dd/MM/yyyy.
  */
 export function formatDateCompact(d: Date | string | null | undefined): string {
   if (!d) return '\u2014';
-  const dt = typeof d === 'string' ? new Date(d) : d;
-  if (Number.isNaN(dt.getTime())) return '\u2014';
-  return `${dt.getDate()}/${dt.getMonth() + 1}/${String(dt.getFullYear()).slice(-2)}`;
+  return ddmmyyyy(d);
 }
 
 /** Format IRN for display — chunk into groups of 16 chars per line. */

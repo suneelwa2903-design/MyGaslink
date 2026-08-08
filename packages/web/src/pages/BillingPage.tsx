@@ -12,6 +12,7 @@ import {
   type BillingCycle,
   BillingStatus,
   UserRole,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, getErrorMessage, api } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -137,13 +138,13 @@ export default function BillingPage() {
                 <tr key={cycle.cycleId}>
                   {isSuperAdmin && <td className="font-medium text-surface-900 dark:text-white">{cycle.distributorName}</td>}
                   <td><Badge variant="neutral">{cycle.periodType}</Badge></td>
-                  <td>{new Date(cycle.periodStartDate).toLocaleDateString('en-IN')}</td>
-                  <td>{new Date(cycle.periodEndDate).toLocaleDateString('en-IN')}</td>
+                  <td>{formatDisplayDate(new Date(cycle.periodStartDate))}</td>
+                  <td>{formatDisplayDate(new Date(cycle.periodEndDate))}</td>
                   <td><Badge variant="info">{cycle.billingTier}</Badge></td>
                   <td>{formatCurrency(cycle.totalAmountExclGst)}</td>
                   <td>{formatCurrency(cycle.totalGstAmount)}</td>
                   <td className="font-medium">{formatCurrency(cycle.totalAmountInclGst)}</td>
-                  <td>{cycle.dueDate ? new Date(cycle.dueDate).toLocaleDateString('en-IN') : '-'}</td>
+                  <td>{cycle.dueDate ? formatDisplayDate(new Date(cycle.dueDate)) : '-'}</td>
                   <td><Badge variant={STATUS_VARIANTS[cycle.billingStatus] || 'neutral'}>{cycle.billingStatus.replace(/_/g, ' ')}</Badge></td>
                   <td>
                     <div className="flex items-center gap-1">

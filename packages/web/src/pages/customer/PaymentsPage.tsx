@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { HiOutlineEye, HiOutlinePlus } from 'react-icons/hi2';
 import type { Payment, PaginationMeta } from '@gaslink/shared';
-import { PaymentAllocationStatus, localTodayISO } from '@gaslink/shared';
+import { PaymentAllocationStatus, localTodayISO, formatDisplayDate } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
 
@@ -101,7 +101,7 @@ export default function CustomerPaymentsPage() {
               <tbody>
                 {payments.map((p) => (
                   <tr key={p.paymentId}>
-                    <td>{new Date(p.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(p.transactionDate))}</td>
                     <td className="font-medium text-surface-900 dark:text-white">{formatCurrency(p.amount)}</td>
                     <td><Badge variant="neutral">{t(`enums.paymentMethod.${p.paymentMethod}`, p.paymentMethod.replace(/_/g, ' '))}</Badge></td>
                     <td className="text-xs">{p.referenceNumber || '-'}</td>
@@ -154,7 +154,7 @@ export default function CustomerPaymentsPage() {
               <tbody>
                 {submissions.map((s) => (
                   <tr key={s.submissionId}>
-                    <td>{new Date(s.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(s.transactionDate))}</td>
                     <td className="font-medium">{formatCurrency(s.amount)}</td>
                     <td><Badge variant="neutral">{s.paymentMethod.replace(/_/g, ' ')}</Badge></td>
                     <td className="text-xs">{s.referenceNumber || '-'}</td>
@@ -192,7 +192,7 @@ export default function CustomerPaymentsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div><p className="text-xs text-surface-400">{t('customerPortal.payments.viewModal.amount')}</p><p className="text-lg font-bold text-surface-900 dark:text-white">{formatCurrency(viewPayment.amount)}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.payments.viewModal.method')}</p><p className="text-sm font-medium">{t(`enums.paymentMethod.${viewPayment.paymentMethod}`, viewPayment.paymentMethod.replace(/_/g, ' '))}</p></div>
-              <div><p className="text-xs text-surface-400">{t('customerPortal.payments.viewModal.date')}</p><p className="text-sm font-medium">{new Date(viewPayment.transactionDate).toLocaleDateString('en-IN')}</p></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.payments.viewModal.date')}</p><p className="text-sm font-medium">{formatDisplayDate(new Date(viewPayment.transactionDate))}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.payments.viewModal.reference')}</p><p className="text-sm font-medium">{viewPayment.referenceNumber || t('customerPortal.payments.viewModal.notAvailable')}</p></div>
             </div>
 

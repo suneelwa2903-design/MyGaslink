@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { HiOutlineArrowDownTray, HiOutlinePhone } from 'react-icons/hi2';
 import type { CollectionsDashboard, OverdueCallListEntry } from '@gaslink/shared';
+import { formatDisplayDate } from '@gaslink/shared';
 import { apiGet, apiPut } from '@/lib/api';
 import { Button, Badge, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -13,7 +14,7 @@ function formatCurrency(n: number) {
 
 function formatDate(d: string | null) {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDisplayDate(new Date(d));
 }
 
 // WI-122: OVERDUE_ORDER_OVERRIDE pending actions — customers blocked at
@@ -263,7 +264,7 @@ export default function CollectionsPage() {
                   <td className="text-xs">
                     {c.lastPaymentDate ? (
                       <div>
-                        <p>{new Date(c.lastPaymentDate).toLocaleDateString('en-IN')}</p>
+                        <p>{formatDisplayDate(new Date(c.lastPaymentDate))}</p>
                         {c.lastPaymentAmount && <p className="text-surface-400">{formatCurrency(c.lastPaymentAmount)}</p>}
                       </div>
                     ) : <span className="text-surface-400">No payments</span>}

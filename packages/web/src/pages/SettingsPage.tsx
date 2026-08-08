@@ -35,6 +35,7 @@ import {
   type GstCredentialsInput,
   createUserSchema,
   type CreateUserInput,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
@@ -565,7 +566,7 @@ function GstCredentialCard({
                 </span>
                 {row.lastValidated && (
                   <span className="text-surface-400">
-                    · last validated {new Date(row.lastValidated).toLocaleDateString('en-IN')}
+                    · last validated {formatDisplayDate(new Date(row.lastValidated))}
                   </span>
                 )}
               </div>
@@ -1099,7 +1100,7 @@ function PriceHistoryModal({
   }
 
   const fmtDate = (iso: string) =>
-    new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    formatDisplayDate(new Date(iso));
   const daysBetween = (a: string, b: string) => {
     const ms = new Date(b).getTime() - new Date(a).getTime();
     return Math.round(ms / 86400000);
@@ -1581,7 +1582,7 @@ function UsersTab() {
                   </td>
                   <td className="text-sm text-surface-600 dark:text-surface-400">
                     {user.createdAt
-                      ? new Date(user.createdAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })
+                      ? formatDisplayDate(new Date(user.createdAt))
                       : '—'}
                   </td>
                   <td>
@@ -2161,7 +2162,7 @@ function LicensesTab() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-surface-500">Expires:</span>
                   <span className={cn('font-medium', license.isExpired ? 'text-red-500' : license.daysUntilExpiry !== null && license.daysUntilExpiry < 30 ? 'text-amber-500' : 'text-surface-700 dark:text-surface-300')}>
-                    {new Date(license.expiryDate).toLocaleDateString('en-IN')}
+                    {formatDisplayDate(new Date(license.expiryDate))}
                     {license.isExpired && <Badge variant="danger" className="ml-2">Expired</Badge>}
                     {!license.isExpired && license.daysUntilExpiry !== null && license.daysUntilExpiry < 30 && (
                       <Badge variant="warning" className="ml-2">{license.daysUntilExpiry}d left</Badge>
@@ -2571,8 +2572,8 @@ function SubscriptionTab() {
         return;
       }
 
-      const startStr = new Date(cycle.periodStartDate).toLocaleDateString('en-IN');
-      const endStr = new Date(cycle.periodEndDate).toLocaleDateString('en-IN');
+      const startStr = formatDisplayDate(new Date(cycle.periodStartDate));
+      const endStr = formatDisplayDate(new Date(cycle.periodEndDate));
       const rz = new RZP({
         key: orderResp.keyId,
         amount: orderResp.amount,
@@ -2635,7 +2636,7 @@ function SubscriptionTab() {
           <div>
             <p className="text-xs text-surface-500">Current Period</p>
             <p className="text-sm font-medium text-surface-900 dark:text-white">
-              {currentCycle ? `${new Date(currentCycle.periodStartDate).toLocaleDateString('en-IN')} — ${new Date(currentCycle.periodEndDate).toLocaleDateString('en-IN')}` : 'No billing cycle'}
+              {currentCycle ? `${formatDisplayDate(new Date(currentCycle.periodStartDate))} — ${formatDisplayDate(new Date(currentCycle.periodEndDate))}` : 'No billing cycle'}
             </p>
           </div>
           <div>
@@ -2696,7 +2697,7 @@ function SubscriptionTab() {
                   <div className="flex items-center gap-2">
                     <Badge variant="neutral">{cycle.periodType.replace('_', ' ')}</Badge>
                     <span className="text-sm text-surface-700 dark:text-surface-300">
-                      {new Date(cycle.periodStartDate).toLocaleDateString('en-IN')} — {new Date(cycle.periodEndDate).toLocaleDateString('en-IN')}
+                      {formatDisplayDate(new Date(cycle.periodStartDate))} — {formatDisplayDate(new Date(cycle.periodEndDate))}
                     </span>
                     <Badge variant={cycle.billingStatus === 'paid_billing' ? 'success' : cycle.billingStatus === 'overdue_billing' ? 'danger' : 'warning'}>
                       {cycle.billingStatus.replace(/_/g, ' ')}
@@ -2762,7 +2763,7 @@ function SubscriptionTab() {
                   </table>
                 </div>
                 {cycle.dueDate && (
-                  <p className="text-xs text-surface-400 mt-2">Due: {new Date(cycle.dueDate).toLocaleDateString('en-IN')}</p>
+                  <p className="text-xs text-surface-400 mt-2">Due: {formatDisplayDate(new Date(cycle.dueDate))}</p>
                 )}
               </div>
             ))}

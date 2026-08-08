@@ -12,6 +12,7 @@ import {
   PendingActionStatus,
   PendingActionSeverity,
   UserRole,
+  formatDisplayDateTime,
 } from '@gaslink/shared';
 import { apiGet, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -177,7 +178,7 @@ export default function PendingActionsPage({ embedded = false }: { embedded?: bo
                           </div>
                           <p className="text-sm font-medium text-surface-900 dark:text-white">{action.description}</p>
                           <p className="text-xs text-surface-400 mt-1">
-                            {action.actionType.replace(/_/g, ' ')} | {new Date(action.createdAt).toLocaleString('en-IN')}
+                            {action.actionType.replace(/_/g, ' ')} | {formatDisplayDateTime(action.createdAt)}
                           </p>
                           {action.resolutionNotes && (
                             <p className="text-xs text-accent-500 mt-1">Resolution: {action.resolutionNotes}</p>

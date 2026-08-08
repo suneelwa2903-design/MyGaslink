@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { HiOutlineArrowDownTray, HiOutlineChevronDown, HiOutlineChevronRight, HiOutlineDocumentArrowDown, HiOutlineUserGroup, HiOutlinePlus } from 'react-icons/hi2';
-import { localTodayISO, localDateISO, type ReportCatalogEntry, type ReportBucketDef, type SavedReportDto } from '@gaslink/shared';
+import { localTodayISO, localDateISO, formatDisplayDate, type ReportCatalogEntry, type ReportBucketDef, type SavedReportDto } from '@gaslink/shared';
 import { api, apiGet, getErrorMessage } from '@/lib/api';
 import { Button, Select, Loader, EmptyState, Modal } from '@/components/ui';
 import { CustomerSearchInput } from '@/components/ui/CustomerSearchInput';
@@ -29,7 +29,7 @@ interface ReportCatalogResponse {
 type ReportCellValue = string | number | null;
 type LineChartData = { x: string; y: number }[];
 type BarChartData = { labels: string[]; series: { name: string; values: number[] }[] };
-interface ReportColumn { key: string; label: string; money?: boolean }
+interface ReportColumn { key: string; label: string; money?: boolean; date?: boolean }
 interface ReportChart { type: 'line' | 'bar'; title: string; data: LineChartData | BarChartData }
 interface ReportTableData { title: string; columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue> }
 interface ReportResult { columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue>; chart?: ReportChart; secondary?: ReportTableData }
@@ -113,6 +113,16 @@ const fmtMoney = (v: ReportCellValue | undefined) => {
   if (v == null || v === '') return '—';
   return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 };
+// DATE-FIX (2026-08-08): a bare ISO date value (YYYY-MM-DD, the shape every
+// report emits for date columns) renders as dd/MM/yyyy. Month buckets
+// (YYYY-MM) and everything else pass through untouched.
+const isIsoDate = (v: ReportCellValue | undefined): v is string =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const fmtCell = (v: ReportCellValue | undefined, col: ReportColumn): string => {
+  if (col.money) return fmtMoney(v);
+  if (col.date || isIsoDate(v)) return formatDisplayDate(v as string);
+  return String(v ?? '');
+};
 const isOverdueRow = (r: Record<string, ReportCellValue>) => Number(r.b31_60 || 0) > 0 || Number(r.b60plus || 0) > 0;
 
 function todayStr() { return localTodayISO(); }
@@ -121,8 +131,8 @@ function monthAgoStr() { const d = new Date(); d.setMonth(d.getMonth() - 1); ret
 // the operator lands on "yesterday's numbers" — the most-asked view.
 function yesterdayStr() { const d = new Date(); d.setDate(d.getDate() - 1); return localDateISO(d); }
 
-export default function ReportsPage() {
-  const [reportKey, setReportKey] = useState('sales-summary');
+export default function ReportsPage({ initialReport }: { initialReport?: string } = {}) {
+  const [reportKey, setReportKey] = useState(initialReport || 'sales-summary');
   const [dateFrom, setDateFrom] = useState(monthAgoStr());
   const [dateTo, setDateTo] = useState(todayStr());
   const [cylinderTypeId, setCylinderTypeId] = useState('');
@@ -954,7 +964,7 @@ function ReportTable({ report }: { report: ReportResult }) {
             <tr key={i} className={`border-b border-surface-100 dark:border-surface-800 ${isOverdueRow(row) ? 'bg-danger-50 dark:bg-danger-900/20' : ''}`}>
               {report.columns.map((c) => (
                 <td key={c.key} className={`px-4 py-2.5 ${c.money ? 'text-right tabular-nums' : ''} ${isOverdueRow(row) ? 'text-danger-700 dark:text-danger-300' : 'text-surface-800 dark:text-surface-200'}`}>
-                  {c.money ? fmtMoney(row[c.key]) : String(row[c.key] ?? '')}
+                  {fmtCell(row[c.key], c)}
                 </td>
               ))}
             </tr>
@@ -963,7 +973,7 @@ function ReportTable({ report }: { report: ReportResult }) {
             <tr className="border-t-2 border-surface-300 dark:border-surface-600 font-bold bg-surface-50 dark:bg-surface-800/50">
               {report.columns.map((c) => (
                 <td key={c.key} className={`px-4 py-3 ${c.money ? 'text-right tabular-nums' : ''} text-surface-900 dark:text-white`}>
-                  {report.totals![c.key] === '' || report.totals![c.key] == null ? '' : (c.money ? fmtMoney(report.totals![c.key]) : String(report.totals![c.key]))}
+                  {report.totals![c.key] === '' || report.totals![c.key] == null ? '' : fmtCell(report.totals![c.key], c)}
                 </td>
               ))}
             </tr>
@@ -991,7 +1001,7 @@ function SecondaryTable({ table }: { table: ReportTableData }) {
             <tr key={i} className="border-b border-surface-100 dark:border-surface-800">
               {table.columns.map((c) => (
                 <td key={c.key} className={`px-4 py-2.5 ${c.money ? 'text-right tabular-nums' : ''} text-surface-800 dark:text-surface-200`}>
-                  {c.money ? fmtMoney(row[c.key]) : String(row[c.key] ?? '')}
+                  {fmtCell(row[c.key], c)}
                 </td>
               ))}
             </tr>
@@ -1000,7 +1010,7 @@ function SecondaryTable({ table }: { table: ReportTableData }) {
             <tr className="border-t-2 border-surface-300 dark:border-surface-600 font-bold bg-surface-50 dark:bg-surface-800/50">
               {table.columns.map((c) => (
                 <td key={c.key} className={`px-4 py-3 ${c.money ? 'text-right tabular-nums' : ''} text-surface-900 dark:text-white`}>
-                  {table.totals![c.key] === '' || table.totals![c.key] == null ? '' : (c.money ? fmtMoney(table.totals![c.key]) : String(table.totals![c.key]))}
+                  {table.totals![c.key] === '' || table.totals![c.key] == null ? '' : fmtCell(table.totals![c.key], c)}
                 </td>
               ))}
             </tr>
@@ -1112,7 +1122,7 @@ function UnifiedVehicleLedger({ report }: { report: ReportResult }) {
         <tbody>
           {rows.map((row, i) => (
             <tr key={i} className="border-b border-surface-100 dark:border-surface-800">
-              <td className={STICKY_TD} style={{ left: STICKY.date.left, minWidth: STICKY.date.width }}>{row.date}</td>
+              <td className={STICKY_TD} style={{ left: STICKY.date.left, minWidth: STICKY.date.width }}>{formatDisplayDate(row.date)}</td>
               <td className={STICKY_TD} style={{ left: STICKY.vehicle.left, minWidth: STICKY.vehicle.width }}>{row.vehicleNumber}</td>
               <td className={STICKY_TD} style={{ left: STICKY.driver.left, minWidth: STICKY.driver.width }}>{row.driverName}</td>
               <td className="px-4 py-2.5 text-surface-800 dark:text-surface-200">{row.tripNumber}</td>
@@ -1742,7 +1752,7 @@ function DeliveryPerformanceDrillDownModal({
             </tbody>
           </table>
           <p className="mt-3 text-xs text-surface-500 dark:text-surface-400">
-            E Pend is a customer-level cumulative pending-empty balance (across all drivers that ever served that customer) — the same number every driver visiting that customer will see.
+            Fulls Split / Empties Split break the per-invoice totals down by cylinder type (e.g. &ldquo;5×19 KG, 2×47.5 LOT&rdquo;).
           </p>
         </div>
       )}

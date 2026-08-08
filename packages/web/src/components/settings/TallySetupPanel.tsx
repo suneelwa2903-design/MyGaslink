@@ -26,6 +26,7 @@ import { HiOutlineArrowRight, HiOutlineCheckCircle, HiOutlineExclamationTriangle
 import { apiGet, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Loader, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
+import { formatDisplayDateTime } from '@gaslink/shared';
 
 // ─── Types matching the API wire shape ──────────────────────────────────────
 //
@@ -324,7 +325,7 @@ export default function TallySetupPanel() {
             <div className="font-medium text-surface-900 dark:text-white">Tally Configured</div>
             {data.updatedAt && (
               <div className="text-xs text-surface-500 dark:text-surface-400">
-                Last updated: {new Date(data.updatedAt).toLocaleString('en-IN')}
+                Last updated: {formatDisplayDateTime(data.updatedAt)}
               </div>
             )}
           </div>

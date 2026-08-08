@@ -14,6 +14,7 @@ import {
   invoiceStatusLabel,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { api, apiGet } from '@/lib/api';
 import { Badge, Loader, EmptyState, Input, Button } from '@/components/ui';
@@ -160,12 +161,12 @@ export default function HqInvoicesPage() {
                     </td>
                     <td>
                       <span className="text-sm text-surface-600 dark:text-surface-400">
-                        {inv.issueDate ? new Date(inv.issueDate).toLocaleDateString('en-IN') : '—'}
+                        {inv.issueDate ? formatDisplayDate(new Date(inv.issueDate)) : '—'}
                       </span>
                     </td>
                     <td>
                       <span className="text-sm text-surface-600 dark:text-surface-400">
-                        {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString('en-IN') : '—'}
+                        {inv.dueDate ? formatDisplayDate(new Date(inv.dueDate)) : '—'}
                       </span>
                     </td>
                     <td>

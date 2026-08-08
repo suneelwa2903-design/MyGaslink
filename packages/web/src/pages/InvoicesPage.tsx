@@ -29,6 +29,8 @@ import {
   PaymentMethod,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
+  formatDisplayDateTime,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore, selectDistributorId } from '@/stores/authStore';
@@ -247,8 +249,8 @@ export default function InvoicesPage() {
                   <tr key={inv.invoiceId}>
                     <td className="font-medium text-surface-900 dark:text-white">{inv.invoiceNumber}</td>
                     <td>{inv.customerName || 'N/A'}</td>
-                    <td>{new Date(inv.issueDate).toLocaleDateString('en-IN')}</td>
-                    <td>{new Date(inv.dueDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(inv.issueDate))}</td>
+                    <td>{formatDisplayDate(new Date(inv.dueDate))}</td>
                     <td className="font-medium">{formatCurrency(inv.totalAmount)}</td>
                     <td className={cn('font-medium', inv.outstandingAmount > 0 && 'text-red-500')}>
                       {formatCurrency(inv.outstandingAmount)}
@@ -448,8 +450,8 @@ function InvoiceDetailModal({
       <div className="space-y-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div><p className="text-xs text-surface-400">Customer</p><p className="text-sm font-medium text-surface-900 dark:text-white">{invoice.customerName}</p></div>
-          <div><p className="text-xs text-surface-400">Issue Date</p><p className="text-sm font-medium">{new Date(invoice.issueDate).toLocaleDateString('en-IN')}</p></div>
-          <div><p className="text-xs text-surface-400">Due Date</p><p className="text-sm font-medium">{new Date(invoice.dueDate).toLocaleDateString('en-IN')}</p></div>
+          <div><p className="text-xs text-surface-400">Issue Date</p><p className="text-sm font-medium">{formatDisplayDate(new Date(invoice.issueDate))}</p></div>
+          <div><p className="text-xs text-surface-400">Due Date</p><p className="text-sm font-medium">{formatDisplayDate(new Date(invoice.dueDate))}</p></div>
           <div><p className="text-xs text-surface-400">Status</p><Badge variant={STATUS_VARIANTS[invoice.status] || 'neutral'}>{invoice.status}</Badge></div>
         </div>
 
@@ -495,7 +497,7 @@ function InvoiceDetailModal({
                     <p className="text-xs text-surface-400">Acknowledgement No.</p>
                     <p className="text-sm font-medium text-surface-700 dark:text-surface-300">{invoice.ackNo}</p>
                     {invoice.ackDate && (
-                      <p className="text-xs text-surface-400 mt-0.5">Ack Date: {new Date(invoice.ackDate).toLocaleDateString('en-IN')}</p>
+                      <p className="text-xs text-surface-400 mt-0.5">Ack Date: {formatDisplayDate(new Date(invoice.ackDate))}</p>
                     )}
                   </div>
                 )}
@@ -625,12 +627,12 @@ function InvoiceDetailModal({
                             {doc.irn && <div><span className="text-surface-400">IRN:</span> <span className="font-mono break-all">{doc.irn.slice(0, 20)}...</span></div>}
                             {doc.ackNo && <div><span className="text-surface-400">AckNo:</span> {doc.ackNo}</div>}
                             {doc.ewbNo && <div><span className="text-surface-400">EWB:</span> {doc.ewbNo}</div>}
-                            {doc.ewbValidTill && <div><span className="text-surface-400">Valid Till:</span> {new Date(doc.ewbValidTill).toLocaleDateString('en-IN')}</div>}
+                            {doc.ewbValidTill && <div><span className="text-surface-400">Valid Till:</span> {formatDisplayDate(new Date(doc.ewbValidTill))}</div>}
                           </div>
                           {doc.errorMessage && (
                             <p className="mt-1 text-xs text-red-500">{doc.errorCode}: {doc.errorMessage}</p>
                           )}
-                          <p className="text-xs text-surface-400 mt-1">Created: {new Date(doc.createdAt).toLocaleString('en-IN')}</p>
+                          <p className="text-xs text-surface-400 mt-1">Created: {formatDisplayDateTime(doc.createdAt)}</p>
                         </div>
                       ))}
                     </div>

@@ -1,4 +1,5 @@
 import type { EdgeInsets } from 'react-native-safe-area-context';
+import { formatDisplayDate } from '@gaslink/shared';
 import { useIsDark } from './stores/themeStore';
 
 // ─── Design tokens ──────────────────────────────────────────────────────────
@@ -167,18 +168,13 @@ export function formatINR(value: number | null | undefined): string {
  * (in case a screen ever passes one), parse it via the JS Date constructor,
  * and format it through Intl in `en-IN`. Output: `"16 May 2026"`.
  *
- * Returns the empty string for null/undefined/unparseable input so calling
+ * Output: `"16/05/2026"` (dd/MM/yyyy). Delegates to the shared
+ * `formatDisplayDate` so mobile matches web/API date rendering.
+ * Returns an em dash for null/undefined/unparseable input so calling
  * `<Text>{formatDate(maybe)}</Text>` is always safe.
  */
 export function formatDate(value: string | Date | null | undefined): string {
-  if (!value) return '';
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(date);
+  return formatDisplayDate(value);
 }
 
 // ─── Badge helper ───────────────────────────────────────────────────────────

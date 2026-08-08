@@ -15,6 +15,7 @@ import {
   orderStatusVariant,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { apiGet } from '@/lib/api';
 import { Badge, Loader, EmptyState, Input, Button } from '@/components/ui';
@@ -163,12 +164,12 @@ export default function HqOrdersPage() {
                     </td>
                     <td>
                       <span className="text-sm text-surface-600 dark:text-surface-400">
-                        {new Date(o.orderDate).toLocaleDateString('en-IN')}
+                        {formatDisplayDate(new Date(o.orderDate))}
                       </span>
                     </td>
                     <td>
                       <span className="text-sm text-surface-600 dark:text-surface-400">
-                        {o.deliveryDate ? new Date(o.deliveryDate).toLocaleDateString('en-IN') : '—'}
+                        {o.deliveryDate ? formatDisplayDate(new Date(o.deliveryDate)) : '—'}
                       </span>
                     </td>
                     <td>

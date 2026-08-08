@@ -52,6 +52,7 @@ import {
   PendingActionStatus,
   PendingActionSeverity,
   UserRole,
+  formatDisplayDateTime,
   type PendingAction,
   type StatusVariant,
 } from '@gaslink/shared';
@@ -379,7 +380,7 @@ export default function AdminPendingActionsScreen() {
         <Text style={[styles.description, { color: C.text }]}>{action.description}</Text>
 
         <Text style={[styles.metaLine, { color: C.textMuted }]}>
-          {formatLabel(action.actionType)} | {new Date(action.createdAt).toLocaleString('en-IN')}
+          {formatLabel(action.actionType)} | {formatDisplayDateTime(action.createdAt)}
         </Text>
 
         {action.resolutionNotes ? (

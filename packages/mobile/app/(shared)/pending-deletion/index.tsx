@@ -7,6 +7,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator, Alert } from 'react-na
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { formatDisplayDate } from '@gaslink/shared';
 import { useTheme } from '../../../src/theme';
 import {
   getDeletionRequestStatus,
@@ -20,9 +21,7 @@ import { tokenStorage } from '../../../src/lib/api';
 function formatDate(iso?: string): string {
   if (!iso) return '—';
   try {
-    return new Date(iso).toLocaleDateString('en-IN', {
-      day: '2-digit', month: 'short', year: 'numeric',
-    });
+    return formatDisplayDate(iso);
   } catch {
     return iso;
   }

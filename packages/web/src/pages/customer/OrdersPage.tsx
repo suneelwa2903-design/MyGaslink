@@ -18,6 +18,7 @@ import {
   orderStatusLabel,
   orderStatusVariant,
   localTodayISO,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -101,8 +102,8 @@ export default function CustomerOrdersPage() {
                 {orders.map((order) => (
                   <tr key={order.orderId}>
                     <td className="font-medium text-surface-900 dark:text-white">{order.orderNumber}</td>
-                    <td>{new Date(order.orderDate).toLocaleDateString('en-IN')}</td>
-                    <td>{new Date(order.deliveryDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(order.orderDate))}</td>
+                    <td>{formatDisplayDate(new Date(order.deliveryDate))}</td>
                     <td>
                       {order.status === 'modified_delivered' ? (
                         <div className="flex flex-col">
@@ -145,8 +146,8 @@ export default function CustomerOrdersPage() {
         <Modal open={!!viewOrder} onClose={() => setViewOrder(null)} title={t('customerPortal.orders.viewModal.title', { orderNumber: viewOrder.orderNumber })} size="lg">
           <div className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.orderDate')}</p><p className="text-sm font-medium">{new Date(viewOrder.orderDate).toLocaleDateString('en-IN')}</p></div>
-              <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.deliveryDate')}</p><p className="text-sm font-medium">{new Date(viewOrder.deliveryDate).toLocaleDateString('en-IN')}</p></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.orderDate')}</p><p className="text-sm font-medium">{formatDisplayDate(new Date(viewOrder.orderDate))}</p></div>
+              <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.deliveryDate')}</p><p className="text-sm font-medium">{formatDisplayDate(new Date(viewOrder.deliveryDate))}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.driver')}</p><p className="text-sm font-medium">{viewOrder.driverName || t('customerPortal.orders.viewModal.notAssigned')}</p></div>
               <div><p className="text-xs text-surface-400">{t('customerPortal.orders.viewModal.status')}</p><Badge variant={orderStatusVariant(viewOrder.status)}>{orderStatusLabel(viewOrder.status)}</Badge></div>
               {viewOrder.driverPhone && (

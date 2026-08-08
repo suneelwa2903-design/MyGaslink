@@ -30,6 +30,7 @@ import {
   noteStatusVariant,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { DepositsView } from '../../src/components/DepositsView';
 
@@ -191,11 +192,7 @@ function formatCurrency(amount: number | undefined): string {
 function formatDate(dateStr: string | undefined): string {
   if (!dateStr) return '';
   try {
-    return new Date(dateStr).toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
+    return formatDisplayDate(dateStr);
   } catch {
     return dateStr;
   }

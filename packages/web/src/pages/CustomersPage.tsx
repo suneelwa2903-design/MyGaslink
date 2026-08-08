@@ -28,6 +28,7 @@ import {
   INDIAN_STATE_NAMES,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { api, apiGet, apiPost, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Combobox, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -1414,7 +1415,7 @@ function CustomerDetailModal({
                 {orders.orders.map((o) => (
                   <tr key={o.orderId}>
                     <td className="font-medium">{o.orderNumber}</td>
-                    <td>{new Date(o.orderDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(o.orderDate))}</td>
                     <td>{formatCurrency(o.totalAmount)}</td>
                     <td><Badge variant={o.status === 'delivered' ? 'success' : 'info'}>{o.status}</Badge></td>
                   </tr>
@@ -1434,7 +1435,7 @@ function CustomerDetailModal({
                 {invoices.invoices.map((inv) => (
                   <tr key={inv.invoiceId}>
                     <td className="font-medium">{inv.invoiceNumber}</td>
-                    <td>{new Date(inv.issueDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(inv.issueDate))}</td>
                     <td>{formatCurrency(inv.totalAmount)}</td>
                     <td>{formatCurrency(inv.outstandingAmount)}</td>
                     <td><Badge variant={inv.status === 'paid' ? 'success' : inv.status === 'overdue' ? 'danger' : 'info'}>{inv.status}</Badge></td>
@@ -1454,7 +1455,7 @@ function CustomerDetailModal({
               <tbody>
                 {payments.payments.map((p) => (
                   <tr key={p.paymentId}>
-                    <td>{new Date(p.transactionDate).toLocaleDateString('en-IN')}</td>
+                    <td>{formatDisplayDate(new Date(p.transactionDate))}</td>
                     <td className="font-medium">{formatCurrency(p.amount)}</td>
                     <td><Badge variant="neutral">{p.paymentMethod}</Badge></td>
                     <td><Badge variant={p.allocationStatus === 'fully_allocated' ? 'success' : 'warning'}>{p.allocationStatus}</Badge></td>
@@ -1644,7 +1645,7 @@ function CylinderBalancesTab({ customerId }: { customerId: string }) {
                       />
                     </td>
                     <td className="text-right text-xs text-surface-500">
-                      {meta?.updatedAt ? new Date(meta.updatedAt).toLocaleDateString('en-IN') : '—'}
+                      {meta?.updatedAt ? formatDisplayDate(new Date(meta.updatedAt)) : '—'}
                     </td>
                     <td className="text-right">
                       <button
@@ -1789,7 +1790,7 @@ function LedgerTab({ entries, loading }: {
                     row.isOpeningBalance && 'bg-surface-50 dark:bg-surface-800/40 italic',
                   )}
                 >
-                  <td className="whitespace-nowrap">{new Date(row.entryDate).toLocaleDateString('en-IN')}</td>
+                  <td className="whitespace-nowrap">{formatDisplayDate(new Date(row.entryDate))}</td>
                   <td><Badge variant={badge.variant}>{badge.label}</Badge></td>
                   <td className="text-surface-600 dark:text-surface-300">{row.narration || '-'}</td>
                   <td className="text-right text-surface-600 dark:text-surface-300">

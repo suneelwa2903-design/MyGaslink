@@ -7,7 +7,7 @@ import { Card, Badge, EmptyState } from '../../src/components/ui';
 import { useTheme, formatINR } from '../../src/theme';
 import { useDistributorStore } from '../../src/stores/distributorStore';
 import type { Order, OrderItem, PaginationMeta } from '@gaslink/shared';
-import { orderStatusLabel, orderStatusVariant } from '@gaslink/shared';
+import { orderStatusLabel, orderStatusVariant, formatDisplayDate } from '@gaslink/shared';
 
 // The orders list endpoint can carry a couple of legacy/aliased numeric fields
 // the card renders defensively (e.g. `deliverQuantity`/`lineTotal`). Model them
@@ -145,7 +145,7 @@ export default function OrdersScreen() {
                       {order.customerName ?? `Order #${order.orderId.slice(-6)}`}
                     </Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                      {new Date(order.orderDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {formatDisplayDate(order.orderDate)}
                     </Text>
                   </View>
                   <Badge

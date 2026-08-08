@@ -167,11 +167,12 @@ describe('SaaS subscription-invoice PDF template', () => {
   });
 
   it('due date is invoice date + 7 days (bug fix)', async () => {
-    // periodStartDate = 2026-07-01 → invoice date = 01-Jul-2026
-    //                              → due date = 08-Jul-2026 (not 07-Aug)
-    expect(content).toMatch(/01-Jul-2026/);
-    expect(content).toMatch(/Due Date: 08-Jul-2026/);
-    expect(content).not.toMatch(/07-Aug-2026/);
+    // periodStartDate = 2026-07-01 → invoice date = 01/07/2026
+    //                              → due date = 08/07/2026 (not 07/08)
+    // DATE-FORMAT-AUDIT (2026-08-08): PDF dates are now dd/MM/yyyy app-wide.
+    expect(content).toMatch(/01\/07\/2026/);
+    expect(content).toMatch(/Due Date: 08\/07\/2026/);
+    expect(content).not.toMatch(/07\/08\/2026/);
   });
 });
 

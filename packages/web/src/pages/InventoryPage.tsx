@@ -33,6 +33,7 @@ import {
   type EmptiesReturnInput,
   localTodayISO,
   localDateISO,
+  formatDisplayDate,
   type DefectiveEligibleInvoice,
   type DefectiveReturn,
 } from '@gaslink/shared';
@@ -611,7 +612,7 @@ export default function InventoryPage() {
                       const defQ = ev.defectiveQty ?? 0;
                       return (
                         <tr key={ev.eventId}>
-                          <td className="whitespace-nowrap">{new Date(ev.eventDate).toLocaleDateString('en-IN')}</td>
+                          <td className="whitespace-nowrap">{formatDisplayDate(new Date(ev.eventDate))}</td>
                           <td>
                             <Badge variant={ev.eventType === 'incoming_fulls' ? 'success' : 'warning'}>
                               {ev.eventType === 'incoming_fulls' ? 'Incoming' : 'Outgoing'}
@@ -627,7 +628,7 @@ export default function InventoryPage() {
                           <td>{ev.driverName || '-'}</td>
                           <td>{ev.documentType || '-'}</td>
                           <td>{ev.documentNumber || '-'}</td>
-                          <td className="whitespace-nowrap">{ev.documentDate ? new Date(ev.documentDate).toLocaleDateString('en-IN') : '-'}</td>
+                          <td className="whitespace-nowrap">{ev.documentDate ? formatDisplayDate(new Date(ev.documentDate)) : '-'}</td>
                           <td className="max-w-[200px] truncate">{ev.notes || '-'}</td>
                         </tr>
                       );
@@ -699,7 +700,7 @@ export default function InventoryPage() {
                       <td className="font-medium text-surface-900 dark:text-white">{s.cylinderTypeName}</td>
                       <td className="text-center">{s.openingFulls}</td>
                       <td className="text-center">{s.openingEmpties}</td>
-                      <td className="text-surface-500 dark:text-surface-400">{new Date(s.dateSet).toLocaleDateString('en-IN')}</td>
+                      <td className="text-surface-500 dark:text-surface-400">{formatDisplayDate(new Date(s.dateSet))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -845,8 +846,8 @@ export default function InventoryPage() {
                         <tr key={row.orderId}>
                           <td className="font-medium text-surface-900 dark:text-white">{row.orderNumber}</td>
                           <td>{row.customerName}</td>
-                          <td>{new Date(row.deliveryDate).toLocaleDateString('en-IN')}</td>
-                          <td>{new Date(row.createdAt).toLocaleDateString('en-IN')}</td>
+                          <td>{formatDisplayDate(new Date(row.deliveryDate))}</td>
+                          <td>{formatDisplayDate(new Date(row.createdAt))}</td>
                           <td className="text-xs text-surface-600 dark:text-surface-300">{itemSummary || '—'}</td>
                           <td>
                             <Button size="sm" variant="secondary" onClick={() => setConfirmAdjustOrder(row)}>
@@ -906,7 +907,7 @@ export default function InventoryPage() {
                           : 'text-surface-400';
                         return (
                           <tr key={h.eventId}>
-                            <td>{new Date(h.eventDate).toLocaleDateString('en-IN')}</td>
+                            <td>{formatDisplayDate(new Date(h.eventDate))}</td>
                             <td>{h.cylinderTypeName}</td>
                             <td className={fullsClass}>
                               {h.fullsChange !== 0 ? h.fullsChange : 0}
@@ -915,7 +916,7 @@ export default function InventoryPage() {
                               {h.emptiesChange > 0 ? `+${h.emptiesChange}` : 0}
                             </td>
                             <td>{h.orderNumber ?? '—'}</td>
-                            <td>{h.deliveryDate ? new Date(h.deliveryDate).toLocaleDateString('en-IN') : '—'}</td>
+                            <td>{h.deliveryDate ? formatDisplayDate(new Date(h.deliveryDate)) : '—'}</td>
                           </tr>
                         );
                       })}
@@ -1826,7 +1827,7 @@ function AdjustStockModal({
                   ) : (
                     historyQuery.data!.data.map((r) => (
                       <tr key={r.eventId} className="border-t border-surface-200 dark:border-surface-700">
-                        <td className="px-3 py-2 text-surface-600 dark:text-surface-400 whitespace-nowrap">{new Date(r.eventDate).toLocaleDateString('en-IN')}</td>
+                        <td className="px-3 py-2 text-surface-600 dark:text-surface-400 whitespace-nowrap">{formatDisplayDate(new Date(r.eventDate))}</td>
                         <td className="px-3 py-2 font-medium whitespace-nowrap">{r.cylinderTypeName}</td>
                         <td className="px-3 py-2 capitalize whitespace-nowrap">{r.bucket}</td>
                         <td className={`px-3 py-2 text-right font-mono whitespace-nowrap ${r.quantity >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>

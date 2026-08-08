@@ -9,7 +9,7 @@ import {
   HiOutlineDocumentArrowDown,
 } from 'react-icons/hi2';
 import type { Order, Invoice } from '@gaslink/shared';
-import { orderStatusLabel, invoiceStatusLabel, localTodayISO, localDateISO } from '@gaslink/shared';
+import { orderStatusLabel, invoiceStatusLabel, localTodayISO, localDateISO, formatDisplayDate } from '@gaslink/shared';
 import { api, apiGet } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Badge, Button, Loader, EmptyState } from '@/components/ui';
@@ -150,7 +150,7 @@ export default function CustomerDashboardPage() {
                   <div key={order.orderId} className="flex items-center justify-between p-4">
                     <div>
                       <p className="font-medium text-surface-900 dark:text-white">{order.orderNumber}</p>
-                      <p className="text-xs text-surface-400">{new Date(order.orderDate).toLocaleDateString('en-IN')}</p>
+                      <p className="text-xs text-surface-400">{formatDisplayDate(new Date(order.orderDate))}</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="font-medium text-sm">{formatCurrency(order.totalAmount)}</span>
@@ -175,7 +175,7 @@ export default function CustomerDashboardPage() {
                   <div key={inv.invoiceId} className="flex items-center justify-between p-4">
                     <div>
                       <p className="font-medium text-surface-900 dark:text-white">{inv.invoiceNumber}</p>
-                      <p className="text-xs text-surface-400">{t('customerPortal.dashboard.due')} {new Date(inv.dueDate).toLocaleDateString('en-IN')}</p>
+                      <p className="text-xs text-surface-400">{t('customerPortal.dashboard.due')} {formatDisplayDate(new Date(inv.dueDate))}</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="font-medium text-sm">{formatCurrency(inv.totalAmount)}</span>

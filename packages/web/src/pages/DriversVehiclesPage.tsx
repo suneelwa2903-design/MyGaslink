@@ -18,6 +18,7 @@ import {
   ASSIGNMENT_STATUS_VARIANTS,
   assignmentStatusLabel,
   localTodayISO,
+  formatDisplayDate,
 } from '@gaslink/shared';
 import { apiGet, apiPost, apiPut, apiDelete, getErrorMessage } from '@/lib/api';
 import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/components/ui';
@@ -201,7 +202,7 @@ export default function DriversVehiclesPage() {
                     <tr key={a.assignmentId}>
                       <td className="font-medium">{a.driverName}</td>
                       <td>{a.vehicleNumber}</td>
-                      <td>{new Date(a.assignmentDate).toLocaleDateString('en-IN')}</td>
+                      <td>{formatDisplayDate(new Date(a.assignmentDate))}</td>
                       <td>{a.tripNumber}</td>
                       <td>{a.orders.length}</td>
                       <td><Badge variant={ASSIGNMENT_STATUS_VARIANTS[a.status as keyof typeof ASSIGNMENT_STATUS_VARIANTS] || 'neutral'}>{assignmentStatusLabel(a.status)}</Badge></td>

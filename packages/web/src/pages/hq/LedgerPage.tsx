@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { HiOutlineDocumentArrowDown } from 'react-icons/hi2';
-import { localTodayISO, localDateISO } from '@gaslink/shared';
+import { localTodayISO, localDateISO, formatDisplayDate } from '@gaslink/shared';
 import { api, apiGet } from '@/lib/api';
 import { Loader, EmptyState, Input, Button } from '@/components/ui';
 
@@ -208,7 +208,7 @@ export default function HqLedgerPage() {
                       <tr key={`${r.customerId}-${r.orderDate}-${i}`}>
                         <td>
                           <span className="text-sm text-surface-600 dark:text-surface-400">
-                            {new Date(r.orderDate).toLocaleDateString('en-IN')}
+                            {formatDisplayDate(new Date(r.orderDate))}
                           </span>
                         </td>
                         <td>
