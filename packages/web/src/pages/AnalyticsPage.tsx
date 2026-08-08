@@ -1,12 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { UserRole, localTodayISO, localDateISO } from '@gaslink/shared';
+import { UserRole, localTodayISO, localDateISO, formatDisplayDate, formatDisplayDateTime } from '@gaslink/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  HiOutlineCurrencyRupee,
-  HiOutlineTruck,
   HiOutlineCube,
   HiOutlineClock,
   HiOutlineExclamationTriangle,
@@ -15,7 +13,6 @@ import {
   HiOutlineXCircle,
 } from 'react-icons/hi2';
 import {
-  type AnalyticsMetrics,
   type DashboardStats,
   type OverdueCallListEntry,
   type PendingAction,
@@ -26,6 +23,7 @@ import { apiGet, apiPut, getErrorMessage } from '@/lib/api';
 import { Button, Badge, Loader, EmptyState, Modal } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import ReportsPanel from '@/pages/ReportsPage';
+import { OverviewFlowDiagram, OverviewCashflowView, type OverviewFlow, type CashflowData } from '@/components/analytics/OverviewFlowDiagram';
 import PendingActionsPanel from '@/pages/PendingActionsPage';
 // Mini-Operator (2026-07-16): setup checklist card. Renders only for
 // accountType='mini_operator' tenants who have missing setup steps.
@@ -37,20 +35,29 @@ function formatCurrency(n: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 }
 
-// The Advanced Metrics API returns rates that are ALREADY multiplied
-// by 100 (see analyticsService.ts getAdvancedMetrics — deliveryEfficiency
-// and cylinderUtilizationRate are `Math.round((num/den) * 100)`). Do
-// NOT multiply again here — that produced the "9300%" / "7200%" cards.
-function formatPercent(n: number) {
-  return `${n.toFixed(1)}%`;
+// OV-5 — one card from /analytics/overview.
+interface OverviewMetric {
+  key: string;
+  label: string;
+  group: 'cash' | 'margin' | 'cylinders';
+  kind: 'flow' | 'snapshot';
+  value: number;
+  format: 'money' | 'count' | 'percent' | 'days';
+  drillReport: string | null;
+  asOf: 'range' | 'now';
+  sub?: string;
+  description: string;
 }
 
-// Inventory shrinkage is a raw count of cylinders recorded as missing —
-// it is NOT a percentage. Render with a "cylinders" suffix so the card
-// no longer implies a rate.
-function formatCylinderCount(n: number) {
-  return `${Math.round(n)} cylinder${Math.round(n) === 1 ? '' : 's'}`;
+function formatMetric(m: OverviewMetric): string {
+  switch (m.format) {
+    case 'money': return formatCurrency(m.value);
+    case 'percent': return `${m.value.toFixed(1)}%`;
+    case 'days': return `${m.value} day${m.value === 1 ? '' : 's'}`;
+    default: return Math.round(m.value).toLocaleString('en-IN');
+  }
 }
+
 
 const SEVERITY_VARIANTS: Record<string, 'danger' | 'warning' | 'info' | 'neutral'> = {
   [PendingActionSeverity.CRITICAL]: 'danger',
@@ -99,10 +106,29 @@ export default function AnalyticsPage() {
   // (see routes/analytics.ts) so header-metrics + dashboard + insights work.
   // /pending-actions stays admin+ops only — the tab is hidden and the
   // standalone card is gated on !isMiniOperator, so no 403s reach the UI.
-  const { data: metrics, isLoading: metricsLoading } = useQuery({
-    queryKey: ['analytics-metrics', dateFrom, dateTo],
-    queryFn: () => apiGet<AnalyticsMetrics>('/analytics/header-metrics', { dateFrom, dateTo }),
-    enabled: hasDistributor,
+  // OV-5 (2026-08-08) — date-scoped Overview metrics. Flow metrics obey the
+  // range; snapshot metrics are current-state (each carries asOf). Replaces
+  // the old all-time header-metrics endpoint.
+  const { data: overview, isLoading: metricsLoading } = useQuery({
+    queryKey: ['analytics-overview', dateFrom, dateTo],
+    queryFn: () => apiGet<{ metrics: OverviewMetric[]; hasPurchaseData: boolean; flow: OverviewFlow; cashflow: CashflowData }>(
+      '/analytics/overview', { from: dateFrom, to: dateTo },
+    ),
+    enabled: hasDistributor && tab === 'overview',
+  });
+
+  // OV-6/OV-7 — Overview sub-view: cards, the flow graphic, or cashflow.
+  const [overviewView, setOverviewView] = useState<'cards' | 'flow' | 'cashflow'>('cards');
+  // Drill-through: card body → the linked report (Reports tab, preselected).
+  const [pendingReport, setPendingReport] = useState<string | undefined>(undefined);
+  // "Show raw data" drawer — the rows that make up one card.
+  const [rawMetric, setRawMetric] = useState<OverviewMetric | null>(null);
+  const { data: rawData, isLoading: rawLoading } = useQuery({
+    queryKey: ['analytics-overview-raw', rawMetric?.key, dateFrom, dateTo],
+    queryFn: () => apiGet<{ columns: { key: string; label: string; money?: boolean }[]; rows: Record<string, unknown>[]; totals?: Record<string, unknown> }>(
+      '/analytics/overview/raw', { metric: rawMetric!.key, from: dateFrom, to: dateTo },
+    ),
+    enabled: !!rawMetric && hasDistributor,
   });
 
   const { data: dashboardStats, isLoading: dashboardLoading } = useQuery({
@@ -457,7 +483,7 @@ export default function AnalyticsPage() {
                         <div key={p.paymentId} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50">
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-surface-900 dark:text-white truncate">{p.customer?.customerName ?? 'Unknown customer'}</p>
-                            <p className="text-xs text-surface-500">{new Date(p.transactionDate).toLocaleDateString('en-IN')} · {p.allocationStatus.replace(/_/g, ' ')}</p>
+                            <p className="text-xs text-surface-500">{formatDisplayDate(new Date(p.transactionDate))} · {p.allocationStatus.replace(/_/g, ' ')}</p>
                           </div>
                           <p className="text-sm font-semibold text-amber-500">{formatCurrency(p.unallocatedAmount ?? p.amount)}</p>
                         </div>
@@ -595,7 +621,7 @@ export default function AnalyticsPage() {
                           </div>
                           <p className="text-sm font-medium text-surface-900 dark:text-white">{action.description}</p>
                           <p className="text-xs text-surface-400 mt-1">
-                            {action.actionType.replace(/_/g, ' ')} | {action.module.replace(/_/g, ' ')} | {new Date(action.createdAt).toLocaleString('en-IN')}
+                            {action.actionType.replace(/_/g, ' ')} | {action.module.replace(/_/g, ' ')} | {formatDisplayDateTime(action.createdAt)}
                           </p>
                         </div>
 
@@ -678,33 +704,90 @@ export default function AnalyticsPage() {
 
       {/* Overview Tab */}
       {tab === 'overview' && (
-        metricsLoading ? <div className="flex justify-center py-20"><Loader size="lg" /></div> : !metrics ? (
+        metricsLoading ? <div className="flex justify-center py-20"><Loader size="lg" /></div> : !overview ? (
           <EmptyState title="No metrics available" />
         ) : (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[
-                { label: 'Amount in Market', value: formatCurrency(metrics.amountInMarket ?? 0), icon: HiOutlineCurrencyRupee, color: 'text-brand-500', bg: 'bg-brand-50 dark:bg-brand-500/10', hint: 'Total value of stock and credit currently out with customers (unrecovered cash + cylinders).' },
-                { label: 'Collected Amount', value: formatCurrency(metrics.collectedAmount ?? 0), icon: HiOutlineCurrencyRupee, color: 'text-accent-500', bg: 'bg-accent-50 dark:bg-accent-500/10', hint: 'Payments received from customers in the selected period.' },
-                { label: 'Due Amount', value: formatCurrency(metrics.dueAmount ?? 0), icon: HiOutlineCurrencyRupee, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-500/10', hint: 'Amount owed by customers that is within the credit period (not yet overdue).' },
-                { label: 'Overdue Amount', value: formatCurrency(metrics.overdueAmount ?? 0), icon: HiOutlineCurrencyRupee, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', hint: 'Invoices past their credit-period due date. Requires immediate collection action.' },
-                { label: 'Cylinder Utilization', value: formatPercent(metrics.cylinderUtilizationRate ?? 0), icon: HiOutlineCube, color: 'text-brand-500', bg: 'bg-brand-50 dark:bg-brand-500/10', hint: 'Share of dispatched cylinders that come back as empties (collected ÷ delivered, last 30 days). Low = cylinders stuck with customers.' },
-                { label: 'Avg Turnaround', value: `${(metrics.averageTurnaroundDays ?? 0).toFixed(1)} days`, icon: HiOutlineTruck, color: 'text-flame-500', bg: 'bg-flame-50 dark:bg-flame-500/10', hint: 'Average days between a cylinder being delivered and its empty being collected. Lower is better.' },
-                { label: 'Delivery Efficiency', value: formatPercent(metrics.deliveryEfficiency ?? 0), icon: HiOutlineTruck, color: 'text-accent-500', bg: 'bg-accent-50 dark:bg-accent-500/10', hint: '% of orders successfully delivered vs total (last 30 days). Industry benchmark: >90%.' },
-                { label: 'Inventory Shrinkage', value: formatCylinderCount(metrics.inventoryShrinkage ?? 0), icon: HiOutlineCube, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10', hint: 'Cylinders recorded as missing/lost across customer balances. High = deposit leakage or loss.' },
-              ].map((m) => (
-                <div key={m.label} className="metric-card flex items-start gap-4">
-                  <div className={cn('flex items-center justify-center h-12 w-12 rounded-xl shrink-0', m.bg)}>
-                    <m.icon className={cn('h-6 w-6', m.color)} />
-                  </div>
-                  <div>
-                    <p className="metric-value text-xl">{m.value}</p>
-                    <p className="metric-label">{m.label}</p>
-                    <p className="text-xs text-surface-400 dark:text-surface-500 mt-1 leading-snug">{m.hint}</p>
-                  </div>
-                </div>
+            {/* OV-6/OV-7 — Cards / Flow / Cashflow toggle */}
+            <div className="inline-flex rounded-lg border border-surface-200 dark:border-surface-700 p-0.5 bg-surface-50 dark:bg-surface-800">
+              {([['cards', 'Summary'], ['flow', 'Profit & Stock'], ['cashflow', 'Cashflow']] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setOverviewView(mode)}
+                  className={cn(
+                    'px-4 py-1.5 text-sm font-semibold rounded-md transition',
+                    overviewView === mode
+                      ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-white shadow-sm'
+                      : 'text-surface-500 dark:text-surface-400',
+                  )}
+                >
+                  {label}
+                </button>
               ))}
             </div>
+
+            {overviewView === 'flow' ? (
+              <OverviewFlowDiagram
+                flow={overview.flow}
+                onOpenReport={(slug) => { setPendingReport(slug); setTab('reports'); }}
+              />
+            ) : overviewView === 'cashflow' ? (
+              <OverviewCashflowView
+                cf={overview.cashflow}
+                onOpenReport={(slug) => { setPendingReport(slug); setTab('reports'); }}
+              />
+            ) : (
+            <div className="space-y-6">
+            {([
+              { g: 'cash', title: 'Cash', blurb: 'Is money coming back?', dot: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400', rule: 'from-emerald-400/50', top: 'border-t-emerald-500' },
+              { g: 'margin', title: 'Margin', blurb: 'Am I actually making money?', dot: 'bg-violet-500', text: 'text-violet-600 dark:text-violet-400', rule: 'from-violet-400/50', top: 'border-t-violet-500' },
+              { g: 'cylinders', title: 'Cylinders', blurb: 'Is my steel coming back?', dot: 'bg-sky-500', text: 'text-sky-600 dark:text-sky-400', rule: 'from-sky-400/50', top: 'border-t-sky-500' },
+            ] as const).map(({ g, title, blurb, dot, text, rule, top }) => {
+              const cards = overview.metrics.filter((m) => m.group === g);
+              if (cards.length === 0) return null;
+              return (
+                <div key={g}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className={cn('h-2.5 w-2.5 rounded-full', dot)} />
+                    <h3 className={cn('text-xs font-bold uppercase tracking-wider', text)}>{title}</h3>
+                    <span className="text-xs text-surface-400 dark:text-surface-500 font-medium">{blurb}</span>
+                    <div className={cn('flex-1 h-px bg-gradient-to-r to-transparent', rule)} />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {cards.map((m) => (
+                      <div
+                        key={m.key}
+                        onClick={() => { if (m.drillReport) { setPendingReport(m.drillReport); setTab('reports'); } }}
+                        className={cn(
+                          'metric-card relative flex flex-col gap-1 border-t-2', top,
+                          m.drillReport && 'cursor-pointer hover:ring-1 hover:ring-brand-500/40 transition',
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="metric-label">{m.label}</p>
+                          {m.asOf === 'now' && (
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-surface-400 dark:text-surface-500 shrink-0">as of today</span>
+                          )}
+                        </div>
+                        <p className="metric-value text-2xl tabular-nums">{formatMetric(m)}</p>
+                        {m.sub && <p className="text-xs font-medium text-surface-600 dark:text-surface-300 leading-snug">{m.sub}</p>}
+                        <p className="text-[11px] text-surface-400 dark:text-surface-500 leading-snug mt-0.5">{m.description}</p>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setRawMetric(m); }}
+                          className="mt-1 self-start text-[11px] font-semibold text-brand-500 hover:text-brand-600"
+                        >
+                          Show raw data
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            </div>
+            )}
 
             {/* ─── Insights (TASK 2 Part B) — computed from live data ───────── */}
             <div className="card p-5">
@@ -738,10 +821,67 @@ export default function AnalyticsPage() {
       )}
 
       {/* Reports Tab — the 6 filterable reports (TASK 1), embedded in Analytics */}
-      {tab === 'reports' && <ReportsPanel />}
+      {tab === 'reports' && <ReportsPanel initialReport={pendingReport} />}
 
       {/* Pending Actions Tab — the full filterable list, embedded in Analytics */}
       {tab === 'pending-actions' && <PendingActionsPanel embedded />}
+
+      {/* OV-5 — Show-raw-data drawer: the exact rows behind one card. */}
+      <Modal open={!!rawMetric} onClose={() => setRawMetric(null)} title={rawMetric ? `Raw data — ${rawMetric.label}` : ''} size="full">
+        {rawMetric && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <span className="font-semibold">{formatMetric(rawMetric)}</span>
+              <span className="text-surface-400">·</span>
+              <span className="text-surface-500 dark:text-surface-400">
+                {rawMetric.asOf === 'now' ? 'current balance (as of today)' : `${dateFrom} → ${dateTo}`}
+              </span>
+              {rawMetric.drillReport && (
+                <button
+                  type="button"
+                  onClick={() => { setPendingReport(rawMetric.drillReport!); setRawMetric(null); setTab('reports'); }}
+                  className="ml-auto text-xs font-semibold text-brand-500 hover:text-brand-600"
+                >
+                  Open full report →
+                </button>
+              )}
+            </div>
+            {rawLoading ? (
+              <div className="flex justify-center py-10"><Loader size="lg" /></div>
+            ) : !rawData || rawData.rows.length === 0 ? (
+              <EmptyState title="No underlying rows" description="Nothing contributed to this figure in the selected range." />
+            ) : (
+              <div className="overflow-x-auto max-h-[60vh]">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-surface-50 dark:bg-surface-800">
+                    <tr className="text-left border-b border-surface-200 dark:border-surface-700">
+                      {rawData.columns.map((c) => (
+                        <th key={c.key} className={cn('px-3 py-2 font-semibold text-surface-600 dark:text-surface-300', c.money && 'text-right')}>{c.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rawData.rows.slice(0, 200).map((row, i) => (
+                      <tr key={i} className="border-b border-surface-100 dark:border-surface-800">
+                        {rawData.columns.map((c) => (
+                          <td key={c.key} className={cn('px-3 py-2', c.money && 'text-right tabular-nums')}>
+                            {c.money && typeof row[c.key] === 'number'
+                              ? formatCurrency(row[c.key] as number)
+                              : String(row[c.key] ?? '')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {rawData.rows.length > 200 && (
+                  <p className="mt-2 text-xs text-surface-500">Showing first 200 of {rawData.rows.length} rows — open the full report for everything.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

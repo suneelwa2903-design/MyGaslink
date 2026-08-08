@@ -2,8 +2,47 @@ import { Router } from 'express';
 import { requireRole } from '../middleware/auth.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 import * as analyticsService from '../services/analyticsService.js';
+import { getOverviewMetrics, getMetricRawData } from '../services/overviewMetricsService.js';
+import { localTodayISO } from '@gaslink/shared';
 
 const router = Router();
+
+// GET /api/analytics/overview?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Date-scoped metric set for the Overview tab. Flow metrics sum over the
+// range; snapshot metrics are current-state (asOf: 'now' on each). Defaults
+// to month-to-today when no range is passed.
+router.get('/overview',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const today = localTodayISO();
+      const from = typeof req.query.from === 'string' ? req.query.from : today.slice(0, 8) + '01';
+      const to = typeof req.query.to === 'string' ? req.query.to : today;
+      const result = await getOverviewMetrics(req.user!.distributorId!, from, to);
+      return sendSuccess(res, result);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  });
+
+// GET /api/analytics/overview/raw?metric=<key>&from&to
+// The "show raw data" drawer — returns the rows that make up one card,
+// which are the rows of the report that card links to.
+router.get('/overview/raw',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const metric = typeof req.query.metric === 'string' ? req.query.metric : '';
+      const today = localTodayISO();
+      const from = typeof req.query.from === 'string' ? req.query.from : today.slice(0, 8) + '01';
+      const to = typeof req.query.to === 'string' ? req.query.to : today;
+      const raw = await getMetricRawData(req.user!.distributorId!, metric, from, to);
+      if (!raw) return sendError(res, `No raw data available for metric: ${metric}`, 404);
+      return sendSuccess(res, raw);
+    } catch (err) {
+      return sendError(res, (err as Error).message);
+    }
+  });
 
 // GET /api/analytics/dashboard
 router.get('/dashboard',
