@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { HiOutlineArrowDownTray, HiOutlineChevronDown, HiOutlineChevronRight, HiOutlineDocumentArrowDown, HiOutlineUserGroup, HiOutlinePlus } from 'react-icons/hi2';
-import { localTodayISO, localDateISO, formatDisplayDate, type ReportCatalogEntry, type ReportBucketDef, type SavedReportDto } from '@gaslink/shared';
+import { localTodayISO, localDateISO, formatDisplayDate, reportFilterSpec, type ReportFilterKey, type ReportCatalogEntry, type ReportBucketDef, type SavedReportDto } from '@gaslink/shared';
 import { api, apiGet, getErrorMessage } from '@/lib/api';
 import { Button, Select, Loader, EmptyState, Modal } from '@/components/ui';
 import { CustomerSearchInput } from '@/components/ui/CustomerSearchInput';
@@ -34,77 +34,56 @@ interface ReportChart { type: 'line' | 'bar'; title: string; data: LineChartData
 interface ReportTableData { title: string; columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue> }
 interface ReportResult { columns: ReportColumn[]; rows: Record<string, ReportCellValue>[]; totals?: Record<string, ReportCellValue>; chart?: ReportChart; secondary?: ReportTableData }
 
-type FilterKey = 'cylinderType' | 'driver' | 'customer' | 'vehicle' | 'groupBy' | 'entryDate' | 'arInterestRate';
+type FilterKey = ReportFilterKey;
 interface ReportDef { key: string; label: string; filters: FilterKey[]; customerRequired?: boolean }
 
-const REPORTS: ReportDef[] = [
-  // ── Chunk 1 (original 8) ────────────────────────────────────────────
-  { key: 'sales-summary', label: 'Sales Summary', filters: ['cylinderType'] },
-  { key: 'outstanding-aging', label: 'Outstanding & Aging', filters: [] },
-  { key: 'gst-summary', label: 'GST Summary', filters: [] },
-  { key: 'delivery-performance', label: 'Delivery Performance', filters: ['driver'] },
-  { key: 'inventory-movement', label: 'Inventory Movement', filters: ['cylinderType'] },
-  { key: 'customer-statement', label: 'Customer Statement', filters: ['customer'], customerRequired: true },
-  { key: 'vehicle-ledger', label: 'Vehicle Ledger', filters: ['vehicle', 'driver', 'cylinderType', 'groupBy'] },
-  // Suneel 2026-07-14: cashflow-lens report.
-  //   • Date range filters payment_transactions.transaction_date
-  //     (not delivery date, not invoice issue date).
-  //   • Optional driver filter narrows to invoices whose underlying
-  //     order was delivered by that driver.
-  // One row per payment_allocation (bulk payment covering 3 invoices
-  // = 3 rows).
-  // 2026-07-17: entry-date filter narrows to payments whose
-  // PaymentTransaction.createdAt (data-entry timestamp) falls in the
-  // range. Stacks with the existing Payment Date range (dateFrom/dateTo
-  // = transactionDate). See docs/reportsService.paymentCollections.
-  { key: 'payment-collections', label: 'Payment Collections', filters: ['driver', 'entryDate'] },
-
-  // ── Chunk 2 · Daily Book ────────────────────────────────────────────
-  // Registered here (2026-08-06) after diagnostic revealed missing client
-  // entries silently disabled the /api/reports query for every entry not
-  // in this array. Filter lists mirror what each service consumes.
-  { key: 'day-close-summary', label: 'Day-Close Summary', filters: [] },
-  { key: 'daily-sales', label: 'Daily Sales', filters: ['cylinderType'] },
-  // 2026-08-06 — merged DDM + Route/DP into single Driver Daily Log.
-  { key: 'driver-daily-log', label: 'Driver Daily Log', filters: ['driver'] },
-
-  // ── Chunk 3a · Inventory / Customers / Expenses ─────────────────────
-  { key: 'deposit-ledger-by-customer', label: 'Deposit Ledger per Customer', filters: ['customer'] },
-  { key: 'stock-adjustment-audit-log', label: 'Stock Adjustment Audit Log', filters: ['cylinderType'] },
-  { key: 'expense-register', label: 'Expense Register', filters: [] },
-
-  // ── Chunk 3b · Invoicing & Payments ─────────────────────────────────
-  { key: 'credit-notes-register', label: 'Credit Notes Register', filters: [] },
-  { key: 'debit-notes-register', label: 'Debit Notes Register', filters: [] },
-  { key: 'opening-balance-certificates-register', label: 'Opening Balance Certificates', filters: [] },
-
-  // ── Chunk 4 · mixed ─────────────────────────────────────────────────
-  { key: 'cylinder-rotation', label: 'Cylinder Rotation', filters: ['customer', 'cylinderType'] },
-  { key: 'driver-vehicle-cost-breakdown', label: 'Driver & Vehicle Cost Breakdown', filters: ['driver'] },
-  { key: 'empties-in-transit', label: 'Empties in Transit', filters: ['cylinderType'] },
-  { key: 'payment-method-mix', label: 'Payment Method Mix', filters: [] },
-  { key: 'rate-variance-leakage', label: 'Rate Variance / Discount Leakage', filters: ['customer', 'cylinderType'] },
-  { key: 'cash-book', label: 'Cash Book', filters: [] },
-  { key: 'cashflow-statement', label: 'Cashflow Statement', filters: [] },
-  { key: 'expenses-by-category-trend', label: 'Expenses by Category (Trend)', filters: [] },
-  { key: 'accountability-log-report', label: 'Accountability Log', filters: ['driver', 'customer', 'cylinderType'] },
-  // 2026-08-06 — N15 + N16 statutory reports (finance-only per catalog role gate).
-  { key: 'gst-reconciliation', label: 'GST Reconciliation', filters: [] },
-  { key: 'gstr-3b-preview', label: 'GSTR-3B Preview', filters: [] },
-  // 2026-08-06 — N18 Customer Profitability. Interest rate editable per-run.
-  { key: 'customer-profitability', label: 'Customer Profitability', filters: ['arInterestRate'] },
-
-  // ── F8v2-R (2026-08-06) · Corporation bucket ─────────────────────────
-  // Sourced from Corporation Ledger data (PurchaseEntry + Payment + CN + DN
-  // + landed cost). Every entry accepts a Corporation dropdown filter to
-  // scope to one OMC (falls back to cross-corp view when left blank).
-  { key: 'corp-landed-cost-trend', label: 'Landed Cost Trend', filters: ['cylinderType'] },
-  { key: 'corp-statement-register', label: 'Corporation Statement Register', filters: [] },
-  { key: 'corp-purchase-vs-sale-margin', label: 'Purchase vs Sale Margin', filters: ['cylinderType'] },
-  { key: 'corp-batch-cost-vs-price', label: 'Batch Cost vs Price (FIFO)', filters: [] },
-  { key: 'corp-supplier-payment-aging', label: 'Supplier Payment Aging', filters: [] },
-  { key: 'corp-landed-cost-reconciliation', label: 'Landed Cost Reconciliation', filters: ['cylinderType'] },
+// Labels + ordering live here; each report's FILTERS come from the shared
+// REPORT_FILTER_SPECS (packages/shared/src/constants/reportFilters.ts) so the
+// web and mobile Reports screens can never drift on which filters a report
+// exposes. Adding a report = add a label here + an entry in the shared spec
+// (a guard test enforces every catalog report has a spec).
+const REPORT_LABELS: Array<{ key: string; label: string }> = [
+  { key: 'sales-summary', label: 'Sales Summary' },
+  { key: 'outstanding-aging', label: 'Outstanding & Aging' },
+  { key: 'gst-summary', label: 'GST Summary' },
+  { key: 'delivery-performance', label: 'Delivery Performance' },
+  { key: 'inventory-movement', label: 'Inventory Movement' },
+  { key: 'customer-statement', label: 'Customer Statement' },
+  { key: 'vehicle-ledger', label: 'Vehicle Ledger' },
+  { key: 'payment-collections', label: 'Payment Collections' },
+  { key: 'day-close-summary', label: 'Day-Close Summary' },
+  { key: 'daily-sales', label: 'Daily Sales' },
+  { key: 'driver-daily-log', label: 'Driver Daily Log' },
+  { key: 'deposit-ledger-by-customer', label: 'Deposit Ledger per Customer' },
+  { key: 'stock-adjustment-audit-log', label: 'Stock Adjustment Audit Log' },
+  { key: 'expense-register', label: 'Expense Register' },
+  { key: 'credit-notes-register', label: 'Credit Notes Register' },
+  { key: 'debit-notes-register', label: 'Debit Notes Register' },
+  { key: 'opening-balance-certificates-register', label: 'Opening Balance Certificates' },
+  { key: 'cylinder-rotation', label: 'Cylinder Rotation' },
+  { key: 'driver-vehicle-cost-breakdown', label: 'Driver & Vehicle Cost Breakdown' },
+  { key: 'empties-in-transit', label: 'Empties in Transit' },
+  { key: 'payment-method-mix', label: 'Payment Method Mix' },
+  { key: 'rate-variance-leakage', label: 'Rate Variance / Discount Leakage' },
+  { key: 'cash-book', label: 'Cash Book' },
+  { key: 'cashflow-statement', label: 'Cashflow Statement' },
+  { key: 'expenses-by-category-trend', label: 'Expenses by Category (Trend)' },
+  { key: 'accountability-log-report', label: 'Accountability Log' },
+  { key: 'gst-reconciliation', label: 'GST Reconciliation' },
+  { key: 'gstr-3b-preview', label: 'GSTR-3B Preview' },
+  { key: 'customer-profitability', label: 'Customer Profitability' },
+  { key: 'corp-landed-cost-trend', label: 'Landed Cost Trend' },
+  { key: 'corp-statement-register', label: 'Corporation Statement Register' },
+  { key: 'corp-purchase-vs-sale-margin', label: 'Purchase vs Sale Margin' },
+  { key: 'corp-batch-cost-vs-price', label: 'Batch Cost vs Price (FIFO)' },
+  { key: 'corp-supplier-payment-aging', label: 'Supplier Payment Aging' },
+  { key: 'corp-landed-cost-reconciliation', label: 'Landed Cost Reconciliation' },
 ];
+const REPORTS: ReportDef[] = REPORT_LABELS.map((r) => ({
+  key: r.key,
+  label: r.label,
+  ...reportFilterSpec(r.key),
+}));
 
 // 2026-08-06: null / undefined / empty-string money renders as em-dash so
 // count-only rows (e.g. Day-Close DELIVERIES section — amount is

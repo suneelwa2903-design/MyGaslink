@@ -1,3 +1,6 @@
+// Report filter specs — single source of truth for web + mobile Reports.
+export * from './reportFilters.js';
+
 // ─── GST Constants ───────────────────────────────────────────────────────────
 
 // Legacy decimal-form GST rates retained for the inter-state CGST/SGST vs

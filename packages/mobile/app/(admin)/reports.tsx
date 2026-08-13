@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   ScrollView,
   TouchableOpacity,
   Alert,
@@ -12,7 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { localTodayISO, localDateISO, type ReportBucketDef, type ReportCatalogEntry } from '@gaslink/shared';
+import { localTodayISO, localDateISO, reportFilterSpec, type ReportFilterKey, type ReportBucketDef, type ReportCatalogEntry } from '@gaslink/shared';
 
 import { api, getErrorMessage } from '../../src/lib/api';
 import { useApiQuery } from '../../src/hooks/useApi';
@@ -57,7 +58,7 @@ interface ReportResult {
   secondary?: ReportTableData;
 }
 
-type FilterKey = 'cylinderType' | 'driver' | 'customer' | 'vehicle' | 'groupBy';
+type FilterKey = ReportFilterKey;
 
 interface ReportDef {
   key: string;
@@ -132,10 +133,18 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
   const [customerId, setCustomerId] = useState('');
   const [vehicleId, setVehicleId] = useState('');
   const [groupBy, setGroupBy] = useState<'day' | 'trip'>('day');
+  const [entryDateFrom, setEntryDateFrom] = useState('');
+  const [entryDateTo, setEntryDateTo] = useState('');
+  const [arInterestRatePct, setArInterestRatePct] = useState('12');
   const [downloading, setDownloading] = useState(false);
 
-  const def = visibleReports.find((r) => r.key === reportKey) ?? visibleReports[0]!;
-  const needsCustomer = !!def.customerRequired && !customerId;
+  // Filter set for the ACTIVE report comes from the shared REPORT_FILTER_SPECS
+  // (packages/shared) — the SAME source the web ReportsPage uses — so every
+  // catalog report gets its correct filters instead of falling back to
+  // sales-summary's. `def` (from the local array) is retained only for the
+  // offline picker label; `spec` drives filters + the customer-required gate.
+  const spec = reportFilterSpec(reportKey);
+  const needsCustomer = !!spec.customerRequired && !customerId;
 
   // ─── Catalog for the bucketed report picker (F2 2026-08-05) ───────────
   // Same /api/reports/catalog endpoint the web left-nav consumes. Mobile
@@ -172,13 +181,23 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
   // ─── Build params ───────────────────────────────────────────────────────
   const params = useMemo(() => {
     const p: Record<string, unknown> = { dateFrom, dateTo };
-    if (def.filters.includes('cylinderType') && cylinderTypeId) p.cylinderTypeId = cylinderTypeId;
-    if (def.filters.includes('driver') && driverId) p.driverId = driverId;
-    if (def.filters.includes('customer') && customerId) p.customerId = customerId;
-    if (def.filters.includes('vehicle') && vehicleId) p.vehicleId = vehicleId;
-    if (def.filters.includes('groupBy')) p.groupBy = groupBy;
+    if (spec.filters.includes('cylinderType') && cylinderTypeId) p.cylinderTypeId = cylinderTypeId;
+    if (spec.filters.includes('driver') && driverId) p.driverId = driverId;
+    if (spec.filters.includes('customer') && customerId) p.customerId = customerId;
+    if (spec.filters.includes('vehicle') && vehicleId) p.vehicleId = vehicleId;
+    if (spec.filters.includes('groupBy')) p.groupBy = groupBy;
+    // entryDate → PaymentTransaction.createdAt window (Payment Collections).
+    if (spec.filters.includes('entryDate')) {
+      if (entryDateFrom) p.entryDateFrom = entryDateFrom;
+      if (entryDateTo) p.entryDateTo = entryDateTo;
+    }
+    // arInterestRate → AR carrying-cost % (Customer Profitability).
+    if (spec.filters.includes('arInterestRate')) {
+      const n = Number(arInterestRatePct);
+      if (Number.isFinite(n) && n >= 0) p.arInterestRatePct = n;
+    }
     return p;
-  }, [dateFrom, dateTo, cylinderTypeId, driverId, customerId, vehicleId, groupBy, def]);
+  }, [dateFrom, dateTo, cylinderTypeId, driverId, customerId, vehicleId, groupBy, entryDateFrom, entryDateTo, arInterestRatePct, spec]);
 
   const {
     data: report,
@@ -346,16 +365,16 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
         </View>
 
         {/* Per-report filters */}
-        {def.filters.includes('customer') && (
+        {spec.filters.includes('customer') && (
           <SelectField
-            label={`Customer${def.customerRequired ? ' *' : ''}`}
+            label={`Customer${spec.customerRequired ? ' *' : ''}`}
             value={customerId}
             options={customerOptions}
             onChange={setCustomerId}
             accent={ACCENT}
           />
         )}
-        {def.filters.includes('cylinderType') && (
+        {spec.filters.includes('cylinderType') && (
           <SelectField
             label="Cylinder Type"
             value={cylinderTypeId}
@@ -364,7 +383,7 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
             accent={ACCENT}
           />
         )}
-        {def.filters.includes('driver') && (
+        {spec.filters.includes('driver') && (
           <SelectField
             label="Driver"
             value={driverId}
@@ -373,7 +392,7 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
             accent={ACCENT}
           />
         )}
-        {def.filters.includes('vehicle') && (
+        {spec.filters.includes('vehicle') && (
           <SelectField
             label="Vehicle"
             value={vehicleId}
@@ -382,7 +401,7 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
             accent={ACCENT}
           />
         )}
-        {def.filters.includes('groupBy') && (
+        {spec.filters.includes('groupBy') && (
           <SelectField
             label="Group By"
             value={groupBy}
@@ -390,6 +409,34 @@ export function ReportsScreen({ allowedKeys }: { allowedKeys?: string[] } = {}) 
             onChange={(v) => setGroupBy(v as 'day' | 'trip')}
             accent={ACCENT}
           />
+        )}
+        {/* entryDate — data-entry (createdAt) window, stacks with the Payment
+            Date range above. Web ReportsPage renders the same two inputs. */}
+        {spec.filters.includes('entryDate') && (
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 4 }}>Entry From</Text>
+              <DateInput value={entryDateFrom || null} onChange={setEntryDateFrom} placeholder="Entry From" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 4 }}>Entry To</Text>
+              <DateInput value={entryDateTo || null} onChange={setEntryDateTo} placeholder="Entry To" />
+            </View>
+          </View>
+        )}
+        {/* arInterestRate — AR carrying-cost %, editable per run (default 12). */}
+        {spec.filters.includes('arInterestRate') && (
+          <View>
+            <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 4 }}>AR Interest Rate (% p.a.)</Text>
+            <TextInput
+              value={arInterestRatePct}
+              onChangeText={(v) => setArInterestRatePct(v.replace(/[^0-9.]/g, ''))}
+              keyboardType="decimal-pad"
+              placeholder="12"
+              placeholderTextColor={colors.textMuted}
+              style={{ borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text, backgroundColor: colors.cardBg }}
+            />
+          </View>
         )}
 
         {/* Download buttons */}
