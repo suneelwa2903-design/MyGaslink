@@ -25,6 +25,7 @@ import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme, ACCENT } from '../../src/theme';
 import { DateInput } from '../../src/components/ui';
 import { StockMovementModal } from '../../src/components/inventory/StockMovementModal';
+import { DefectiveReturnModal } from '../../src/components/inventory/DefectiveReturnModal';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -382,7 +383,7 @@ export default function AdminInventoryScreen() {
 
 // ─── SUMMARY TAB ────────────────────────────────────────────────────────────
 
-type StockModalType = 'incoming' | 'outgoing' | 'adjust' | 'emptiesReturn' | null;
+type StockModalType = 'incoming' | 'outgoing' | 'adjust' | 'emptiesReturn' | 'defective' | null;
 
 interface AdjustForm {
   cylinderTypeId: string;
@@ -632,8 +633,12 @@ function SummaryTab({
             </TouchableOpacity>
           )}
 
+          {/* Defective Return (2026-08-13) — replaces the lightly-used Adjust
+              Stock button. Captures a customer's defective cylinder return
+              against a source invoice and raises the auto credit-note, matching
+              the web DefectiveReturnsPage flow. */}
           <TouchableOpacity
-            onPress={() => openModal('adjust')}
+            onPress={() => openModal('defective')}
             style={{
               flex: 1,
               minWidth: 0,
@@ -641,19 +646,19 @@ function SummaryTab({
               alignItems: 'center',
               justifyContent: 'center',
               gap: 4,
-              backgroundColor: t.blueBg,
+              backgroundColor: t.redBg,
               borderRadius: 10,
               paddingVertical: 10,
               borderWidth: 1,
-              borderColor: t.blue + '40',
+              borderColor: t.red + '40',
             }}
           >
-            <Ionicons name="create-outline" size={16} color={t.blue} />
+            <Ionicons name="alert-circle-outline" size={16} color={t.red} />
             <Text
-              style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.blue, textAlign: 'center' }}
+              style={{ flexShrink: 1, fontSize: 12, fontWeight: '700', color: t.red, textAlign: 'center' }}
               numberOfLines={2}
             >
-              Adjust Stock
+              Defective Return
             </Text>
           </TouchableOpacity>
 
@@ -813,6 +818,13 @@ function SummaryTab({
         availableMappings={availableMappings}
         defaultDate={selectedDate}
         invalidateKeys={[['inventory', selectedDate]]}
+      />
+
+      {/* Defective Return — customer defective cylinder capture + auto CN. */}
+      <DefectiveReturnModal
+        visible={activeModal === 'defective'}
+        onClose={() => setActiveModal(null)}
+        onSaved={() => setActiveModal(null)}
       />
 
       {/* ── Adjust Stock Modal ─────────────────────────────────────────────── */}
