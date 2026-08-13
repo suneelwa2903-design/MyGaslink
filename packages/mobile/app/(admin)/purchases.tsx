@@ -20,7 +20,6 @@
  *     running balance — mirrors the customer-side ledger convention.
  */
 import { useMemo, useState } from 'react';
-import { useSegments } from 'expo-router';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, Modal, StyleSheet, Alert,
 } from 'react-native';
@@ -30,7 +29,7 @@ import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
 import { api } from '../../src/lib/api';
 import { Card, EmptyState, DateInput, todayLocalIso, SelectField, type SelectOption } from '../../src/components/ui';
 import { useIsDark } from '../../src/stores/themeStore';
-import { formatINR, formatDate } from '../../src/theme';
+import { formatINR } from '../../src/theme';
 
 interface SourceDistributor {
   id: string;
@@ -68,26 +67,6 @@ interface PurchaseEntryItem {
   emptiesGivenOut: number;
   unitPrice?: Decimalish;
   cylinderType?: { id: string; typeName: string } | null;
-}
-
-// Corp. Loads (2026-08-13) — GET /purchase-payments/cost-layers response
-// (computeStockValuation in cogsService.ts). FIFO open layers + valuation.
-interface CostLayer {
-  cylinderTypeId: string;
-  cylinderTypeName: string;
-  purchaseEntryId: string | null; // null = injected opening layer
-  date?: string;
-  grossRate: Decimalish;   // price/cyl before freight/CN/DN (GST-adjusted)
-  landedRate: Decimalish;  // grossRate + freight + DN − CN
-  qtyRemaining: number;
-}
-interface CostLayersResponse {
-  gstMode: string;
-  asOf: string | null;
-  totalRemainingQty: number;
-  totalValue: number;
-  openLayers: CostLayer[];
-  uncostedQty: number;
 }
 
 interface PurchaseEntry {
@@ -175,12 +154,6 @@ type SortKey = 'date' | 'source' | 'type' | 'amount';
 
 export default function PurchasesScreen() {
   const dark = useIsDark();
-  // Corp. Loads (2026-08-13): the same component serves two routes — the
-  // mini-op "Purchases" tab and the regular-admin "Corp. Loads" tab (which
-  // re-exports this default). When surfaced as Corp. Loads we relabel the
-  // header and reveal the FIFO Cost Layers valuation card.
-  const segments = useSegments();
-  const isCorpLoads = segments[segments.length - 1] === 'corp-loads';
   const [modalOpen, setModalOpen] = useState(false);
   // 2026-07-19 v3: editEntry holds the row being edited when the modal
   // is opened via tap-to-edit on a card. Null = create mode.
@@ -228,18 +201,6 @@ export default function PurchasesScreen() {
   const { data: cylinderTypesResp } = useApiQuery<CylinderTypesListResponse>(
     ['cylinder-types'],
     '/cylinder-types',
-  );
-  // Corp. Loads only — FIFO cost layers + stock valuation. `enabled` keeps
-  // the mini-op Purchases screen from making this call.
-  const {
-    data: costLayers,
-    isLoading: costLayersLoading,
-    refetch: refetchCostLayers,
-  } = useApiQuery<CostLayersResponse>(
-    ['cost-layers'],
-    '/purchase-payments/cost-layers',
-    undefined,
-    { enabled: isCorpLoads },
   );
 
   const rawRows = data?.purchaseEntries ?? [];
@@ -348,13 +309,9 @@ export default function PurchasesScreen() {
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View>
-            <Text style={{ fontSize: 22, fontWeight: '700', color: text }}>
-              {isCorpLoads ? 'Corp. Loads' : 'Purchases'}
-            </Text>
+            <Text style={{ fontSize: 22, fontWeight: '700', color: text }}>Purchases</Text>
             <Text style={{ fontSize: 13, color: muted, marginTop: 2 }}>
-              {isCorpLoads
-                ? 'OMC loads, supplier ledger & landed cost.'
-                : 'Stock received from source distributors.'}
+              Stock received from source distributors.
             </Text>
           </View>
         </View>
@@ -377,105 +334,6 @@ export default function PurchasesScreen() {
               {error instanceof Error ? error.message : 'Unknown error — pull to refresh or try again.'}
             </Text>
           </View>
-        )}
-
-        {/* Corp. Loads (2026-08-13) — FIFO Cost Layers / landed-cost
-            valuation. The mobile counterpart of the web Cost Layer Ledger
-            tab: current stock value at true landed cost, plus each still-open
-            purchase load per cylinder type. Only rendered on the Corp. Loads
-            route (isCorpLoads); the mini-op Purchases screen never fetches it. */}
-        {isCorpLoads && (
-          <Card style={{ backgroundColor: cardBg }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: muted, letterSpacing: 0.4 }}>
-                COST LAYERS · LANDED COST
-              </Text>
-              <TouchableOpacity onPress={() => refetchCostLayers()} accessibilityLabel="Refresh cost layers">
-                <Text style={{ fontSize: 12, color: '#dc2626', fontWeight: '600' }}>Refresh</Text>
-              </TouchableOpacity>
-            </View>
-
-            {costLayersLoading && !costLayers ? (
-              <Text style={{ color: muted, fontSize: 13, paddingVertical: 12 }}>Loading valuation…</Text>
-            ) : (
-              <>
-                {/* Headline valuation */}
-                <View style={{ flexDirection: 'row', gap: 12 }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 11, color: muted, fontWeight: '600' }}>STOCK VALUE (LANDED)</Text>
-                    <Text style={{ fontSize: 22, fontWeight: '800', color: text, marginTop: 2 }}>
-                      {formatINR(toNum(costLayers?.totalValue))}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 11, color: muted, fontWeight: '600' }}>FULLS IN STOCK</Text>
-                    <Text style={{ fontSize: 22, fontWeight: '800', color: text, marginTop: 2 }}>
-                      {toNum(costLayers?.totalRemainingQty)}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Uncosted warning — delivered cylinders with no purchase
-                    layer behind them (opening stock not entered). Same signal
-                    the web Cost Layer Ledger surfaces. */}
-                {toNum(costLayers?.uncostedQty) > 0 && (
-                  <View style={{
-                    marginTop: 10, padding: 10, borderRadius: 8, borderWidth: 1,
-                    borderColor: dark ? '#78350f' : '#fcd34d',
-                    backgroundColor: dark ? 'rgba(180,83,9,0.15)' : '#fffbeb',
-                  }}>
-                    <Text style={{ color: dark ? '#fcd34d' : '#92400e', fontSize: 12, fontWeight: '600' }}>
-                      ⚠ {toNum(costLayers?.uncostedQty)} cyl uncosted — enter opening stock / purchase rate so COGS is exact.
-                    </Text>
-                  </View>
-                )}
-
-                {/* Open layers list */}
-                <View style={{ height: 1, backgroundColor: border, marginVertical: 10 }} />
-                {(costLayers?.openLayers ?? []).length === 0 ? (
-                  <Text style={{ color: muted, fontSize: 13 }}>
-                    No open cost layers yet. Record a purchase load to start FIFO costing.
-                  </Text>
-                ) : (
-                  (costLayers?.openLayers ?? []).map((L, i) => {
-                    const gross = toNum(L.grossRate);
-                    const landed = toNum(L.landedRate);
-                    const cnImpact = landed !== gross;
-                    return (
-                      <View
-                        key={`${L.purchaseEntryId ?? 'open'}-${L.cylinderTypeId}-${i}`}
-                        style={{
-                          flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
-                          paddingVertical: 8,
-                          borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: border,
-                        }}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: text }}>
-                            {L.cylinderTypeName}
-                            {L.purchaseEntryId == null && (
-                              <Text style={{ fontSize: 11, color: muted, fontWeight: '500' }}>  · opening</Text>
-                            )}
-                          </Text>
-                          <Text style={{ fontSize: 12, color: muted, marginTop: 2 }}>
-                            {L.qtyRemaining} left{L.date ? ` · ${formatDate(L.date)}` : ''}
-                          </Text>
-                        </View>
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <Text style={{ fontSize: 14, fontWeight: '700', color: text }}>
-                            {formatINR(landed)}
-                          </Text>
-                          <Text style={{ fontSize: 11, color: muted, marginTop: 2 }}>
-                            {cnImpact ? `landed · gross ${formatINR(gross)}` : 'landed /cyl'}
-                          </Text>
-                        </View>
-                      </View>
-                    );
-                  })
-                )}
-              </>
-            )}
-          </Card>
         )}
 
         {/* 2026-07-19 v2 — Filters + sort. Collapsible card so the

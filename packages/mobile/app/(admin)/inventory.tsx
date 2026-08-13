@@ -55,6 +55,12 @@ interface InventorySummary {
   // reconcile data isn't guaranteed for every row.
   inFlightFulls?: number;
   emptiesOnVehicle?: number;
+  // F1 defective bucket (2026-08-13) — mirror the web Daily Summary's
+  // Defective Out / Defective In / Closing Defective columns. Optional +
+  // default 0; independent of the closing-fulls/empties formulas.
+  defectiveFullsOut?: number;
+  defectiveFullsIn?: number;
+  closingDefectiveFulls?: number;
   thresholdWarning: number | null;
   thresholdCritical: number | null;
   isLocked: boolean;
@@ -1960,6 +1966,7 @@ function buildSummaryGroups(item: InventorySummary, isCritical: boolean): Summar
       rows: [
         { label: 'Incoming Fulls', value: item.incomingFulls ?? 0 },
         { label: 'Outgoing Empties', value: item.outgoingEmpties ?? 0 },
+        { label: 'Defective Out', value: item.defectiveFullsOut ?? 0 },
       ],
     },
     {
@@ -1981,6 +1988,7 @@ function buildSummaryGroups(item: InventorySummary, isCritical: boolean): Summar
       rows: [
         { label: 'Delivered Fulls', value: item.deliveredQty ?? 0 },
         { label: 'Collected Empties', value: item.collectedEmpties ?? 0 },
+        { label: 'Defective In', value: item.defectiveFullsIn ?? 0 },
       ],
     },
     {
@@ -1995,6 +2003,7 @@ function buildSummaryGroups(item: InventorySummary, isCritical: boolean): Summar
       rows: [
         { label: 'Fulls', value: item.closingFulls ?? 0, accent: isCritical },
         { label: 'Empties', value: item.closingEmpties ?? 0 },
+        { label: 'Defective', value: item.closingDefectiveFulls ?? 0 },
       ],
     },
   ];
