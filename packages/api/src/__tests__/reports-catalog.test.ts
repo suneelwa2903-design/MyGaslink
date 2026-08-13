@@ -37,7 +37,7 @@ beforeAll(async () => {
 });
 
 describe('GET /api/reports/catalog', () => {
-  it('POSITIVE — distributor_admin gets 7 buckets + all 37 catalog entries', async () => {
+  it('POSITIVE — distributor_admin gets 7 buckets + all 38 catalog entries', async () => {
     const res = await request(app)
       .get('/api/reports/catalog')
       .set('Authorization', `Bearer ${adminToken}`);
@@ -47,8 +47,8 @@ describe('GET /api/reports/catalog', () => {
     expect(Array.isArray(entries)).toBe(true);
     expect(buckets).toHaveLength(7);
     // Update this count alongside every REPORT_CATALOG append/remove.
-    // 2026-08-07: 37 = 32 (previous total) + 5 (F8v2-R Corporation bucket).
-    expect(entries).toHaveLength(37);
+    // 2026-08-12: 38 = 37 + 1 (corp-batch-cost-vs-price, FIFO cost layers).
+    expect(entries).toHaveLength(38);
   });
 
   it('POSITIVE — 7 buckets appear in canonical order 1..7', async () => {
@@ -73,12 +73,12 @@ describe('GET /api/reports/catalog', () => {
     }
   });
 
-  it('POSITIVE — finance role sees the same 37 entries as distributor_admin', async () => {
+  it('POSITIVE — finance role sees the same 38 entries as distributor_admin', async () => {
     const res = await request(app)
       .get('/api/reports/catalog')
       .set('Authorization', `Bearer ${financeToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.entries).toHaveLength(37); // 2026-08-07: +5 F8v2-R Corporation reports
+    expect(res.body.data.entries).toHaveLength(38); // 2026-08-12: +1 corp-batch-cost-vs-price
     // GST filing IS in finance's view (finance is in ROLES_FINANCE_ONLY).
     const slugs = res.body.data.entries.map((e: { slug: string }) => e.slug);
     expect(slugs).toContain('gst-filing-export');
@@ -92,8 +92,8 @@ describe('GET /api/reports/catalog', () => {
     const slugs = res.body.data.entries.map((e: { slug: string }) => e.slug);
     expect(slugs).not.toContain('gst-filing-export');
     // Inventory sees everything EXCEPT the 3 finance-only entries.
-    // 2026-08-07: 34 = 37 (total for admin) − 3 (gst-filing-export, gst-reconciliation, gstr-3b-preview).
-    expect(res.body.data.entries).toHaveLength(34);
+    // 2026-08-12: 35 = 38 (total for admin) − 3 (gst-filing-export, gst-reconciliation, gstr-3b-preview).
+    expect(res.body.data.entries).toHaveLength(35);
   });
 
   it('NEGATIVE — driver role hitting /catalog → 403 (route-level role gate blocks)', async () => {

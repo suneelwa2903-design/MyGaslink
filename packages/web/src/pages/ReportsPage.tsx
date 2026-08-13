@@ -101,6 +101,7 @@ const REPORTS: ReportDef[] = [
   { key: 'corp-landed-cost-trend', label: 'Landed Cost Trend', filters: ['cylinderType'] },
   { key: 'corp-statement-register', label: 'Corporation Statement Register', filters: [] },
   { key: 'corp-purchase-vs-sale-margin', label: 'Purchase vs Sale Margin', filters: ['cylinderType'] },
+  { key: 'corp-batch-cost-vs-price', label: 'Batch Cost vs Price (FIFO)', filters: [] },
   { key: 'corp-supplier-payment-aging', label: 'Supplier Payment Aging', filters: [] },
   { key: 'corp-landed-cost-reconciliation', label: 'Landed Cost Reconciliation', filters: ['cylinderType'] },
 ];
@@ -772,6 +773,10 @@ function ReportsSidebar({ catalog, selectedSlug, onSelect, isMiniOperator, saved
   const entriesByBucket = new Map<string, ReportCatalogEntry[]>();
   for (const entry of catalog.entries) {
     if (isMiniOperator && (entry.slug === 'tally-export' || entry.slug === 'gst-filing-export')) continue;
+    // 2026-08-13 (Suneel) — Tally hidden from the UI for now (paired with the
+    // hidden Settings → Tally Setup tab). Hide the Tally Export report + its
+    // setup-prompt panel for everyone. Restore by removing this line.
+    if (entry.slug === 'tally-export') continue;
     const list = entriesByBucket.get(entry.bucket) ?? [];
     list.push(entry);
     entriesByBucket.set(entry.bucket, list);

@@ -31,6 +31,8 @@ import * as service from '../services/purchasePaymentService.js';
 import { generateSupplierLedgerPdf } from '../services/pdf/supplierLedgerPdfService.js';
 // F8 v2 (2026-08-06) — landed cost per cyl type per month.
 import { computeLandedCost, computeAverageLandedCost } from '../services/landedCostService.js';
+// Cost-Layer COGS (2026-08-12) — FIFO layers + valuation (docs/COST-LAYER-COGS-DESIGN.md).
+import { computeStockValuation, computeFifoCogs } from '../services/cogsService.js';
 
 const router = Router();
 
@@ -200,6 +202,38 @@ router.get('/landed-cost/avg/:sourceId', async (req, res) => {
       sourceId,
       Number.isFinite(days) ? days : 30,
     );
+    return sendSuccess(res, result);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
+
+// ─── GET /cost-layers — FIFO open cost layers + inventory valuation ──────
+// Powers the Cost Layer Ledger tab: each still-open purchase load per cyl
+// type with remaining qty and gross→CN→net landed rate, plus the total
+// stock valuation and any uncosted (opening-not-entered) quantity.
+const costLayersQuerySchema = z.object({
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+router.get('/cost-layers', validateQuery(costLayersQuerySchema), async (req, res) => {
+  try {
+    const q = (req.validated?.query ?? req.query) as z.infer<typeof costLayersQuerySchema>;
+    const result = await computeStockValuation(req.user!.distributorId!, { asOf: q.asOf });
+    return sendSuccess(res, result);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
+
+// ─── GET /fifo-cogs — FIFO COGS breakdown (batch cost-vs-price / drilldown) ─
+const fifoCogsQuerySchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+router.get('/fifo-cogs', validateQuery(fifoCogsQuerySchema), async (req, res) => {
+  try {
+    const q = (req.validated?.query ?? req.query) as z.infer<typeof fifoCogsQuerySchema>;
+    const result = await computeFifoCogs(req.user!.distributorId!, q);
     return sendSuccess(res, result);
   } catch (err) {
     return sendError(res, (err as Error).message);

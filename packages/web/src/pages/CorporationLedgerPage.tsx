@@ -242,8 +242,8 @@ export default function CorporationLedgerPage() {
   if (balances.length === 0) {
     return (
       <div className="p-6">
-        <h1 className="text-2xl font-semibold">Corporations</h1>
-        <p className="mt-4 rounded-md bg-amber-50 p-4 text-sm text-amber-800">
+        <h1 className="text-2xl font-semibold">Corp. Loads</h1>
+        <p className="mt-4 rounded-md bg-amber-50 dark:bg-amber-900/20 p-4 text-sm text-amber-800">
           No corporations set up for this tenant. A super-admin needs to add provider codes
           (IOCL / HPCL / BPCL / GOGAS / etc.) to your distributor profile — they auto-create as
           Corporations here on first save.
@@ -267,7 +267,7 @@ export default function CorporationLedgerPage() {
           ) : (
             <h1 className="text-2xl font-semibold">{activeBalance?.name ?? 'Corporation'}</h1>
           )}
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-500 dark:text-surface-400">
             Account ledger — every purchase, payment, credit note, debit note, deposit, and ERV in one place.
           </p>
         </div>
@@ -308,9 +308,9 @@ export default function CorporationLedgerPage() {
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-end gap-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+      <div className="flex flex-wrap items-end gap-3 rounded-md border border-slate-200 dark:border-surface-700 bg-slate-50 dark:bg-surface-800 p-3">
         <label className="text-sm">
-          <div className="text-slate-600">From</div>
+          <div className="text-slate-600 dark:text-surface-300">From</div>
           <input
             type="date"
             className="rounded border border-slate-300 px-2 py-1"
@@ -319,7 +319,7 @@ export default function CorporationLedgerPage() {
           />
         </label>
         <label className="text-sm">
-          <div className="text-slate-600">To</div>
+          <div className="text-slate-600 dark:text-surface-300">To</div>
           <input
             type="date"
             className="rounded border border-slate-300 px-2 py-1"
@@ -328,7 +328,7 @@ export default function CorporationLedgerPage() {
           />
         </label>
         <label className="text-sm">
-          <div className="text-slate-600">Entry type</div>
+          <div className="text-slate-600 dark:text-surface-300">Entry type</div>
           <Select
             className="w-48"
             value={typeFilter}
@@ -348,9 +348,9 @@ export default function CorporationLedgerPage() {
       </div>
 
       {/* Ledger table — Confidence-style */}
-      <div className="overflow-x-auto rounded-md border border-slate-200">
+      <div className="overflow-x-auto rounded-md border border-slate-200 dark:border-surface-700">
         <table className="w-full text-sm">
-          <thead className="bg-slate-100 text-xs uppercase text-slate-700">
+          <thead className="bg-slate-100 dark:bg-surface-700 text-xs uppercase text-slate-700 dark:text-surface-200">
             <tr>
               <th className="p-2 text-left">Date</th>
               <th className="p-2 text-left">Type</th>
@@ -365,13 +365,13 @@ export default function CorporationLedgerPage() {
           <tbody>
             {ledgerLoading ? (
               <tr>
-                <td colSpan={8} className="p-6 text-center text-slate-500">
+                <td colSpan={8} className="p-6 text-center text-slate-500 dark:text-surface-400">
                   Loading ledger…
                 </td>
               </tr>
             ) : filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="p-6 text-center text-slate-500">
+                <td colSpan={8} className="p-6 text-center text-slate-500 dark:text-surface-400">
                   No entries in the selected period. Click <b>+ Add Entry</b> to record one.
                 </td>
               </tr>
@@ -379,7 +379,7 @@ export default function CorporationLedgerPage() {
               filteredRows.map((row, i) => (
                 <tr
                   key={row.documentId + row.kind}
-                  className={i % 2 ? 'bg-slate-50' : ''}
+                  className={i % 2 ? 'bg-slate-50 dark:bg-surface-800' : ''}
                 >
                   <td className="p-2 whitespace-nowrap">{row.entryDate}</td>
                   <td className="p-2 whitespace-nowrap">
@@ -388,7 +388,7 @@ export default function CorporationLedgerPage() {
                   <td className="p-2 whitespace-nowrap font-mono text-xs">
                     {row.supplierDocumentNumber ?? row.documentNumber ?? '—'}
                   </td>
-                  <td className="p-2 text-slate-700">{row.narration}</td>
+                  <td className="p-2 text-slate-700 dark:text-surface-200">{row.narration}</td>
                   <td className="p-2 text-right">{fmtMoney(row.debit)}</td>
                   <td className="p-2 text-right">{fmtMoney(row.credit)}</td>
                   <td className="p-2 text-right">{fmtMoney(row.balance, true)}</td>
@@ -398,7 +398,7 @@ export default function CorporationLedgerPage() {
             )}
           </tbody>
           {ledger && filteredRows.length > 0 && (
-            <tfoot className="bg-slate-100 text-sm font-semibold">
+            <tfoot className="bg-slate-100 dark:bg-surface-700 text-sm font-semibold">
               <tr>
                 <td colSpan={4} className="p-2 text-right">
                   Totals
@@ -425,6 +425,9 @@ export default function CorporationLedgerPage() {
 
       {/* Landed Cost — per cyl type per month grid */}
       <LandedCostPanel corpId={activeCorpId} from={from} to={to} />
+
+      {/* Cost Layer Ledger — FIFO open loads with gross→CN→net + stock value */}
+      <CostLayerLedgerPanel />
 
       {/* Deposit Ledger — deposit invoices as a mini-ledger */}
       <DepositLedgerPanel rows={filteredRows} totalDeposits={activeBalance?.totalDeposits ?? 0} />
@@ -496,22 +499,22 @@ function PhysicalActivityPanel({ rows }: { rows: LedgerRow[] }) {
   );
   if (physical.length === 0) {
     return (
-      <details className="rounded-md border border-slate-200 bg-white" open>
-        <summary className="cursor-pointer bg-slate-50 px-3 py-2 text-sm font-medium">
+      <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
+        <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
           Physical Activity
         </summary>
-        <p className="p-4 text-center text-sm text-slate-500">No physical activity in the selected period.</p>
+        <p className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">No physical activity in the selected period.</p>
       </details>
     );
   }
   return (
-    <details className="rounded-md border border-slate-200 bg-white" open>
-      <summary className="cursor-pointer bg-slate-50 px-3 py-2 text-sm font-medium">
+    <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
+      <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
         Physical Activity — Incoming / Empties / Defective ({physical.length} events)
       </summary>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-700">
+          <thead className="bg-slate-50 dark:bg-surface-800 text-xs uppercase text-slate-700 dark:text-surface-200">
             <tr>
               <th className="p-2 text-left">Date</th>
               <th className="p-2 text-left">Kind</th>
@@ -522,7 +525,7 @@ function PhysicalActivityPanel({ rows }: { rows: LedgerRow[] }) {
           </thead>
           <tbody>
             {physical.map((r, i) => (
-              <tr key={r.documentId + r.kind} className={i % 2 ? 'bg-slate-50' : ''}>
+              <tr key={r.documentId + r.kind} className={i % 2 ? 'bg-slate-50 dark:bg-surface-800' : ''}>
                 <td className="p-2 whitespace-nowrap">{r.entryDate}</td>
                 <td className="p-2 whitespace-nowrap text-xs font-medium">{KIND_LABELS[r.kind]}</td>
                 <td className="p-2">{r.cylinderTypeName ?? r.narration}</td>
@@ -578,12 +581,12 @@ function LandedCostPanel({ corpId, from, to }: { corpId: string; from: string; t
     enabled: Boolean(corpId),
   });
   return (
-    <details className="rounded-md border border-slate-200 bg-white" open>
-      <summary className="cursor-pointer bg-slate-50 px-3 py-2 text-sm font-medium">
+    <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
+      <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
         Landed Cost per Cylinder — per type, per month
       </summary>
       <div className="p-3">
-        <p className="mb-2 text-xs text-slate-500">
+        <p className="mb-2 text-xs text-slate-500 dark:text-surface-400">
           Formula: (line total + freight + DN − CN) ÷ cylinders received.{' '}
           {data?.gstMode && data.gstMode !== 'disabled' && (
             <b>GST-EXCLUSIVE</b>
@@ -593,15 +596,15 @@ function LandedCostPanel({ corpId, from, to }: { corpId: string; from: string; t
           )}
         </p>
         {isLoading ? (
-          <div className="p-4 text-center text-sm text-slate-500">Computing…</div>
+          <div className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">Computing…</div>
         ) : !data || data.rows.length === 0 ? (
-          <p className="p-4 text-center text-sm text-slate-500">
+          <p className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">
             No landed-cost activity in this period.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-xs uppercase text-slate-700">
+              <thead className="bg-slate-50 dark:bg-surface-800 text-xs uppercase text-slate-700 dark:text-surface-200">
                 <tr>
                   <th className="p-2 text-left">Month</th>
                   <th className="p-2 text-left">Cyl Type</th>
@@ -616,7 +619,7 @@ function LandedCostPanel({ corpId, from, to }: { corpId: string; from: string; t
               </thead>
               <tbody>
                 {data.rows.map((r, i) => (
-                  <tr key={r.month + r.cylinderTypeId} className={i % 2 ? 'bg-slate-50' : ''}>
+                  <tr key={r.month + r.cylinderTypeId} className={i % 2 ? 'bg-slate-50 dark:bg-surface-800' : ''}>
                     <td className="p-2">{r.month}</td>
                     <td className="p-2">{r.cylinderTypeName}</td>
                     <td className="p-2 text-right">{r.cylindersReceived}</td>
@@ -629,7 +632,7 @@ function LandedCostPanel({ corpId, from, to }: { corpId: string; from: string; t
                   </tr>
                 ))}
               </tbody>
-              <tfoot className="bg-slate-100 text-sm font-semibold">
+              <tfoot className="bg-slate-100 dark:bg-surface-700 text-sm font-semibold">
                 <tr>
                   <td colSpan={2} className="p-2 text-right">Totals</td>
                   <td className="p-2 text-right">{data.summary.totalCylsReceived}</td>
@@ -649,23 +652,129 @@ function LandedCostPanel({ corpId, from, to }: { corpId: string; from: string; t
   );
 }
 
-function DepositLedgerPanel({ rows, totalDeposits }: { rows: LedgerRow[]; totalDeposits: number }) {
-  const deposits = rows.filter((r) => r.kind === 'deposit');
+// ─── Cost Layer Ledger (FIFO) ───────────────────────────────────────────────
+// Live open purchase loads per cyl type with gross → OMC discount (CN) → net
+// landed rate, remaining qty, and stock value. This is the "running counter
+// per cylinder type as per the load and its landed price" (design §6). Any
+// delivered stock with no purchase layer behind it shows as an uncosted
+// warning (opening stock not yet entered).
+interface CostLayerRow {
+  cylinderTypeName: string;
+  date: string;
+  ref: string;
+  qtyReceived: number;
+  qtyRemaining: number;
+  grossRate: number;
+  cnPerCyl: number;
+  dnPerCyl: number;
+  landedRate: number;
+  isOpening: boolean;
+}
+interface CostLayersResponse {
+  gstMode: 'live' | 'sandbox' | 'disabled';
+  totalRemainingQty: number;
+  totalValue: number;
+  uncostedQty: number;
+  openLayers: CostLayerRow[];
+}
+
+function CostLayerLedgerPanel() {
+  const { data, isLoading } = useQuery<CostLayersResponse>({
+    queryKey: ['corp-cost-layers'],
+    queryFn: () => apiGet<CostLayersResponse>('/purchase-payments/cost-layers'),
+  });
   return (
-    <details className="rounded-md border border-slate-200 bg-white" open>
-      <summary className="cursor-pointer bg-slate-50 px-3 py-2 text-sm font-medium">
-        Deposit Ledger — {fmtMoney(totalDeposits, true)}
+    <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
+      <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
+        Cost Layer Ledger — open loads (FIFO) · stock value{' '}
+        {data ? <b>{fmtMoney(data.totalValue, true)}</b> : null}
       </summary>
       <div className="p-3">
-        <p className="mb-2 text-xs text-slate-500">
-          Deposit invoices are Nil-GST and refundable. Balance does NOT count toward gas outstanding.
+        <p className="mb-2 text-xs text-slate-500 dark:text-surface-400">
+          Each still-open purchase load, oldest first. Net landed rate ={' '}
+          gross − OMC discount (CN) + extra billed (DN).{' '}
+          {data?.gstMode && data.gstMode !== 'disabled' && <b>GST-EXCLUSIVE</b>}
         </p>
-        {deposits.length === 0 ? (
-          <p className="p-4 text-center text-sm text-slate-500">No deposit invoices in this period.</p>
+        {data && data.uncostedQty > 0 && (
+          <p className="mb-2 rounded-md bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800">
+            ⚠️ {data.uncostedQty} delivered cylinder(s) have no purchase load behind them
+            (opening stock not entered yet) — these are excluded from cost until you record
+            an opening entry.
+          </p>
+        )}
+        {isLoading ? (
+          <div className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">Computing…</div>
+        ) : !data || data.openLayers.length === 0 ? (
+          <p className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">No open cost layers.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-xs uppercase text-slate-700">
+              <thead className="bg-slate-50 dark:bg-surface-800 text-xs uppercase text-slate-700 dark:text-surface-200">
+                <tr>
+                  <th className="p-2 text-left">Cyl Type</th>
+                  <th className="p-2 text-left">Load Date</th>
+                  <th className="p-2 text-left">Load Ref</th>
+                  <th className="p-2 text-right">Received</th>
+                  <th className="p-2 text-right">Remaining</th>
+                  <th className="p-2 text-right">Gross / Cyl</th>
+                  <th className="p-2 text-right">OMC Disc / Cyl</th>
+                  <th className="p-2 text-right font-semibold">Net Landed / Cyl</th>
+                  <th className="p-2 text-right">Remaining Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.openLayers.map((L, i) => (
+                  <tr key={L.ref + L.date + L.cylinderTypeName} className={i % 2 ? 'bg-slate-50 dark:bg-surface-800' : ''}>
+                    <td className="p-2">{L.cylinderTypeName}</td>
+                    <td className="p-2">{L.date}</td>
+                    <td className="p-2 font-mono text-xs">
+                      {L.ref}
+                      {L.isOpening && <span className="ml-1 rounded bg-slate-200 dark:bg-surface-700 px-1 text-[10px]">opening</span>}
+                    </td>
+                    <td className="p-2 text-right">{L.qtyReceived}</td>
+                    <td className="p-2 text-right font-medium">{L.qtyRemaining}</td>
+                    <td className="p-2 text-right">{fmtMoney(L.grossRate, true)}</td>
+                    <td className="p-2 text-right text-green-700 dark:text-green-400">
+                      {L.cnPerCyl > 0 ? `− ${fmtMoney(L.cnPerCyl, true)}` : '—'}
+                    </td>
+                    <td className="p-2 text-right font-semibold">{fmtMoney(L.landedRate, true)}</td>
+                    <td className="p-2 text-right">{fmtMoney(L.qtyRemaining * L.landedRate)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-slate-100 dark:bg-surface-700 text-sm font-semibold">
+                <tr>
+                  <td colSpan={4} className="p-2 text-right">Total open stock</td>
+                  <td className="p-2 text-right">{data.totalRemainingQty}</td>
+                  <td colSpan={3} className="p-2 text-right">Stock value</td>
+                  <td className="p-2 text-right">{fmtMoney(data.totalValue, true)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function DepositLedgerPanel({ rows, totalDeposits }: { rows: LedgerRow[]; totalDeposits: number }) {
+  const deposits = rows.filter((r) => r.kind === 'deposit');
+  return (
+    <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
+      <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
+        Deposit Ledger — {fmtMoney(totalDeposits, true)}
+      </summary>
+      <div className="p-3">
+        <p className="mb-2 text-xs text-slate-500 dark:text-surface-400">
+          Deposit invoices are Nil-GST and refundable. Balance does NOT count toward gas outstanding.
+        </p>
+        {deposits.length === 0 ? (
+          <p className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">No deposit invoices in this period.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-surface-800 text-xs uppercase text-slate-700 dark:text-surface-200">
                 <tr>
                   <th className="p-2 text-left">Date</th>
                   <th className="p-2 text-left">Doc</th>
@@ -675,7 +784,7 @@ function DepositLedgerPanel({ rows, totalDeposits }: { rows: LedgerRow[]; totalD
               </thead>
               <tbody>
                 {deposits.map((r, i) => (
-                  <tr key={r.documentId} className={i % 2 ? 'bg-slate-50' : ''}>
+                  <tr key={r.documentId} className={i % 2 ? 'bg-slate-50 dark:bg-surface-800' : ''}>
                     <td className="p-2">{r.entryDate}</td>
                     <td className="p-2 font-mono text-xs">{r.supplierDocumentNumber ?? r.documentNumber}</td>
                     <td className="p-2">{r.narration}</td>
@@ -706,15 +815,15 @@ function SummaryChip({
 }) {
   const toneClass =
     tone === 'warn'
-      ? 'border-amber-300 bg-amber-50'
+      ? 'border-amber-300 bg-amber-50 dark:bg-amber-900/20'
       : tone === 'ok'
         ? 'border-emerald-300 bg-emerald-50'
-        : 'border-slate-200 bg-white';
+        : 'border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800';
   return (
     <div className={`rounded-md border p-3 ${toneClass}`}>
-      <div className="text-xs uppercase text-slate-600">{label}</div>
+      <div className="text-xs uppercase text-slate-600 dark:text-surface-300">{label}</div>
       <div className="mt-1 text-lg font-semibold">{value}</div>
-      <div className="text-xs text-slate-500">{hint}</div>
+      <div className="text-xs text-slate-500 dark:text-surface-400">{hint}</div>
     </div>
   );
 }
@@ -735,8 +844,8 @@ function AddEntryButton({ onPick }: { onPick: (kind: AddEntryKind) => void }) {
   // option opens its modal IN PLACE on the Corp Ledger page (same modal
   // shown on Inventory page for Incoming/Outgoing — imported directly).
   const items: Array<{ label: string; kind: AddEntryKind; hint?: string }> = [
-    { label: 'Incoming Fulls', kind: 'incoming_fulls', hint: 'OMC invoice — gas cylinders received' },
-    { label: 'Outgoing Empties', kind: 'outgoing_empties', hint: 'ERV — empties returning to OMC plant' },
+    { label: 'Incoming Fulls', kind: 'incoming_fulls', hint: 'Gas cylinders received from Bottling / Refill Plant to Godown' },
+    { label: 'Outgoing Empties', kind: 'outgoing_empties', hint: 'Empty cylinders sent from Godown to Bottling / Refill Plant' },
     { label: 'Payment', kind: 'payment', hint: 'Money you paid the OMC' },
     { label: 'Credit Note', kind: 'credit_note', hint: 'OMC issued you a CN (incentive)' },
     { label: 'Debit Note', kind: 'debit_note', hint: 'OMC billed you extra (short supply, damage)' },
@@ -750,19 +859,19 @@ function AddEntryButton({ onPick }: { onPick: (kind: AddEntryKind) => void }) {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-slate-200 bg-white shadow-lg">
+          <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800 shadow-lg">
             {items.map((it) => (
               <button
                 key={it.label}
                 type="button"
-                className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50 dark:bg-surface-800"
                 onClick={() => {
                   onPick(it.kind);
                   setOpen(false);
                 }}
               >
                 <div className="font-medium">{it.label}</div>
-                {it.hint && <div className="text-xs text-slate-500">{it.hint}</div>}
+                {it.hint && <div className="text-xs text-slate-500 dark:text-surface-400">{it.hint}</div>}
               </button>
             ))}
           </div>

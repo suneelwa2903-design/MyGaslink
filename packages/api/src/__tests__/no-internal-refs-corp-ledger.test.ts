@@ -49,7 +49,46 @@ async function allRows(distributorId: string): Promise<LedgerRow[]> {
 let d1Rows: LedgerRow[] = [];
 let d2Rows: LedgerRow[] = [];
 
+// The seed creates real corp rows (ERV events + source distributors) for
+// dist-001, but the suite runs against a SHARED dev DB and sibling test files
+// delete dist-001 inventory events / source distributors mid-run — which used
+// to make the POSITIVE ("guard is not vacuous") assertion flake to zero. To
+// pin determinism we plant ONE guaranteed clean row here: a purchase PAYMENT
+// against a guard source distributor. A payment row surfaces with
+// documentNumber=null and narration "PAYMENT (cash)" (no referenceNumber), so
+// it satisfies the POSITIVE check while the NEGATIVE checks still hold — it
+// carries no internal PSHD/FSHD sequence anywhere.
+async function seedGuardRow(): Promise<void> {
+  const GUARD_NAME = 'NOREF-GUARD-OMC';
+  let src = await prisma.sourceDistributor.findFirst({
+    where: { distributorId: D1, name: GUARD_NAME },
+    select: { id: true },
+  });
+  if (!src) {
+    src = await prisma.sourceDistributor.create({
+      data: { distributorId: D1, name: GUARD_NAME },
+      select: { id: true },
+    });
+  }
+  // Idempotent across reruns on the shared DB.
+  await prisma.purchasePayment.deleteMany({
+    where: { distributorId: D1, sourceDistributorId: src.id, notes: 'noref-guard' },
+  });
+  await prisma.purchasePayment.create({
+    data: {
+      distributorId: D1,
+      sourceDistributorId: src.id,
+      transactionDate: '2026-08-01',
+      amount: 1,
+      paymentMethod: 'cash',
+      notes: 'noref-guard',
+      createdBy: 'test-guard',
+    },
+  });
+}
+
 beforeAll(async () => {
+  await seedGuardRow();
   d1Rows = await allRows(D1);
   d2Rows = await allRows(D2);
 });

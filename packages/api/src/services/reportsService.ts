@@ -4625,6 +4625,102 @@ async function corpPurchaseVsSaleMargin(distributorId: string, f: ReportFilters)
   return { columns, rows: rows as unknown as Record<string, unknown>[] };
 }
 
+/**
+ * Batch Cost-vs-Price (FIFO) — docs/COST-LAYER-COGS-DESIGN.md §6.
+ *
+ * For every purchase LOAD (cost layer) whose cylinders were SOLD in the
+ * window, show what that specific batch cost (gross → OMC discount (CN) →
+ * net landed) vs what those cylinders actually sold for, and the realised
+ * margin. This is the per-batch "cost vs price / how much did the OMC
+ * discount this stock" view a monthly average can't give.
+ *
+ * Sale value is attributed to each layer draw pro-rata by quantity from the
+ * FIFO consumption breakdown (each delivery records which layers it drew).
+ */
+async function corpBatchCostVsPrice(distributorId: string, f: ReportFilters): Promise<ReportResult> {
+  const { buildCostLayers, computeFifoCogs } = await import('./cogsService.js');
+  const layersMap = await buildCostLayers(distributorId, { upToDate: f.dateTo });
+  // Group by the load's stable identity (purchaseEntryId), NOT the display ref
+  // — the ref may be blank/duplicated for loads with no OMC document number.
+  const key = (purchaseEntryId: string | null, date: string, ref: string) =>
+    purchaseEntryId ?? `opening|${date}|${ref}`;
+  interface Meta { cylinderTypeName: string; date: string; ref: string; grossRate: number; cnPerCyl: number; dnPerCyl: number; landedRate: number; }
+  const meta = new Map<string, Meta>();
+  for (const list of layersMap.values()) {
+    for (const L of list) {
+      meta.set(key(L.purchaseEntryId, L.date, L.ref), {
+        cylinderTypeName: L.cylinderTypeName,
+        date: L.date,
+        ref: L.ref,
+        grossRate: L.grossRate,
+        cnPerCyl: L.cnPerCyl,
+        dnPerCyl: L.dnPerCyl,
+        landedRate: L.landedRate,
+      });
+    }
+  }
+
+  const fifo = await computeFifoCogs(distributorId, { from: f.dateFrom, to: f.dateTo });
+  interface Agg { purchaseEntryId: string | null; cylinderTypeId: string; date: string; ref: string; qty: number; cogs: number; saleValue: number; }
+  const agg = new Map<string, Agg>();
+  for (const c of fifo.consumptions) {
+    const totalDrawQty = c.draws.reduce((s, d) => s + d.qty, 0);
+    if (totalDrawQty === 0) continue; // fully uncosted delivery — no layer to attribute
+    for (const d of c.draws) {
+      const k = key(d.purchaseEntryId, d.layerDate, d.ref);
+      const a = agg.get(k) ?? { purchaseEntryId: d.purchaseEntryId, cylinderTypeId: c.cylinderTypeId, date: d.layerDate, ref: d.ref, qty: 0, cogs: 0, saleValue: 0 };
+      a.qty += d.qty;
+      a.cogs = round2(a.cogs + d.qty * d.rate);
+      a.saleValue = round2(a.saleValue + c.saleValue * (d.qty / totalDrawQty));
+      agg.set(k, a);
+    }
+  }
+
+  interface Row {
+    loadDate: string; loadRef: string; cylinderTypeName: string; qtySold: number;
+    grossPerCyl: number; omcDiscountPerCyl: number; netCostPerCyl: number;
+    soldPerCyl: number; marginPerCyl: number; marginPct: number;
+    totalCost: number; totalSale: number; totalDiscount: number;
+  }
+  const rows: Row[] = [];
+  for (const a of agg.values()) {
+    const m = meta.get(key(a.purchaseEntryId, a.date, a.ref));
+    const soldPerCyl = a.qty > 0 ? round2(a.saleValue / a.qty) : 0;
+    const netCostPerCyl = m ? m.landedRate : (a.qty > 0 ? round2(a.cogs / a.qty) : 0);
+    rows.push({
+      loadDate: a.date,
+      loadRef: a.ref,
+      cylinderTypeName: m?.cylinderTypeName ?? '—',
+      qtySold: a.qty,
+      grossPerCyl: m?.grossRate ?? 0,
+      omcDiscountPerCyl: m?.cnPerCyl ?? 0,
+      netCostPerCyl: round2(netCostPerCyl),
+      soldPerCyl,
+      marginPerCyl: round2(soldPerCyl - netCostPerCyl),
+      marginPct: soldPerCyl > 0 ? round2(((soldPerCyl - netCostPerCyl) / soldPerCyl) * 100) : 0,
+      totalCost: a.cogs,
+      totalSale: a.saleValue,
+      totalDiscount: round2((m?.cnPerCyl ?? 0) * a.qty),
+    });
+  }
+  rows.sort((x, y) => x.loadDate.localeCompare(y.loadDate) || x.cylinderTypeName.localeCompare(y.cylinderTypeName) || x.loadRef.localeCompare(y.loadRef));
+
+  const columns: ReportColumn[] = [
+    { key: 'loadDate', label: 'Load Date' },
+    { key: 'loadRef', label: 'Load Ref' },
+    { key: 'cylinderTypeName', label: 'Cyl Type' },
+    { key: 'qtySold', label: 'Qty Sold' },
+    { key: 'grossPerCyl', label: 'Gross / Cyl ₹', money: true },
+    { key: 'omcDiscountPerCyl', label: 'OMC Disc / Cyl ₹', money: true },
+    { key: 'netCostPerCyl', label: 'Net Cost / Cyl ₹', money: true },
+    { key: 'soldPerCyl', label: 'Sold / Cyl ₹', money: true },
+    { key: 'marginPerCyl', label: 'Margin / Cyl ₹', money: true },
+    { key: 'marginPct', label: 'Margin %' },
+    { key: 'totalDiscount', label: 'Total OMC Disc ₹', money: true },
+  ];
+  return { columns, rows: rows as unknown as Record<string, unknown>[] };
+}
+
 async function corpSupplierPaymentAging(distributorId: string, f: ReportFilters): Promise<ReportResult> {
   // Per corp: sum of open outstanding invoice balances bucketed by age
   // (0-30 / 31-60 / 61-90 / 90+ days) based on the invoice's supplierDocumentDate
@@ -4859,6 +4955,7 @@ export const REPORTS: Record<string, (d: string, f: ReportFilters) => Promise<Re
   'corp-landed-cost-trend': corpLandedCostTrend,
   'corp-statement-register': corpStatementRegister,
   'corp-purchase-vs-sale-margin': corpPurchaseVsSaleMargin,
+  'corp-batch-cost-vs-price': corpBatchCostVsPrice,
   'corp-supplier-payment-aging': corpSupplierPaymentAging,
   'corp-landed-cost-reconciliation': corpLandedCostReconciliation,
 };
@@ -4881,9 +4978,9 @@ import { UserRole } from '@gaslink/shared';
 export const REPORT_BUCKETS: ReportBucketDef[] = [
   { key: 'daily-book',         label: 'Daily Book',         order: 1, description: 'What happened today — sales, deliveries, driver + vehicle activity' },
   { key: 'invoicing-payments', label: 'Invoicing & Payments', order: 2, description: 'Invoices, credit notes, payments, aging' },
-  { key: 'inventory',          label: 'Inventory',          order: 3, description: 'Depot stock, adjustments, defective cylinders' },
+  { key: 'inventory',          label: 'Godown',             order: 3, description: 'Depot stock, adjustments, defective cylinders' },
   { key: 'customers',          label: 'Customers',          order: 4, description: 'Per-customer statements, activity, deposits, profitability' },
-  { key: 'corporation',        label: 'Corporation',        order: 5, description: 'OMC purchases, landed cost, supplier aging, sale-margin — everything downstream of Corporation Ledger' },
+  { key: 'corporation',        label: 'Corp. Loads',        order: 5, description: 'OMC purchases, landed cost, supplier aging, sale-margin — everything downstream of Corp. Loads' },
   { key: 'expenses',           label: 'Expenses',           order: 6, description: 'Operational costs, categories, trends' },
   { key: 'month-end',          label: 'Month-End',          order: 7, description: 'GST filings, Tally, cash book, P&L, cashflow' },
 ];
@@ -5267,6 +5364,15 @@ export const REPORT_CATALOG: ReportCatalogEntry[] = [
     label: 'Purchase vs Sale Margin',
     bucket: 'corporation',
     description: 'Landed cost / cyl vs sale rate / cyl for the same cyl type + month → margin ₹ + margin %. Are you pricing customer sales enough over what you paid the OMC?',
+    kind: 'inline',
+    outputs: ['json', 'csv'],
+    roles: ROLES_ALL_STAFF,
+  },
+  {
+    slug: 'corp-batch-cost-vs-price',
+    label: 'Batch Cost vs Price (FIFO)',
+    bucket: 'corporation',
+    description: 'Per purchase load: what that batch cost you (gross → OMC discount → net landed) vs what those cylinders sold for, with realised margin. Shows exactly how much the corporation discounted each batch — cost vs price.',
     kind: 'inline',
     outputs: ['json', 'csv'],
     roles: ROLES_ALL_STAFF,

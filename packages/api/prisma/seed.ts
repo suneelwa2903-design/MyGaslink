@@ -747,6 +747,23 @@ async function main() {
   }
   console.log('Inventory events created:', inventoryEvents.length);
 
+  // ─── 16b. Corporation (OMC) source distributors ────────────────────────
+  // At least one SourceDistributor per tenant so the Corporation Ledger has a
+  // supplier to render (the seeded outgoing_empties RET-001/RET-002 rows then
+  // surface via getSupplierLedger). Without this the ledger is empty and the
+  // no-internal-refs guard test is vacuous. Idempotent via @@unique([distributorId, name]).
+  await prisma.sourceDistributor.upsert({
+    where: { distributorId_name: { distributorId: distributor.id, name: 'Indian Oil Corporation (IOCL)' } },
+    update: {},
+    create: { distributorId: distributor.id, name: 'Indian Oil Corporation (IOCL)' },
+  });
+  await prisma.sourceDistributor.upsert({
+    where: { distributorId_name: { distributorId: gstDist.id, name: 'Hindustan Petroleum (HPCL)' } },
+    update: {},
+    create: { distributorId: gstDist.id, name: 'Hindustan Petroleum (HPCL)' },
+  });
+  console.log('Source distributors (OMC) seeded: IOCL, HPCL');
+
   // ─── 17. Orders (11 orders in various statuses) ────────────────────────
 
   // Helper to create order with items

@@ -446,15 +446,13 @@ describe('Report Builder — end-to-end integration', () => {
     expect(runRow).toEqual(previewRow);
   });
 
-  it('REGRESSION — /api/reports/catalog still returns 32 entries', async () => {
+  it('REGRESSION — /api/reports/catalog still returns 38 entries', async () => {
     const res = await request(app)
       .get('/api/reports/catalog')
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
-    // 2026-08-07: 37 = 32 (prior baseline) + 5 (F8v2-R Corporation bucket:
-    // landed-cost-trend, statement-register, purchase-vs-sale-margin,
-    // supplier-payment-aging, landed-cost-reconciliation).
-    expect(res.body.data.entries.length).toBe(37);
+    // 2026-08-12: 38 = 37 + 1 (corp-batch-cost-vs-price, FIFO cost layers).
+    expect(res.body.data.entries.length).toBe(38);
   });
 
   it('REGRESSION — /api/reports/vehicle-ledger still works', async () => {

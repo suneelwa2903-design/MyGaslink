@@ -23,7 +23,7 @@
 import { prisma } from '../lib/prisma.js';
 import { toNum } from '../utils/decimal.js';
 import { computeCustomerOverdue } from './paymentService.js';
-import { computeAverageLandedCost } from './landedCostService.js';
+import { computeFifoCogs } from './cogsService.js';
 import {
   salesSummary,
   cylinderRotation,
@@ -50,7 +50,10 @@ export interface OverviewFlow {
     paidToOmc: number;           // You → OMC: purchase payments (range)
     billed: number;              // You → Customers: revenue billed (range)
     collected: number;           // Customers → You: cash received (range)
-    cogs: number;                // cost of cylinders SOLD (for the P&L line)
+    cogs: number;                // cost of cylinders SOLD (FIFO cost layers)
+    /** delivered cyls with no purchase layer behind them (opening stock not
+     *  yet entered) — FIFO COGS excludes them; UI flags "N cyls uncosted". */
+    costingUncosted?: number;
     expenses: number;            // running costs out (range)
     netProfit: number;           // revenue − cogs − expenses
     dueOutstanding: number;      // customers still owe, in-credit (snapshot)
@@ -132,7 +135,6 @@ export async function getOverviewMetrics(
   const fromDate = new Date(from);
   const toDate = new Date(to);
   toDate.setHours(23, 59, 59, 999);
-  const days = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86_400_000));
 
   // ── FLOW: revenue + fulls delivered — reuse salesSummary verbatim ──
   const sales = await salesSummary(distributorId, f);
@@ -297,8 +299,14 @@ export async function getOverviewMetrics(
     else ag90 += amt;
   }
 
-  const landed = await computeAverageLandedCost(distributorId, undefined, days);
-  const cogs = fullsDelivered * landed.avgPerCyl;
+  // FIFO cost-layer COGS (docs/COST-LAYER-COGS-DESIGN.md) — replaces the old
+  // trailing-30-day blended average. Cost is drawn from the actual purchase
+  // loads the delivered cylinders came from (oldest-first), per cyl type. Any
+  // delivered cyls with no purchase layer behind them are surfaced as
+  // `costingUncosted` so the UI can flag "opening stock not entered yet".
+  const fifo = await computeFifoCogs(distributorId, { from, to });
+  const cogs = fifo.totals.cogs;
+  const costingUncosted = fifo.totals.uncostedQty;
   const grossMarginPct = revenue > 0 ? Math.round(((revenue - cogs) / revenue) * 1000) / 10 : 0;
   const purchaseCost = cogs;
 
@@ -396,7 +404,7 @@ export async function getOverviewMetrics(
     { key: 'amountInMarket', label: 'Amount in Market', group: 'cash', kind: 'snapshot', value: +amountInMarket.toFixed(2), format: 'money', drillReport: 'outstanding-aging', asOf: 'now', sub: 'cash owed + cylinder deposits out', description: 'Everything of yours out in the field = Due + Overdue + deposit value of cylinders customers hold.' },
     { key: 'collectionDays', label: 'Avg Collection Days', group: 'cash', kind: 'snapshot', value: collectionDays, format: 'days', drillReport: 'outstanding-aging', asOf: 'now', description: 'On average, how many days to get paid after billing (based on the last 90 days of sales). Lower is better.' },
     // MARGIN — the P&L chain: Revenue − Purchase cost − Expenses = Net profit
-    { key: 'purchaseCost', label: 'Purchase cost (OMC)', group: 'margin', kind: 'flow', value: +purchaseCost.toFixed(2), format: 'money', drillReport: 'corp-landed-cost-trend', asOf: 'range', needsPurchaseData: true, description: 'What the delivered cylinders cost you from the corporation (landed cost × cylinders delivered).' },
+    { key: 'purchaseCost', label: 'Purchase cost (OMC)', group: 'margin', kind: 'flow', value: +purchaseCost.toFixed(2), format: 'money', drillReport: 'corp-landed-cost-trend', asOf: 'range', needsPurchaseData: true, description: 'What the delivered cylinders actually cost you from the corporation — each cylinder costed at the purchase load it came from (FIFO cost layers).' },
     { key: 'grossMargin', label: 'Gross Margin', group: 'margin', kind: 'flow', value: grossMarginPct, format: 'percent', drillReport: 'corp-purchase-vs-sale-margin', asOf: 'range', needsPurchaseData: true, description: '(Revenue − Purchase cost) ÷ Revenue. Profit before running costs.' },
     { key: 'expenses', label: 'Expenses', group: 'margin', kind: 'flow', value: +expenses.toFixed(2), format: 'money', drillReport: 'expense-register', asOf: 'range', description: 'Total running costs booked in this period (fuel, salary, rent, etc.).' },
     { key: 'netMargin', label: 'Net Margin', group: 'margin', kind: 'flow', value: netMarginPct, format: 'percent', drillReport: 'expense-register', asOf: 'range', needsPurchaseData: true, sub: `Net profit ${netProfit >= 0 ? '' : '−'}₹${Math.abs(Math.round(netProfit)).toLocaleString('en-IN')}`, description: '(Revenue − Purchase cost − Expenses) ÷ Revenue. The true bottom line.' },
@@ -422,6 +430,7 @@ export async function getOverviewMetrics(
       billed: +revenue.toFixed(2),
       collected: +collected.toFixed(2),
       cogs: +cogs.toFixed(2),
+      costingUncosted,
       expenses: +expenses.toFixed(2),
       netProfit: +netProfit.toFixed(2),
       dueOutstanding: +due.toFixed(2),
