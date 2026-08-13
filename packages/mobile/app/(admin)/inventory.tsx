@@ -24,6 +24,7 @@ import { apiGet, apiPost, getErrorMessage } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useTheme, ACCENT } from '../../src/theme';
 import { DateInput } from '../../src/components/ui';
+import { StockMovementModal } from '../../src/components/inventory/StockMovementModal';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -383,49 +384,12 @@ export default function AdminInventoryScreen() {
 
 type StockModalType = 'incoming' | 'outgoing' | 'adjust' | 'emptiesReturn' | null;
 
-interface StockMovementForm {
-  cylinderTypeId: string;
-  quantity: string;
-  documentType: string;
-  documentNumber: string;
-  documentDate: string;
-  // Picker-bound: vehicleId is the source of truth; vehicleNumber + driverName
-  // are derived from the selected mapping and persisted on submit so the
-  // server-side legacy free-text columns stay populated for audit. Amount
-  // is now an explicit money field (matches web). Outgoing-only:
-  // authorizationRef + condition.
-  vehicleId: string;
-  vehicleNumber: string;
-  driverName: string;
-  amount: string;
-  authorizationRef: string;
-  condition: 'good' | 'defective' | '';
-  notes: string;
-}
-
 interface AdjustForm {
   cylinderTypeId: string;
   adjustmentType: 'add' | 'subtract';
   quantity: string;
   reason: string;
   adjustmentDate: string;
-}
-
-function emptyMovementForm(defaultDate: string): StockMovementForm {
-  return {
-    cylinderTypeId: '',
-    quantity: '',
-    documentType: '',
-    documentNumber: '',
-    documentDate: defaultDate,
-    vehicleId: '',
-    vehicleNumber: '',
-    driverName: '',
-    amount: '',
-    authorizationRef: '',
-    condition: '',
-    notes: '',
-  };
 }
 
 function emptyAdjustForm(defaultDate: string): AdjustForm {
@@ -478,9 +442,6 @@ function SummaryTab({
   // ── Modal state ────────────────────────────────────────────────────────────
   const [activeModal, setActiveModal] = useState<StockModalType>(null);
   const [adjustTab, setAdjustTab] = useState<'new' | 'history'>('new');
-  const [movementForm, setMovementForm] = useState<StockMovementForm>(() =>
-    emptyMovementForm(selectedDate),
-  );
   const [adjustForm, setAdjustForm] = useState<AdjustForm>(() => emptyAdjustForm(selectedDate));
 
   // Cylinder type options derived from loaded inventory
@@ -489,54 +450,9 @@ function SummaryTab({
     [inventory],
   );
 
-  // ── Mutations ──────────────────────────────────────────────────────────────
-  const incomingMutation = useApiMutation<
-    unknown,
-    {
-      cylinderTypeId: string;
-      quantity: number;
-      documentType: string;
-      documentNumber: string;
-      documentDate: string;
-      vehicleId?: string;
-      vehicleNumber?: string;
-      driverName?: string;
-      amount?: number;
-      notes?: string;
-    }
-  >('post', '/inventory/incoming-fulls', {
-    invalidateKeys: [['inventory', selectedDate]],
-    successMessage: 'Incoming fulls recorded',
-    onSuccess: () => {
-      setActiveModal(null);
-      setMovementForm(emptyMovementForm(selectedDate));
-    },
-  });
-
-  const outgoingMutation = useApiMutation<
-    unknown,
-    {
-      cylinderTypeId: string;
-      quantity: number;
-      documentType: string;
-      documentNumber: string;
-      documentDate: string;
-      vehicleId?: string;
-      vehicleNumber?: string;
-      driverName?: string;
-      amount?: number;
-      authorizationRef?: string;
-      condition?: 'good' | 'defective';
-      notes?: string;
-    }
-  >('post', '/inventory/outgoing-empties', {
-    invalidateKeys: [['inventory', selectedDate]],
-    successMessage: 'Outgoing empties recorded',
-    onSuccess: () => {
-      setActiveModal(null);
-      setMovementForm(emptyMovementForm(selectedDate));
-    },
-  });
+  // Incoming/Outgoing mutations now live inside the shared StockMovementModal
+  // (src/components/inventory/StockMovementModal.tsx) — the ONE modal Godown
+  // and Corp. Loads both render.
 
   // Today's vehicle mappings — drives the vehicle+driver picker shown in
   // the Incoming/Outgoing modals. Empty `recommendations` ⇒ show the
@@ -614,59 +530,9 @@ function SummaryTab({
     if (type === 'adjust') {
       setAdjustForm(emptyAdjustForm(selectedDate));
       setAdjustTab('new');
-    } else {
-      setMovementForm(emptyMovementForm(selectedDate));
     }
+    // Incoming/Outgoing forms self-reset inside StockMovementModal on open.
     setActiveModal(type);
-  };
-
-  const handleMovementSubmit = () => {
-    const qty = parseInt(movementForm.quantity, 10);
-    if (!movementForm.cylinderTypeId) {
-      Alert.alert('Required', 'Please select a cylinder type.');
-      return;
-    }
-    if (isNaN(qty) || qty <= 0) {
-      Alert.alert('Required', 'Quantity must be a whole number greater than 0.');
-      return;
-    }
-    if (!movementForm.documentType.trim()) {
-      Alert.alert('Required', 'Document Type is required.');
-      return;
-    }
-    if (!movementForm.documentNumber.trim()) {
-      Alert.alert('Required', 'Document Number is required.');
-      return;
-    }
-
-    const amt = movementForm.amount.trim() ? Number(movementForm.amount) : undefined;
-    if (amt !== undefined && (Number.isNaN(amt) || amt < 0)) {
-      Alert.alert('Required', 'Amount must be 0 or greater.');
-      return;
-    }
-
-    const base = {
-      cylinderTypeId: movementForm.cylinderTypeId,
-      quantity: qty,
-      documentType: movementForm.documentType.trim(),
-      documentNumber: movementForm.documentNumber.trim(),
-      documentDate: movementForm.documentDate,
-      ...(movementForm.vehicleId ? { vehicleId: movementForm.vehicleId } : {}),
-      ...(movementForm.vehicleNumber.trim() ? { vehicleNumber: movementForm.vehicleNumber.trim() } : {}),
-      ...(movementForm.driverName.trim() ? { driverName: movementForm.driverName.trim() } : {}),
-      ...(amt !== undefined ? { amount: amt } : {}),
-      ...(movementForm.notes.trim() ? { notes: movementForm.notes.trim() } : {}),
-    };
-
-    if (activeModal === 'incoming') {
-      incomingMutation.mutate(base);
-    } else {
-      outgoingMutation.mutate({
-        ...base,
-        ...(movementForm.authorizationRef.trim() ? { authorizationRef: movementForm.authorizationRef.trim() } : {}),
-        ...(movementForm.condition ? { condition: movementForm.condition } : {}),
-      });
-    }
   };
 
   const handleAdjustSubmit = () => {
@@ -693,7 +559,6 @@ function SummaryTab({
     });
   };
 
-  const isMovementPending = incomingMutation.isPending || outgoingMutation.isPending;
 
   return (
     <>
@@ -936,374 +801,19 @@ function SummaryTab({
           ))}
       </ScrollView>
 
-      {/* ── Incoming Fulls / Outgoing Empties Modal ───────────────────────── */}
-      <Modal
+      {/* Incoming Fulls / Outgoing Empties — shared modal (Godown + Corp. Loads).
+          `key` changes each open so the form self-resets on remount. */}
+      <StockMovementModal
+        key={activeModal ?? 'closed'}
         visible={activeModal === 'incoming' || activeModal === 'outgoing'}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setActiveModal(null)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={{ flex: 1, justifyContent: 'flex-end' }}
-        >
-          <View
-            style={{
-              backgroundColor: t.card,
-              borderTopLeftRadius: 20,
-              borderTopRightRadius: 20,
-              padding: 20,
-              paddingBottom: Math.max(insets.bottom + 8, 20),
-              maxHeight: '90%',
-            }}
-          >
-            {/* Modal Header */}
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 16,
-              }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Ionicons
-                  name={
-                    activeModal === 'incoming'
-                      ? 'arrow-down-circle-outline'
-                      : 'arrow-up-circle-outline'
-                  }
-                  size={22}
-                  color={activeModal === 'incoming' ? t.green : t.orange}
-                />
-                <Text style={{ fontSize: 17, fontWeight: '800', color: t.text }}>
-                  {activeModal === 'incoming' ? '+ Incoming Fulls' : '+ Outgoing Empties'}
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setActiveModal(null)} style={{ padding: 4 }}>
-                <Ionicons name="close" size={22} color={t.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              {/* Cylinder Type Picker */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Cylinder Type <Text style={{ color: t.red }}>*</Text>
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ marginBottom: 14 }}
-                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
-              >
-                {cylinderOptions.map((opt) => {
-                  const selected = movementForm.cylinderTypeId === opt.id;
-                  const chipColor = activeModal === 'incoming' ? t.green : t.orange;
-                  return (
-                    <TouchableOpacity
-                      key={opt.id}
-                      onPress={() =>
-                        setMovementForm((f) => ({ ...f, cylinderTypeId: opt.id }))
-                      }
-                      style={{
-                        paddingHorizontal: 14,
-                        paddingVertical: 8,
-                        borderRadius: 20,
-                        backgroundColor: selected ? chipColor : t.metricBg,
-                        borderWidth: 1,
-                        borderColor: selected ? chipColor : t.cardBorder,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 13,
-                          fontWeight: '600',
-                          color: selected ? '#fff' : t.text,
-                        }}
-                      >
-                        {opt.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-                {cylinderOptions.length === 0 && (
-                  <Text style={{ fontSize: 13, color: t.textMuted, paddingVertical: 8 }}>
-                    Load summary first
-                  </Text>
-                )}
-              </ScrollView>
-
-              {/* Quantity */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Quantity <Text style={{ color: t.red }}>*</Text>
-              </Text>
-              <TextInput
-                style={[
-                  modalStyles.input,
-                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                ]}
-                placeholder="e.g. 50"
-                placeholderTextColor={t.textMuted}
-                keyboardType="number-pad"
-                value={movementForm.quantity}
-                onChangeText={(v) => setMovementForm((f) => ({ ...f, quantity: v }))}
-              />
-
-              {/* Date */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>Date</Text>
-              <View style={{ marginBottom: 12 }}>
-                <DateInput
-                  value={movementForm.documentDate || null}
-                  onChange={(v) => setMovementForm((f) => ({ ...f, documentDate: v }))}
-                  placeholder="Select date"
-                />
-              </View>
-
-              {/* Document Type */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Document Type <Text style={{ color: t.red }}>*</Text>
-              </Text>
-              <TextInput
-                style={[
-                  modalStyles.input,
-                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                ]}
-                placeholder="e.g. Invoice, DC"
-                placeholderTextColor={t.textMuted}
-                value={movementForm.documentType}
-                onChangeText={(v) => setMovementForm((f) => ({ ...f, documentType: v }))}
-              />
-
-              {/* Document Number */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Document Number <Text style={{ color: t.red }}>*</Text>
-              </Text>
-              <TextInput
-                style={[
-                  modalStyles.input,
-                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                ]}
-                placeholder="e.g. INV-2026-001"
-                placeholderTextColor={t.textMuted}
-                value={movementForm.documentNumber}
-                onChangeText={(v) => setMovementForm((f) => ({ ...f, documentNumber: v }))}
-              />
-
-              {/* Vehicle picker — bound to today's confirmed/recommended
-                  driver-vehicle mappings. Selecting a chip auto-fills both
-                  the vehicleId and the driver name. Empty-state directs
-                  the user to Fleet → Vehicle Mappings if none are set. */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Vehicle &amp; Driver{' '}
-                <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
-              </Text>
-              {availableMappings.length === 0 ? (
-                <View
-                  style={{
-                    padding: 12,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: t.cardBorder,
-                    backgroundColor: t.inputBg,
-                    marginBottom: 14,
-                  }}
-                >
-                  <Text style={{ fontSize: 13, color: t.textMuted }}>
-                    No vehicle mappings for today. Set one up in Fleet → Vehicle Mappings, or leave this blank.
-                  </Text>
-                </View>
-              ) : (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={{ marginBottom: 14 }}
-                  contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
-                >
-                  {availableMappings.map((m) => {
-                    const selected = movementForm.vehicleId === m.vehicleId;
-                    return (
-                      <TouchableOpacity
-                        key={m.driverId}
-                        onPress={() => setMovementForm((f) => ({
-                          ...f,
-                          vehicleId: m.vehicleId!,
-                          vehicleNumber: m.vehicleNumber ?? '',
-                          driverName: m.driverName,
-                        }))}
-                        style={{
-                          paddingHorizontal: 12,
-                          paddingVertical: 8,
-                          borderRadius: 12,
-                          backgroundColor: selected ? (activeModal === 'incoming' ? t.green : t.orange) : t.metricBg,
-                          borderWidth: 1,
-                          borderColor: selected ? (activeModal === 'incoming' ? t.green : t.orange) : t.cardBorder,
-                        }}
-                      >
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>
-                          {m.vehicleNumber}
-                        </Text>
-                        <Text style={{ fontSize: 11, color: selected ? '#fff' : t.textSecondary, marginTop: 2 }}>
-                          {m.driverName}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                  {movementForm.vehicleId !== '' && (
-                    <TouchableOpacity
-                      onPress={() => setMovementForm((f) => ({
-                        ...f,
-                        vehicleId: '',
-                        vehicleNumber: '',
-                        driverName: '',
-                      }))}
-                      style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderRadius: 12,
-                        borderWidth: 1,
-                        borderColor: t.cardBorder,
-                        backgroundColor: 'transparent',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <Ionicons name="close" size={14} color={t.textSecondary} />
-                      <Text style={{ fontSize: 11, color: t.textSecondary, marginTop: 2 }}>Clear</Text>
-                    </TouchableOpacity>
-                  )}
-                </ScrollView>
-              )}
-
-              {/* Amount (optional money value) */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Amount{' '}
-                <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
-              </Text>
-              <TextInput
-                style={[
-                  modalStyles.input,
-                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                ]}
-                placeholder="e.g. 12000"
-                placeholderTextColor={t.textMuted}
-                keyboardType="decimal-pad"
-                value={movementForm.amount}
-                onChangeText={(v) => setMovementForm((f) => ({ ...f, amount: v.replace(/[^0-9.]/g, '') }))}
-              />
-
-              {/* Outgoing-only: Authorization Ref + Condition */}
-              {activeModal === 'outgoing' && (
-                <>
-                  <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                    Authorization Ref{' '}
-                    <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
-                  </Text>
-                  <TextInput
-                    style={[
-                      modalStyles.input,
-                      { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                    ]}
-                    placeholder="e.g. AUTH-2026-001"
-                    placeholderTextColor={t.textMuted}
-                    value={movementForm.authorizationRef}
-                    onChangeText={(v) => setMovementForm((f) => ({ ...f, authorizationRef: v }))}
-                  />
-
-                  <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                    Condition{' '}
-                    <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
-                  </Text>
-                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-                    {(['good', 'defective'] as const).map((c) => {
-                      const selected = movementForm.condition === c;
-                      return (
-                        <TouchableOpacity
-                          key={c}
-                          onPress={() => setMovementForm((f) => ({
-                            ...f,
-                            condition: f.condition === c ? '' : c,
-                          }))}
-                          style={{
-                            flex: 1,
-                            paddingVertical: 10,
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: selected ? t.orange : t.cardBorder,
-                            backgroundColor: selected ? t.orange : t.metricBg,
-                            alignItems: 'center',
-                          }}
-                        >
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>
-                            {c === 'good' ? 'Good' : 'Defective'}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </>
-              )}
-
-              {/* Notes (optional) */}
-              <Text style={[modalStyles.label, { color: t.textSecondary }]}>
-                Notes <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text>
-              </Text>
-              <TextInput
-                style={[
-                  modalStyles.input,
-                  modalStyles.textarea,
-                  { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder },
-                ]}
-                placeholder="Additional notes..."
-                placeholderTextColor={t.textMuted}
-                multiline
-                numberOfLines={3}
-                value={movementForm.notes}
-                onChangeText={(v) => setMovementForm((f) => ({ ...f, notes: v }))}
-              />
-
-              {/* Submit */}
-              <TouchableOpacity
-                onPress={handleMovementSubmit}
-                disabled={isMovementPending}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  backgroundColor:
-                    activeModal === 'incoming' ? t.green : t.orange,
-                  borderRadius: 12,
-                  paddingVertical: 14,
-                  marginTop: 8,
-                  marginBottom: 8,
-                  opacity: isMovementPending ? 0.6 : 1,
-                }}
-              >
-                {isMovementPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Ionicons
-                    name={
-                      activeModal === 'incoming'
-                        ? 'arrow-down-circle-outline'
-                        : 'arrow-up-circle-outline'
-                    }
-                    size={18}
-                    color="#fff"
-                  />
-                )}
-                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
-                  {isMovementPending
-                    ? 'Saving...'
-                    : activeModal === 'incoming'
-                      ? 'Record Incoming Fulls'
-                      : 'Record Outgoing Empties'}
-                </Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+        mode={activeModal === 'incoming' ? 'incoming' : 'outgoing'}
+        onClose={() => setActiveModal(null)}
+        onSaved={() => setActiveModal(null)}
+        cylinderOptions={cylinderOptions}
+        availableMappings={availableMappings}
+        defaultDate={selectedDate}
+        invalidateKeys={[['inventory', selectedDate]]}
+      />
 
       {/* ── Adjust Stock Modal ─────────────────────────────────────────────── */}
       <Modal

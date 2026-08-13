@@ -180,8 +180,6 @@ function LabeledDate({ label, value, onChange, required }: {
 // ─── Shared data hooks ──────────────────────────────────────────────────────
 
 interface CylinderType { cylinderTypeId: string; typeName: string; isActive?: boolean }
-interface VehicleRow { vehicleId: string; vehicleNumber: string }
-interface DriverRow { driverName: string }
 interface OutstandingEntry {
   purchaseEntryId: string;
   purchaseDate: string;
@@ -198,235 +196,11 @@ function useCylinderTypes(): SelectOption[] {
     [data],
   );
 }
-function useVehicleOptions(): SelectOption[] {
-  const { data } = useApiQuery<{ vehicles: VehicleRow[] }>(['vehicles-list'], '/vehicles');
-  return useMemo(
-    () => [{ value: '', label: 'No vehicle' }, ...(data?.vehicles ?? []).map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }))],
-    [data],
-  );
-}
-function useDriverOptions(): SelectOption[] {
-  const { data } = useApiQuery<{ drivers: DriverRow[] }>(['drivers-list'], '/drivers', { status: 'active' });
-  return useMemo(
-    () => [{ value: '', label: 'No driver' }, ...(data?.drivers ?? []).map((d) => ({ value: d.driverName, label: d.driverName }))],
-    [data],
-  );
-}
 
 const INVALIDATE_ALL = [
   ['corp-ledger'], ['supplier-balances'], ['cost-layers'],
   ['corp-avg-landed'], ['purchase-entries'], ['inventory'], ['source-distributors'],
 ];
-
-// ─── 1. Incoming Fulls ──────────────────────────────────────────────────────
-
-const CHARGE_TYPES: SelectOption[] = [
-  { value: 'freight', label: 'Freight' },
-  { value: 'handling', label: 'Handling' },
-  { value: 'testing', label: 'Testing' },
-  { value: 'insurance', label: 'Insurance' },
-  { value: 'other', label: 'Other' },
-];
-
-export function IncomingFullsModal({ corp, onClose, onSaved }: {
-  corp: CorpContext; onClose: () => void; onSaved: () => void;
-}) {
-  const c = useColors();
-  const cylOpts = useCylinderTypes();
-  const vehicleOpts = useVehicleOptions();
-  const driverOpts = useDriverOptions();
-
-  const [cylinderTypeId, setCylinderTypeId] = useState('');
-  const [quantity, setQuantity] = useState('1');
-  const [documentType, setDocumentType] = useState('');
-  const [documentNumber, setDocumentNumber] = useState('');
-  const [documentDate, setDocumentDate] = useState(todayLocalIso());
-  const [vehicleId, setVehicleId] = useState('');
-  const [driverName, setDriverName] = useState('');
-  const [rate, setRate] = useState('');
-  const [amount, setAmount] = useState('');
-  const [charges, setCharges] = useState<Array<{ chargeType: string; amount: string }>>([]);
-  const [notes, setNotes] = useState('');
-
-  // Rate ↔ Amount: editing rate recomputes amount (rate × qty); editing amount
-  // recomputes rate (amount ÷ qty). Matches the web modal.
-  const qtyNum = toNum(quantity);
-  const onRateChange = (v: string) => {
-    setRate(v);
-    const r = toNum(v);
-    if (qtyNum > 0 && r > 0) setAmount((r * qtyNum).toFixed(2));
-  };
-  const onAmountChange = (v: string) => {
-    setAmount(v);
-    const a = toNum(v);
-    if (qtyNum > 0 && a > 0) setRate((a / qtyNum).toFixed(4));
-  };
-
-  const vehicleNumber = useMemo(
-    () => vehicleOpts.find((o) => o.value === vehicleId)?.label ?? '',
-    [vehicleOpts, vehicleId],
-  );
-
-  const mutation = useApiMutation<unknown, Record<string, unknown>>('post', '/inventory/incoming-fulls', {
-    successMessage: 'Incoming fulls recorded',
-    invalidateKeys: INVALIDATE_ALL,
-    onSuccess: onSaved,
-  });
-
-  const submit = () => {
-    if (!cylinderTypeId || qtyNum <= 0 || !documentType.trim() || !documentNumber.trim() || !documentDate) return;
-    mutation.mutate({
-      sourceDistributorId: corp.sourceDistributorId,
-      cylinderTypeId,
-      quantity: Math.trunc(qtyNum),
-      documentType: documentType.trim(),
-      documentNumber: documentNumber.trim(),
-      documentDate,
-      vehicleId: vehicleId || undefined,
-      vehicleNumber: vehicleNumber || undefined,
-      driverName: driverName || undefined,
-      unitPrice: rate ? toNum(rate) : undefined,
-      amount: amount ? toNum(amount) : undefined,
-      charges: charges.filter((ch) => toNum(ch.amount) > 0).map((ch) => ({ chargeType: ch.chargeType, amount: toNum(ch.amount) })),
-      notes: notes.trim() || undefined,
-    });
-  };
-
-  const disabled = !cylinderTypeId || qtyNum <= 0 || !documentType.trim() || !documentNumber.trim();
-
-  return (
-    <FormModal
-      title={`Incoming Fulls — ${corp.name}`}
-      subtitle="Gas cylinders received from Bottling / Refill Plant to Godown"
-      onClose={onClose}
-      submitLabel="Record Incoming"
-      onSubmit={submit}
-      submitting={mutation.isPending}
-      submitDisabled={disabled}
-    >
-      <SelectField label="Cylinder Type *" value={cylinderTypeId} onChange={setCylinderTypeId} options={cylOpts} />
-      <Field label="Quantity" value={quantity} onChangeText={setQuantity} keyboardType="numeric" required />
-      <Field label="Supply Type" value={documentType} onChangeText={setDocumentType} placeholder="e.g. Delivery Challan" required />
-      <Field label="Supply Reference No." value={documentNumber} onChangeText={setDocumentNumber} placeholder="OMC document no." required />
-      <LabeledDate label="Supply Date" value={documentDate} onChange={setDocumentDate} required />
-      <SelectField label="Vehicle (optional)" value={vehicleId} onChange={setVehicleId} options={vehicleOpts} />
-      <SelectField label="Driver (optional)" value={driverName} onChange={setDriverName} options={driverOpts} />
-      <View style={{ flexDirection: 'row', gap: 10 }}>
-        <View style={{ flex: 1 }}><Field label="Rate / cyl (₹)" value={rate} onChangeText={onRateChange} keyboardType="decimal-pad" placeholder="GST-incl" /></View>
-        <View style={{ flex: 1 }}><Field label="Amount (₹)" value={amount} onChangeText={onAmountChange} keyboardType="decimal-pad" placeholder="Line total" /></View>
-      </View>
-
-      {/* Charges */}
-      <View style={{ borderTopWidth: 1, borderTopColor: c.border, paddingTop: 12 }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: '600', color: c.muted }}>Charges (freight etc.)</Text>
-          <TouchableOpacity onPress={() => setCharges((cs) => [...cs, { chargeType: 'freight', amount: '' }])}>
-            <Text style={{ color: c.accent, fontWeight: '600', fontSize: 13 }}>+ Add charge</Text>
-          </TouchableOpacity>
-        </View>
-        {charges.map((ch, i) => (
-          <View key={i} style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-end', marginBottom: 8 }}>
-            <View style={{ flex: 1.4 }}>
-              <SelectField label="" value={ch.chargeType} onChange={(v) => setCharges((cs) => cs.map((x, j) => j === i ? { ...x, chargeType: v } : x))} options={CHARGE_TYPES} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Field label="" value={ch.amount} onChangeText={(v) => setCharges((cs) => cs.map((x, j) => j === i ? { ...x, amount: v } : x))} keyboardType="decimal-pad" placeholder="₹" />
-            </View>
-            <TouchableOpacity onPress={() => setCharges((cs) => cs.filter((_, j) => j !== i))} style={{ paddingBottom: 10 }}>
-              <Ionicons name="trash-outline" size={20} color={c.accent} />
-            </TouchableOpacity>
-          </View>
-        ))}
-      </View>
-
-      <Field label="Notes (optional)" value={notes} onChangeText={setNotes} />
-    </FormModal>
-  );
-}
-
-// ─── 2. Outgoing Empties ────────────────────────────────────────────────────
-
-const CONDITION_OPTS: SelectOption[] = [
-  { value: '', label: 'Not specified' },
-  { value: 'good', label: 'Good' },
-  { value: 'defective', label: 'Defective' },
-];
-
-export function OutgoingEmptiesModal({ corp, onClose, onSaved }: {
-  corp: CorpContext; onClose: () => void; onSaved: () => void;
-}) {
-  const cylOpts = useCylinderTypes();
-  const vehicleOpts = useVehicleOptions();
-  const driverOpts = useDriverOptions();
-
-  const [cylinderTypeId, setCylinderTypeId] = useState('');
-  const [quantity, setQuantity] = useState('1');
-  const [documentType, setDocumentType] = useState('');
-  const [documentNumber, setDocumentNumber] = useState('');
-  const [documentDate, setDocumentDate] = useState(todayLocalIso());
-  const [vehicleId, setVehicleId] = useState('');
-  const [driverName, setDriverName] = useState('');
-  const [authorizationRef, setAuthorizationRef] = useState('');
-  const [amount, setAmount] = useState('');
-  const [condition, setCondition] = useState('');
-  const [notes, setNotes] = useState('');
-
-  const vehicleNumber = useMemo(
-    () => vehicleOpts.find((o) => o.value === vehicleId)?.label ?? '',
-    [vehicleOpts, vehicleId],
-  );
-
-  const mutation = useApiMutation<unknown, Record<string, unknown>>('post', '/inventory/outgoing-empties', {
-    successMessage: 'Outgoing empties recorded',
-    invalidateKeys: INVALIDATE_ALL,
-    onSuccess: onSaved,
-  });
-
-  const qtyNum = toNum(quantity);
-  const submit = () => {
-    if (!cylinderTypeId || qtyNum <= 0 || !documentType.trim() || !documentNumber.trim() || !documentDate) return;
-    mutation.mutate({
-      cylinderTypeId,
-      quantity: Math.trunc(qtyNum),
-      documentType: documentType.trim(),
-      documentNumber: documentNumber.trim(),
-      documentDate,
-      vehicleId: vehicleId || undefined,
-      vehicleNumber: vehicleNumber || undefined,
-      driverName: driverName || undefined,
-      authorizationRef: authorizationRef.trim() || undefined,
-      amount: amount ? toNum(amount) : undefined,
-      condition: condition || undefined,
-      notes: notes.trim() || undefined,
-    });
-  };
-
-  const disabled = !cylinderTypeId || qtyNum <= 0 || !documentType.trim() || !documentNumber.trim();
-
-  return (
-    <FormModal
-      title={`Outgoing Empties — ${corp.name}`}
-      subtitle="Empty cylinders sent from Godown to Bottling / Refill Plant"
-      onClose={onClose}
-      submitLabel="Record Outgoing"
-      onSubmit={submit}
-      submitting={mutation.isPending}
-      submitDisabled={disabled}
-    >
-      <SelectField label="Cylinder Type *" value={cylinderTypeId} onChange={setCylinderTypeId} options={cylOpts} />
-      <Field label="Quantity" value={quantity} onChangeText={setQuantity} keyboardType="numeric" required />
-      <Field label="Challan Type" value={documentType} onChangeText={setDocumentType} placeholder="e.g. Return Challan" required />
-      <Field label="Challan No." value={documentNumber} onChangeText={setDocumentNumber} required />
-      <LabeledDate label="Challan Date" value={documentDate} onChange={setDocumentDate} required />
-      <SelectField label="Vehicle (optional)" value={vehicleId} onChange={setVehicleId} options={vehicleOpts} />
-      <SelectField label="Driver (optional)" value={driverName} onChange={setDriverName} options={driverOpts} />
-      <Field label="Authorization Ref. (optional)" value={authorizationRef} onChangeText={setAuthorizationRef} />
-      <Field label="Amount (₹, optional)" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="Value of empties returned" />
-      <SelectField label="Condition (optional)" value={condition} onChange={setCondition} options={CONDITION_OPTS} />
-      <Field label="Notes (optional)" value={notes} onChangeText={setNotes} />
-    </FormModal>
-  );
-}
 
 // ─── 3. Payment ─────────────────────────────────────────────────────────────
 
@@ -782,8 +556,12 @@ export function CorpEntryModalHost({ kind, corp, onClose, onSaved }: {
 }) {
   const props = { corp, onClose, onSaved };
   switch (kind) {
-    case 'incoming_fulls': return <IncomingFullsModal {...props} />;
-    case 'outgoing_empties': return <OutgoingEmptiesModal {...props} />;
+    // Incoming Fulls / Outgoing Empties are handled by the shared
+    // StockMovementModal (Godown + Corp. Loads use the same one) — the caller
+    // renders that directly, so this host only owns the corp-only modals.
+    case 'incoming_fulls':
+    case 'outgoing_empties':
+      return null;
     case 'payment': return <PaymentModal {...props} />;
     case 'credit_note': return <CreditNoteModal {...props} />;
     case 'debit_note': return <DebitNoteModal {...props} />;

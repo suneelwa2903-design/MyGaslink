@@ -32,6 +32,7 @@ import { formatINR, formatDate } from '../../src/theme';
 import {
   AddEntryMenu, CorpEntryModalHost, type CorpEntryKind, type CorpContext,
 } from '../../src/components/corp/CorpEntryModals';
+import { StockMovementModal, type VehicleMapping } from '../../src/components/inventory/StockMovementModal';
 
 // ─── Types (mirror the API) ─────────────────────────────────────────────────
 
@@ -145,6 +146,22 @@ export default function CorpLoadsScreen() {
   );
   const { data: costLayers, isLoading: costLayersLoading, refetch: refetchCostLayers } =
     useApiQuery<CostLayersResponse>(['cost-layers'], '/purchase-payments/cost-layers');
+
+  // Picker data for the shared Incoming/Outgoing modal (same endpoints Godown uses).
+  const { data: cylResp } = useApiQuery<{ cylinderTypes: { cylinderTypeId: string; typeName: string; isActive?: boolean }[] }>(
+    ['cylinder-types'], '/cylinder-types',
+  );
+  const cylOptions = useMemo(
+    () => (cylResp?.cylinderTypes ?? []).filter((c) => c.isActive !== false).map((c) => ({ id: c.cylinderTypeId, name: c.typeName })),
+    [cylResp],
+  );
+  const { data: mapResp } = useApiQuery<{ recommendations: VehicleMapping[] }>(
+    ['admin-vehicle-mappings', todayLocalIso()], '/assignments/vehicle-mappings', { date: todayLocalIso() },
+  );
+  const availableMappings = useMemo(
+    () => (mapResp?.recommendations ?? []).filter((m) => m.vehicleId && m.vehicleNumber && m.status !== 'unassigned'),
+    [mapResp],
+  );
 
   const rows = useMemo(() => {
     const all = ledger?.rows ?? [];
@@ -378,7 +395,25 @@ export default function CorpLoadsScreen() {
           onPick={(k) => { setAddMenuOpen(false); setEntryOpen(k); }}
         />
       )}
-      {entryOpen && (
+      {/* Incoming Fulls / Outgoing Empties → the SAME shared modal Godown uses,
+          with the OMC context so incoming loads land on this corp's ledger. */}
+      {(entryOpen === 'incoming_fulls' || entryOpen === 'outgoing_empties') && (
+        <StockMovementModal
+          key={entryOpen}
+          visible
+          mode={entryOpen === 'incoming_fulls' ? 'incoming' : 'outgoing'}
+          onClose={() => setEntryOpen(null)}
+          onSaved={() => { setEntryOpen(null); refetchAll(); }}
+          cylinderOptions={cylOptions}
+          availableMappings={availableMappings}
+          defaultDate={todayLocalIso()}
+          invalidateKeys={[['corp-ledger'], ['supplier-balances'], ['cost-layers'], ['corp-avg-landed'], ['inventory']]}
+          sourceDistributorId={corpId}
+          sourceName={activeBalance?.name}
+        />
+      )}
+      {/* Payment / CN / DN / Deposit → corp-only modals. */}
+      {entryOpen && entryOpen !== 'incoming_fulls' && entryOpen !== 'outgoing_empties' && (
         <CorpEntryModalHost
           kind={entryOpen}
           corp={corp}
