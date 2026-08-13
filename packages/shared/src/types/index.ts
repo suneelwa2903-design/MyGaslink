@@ -1130,6 +1130,9 @@ export interface DashboardStats {
   ordersToday: number;
   deliveredToday: number;
   revenueToday: number;
+  /** Sum of customer payments received TODAY (by transactionDate), regardless
+   *  of which invoice/day they apply to. Cleared money only (PaymentTransaction). */
+  collectionsToday: number;
   /** Orders awaiting dispatch: pending_driver_assignment + pending_dispatch. */
   pendingDispatch: number;
   /** Dispatched, awaiting delivery: pending_delivery. */

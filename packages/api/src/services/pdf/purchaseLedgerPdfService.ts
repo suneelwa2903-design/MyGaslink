@@ -13,6 +13,7 @@
  */
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import { formatDate, formatMoney } from './pdfLayoutUtils.js';
 import type { Prisma } from '@prisma/client';
 
@@ -21,7 +22,7 @@ const PAGE_WIDTH = 842;
 const MARGIN = { left: 40, right: 40, top: 40, bottom: 40 };
 
 const THEME = {
-  PRIMARY: '#0a3d62',
+  get PRIMARY() { return currentPdfAccent(); },
   TEXT: '#111827',
   MUTED: '#6b7280',
   BORDER: '#e5e7eb',
@@ -119,6 +120,7 @@ export async function generatePurchaseLedgerPdf(
   distributorId: string,
   filters: PurchaseLedgerFilters,
 ): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
     select: {

@@ -116,7 +116,7 @@ export default function DriverInventoryScreen() {
                     paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignItems: 'center',
                   }}>
                     <Text style={{ fontSize: 11, color: dark ? '#fbbf24' : '#b45309' }}>
-                      Available: <Text style={{ fontWeight: '800' }}>{item.availableFulls ?? 0}</Text>
+                      Spare Available: <Text style={{ fontWeight: '800' }}>{item.availableFulls ?? 0}</Text>
                     </Text>
                   </View>
                   {(item.floatQty ?? 0) > 0 && (
@@ -125,7 +125,7 @@ export default function DriverInventoryScreen() {
                       paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignItems: 'center',
                     }}>
                       <Text style={{ fontSize: 11, color: dark ? '#a78bfa' : '#6d28d9' }}>
-                        Spare: <Text style={{ fontWeight: '800' }}>{item.floatQty}</Text>
+                        Spare Loaded: <Text style={{ fontWeight: '800' }}>{item.floatQty}</Text>
                       </Text>
                     </View>
                   )}

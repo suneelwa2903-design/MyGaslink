@@ -43,6 +43,8 @@ import { Button, Input, Select, Modal, Badge, Loader, EmptyState } from '@/compo
 import { cn } from '@/lib/cn';
 import { OnboardingTab } from '@/components/OnboardingTab';
 import TallySetupPanel from '@/components/settings/TallySetupPanel';
+// 2026-08-13 (Suneel) — Quotations moved from the main sidebar into Settings.
+import QuotationsPage from '@/pages/QuotationsPage';
 import { ExpenseCategoriesTab } from '@/components/settings/ExpenseCategoriesTab';
 import { HiOutlineBanknotes } from 'react-icons/hi2';
 
@@ -58,7 +60,8 @@ type SettingsTabKey =
   | 'users'
   | 'licenses'
   | 'tally'
-  | 'expense_categories';
+  | 'expense_categories'
+  | 'quotations';
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
@@ -77,6 +80,10 @@ export default function SettingsPage() {
   const showPrices = isAdmin || isMiniOperator;
   const showOnboarding = isAdmin;
 
+  // 2026-08-13 (Suneel) — Approvals + Tally Setup hidden from the Settings UI
+  // for now. Tab definitions + render cases stay intact so restoring is a
+  // one-liner (remove the key from this set).
+  const HIDDEN_SETTINGS_TABS = new Set<string>(['approvals', 'tally']);
   const tabs = [
     ...(showOnboarding ? [{ key: 'onboarding' as const, label: 'Onboarding', icon: HiOutlineCheckCircle }] : []),
     ...(isAdmin || isMiniOperator ? [{ key: 'general' as const, label: 'General', icon: HiOutlineCog6Tooth }] : []),
@@ -95,7 +102,9 @@ export default function SettingsPage() {
     // mini-op only — finance/inventory just consume the picker, they
     // don't own the taxonomy.
     ...(isAdmin || isMiniOperator ? [{ key: 'expense_categories' as const, label: 'Expense Categories', icon: HiOutlineBanknotes }] : []),
-  ];
+    // Quotations — moved here from the main sidebar (2026-08-13). Admin + finance.
+    ...(isAdmin || user?.role === UserRole.FINANCE ? [{ key: 'quotations' as const, label: 'Quotations', icon: HiOutlineDocumentText }] : []),
+  ].filter((t) => !HIDDEN_SETTINGS_TABS.has(t.key));
 
   const allowedTabs = tabs.map((t) => t.key);
   const rawTab = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null;
@@ -148,6 +157,68 @@ export default function SettingsPage() {
       {tab === 'licenses' && <LicensesTab />}
       {tab === 'tally' && <TallySetupPanel />}
       {tab === 'expense_categories' && <ExpenseCategoriesTab />}
+      {tab === 'quotations' && <QuotationsPage />}
+    </div>
+  );
+}
+
+// ─── PDF Colour picker (2026-08-13, Suneel) ────────────────────────────────
+// One accent colour, per distributor, applied to every generated PDF. Stored
+// as the key-value setting `pdfAccentColor`; resolved server-side in
+// services/pdf/pdfTheme.ts. Keys + hexes MUST match that file.
+const PDF_COLOURS: Array<{ key: string; label: string; hex: string }> = [
+  { key: 'blue', label: 'Blue', hex: '#0a3d62' },
+  { key: 'red', label: 'Red', hex: '#b91c1c' },
+  { key: 'green', label: 'Green', hex: '#15803d' },
+  { key: 'amber', label: 'Amber', hex: '#b45309' },
+];
+
+function PdfColourPicker() {
+  const queryClient = useQueryClient();
+  const { data: selected } = useQuery({
+    queryKey: ['pdf-accent'],
+    queryFn: async () => {
+      try {
+        const r = await apiGet<{ settingValue: string }>('/settings/pdfAccentColor');
+        return typeof r?.settingValue === 'string' ? r.settingValue : 'blue';
+      } catch {
+        return 'blue'; // unset → historical default
+      }
+    },
+  });
+  const mutation = useMutation({
+    mutationFn: (key: string) => apiPut('/settings/pdfAccentColor', { value: key }),
+    onSuccess: () => { toast.success('PDF colour saved'); queryClient.invalidateQueries({ queryKey: ['pdf-accent'] }); },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+  const active = selected ?? 'blue';
+  return (
+    <div className="border-t border-surface-200 dark:border-surface-700 pt-6 space-y-3">
+      <h3 className="font-semibold text-surface-900 dark:text-white">PDF Colour</h3>
+      <p className="text-sm text-surface-500 dark:text-surface-400">
+        Accent colour used across all PDFs you generate — invoices, statements, ledgers, quotations.
+      </p>
+      <div className="flex items-center gap-3">
+        {PDF_COLOURS.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            onClick={() => mutation.mutate(c.key)}
+            disabled={mutation.isPending}
+            title={c.label}
+            aria-label={`PDF colour ${c.label}`}
+            className={`h-10 w-10 rounded-full flex items-center justify-center text-white transition ${
+              active === c.key ? 'ring-2 ring-offset-2 ring-surface-400 dark:ring-offset-surface-900' : 'opacity-80 hover:opacity-100'
+            }`}
+            style={{ backgroundColor: c.hex }}
+          >
+            {active === c.key ? '✓' : ''}
+          </button>
+        ))}
+        <span className="ml-2 text-sm text-surface-600 dark:text-surface-300">
+          {PDF_COLOURS.find((c) => c.key === active)?.label ?? 'Blue'}
+        </span>
+      </div>
     </div>
   );
 }
@@ -206,6 +277,9 @@ function GeneralTab() {
         </div>
         <Button type="submit" loading={mutation.isPending}>Save Settings</Button>
       </form>
+
+      {/* 2026-08-13 (Suneel) — per-distributor PDF accent colour */}
+      <PdfColourPicker />
 
       {/* WI-108: structured invoice/order numbering */}
       <div className="border-t border-surface-200 dark:border-surface-700 pt-6 space-y-3">

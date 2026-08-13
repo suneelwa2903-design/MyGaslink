@@ -9,6 +9,7 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { prisma } from '../../lib/prisma.js';
 import { toNum } from '../../utils/decimal.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import {
   formatMoney, formatDate, formatIrnForDisplay,
   drawBox, drawTextBlock,
@@ -25,7 +26,7 @@ const LAYOUT = {
   CARD_PADDING: 14,
   BORDER_WIDTH: 1,
   THEME: {
-    PRIMARY: '#0a3d62',
+    get PRIMARY() { return currentPdfAccent(); },
     TEXT: '#111827',
     MUTED: '#6b7280',
     BORDER: '#e5e7eb',
@@ -221,6 +222,7 @@ function drawFooter(doc: PDFKit.PDFDocument, sellerName: string, startY: number)
 // ─── Main Generator ─────────────────────────────────────────────────────────
 
 export async function generateCreditNotePdf(creditNoteId: string, distributorId: string): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId));
   const creditNote = await prisma.creditNote.findFirst({
     where: { id: creditNoteId, invoice: { distributorId } },
     include: {

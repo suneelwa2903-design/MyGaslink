@@ -16,6 +16,7 @@
  */
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import QRCode from 'qrcode';
 import { toNum } from '../../utils/decimal.js';
 
@@ -27,7 +28,7 @@ const MARGIN = { left: 40, right: 40, top: 40, bottom: 40 };
 const USABLE = PAGE_WIDTH - MARGIN.left - MARGIN.right;
 
 const THEME = {
-  PRIMARY: '#0a3d62',
+  get PRIMARY() { return currentPdfAccent(); },
   TEXT: '#111827',
   MUTED: '#6b7280',
   BORDER: '#d1d5db',
@@ -64,6 +65,7 @@ function formatDate(iso: string): string {
 export async function generateQuotationPdf(
   distributorId: string, quotationId: string,
 ): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   const [distributor, quotation] = await Promise.all([
     prisma.distributor.findUnique({
       where: { id: distributorId },

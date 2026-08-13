@@ -863,7 +863,21 @@ async function preflightOne(params: {
     // Sits BEFORE the gstMode='disabled' branch so non-GST tenants are
     // covered too. The order is already locked at preflight_in_progress
     // so revertToPendingDispatch is the right release path.
-    if (process.env.INVENTORY_STOCK_GATE_BYPASS !== 'true') {
+    //
+    // CLAUDE.md anti-pattern #28 (2026-08-13): the depot stock gate is only
+    // meaningful for an order that ACTUALLY debits the depot — i.e. one for
+    // which a fresh `dispatch` inventory event will be written. Walk-in
+    // orders (orderSource='walk_in') and ANY add-to-trip order consume from
+    // the truck FLOAT already on the vehicle; buildDispatchCtx returns
+    // undefined for exactly these two cases, so NO depot event fires. Running
+    // the depot check for them is a phantom gate — it blocks the order (e.g.
+    // "need 5, available 4") while consuming nothing from the depot, leaving
+    // the walk-in stuck with a false "GST docs pending" message. The truck-
+    // float availability IS enforced separately (INSUFFICIENT_VEHICLE_STOCK
+    // at POST /drivers/me/orders). The discriminator here MUST match
+    // buildDispatchCtx exactly so the gate fires iff the consumption fires.
+    const consumesFromDepot = order.orderSource !== 'walk_in' && !isAddToTrip;
+    if (consumesFromDepot && process.env.INVENTORY_STOCK_GATE_BYPASS !== 'true') {
       type Need = { qty: number; name: string };
       const need = new Map<string, Need>();
       for (const item of order.items) {

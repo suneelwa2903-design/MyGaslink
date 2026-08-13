@@ -9,7 +9,7 @@ import { RoleGuard } from '../../src/components/RoleGuard';
 const TAB_CONFIG: { name: string; title: string; iconFocused: string; iconOutline: string }[] = [
   { name: 'dashboard', title: 'Analytics', iconFocused: 'analytics', iconOutline: 'analytics-outline' },
   { name: 'orders', title: 'Orders', iconFocused: 'receipt', iconOutline: 'receipt-outline' },
-  { name: 'inventory', title: 'Inventory', iconFocused: 'cube', iconOutline: 'cube-outline' },
+  { name: 'inventory', title: 'Godown', iconFocused: 'cube', iconOutline: 'cube-outline' },
   { name: 'customers', title: 'Customers', iconFocused: 'people', iconOutline: 'people-outline' },
   { name: 'more', title: 'More', iconFocused: 'grid', iconOutline: 'grid-outline' },
 ];

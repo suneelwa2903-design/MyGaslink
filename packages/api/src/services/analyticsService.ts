@@ -43,7 +43,7 @@ export async function getDashboardStats(distributorId: string) {
   const [
     ordersToday, deliveredToday, revenueTodayResult,
     pendingDispatch, inFlight, overdueInvoices, outstandingResult,
-    inventoryAlerts, pendingActions, totalCustomers,
+    inventoryAlerts, pendingActions, totalCustomers, collectionsTodayResult,
   ] = await Promise.all([
     prisma.order.count({
       where: { distributorId, deletedAt: null, orderDate: { gte: today, lt: tomorrow } },
@@ -105,6 +105,13 @@ export async function getDashboardStats(distributorId: string) {
     prisma.customer.count({
       where: { distributorId, deletedAt: null },
     }),
+    // Collections TODAY — cleared customer payments received today (by
+    // transactionDate), regardless of which invoice/day they apply to.
+    // PaymentTransaction = cleared money only (pending submissions excluded).
+    prisma.paymentTransaction.aggregate({
+      where: { distributorId, deletedAt: null, transactionDate: { gte: today, lt: tomorrow } },
+      _sum: { amount: true },
+    }),
   ]);
 
   // 2026-07-23 — per-cylinder-type breakdown of today's delivery activity.
@@ -154,6 +161,7 @@ export async function getDashboardStats(distributorId: string) {
     ordersToday,
     deliveredToday,
     revenueToday: toNum(revenueTodayResult._sum.totalAmount),
+    collectionsToday: toNum(collectionsTodayResult._sum.amount),
     pendingDispatch,
     inFlight,
     overdueInvoices,

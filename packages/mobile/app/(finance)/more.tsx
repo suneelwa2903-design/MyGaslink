@@ -56,13 +56,13 @@ export default function FinanceMoreScreen() {
     // buttons; finance sees them as read-only operational views.
     {
       icon: 'cube-outline',
-      label: 'Inventory',
+      label: 'Godown',
       subtitle: 'Stock levels, movements, vehicle return',
       onPress: () => router.push('/(finance)/inventory'),
     },
     {
       icon: 'car-outline',
-      label: 'Fleet',
+      label: 'Transport',
       subtitle: 'Drivers, vehicles, and daily assignments',
       onPress: () => router.push('/(finance)/fleet'),
     },

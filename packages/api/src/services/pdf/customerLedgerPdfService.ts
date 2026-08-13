@@ -11,6 +11,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { prisma } from '../../lib/prisma.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import { getCustomerLedger } from '../paymentService.js';
 import { getGroupLedger } from '../customerGroupPortalService.js';
 import { formatMoney, formatDate, formatDateCompact } from './pdfLayoutUtils.js';
@@ -21,7 +22,7 @@ const PAGE_HEIGHT = 595;
 const MARGIN = { left: 40, right: 40, top: 40, bottom: 40 };
 
 const THEME = {
-  PRIMARY: '#0a3d62',
+  get PRIMARY() { return currentPdfAccent(); },
   TEXT: '#111827',
   MUTED: '#6b7280',
   BORDER: '#e5e7eb',
@@ -264,6 +265,7 @@ export async function generateCustomerLedgerPdf(
   customerId: string,
   range?: { from?: string; to?: string },
 ): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, distributorId, deletedAt: null },
     select: {
@@ -972,6 +974,7 @@ export async function generateGroupLedgerPdf(
   // picker. See DisplayNameMap contract in customerGroupPortalService.
   displayNames?: ReadonlyMap<string, string>,
 ): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
     select: {

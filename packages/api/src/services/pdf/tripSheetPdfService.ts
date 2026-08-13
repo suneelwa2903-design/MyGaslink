@@ -17,6 +17,7 @@
 
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import { formatDate, formatMoney, drawBox, drawTableHeader } from './pdfLayoutUtils.js';
 import { toNum } from '../../utils/decimal.js';
 
@@ -31,7 +32,7 @@ const ML = 40;   // margin left
 const MT = 50;   // margin top
 
 const THEME = {
-  PRIMARY: '#0a3d62',
+  get PRIMARY() { return currentPdfAccent(); },
   TEXT:    '#111827',
   MUTED:   '#6b7280',
   BORDER:  '#e5e7eb',
@@ -73,6 +74,7 @@ export async function generateTripSheetPdf(
   assignmentId: string,
   distributorId: string,
 ): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   const assignment = await prisma.driverVehicleAssignment.findFirst({
     where: { id: assignmentId, distributorId },
     include: {

@@ -52,7 +52,7 @@ export default function NotFoundPage() {
                   <Link to="/app/orders" className="text-brand-500 hover:underline">Orders</Link>
                   <Link to="/app/customers" className="text-brand-500 hover:underline">Customers</Link>
                   <Link to="/app/billing-payments" className="text-brand-500 hover:underline">Billing & Payments</Link>
-                  <Link to="/app/inventory" className="text-brand-500 hover:underline">Inventory</Link>
+                  <Link to="/app/inventory" className="text-brand-500 hover:underline">Godown</Link>
                 </>
               )}
               {isCustomer && (

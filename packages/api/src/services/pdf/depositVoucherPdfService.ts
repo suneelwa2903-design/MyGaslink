@@ -23,6 +23,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { prisma } from '../../lib/prisma.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import { toNum } from '../../utils/decimal.js';
 import { formatMoney, formatDate } from './pdfLayoutUtils.js';
 
@@ -37,7 +38,7 @@ const CONTENT_W = RIGHT_EDGE - MARGIN.left;
 // like they came from the same office. Any future palette change should be
 // made in ONE place and propagated to all three PDF services.
 const THEME = {
-  PRIMARY: '#0a3d62',
+  get PRIMARY() { return currentPdfAccent(); },
   TEXT: '#111827',
   MUTED: '#6b7280',
   BORDER: '#e5e7eb',
@@ -103,6 +104,7 @@ export async function generateDepositVoucherPdf(
   distributorId: string,
   ledgerEntryId: string,
 ): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   // 1. Load the ledger entry + related bits.
   //
   // Change L v2 (2026-07-31): also pull voucherNumber — the sequential

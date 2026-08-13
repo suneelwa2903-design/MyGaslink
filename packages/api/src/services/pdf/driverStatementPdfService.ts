@@ -13,6 +13,7 @@
 
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import { deliveryPerformanceStatement } from '../reportsService.js';
 import { formatMoney, formatDate } from './pdfLayoutUtils.js';
 
@@ -22,7 +23,7 @@ const PAGE_HEIGHT = 595;
 const MARGIN = { left: 40, right: 40, top: 40, bottom: 40 };
 
 const THEME = {
-  PRIMARY: '#0a3d62',
+  get PRIMARY() { return currentPdfAccent(); },
   TEXT: '#111827',
   MUTED: '#6b7280',
   BORDER: '#e5e7eb',
@@ -115,6 +116,7 @@ export async function generateDriverStatementPdf(
   driverId: string,
   range?: DriverStatementRange,
 ): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   const driver = await prisma.driver.findFirst({
     where: { id: driverId, distributorId, deletedAt: null },
     select: { driverName: true, phone: true },

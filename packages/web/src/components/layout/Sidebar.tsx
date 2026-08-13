@@ -67,7 +67,7 @@ const adminMenuItems: MenuItem[] = [
     ],
   },
   {
-    label: 'Inventory',
+    label: 'Godown',
     labelKey: 'nav.inventory',
     path: '/app/inventory',
     icon: HiOutlineCube,
@@ -85,15 +85,8 @@ const adminMenuItems: MenuItem[] = [
     icon: HiOutlineUsers,
     roles: [UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR_ADMIN, UserRole.INVENTORY, UserRole.FINANCE],
   },
-  {
-    // Mini-op #7 (2026-07-27) — pre-sales quotations. Distributor admin +
-    // finance can create and send. Gated to admin roles only — quoting is
-    // a sales action, not an operations task.
-    label: 'Quotations',
-    path: '/app/quotations',
-    icon: HiOutlineDocumentText,
-    roles: [UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR_ADMIN, UserRole.FINANCE],
-  },
+  // Quotations moved into Settings → Quotations (2026-08-13, Suneel). The
+  // /app/quotations route still exists for deep links.
   {
     label: 'Billing & Payments',
     labelKey: 'nav.billing',
@@ -121,7 +114,7 @@ const adminMenuItems: MenuItem[] = [
     ],
   },
   {
-    label: 'Fleet',
+    label: 'Transport',
     labelKey: 'nav.fleet',
     path: '/app/fleet',
     icon: HiOutlineTruck,
@@ -149,7 +142,7 @@ const adminMenuItems: MenuItem[] = [
   // separate "Purchases" entry inside its dedicated menu items list.
   // Excludes INVENTORY role — CN/DN/Payment recording is admin+finance.
   {
-    label: 'Corporations',
+    label: 'Corp. Loads',
     path: '/app/corporations',
     icon: HiOutlineShoppingCart,
     roles: [

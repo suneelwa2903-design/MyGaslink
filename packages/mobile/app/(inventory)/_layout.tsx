@@ -107,7 +107,7 @@ function InventoryLayoutInner() {
       <Tabs.Screen
         name="inventory"
         options={{
-          title: 'Inventory',
+          title: 'Godown',
           tabBarIcon: ({ focused }) => (
             <Ionicons
               name={focused ? TAB_ICONS_FOCUSED.inventory : TAB_ICONS.inventory}
@@ -146,7 +146,7 @@ function InventoryLayoutInner() {
       <Tabs.Screen
         name="fleet"
         options={{
-          title: 'Fleet',
+          title: 'Transport',
           tabBarIcon: ({ focused }) => (
             <Ionicons
               name={focused ? TAB_ICONS_FOCUSED.fleet : TAB_ICONS.fleet}

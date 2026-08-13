@@ -16,7 +16,7 @@ import request from 'supertest';
 import { createApp } from '../../app.js';
 import { prisma } from '../../lib/prisma.js';
 import { createOrUpdateManifest } from '../../services/dvaManifestService.js';
-import { preflightDispatch } from '../../services/gst/gstPreflightService.js';
+import { preflightDispatch, preflightAddToTrip } from '../../services/gst/gstPreflightService.js';
 import {
   ensureDriverVehicleMapping,
   getOrCreateTestVehicle,
@@ -324,6 +324,94 @@ describe('FLOAT-001 — POST /api/drivers/me/orders + driver customer search', (
     const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.data.orderId } });
     expect(order.orderSource).toBe('walk_in');
     expect(order.tripNumber).toBe(2);
+  });
+
+  // ─── Anti-pattern #28 (2026-08-13): walk-in depot-gate phantom-check ──────
+  //
+  // Walk-in / add-to-trip orders consume from the TRUCK FLOAT, not the depot,
+  // so buildDispatchCtx writes no `dispatch` event for them. Before the fix,
+  // preflightAddToTrip STILL ran the depot stock gate against them — a phantom
+  // check that blocked any walk-in whose qty exceeded remaining depot stock,
+  // even though the depot is not involved. These tests force the exact bug
+  // condition: depot empty, truck float available.
+
+  /** Force today's depot closing to a known value for the test cyl type. */
+  async function forceDepot(closingFulls: number) {
+    const affected = await prisma.inventorySummary.updateMany({
+      where: { distributorId: DIST, cylinderTypeId, summaryDate: todayMidnight },
+      data: { closingFulls },
+    });
+    // Guard: if no today-summary row exists the gate would read an older
+    // (higher-stock) row and the test wouldn't exercise the bug. Fail loud.
+    expect(affected.count).toBeGreaterThan(0);
+  }
+
+  it('BUG FIX (#28) — walk-in for MORE than depot stock SUCCEEDS (consumes truck float, not depot)', async () => {
+    await dispatchFloatTrip(10);         // 10 fulls on the truck as float
+    await forceDepot(0);                 // depot empty — the exact bug condition
+    const res = await request(app)
+      .post('/api/drivers/me/orders')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ customerId, cylinderTypeId, quantity: 3, deliveryDate: TEST_DATE });
+    // Before the fix: 207 preflightStatus='failed' errorCode=INSUFFICIENT_STOCK.
+    expect(res.status).toBe(201);
+    expect(res.body.data.preflightStatus).toBe('success');
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.data.orderId } });
+    expect(order.orderSource).toBe('walk_in');
+    // Moved forward — NOT stuck in pending_dispatch.
+    expect(order.status).toBe('pending_delivery');
+  });
+
+  it('BUG FIX (#28) — walk-in writes NO new dispatch event (float already debited at trip start)', async () => {
+    await dispatchFloatTrip(10);
+    await forceDepot(0);
+    const before = await prisma.inventoryEvent.count({
+      where: { distributorId: DIST, eventType: 'dispatch', eventDate: todayMidnight },
+    });
+    const res = await request(app)
+      .post('/api/drivers/me/orders')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ customerId, cylinderTypeId, quantity: 3, deliveryDate: TEST_DATE });
+    expect(res.status).toBe(201);
+    const after = await prisma.inventoryEvent.count({
+      where: { distributorId: DIST, eventType: 'dispatch', eventDate: todayMidnight },
+    });
+    // The walk-in added ZERO depot dispatch events — the whole point.
+    expect(after).toBe(before);
+  });
+
+  it('BUG FIX (#28) — the TRUCK-float gate still holds (qty > float → INSUFFICIENT_VEHICLE_STOCK, even with depot empty)', async () => {
+    await dispatchFloatTrip(3);          // only 3 on the truck
+    await forceDepot(0);
+    const res = await request(app)
+      .post('/api/drivers/me/orders')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ customerId, cylinderTypeId, quantity: 5, deliveryDate: TEST_DATE });
+    // The real gate (truck float) still fires — we only removed the phantom depot gate.
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INSUFFICIENT_VEHICLE_STOCK');
+  });
+
+  it('CONSISTENCY (#28) — a REGULAR add-to-trip order also skips the depot gate (cylinders come from float)', async () => {
+    await dispatchFloatTrip(10);
+    await forceDepot(0);
+    // Office adds a regular order to the running trip (pending_dispatch, orderSource=regular).
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `TEST-ADDTRIP-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        distributorId: DIST, customerId, driverId, vehicleId,
+        orderDate: todayMidnight, deliveryDate: todayMidnight,
+        status: 'pending_dispatch', orderSource: 'regular', tripNumber: 1, totalAmount: 600,
+        items: { create: [{ cylinderTypeId, quantity: 3, unitPrice: 200, totalPrice: 600 }] },
+      },
+    });
+    const result = await preflightAddToTrip({
+      distributorId: DIST, driverId, assignmentDate: TEST_DATE, userId: adminUserId,
+    });
+    const r = result.results.find((x) => x.orderId === order.id);
+    expect(r?.success).toBe(true);       // NOT blocked by the depot gate
+    const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+    expect(refreshed.status).toBe('pending_delivery');
   });
 
   it('GET /api/manifests/dva/:dvaId returns manifest for the DVA (driver allowed)', async () => {

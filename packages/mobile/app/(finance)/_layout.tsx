@@ -33,8 +33,8 @@ const TAB_CONFIG: {
   // finance More hub; kept off the bottom tab bar (5-tab usability limit).
   // Admin's screens hide write buttons via the canEdit role gate, so
   // finance sees them as read-only.
-  { name: 'inventory', title: 'Inventory', iconOutline: 'cube-outline', iconFilled: 'cube', href: null },
-  { name: 'fleet', title: 'Fleet', iconOutline: 'car-outline', iconFilled: 'car', href: null },
+  { name: 'inventory', title: 'Godown', iconOutline: 'cube-outline', iconFilled: 'cube', href: null },
+  { name: 'fleet', title: 'Transport', iconOutline: 'car-outline', iconFilled: 'car', href: null },
   // WI-PENDING-PAYMENTS: pending approval queue. Stack-pushed from the
   // More tab. Re-exports (admin)/pending-payments.
   { name: 'pending-payments', title: 'Pending Payments', iconOutline: 'time-outline', iconFilled: 'time', href: null },

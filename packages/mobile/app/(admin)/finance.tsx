@@ -2505,6 +2505,16 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
     { staleTime: 5 * 60 * 1000 },
   );
 
+  // 2026-08-13 (Suneel) — show the selected customer's pending due before
+  // recording a payment. Sum of that customer's open invoices' outstanding.
+  const { data: custInvoicesResp } = useApiQuery<{ invoices: Array<{ outstandingAmount: number }> }>(
+    ['cust-outstanding', selectedCustomer?.customerId ?? ''],
+    '/invoices',
+    { customerId: selectedCustomer?.customerId, pageSize: 300 },
+    { enabled: !!selectedCustomer?.customerId },
+  );
+  const customerDue = (custInvoicesResp?.invoices ?? []).reduce((s, i) => s + (i.outstandingAmount || 0), 0);
+
   const filteredCustomers = useMemo(() => {
     const customers = customersData?.customers ?? [];
     if (!customerSearch.trim()) return customers;
@@ -2628,6 +2638,20 @@ function CreatePaymentModal({ C, dark, onClose }: CreatePaymentModalProps) {
               </TouchableOpacity>
 
             </View>
+
+            {/* 2026-08-13 (Suneel) — pending due for the selected customer. */}
+            {selectedCustomer && (
+              <View style={{
+                marginBottom: 16, borderRadius: 12, padding: 12,
+                flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                backgroundColor: dark ? 'rgba(245, 158, 11, 0.12)' : '#fffbeb',
+              }}>
+                <Text style={{ color: C.textSecondary, fontSize: 13 }}>Pending due</Text>
+                <Text style={{ fontWeight: '800', fontSize: 16, color: customerDue > 0 ? '#f59e0b' : '#10b981' }}>
+                  {formatCurrency(customerDue)}
+                </Text>
+              </View>
+            )}
             {/* 2026-07-21 — customer picker moved OUT of the outer ScrollView
                 and into its own full-screen Modal below. Previously the
                 picker rendered inline as `View { maxHeight: 190 }` mapping

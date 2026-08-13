@@ -7,10 +7,10 @@
   "nav": {
     "analytics": "Analytics",
     "orders": "Orders",
-    "inventory": "Inventory",
+    "inventory": "Godown",
     "customers": "Customers",
     "billing": "Billing & Payments",
-    "fleet": "Fleet",
+    "fleet": "Transport",
     "collections": "Collections",
     "settings": "Settings",
     "distributors": "Distributors",

@@ -163,6 +163,16 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
     href: '/reports',
   },
   {
+    key: 'collectionsToday',
+    label: 'Collections (Today)',
+    icon: 'cash-outline',
+    color: ACCENT.blue,
+    iconBgLight: '#eff6ff',
+    iconBgDark: 'rgba(59, 130, 246, 0.15)',
+    isCurrency: true,
+    href: '/collections',
+  },
+  {
     key: 'totalOutstanding',
     label: 'Outstanding',
     icon: 'wallet-outline',

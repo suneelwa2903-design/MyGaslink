@@ -306,7 +306,7 @@ export default function AdminInventoryScreen() {
     <SafeAreaView edges={Platform.OS === 'ios' ? ['left', 'right'] : ['top', 'left', 'right']} style={{ flex: 1, backgroundColor: t.bg }}>
       {/* Header */}
       <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
-        <Text style={{ fontSize: 22, fontWeight: '800', color: t.text }}>Inventory</Text>
+        <Text style={{ fontSize: 22, fontWeight: '800', color: t.text }}>Godown</Text>
         <Text style={{ fontSize: 13, color: t.textSecondary, marginTop: 2 }}>
           Track cylinder stock levels
         </Text>

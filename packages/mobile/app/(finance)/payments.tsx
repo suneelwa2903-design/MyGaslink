@@ -320,6 +320,17 @@ function RecordPaymentModal({ visible, dark, colors, accent, onClose, onSuccess 
 
   const selectedCustomer = customers?.find((c) => c.customerId === customerId);
 
+  // 2026-08-13 (Suneel) — show the selected customer's pending due so the
+  // office knows how much is outstanding before recording a payment. Sum of
+  // that customer's open invoices' outstandingAmount (paid ones contribute 0).
+  const { data: custInvoicesResp } = useApiQuery<{ invoices: Array<{ outstandingAmount: number }> }>(
+    ['cust-outstanding', customerId],
+    '/invoices',
+    { customerId, pageSize: 300 },
+    { enabled: visible && !!customerId },
+  );
+  const customerDue = (custInvoicesResp?.invoices ?? []).reduce((s, i) => s + (i.outstandingAmount || 0), 0);
+
   const handleSubmit = () => {
     if (!customerId) { Alert.alert('Required', 'Select a customer'); return; }
     if (!amount || parseFloat(amount) <= 0) { Alert.alert('Required', 'Enter a valid amount'); return; }
@@ -441,6 +452,20 @@ function RecordPaymentModal({ visible, dark, colors, accent, onClose, onSuccess 
                   placeholderTextColor={colors.textMuted}
                 />
               </View>
+
+              {/* 2026-08-13 (Suneel) — pending due for the selected customer. */}
+              {selectedCustomer && (
+                <View style={{
+                  borderRadius: 12, padding: 12,
+                  flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                  backgroundColor: dark ? 'rgba(245, 158, 11, 0.12)' : '#fffbeb',
+                }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13 }}>Pending due</Text>
+                  <Text style={{ fontWeight: '800', fontSize: 16, color: customerDue > 0 ? '#f59e0b' : '#10b981' }}>
+                    {formatINR(customerDue)}
+                  </Text>
+                </View>
+              )}
 
               {/* Payment Method */}
               <View>

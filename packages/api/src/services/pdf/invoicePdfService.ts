@@ -17,6 +17,9 @@ import {
   formatMoney, formatDate, formatIrnForDisplay, numberToWords,
   round2, drawBox, drawTableHeader, drawTextBlock,
 } from './pdfLayoutUtils.js';
+// Per-distributor PDF accent colour (2026-08-13). PRIMARY becomes a getter
+// that reads the current PDF's accent; the public generate fn sets it.
+import { getPdfAccentColor, withPdfAccent, currentPdfAccent } from './pdfTheme.js';
 
 /**
  * Resolve a delivery-proof s3Key to a Buffer of its bytes.
@@ -168,7 +171,9 @@ const LAYOUT = {
   BORDER_WIDTH: 1,
   LINE_GAP: 12,
   THEME: {
-    PRIMARY: '#0a3d62',
+    // Per-distributor accent (2026-08-13) — resolves to the current PDF's
+    // colour, default blue. Kept as a getter so no drawing helper changes.
+    get PRIMARY() { return currentPdfAccent(); },
     TEXT: '#111827',
     MUTED: '#6b7280',
     BORDER: '#e5e7eb',
@@ -1048,6 +1053,13 @@ function drawFooter(doc: PDFKit.PDFDocument, sellerName: string, startY: number)
 // ─── Main Generator ─────────────────────────────────────────────────────────
 
 export async function generateInvoicePdf(invoiceId: string, distributorId: string): Promise<Buffer> {
+  // 2026-08-13 — resolve the distributor's PDF accent once, then run the whole
+  // render inside its async context so THEME.PRIMARY (a getter) picks it up.
+  const accent = await getPdfAccentColor(distributorId);
+  return withPdfAccent(accent, () => _generateInvoicePdf(invoiceId, distributorId));
+}
+
+async function _generateInvoicePdf(invoiceId: string, distributorId: string): Promise<Buffer> {
   // Fetch invoice with all required relations
   const invoice = await prisma.invoice.findFirst({
     where: { id: invoiceId, distributorId, deletedAt: null },

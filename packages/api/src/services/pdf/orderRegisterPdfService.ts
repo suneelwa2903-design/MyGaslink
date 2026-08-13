@@ -11,6 +11,7 @@
  */
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import * as orderService from '../orderService.js';
 import { formatMoney, formatDate } from './pdfLayoutUtils.js';
 
@@ -19,7 +20,7 @@ const PAGE_HEIGHT = 595;
 const MARGIN = { left: 40, right: 40, top: 40, bottom: 40 };
 
 const THEME = {
-  PRIMARY: '#0a3d62',
+  get PRIMARY() { return currentPdfAccent(); },
   TEXT: '#111827',
   MUTED: '#6b7280',
   ZEBRA: '#f8fafc',
@@ -106,6 +107,7 @@ export async function generateOrderRegisterPdf(
   distributorId: string,
   filters: OrderRegisterFilters,
 ): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   const distributor = await prisma.distributor.findUnique({
     where: { id: distributorId },
     select: {

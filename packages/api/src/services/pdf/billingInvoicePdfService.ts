@@ -9,6 +9,7 @@
 
 import PDFDocument from 'pdfkit';
 import { prisma } from '../../lib/prisma.js';
+import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import {
   formatMoney, formatDate, numberToWords, round2,
   drawBox, drawTableHeader, drawTextBlock,
@@ -65,7 +66,7 @@ const LAYOUT = {
   BORDER_WIDTH: 1,
   LINE_GAP: 12,
   THEME: {
-    PRIMARY: '#0a3d62',
+    get PRIMARY() { return currentPdfAccent(); },
     TEXT: '#111827',
     MUTED: '#6b7280',
     BORDER: '#e5e7eb',
@@ -470,6 +471,7 @@ function drawFooter(doc: PDFKit.PDFDocument, startY: number): number {
 // ─── Main Generator ─────────────────────────────────────────────────────────
 
 export async function generateBillingInvoicePdf(billingCycleId: string, distributorId?: string): Promise<Buffer> {
+  setPdfAccent(await getPdfAccentColor(distributorId ?? ''));
   const cycle = await prisma.billingCycle.findUnique({
     where: { id: billingCycleId },
     include: {

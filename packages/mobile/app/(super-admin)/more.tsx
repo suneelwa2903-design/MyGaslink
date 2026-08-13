@@ -20,7 +20,7 @@ type MenuItem = {
 
 const MENU_ITEMS: MenuItem[] = [
   { label: 'Billing & Payments', description: 'Billing cycles, invoices, payments', icon: 'card-outline', route: '/(super-admin)/billing' },
-  { label: 'Fleet', description: 'Drivers & vehicles management', icon: 'car-outline', route: '/(super-admin)/fleet' },
+  { label: 'Transport', description: 'Drivers & vehicles management', icon: 'car-outline', route: '/(super-admin)/fleet' },
   { label: 'Settings', description: 'System configuration', icon: 'settings-outline', route: '/(super-admin)/settings' },
   { label: 'Distributors', description: 'Manage distributor accounts', icon: 'business-outline', route: '/(super-admin)/distributors' },
   { label: 'Provider Catalog', description: 'Cylinder types & pricing catalog', icon: 'pricetag-outline', route: '/(super-admin)/provider-catalog' },

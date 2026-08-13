@@ -133,7 +133,7 @@ function AdminLayoutInner() {
       <Tabs.Screen
         name="inventory"
         options={{
-          title: isMiniOperator ? 'Stock' : 'Inventory',
+          title: isMiniOperator ? 'Stock' : 'Godown',
           tabBarIcon: ({ focused }) => (
             <Ionicons
               name={focused ? TAB_ICONS_FOCUSED.inventory : TAB_ICONS.inventory}
@@ -196,8 +196,8 @@ function AdminLayoutInner() {
       {/* STAGE-H: promoted from FleetModal in more.tsx. */}
       <Tabs.Screen
         name="fleet"
-        options={isMiniOperator ? { href: null, title: 'Fleet', tabBarItemStyle: { display: 'none' } } : {
-          title: 'Fleet',
+        options={isMiniOperator ? { href: null, title: 'Transport', tabBarItemStyle: { display: 'none' } } : {
+          title: 'Transport',
           tabBarIcon: ({ focused }) => (
             <Ionicons
               name={focused ? TAB_ICONS_FOCUSED.fleet : TAB_ICONS.fleet}
