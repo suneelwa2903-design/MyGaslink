@@ -24,6 +24,10 @@ const TAB_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   // Mini-Operator (2026-07-16): purchases screen — stock IN from source
   // distributors. Only surfaced for accountType='mini_operator' tenants.
   purchases: 'cart-outline',
+  // Corp. Loads (2026-08-13): full corporation ledger (OMC loads, supplier
+  // ledger, landed cost / FIFO cost layers) for REGULAR distributor_admin.
+  // Mini-op keeps its lighter Purchases tab instead.
+  'corp-loads': 'business-outline',
 };
 
 const TAB_ICONS_FOCUSED: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -37,6 +41,7 @@ const TAB_ICONS_FOCUSED: Record<string, keyof typeof Ionicons.glyphMap> = {
   collections: 'wallet',
   more: 'menu',
   purchases: 'cart',
+  'corp-loads': 'business',
 };
 
 function AdminLayoutInner() {
@@ -162,6 +167,25 @@ function AdminLayoutInner() {
             />
           ),
         } : { href: null, title: 'Purchases', tabBarItemStyle: { display: 'none' } }}
+      />
+      {/* Corp. Loads (2026-08-13): full corporation ledger for REGULAR
+          distributor_admin (OMC loads, supplier ledger with CN/DN/ERV, and
+          the FIFO Cost Layers / landed-cost valuation). Reuses the same
+          PurchasesScreen component (re-exported by corp-loads.tsx) which the
+          screen adapts by route. Hidden for mini_operator_admin — they keep
+          the lighter Purchases tab above. */}
+      <Tabs.Screen
+        name="corp-loads"
+        options={isMiniOperator ? { href: null, title: 'Corp. Loads', tabBarItemStyle: { display: 'none' } } : {
+          title: 'Corp. Loads',
+          tabBarIcon: ({ focused }) => (
+            <Ionicons
+              name={focused ? TAB_ICONS_FOCUSED['corp-loads'] : TAB_ICONS['corp-loads']}
+              size={22}
+              color={focused ? activeColor : inactiveColor}
+            />
+          ),
+        }}
       />
       {/* STAGE-H: new — was a 3-tab quasi-modal (Revenue/Top Customers/Drivers)
           inside more.tsx. Now a real screen that hits every report at
