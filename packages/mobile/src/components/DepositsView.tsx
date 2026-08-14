@@ -135,7 +135,7 @@ export function DepositsView() {
         data={rows}
         keyExtractor={(r) => r.id}
         refreshControl={<RefreshControl refreshing={isLoading || isRefetching} onRefresh={refetch} />}
-        contentContainerStyle={{ padding: 16, paddingBottom: 32, gap: 10 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 32, gap: 10, flexGrow: 1 }}
         ListHeaderComponent={
           <View style={{ gap: 12, marginBottom: 6 }}>
             {/* 2026-08-01 polish — dropped the "Deposits" title (repetitive
@@ -216,14 +216,16 @@ export function DepositsView() {
         }
         ListEmptyComponent={
           isLoading ? null : (
-            <EmptyState
-              title="No deposits yet"
-              description={
-                (cylinderTypeFilter || eventFilter !== 'all')
-                  ? 'No deposits match the current filters.'
-                  : 'Tap + Record to charge your first cylinder deposit.'
-              }
-            />
+            <View style={{ flex: 1, justifyContent: 'center' }}>
+              <EmptyState
+                title="No deposits yet"
+                description={
+                  (cylinderTypeFilter || eventFilter !== 'all')
+                    ? 'No deposits match the current filters.'
+                    : 'Tap + Record to charge your first cylinder deposit.'
+                }
+              />
+            </View>
           )
         }
         renderItem={({ item: r }) => (

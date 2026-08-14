@@ -41,6 +41,14 @@ interface CreditNote {
   createdAt: string;
 }
 
+// Issued invoice for the CN/DN invoice picker (subset of GET /invoices).
+interface NoteInvoice {
+  invoiceId: string;
+  invoiceNumber: string;
+  totalAmount: number;
+  outstandingAmount: number;
+}
+
 // ─── Main Screen ─────────────────────────────────────────────────────────────
 
 export default function FinancePaymentsScreen() {
@@ -120,7 +128,7 @@ export default function FinancePaymentsScreen() {
             />
           </View>
           <ScrollView
-            contentContainerStyle={{ padding: 16, gap: 10 }}
+            contentContainerStyle={{ padding: 16, gap: 10, flexGrow: 1 }}
             refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} />}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -140,7 +148,9 @@ export default function FinancePaymentsScreen() {
 
             {/* Payments List */}
             {(!payments || payments.length === 0) ? (
-              <EmptyState title="No payments" description="Record your first payment" />
+              <View style={{ flex: 1, justifyContent: 'center' }}>
+                <EmptyState title="No payments" description="Record your first payment" />
+              </View>
             ) : (
               payments.map((payment) => (
                 <Card key={payment.paymentId}>
@@ -208,7 +218,7 @@ export default function FinancePaymentsScreen() {
       {screenTab === 'credit_notes' && (
         <>
           <ScrollView
-            contentContainerStyle={{ padding: 16, gap: 10 }}
+            contentContainerStyle={{ padding: 16, gap: 10, flexGrow: 1 }}
             refreshControl={<RefreshControl refreshing={notesLoading} onRefresh={refetchNotes} />}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -217,7 +227,9 @@ export default function FinancePaymentsScreen() {
             </View>
 
             {(!creditNotes || creditNotes.length === 0) ? (
-              <EmptyState title="No notes" description="No credit or debit notes yet" />
+              <View style={{ flex: 1, justifyContent: 'center' }}>
+                <EmptyState title="No notes" description="No credit or debit notes yet" />
+              </View>
             ) : (
               creditNotes.map((note) => (
                 <Card key={note.creditNoteId}>
@@ -552,6 +564,9 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
   const insets = useSafeAreaInsets();
   const [noteType, setNoteType] = useState<'credit' | 'debit'>('credit');
   const [customerId, setCustomerId] = useState('');
+  // A CN/DN is always raised AGAINST a specific invoice (API requires
+  // invoiceId). Pick the customer, then the customer's issued invoice.
+  const [invoiceId, setInvoiceId] = useState('');
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -564,22 +579,35 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
   );
   const customers: Customer[] = customersResponse?.customers ?? [];
 
-  const mutation = useApiMutation<CreditNote, {
-    type: 'credit' | 'debit';
-    customerId: string;
-    amount: number;
-    reason: string;
-  }>(
-    'post', '/credit-notes',
-    {
-      invalidateKeys: [['credit-notes'], ['fin-invoices'], ['fin-metrics']],
-      successMessage: `${noteType === 'credit' ? 'Credit' : 'Debit'} note created`,
-      onSuccess: () => {
-        onSuccess();
-        setNoteType('credit'); setCustomerId(''); setAmount(''); setReason(''); setCustomerSearch('');
-      },
-    },
+  // Issued invoices for the chosen customer — same source the admin CN/DN flow
+  // and DepositsView use. Only 'issued' invoices can take a CN/DN.
+  const { data: invoicesResp } = useApiQuery<{ invoices: NoteInvoice[] }>(
+    ['note-customer-invoices', customerId],
+    '/invoices',
+    { customerId, status: 'issued', pageSize: 50 },
+    { enabled: visible && !!customerId },
   );
+  const invoices: NoteInvoice[] = invoicesResp?.invoices ?? [];
+  const selectedInvoice = invoices.find((i) => i.invoiceId === invoiceId);
+
+  const resetForm = () => {
+    setNoteType('credit'); setCustomerId(''); setInvoiceId('');
+    setAmount(''); setReason(''); setCustomerSearch('');
+  };
+  const onDone = () => { onSuccess(); resetForm(); };
+
+  // Route by type — the real endpoints are /invoices/credit-notes and
+  // /invoices/debit-notes (the old flat '/credit-notes' 404'd). Body is
+  // { invoiceId, amount, reason } per createCreditNoteSchema.
+  const creditMutation = useApiMutation<unknown, { invoiceId: string; amount: number; reason: string }>(
+    'post', '/invoices/credit-notes',
+    { invalidateKeys: [['credit-notes'], ['fin-invoices'], ['fin-metrics']], successMessage: 'Credit note created — pending approval', onSuccess: onDone },
+  );
+  const debitMutation = useApiMutation<unknown, { invoiceId: string; amount: number; reason: string }>(
+    'post', '/invoices/debit-notes',
+    { invalidateKeys: [['credit-notes'], ['fin-invoices'], ['fin-metrics']], successMessage: 'Debit note created — pending approval', onSuccess: onDone },
+  );
+  const activeMutation = noteType === 'credit' ? creditMutation : debitMutation;
 
   const filteredCustomers = (customers ?? []).filter((c) =>
     !customerSearch || c.businessName?.toLowerCase().includes(customerSearch.toLowerCase()) ||
@@ -590,12 +618,15 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
 
   const handleSubmit = () => {
     if (!customerId) { Alert.alert('Required', 'Select a customer'); return; }
+    // selectedInvoice is only defined when invoiceId is in THIS customer's
+    // issued-invoice list — so a stale pick from a previous customer can't slip
+    // through (the picker re-shows and this guard blocks submit).
+    if (!selectedInvoice) { Alert.alert('Required', 'Select the invoice this note is against'); return; }
     if (!amount || parseFloat(amount) <= 0) { Alert.alert('Required', 'Enter a valid amount'); return; }
-    if (!reason.trim()) { Alert.alert('Required', 'Enter a reason'); return; }
+    if (reason.trim().length === 0) { Alert.alert('Required', 'Enter a reason'); return; }
 
-    mutation.mutate({
-      type: noteType,
-      customerId,
+    activeMutation.mutate({
+      invoiceId: selectedInvoice.invoiceId,
       amount: parseFloat(amount),
       reason: reason.trim(),
     });
@@ -723,6 +754,41 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
                 )}
               </View>
 
+              {/* Invoice — a CN/DN is always raised against a specific invoice */}
+              {customerId ? (
+                <View>
+                  <Text style={{ fontSize: 14, fontWeight: '500', color: colors.textSecondary, marginBottom: 6 }}>Invoice *</Text>
+                  {selectedInvoice ? (
+                    <TouchableOpacity
+                      onPress={() => setInvoiceId('')}
+                      style={{ backgroundColor: dark ? 'rgba(220, 38, 38, 0.1)' : '#fef2f2', borderRadius: 12, padding: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                    >
+                      <Text style={{ fontWeight: '600', color: accent.red }}>{selectedInvoice.invoiceNumber}</Text>
+                      <Text style={{ color: colors.textSecondary }}>₹{Number(selectedInvoice.outstandingAmount).toFixed(2)} due · Change</Text>
+                    </TouchableOpacity>
+                  ) : invoices.length === 0 ? (
+                    <Text style={{ fontSize: 13, color: colors.textMuted, padding: 12, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12 }}>
+                      No issued invoices for this customer.
+                    </Text>
+                  ) : (
+                    <View style={{ maxHeight: 160, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12, backgroundColor: dark ? colors.cardBg : '#fff' }}>
+                      <ScrollView keyboardShouldPersistTaps="handled">
+                        {invoices.map((inv) => (
+                          <TouchableOpacity
+                            key={inv.invoiceId}
+                            onPress={() => setInvoiceId(inv.invoiceId)}
+                            style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: colors.divider, flexDirection: 'row', justifyContent: 'space-between' }}
+                          >
+                            <Text style={{ fontWeight: '600', color: colors.text }}>{inv.invoiceNumber}</Text>
+                            <Text style={{ color: colors.textSecondary }}>₹{Number(inv.outstandingAmount).toFixed(2)} due</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  )}
+                </View>
+              ) : null}
+
               {/* Amount */}
               <View>
                 <Text style={{ fontSize: 14, fontWeight: '500', color: colors.textSecondary, marginBottom: 6 }}>Amount *</Text>
@@ -761,7 +827,7 @@ function CreateCreditNoteModal({ visible, dark, colors, accent, onClose, onSucce
                 />
               </View>
 
-              <Button title="Create Note" onPress={handleSubmit} loading={mutation.isPending} style={{ marginTop: 4 }} />
+              <Button title="Create Note" onPress={handleSubmit} loading={activeMutation.isPending} style={{ marginTop: 4 }} />
             </ScrollView>
           </View>
         </View>
