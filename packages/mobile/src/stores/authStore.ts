@@ -43,8 +43,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   setSelectedDistributorId: (id) => set({ selectedDistributorId: id }),
 
   logout: async () => {
-    await tokenStorage.clearTokens();
+    // Flip auth state FIRST so the RoleGuard redirect to /(auth)/login fires
+    // instantly. Previously we awaited two serial SecureStore deletes BEFORE
+    // clearing state, so the screen froze on the current tab during that
+    // native round-trip (most visible on the customer Account screen). The
+    // in-memory session is already gone, so no authed request can fire; the
+    // token wipe just completes in the background.
     set({ user: null, isAuthenticated: false, selectedDistributorId: null });
+    await tokenStorage.clearTokens();
   },
 
   hydrate: async () => {

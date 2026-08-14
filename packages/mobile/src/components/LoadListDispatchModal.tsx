@@ -202,13 +202,20 @@ export function LoadListDispatchModal(props: LoadListDispatchModalProps) {
       statusBarTranslucent
       onRequestClose={onClose}
     >
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ maxHeight: '92%' }}>
+      {/* KeyboardAvoidingView owns the flex box + bottom-anchoring so it can
+          shrink the sheet when the number pad opens (anti-pattern #25). On
+          Android `behavior` must be 'height' (undefined = no avoidance → the
+          keyboard covered the Spare inputs); iOS uses 'padding'. */}
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
           <View style={{
             backgroundColor: colors.bg,
             borderTopLeftRadius: 16,
             borderTopRightRadius: 16,
-            maxHeight: '100%',
+            maxHeight: '92%',
           }}>
             {/* Header */}
             <View style={{

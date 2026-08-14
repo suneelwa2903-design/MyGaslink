@@ -216,7 +216,11 @@ export default function LoginScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24 }}>
+        {/* Top-aligned (no justifyContent:'center') — centering a content
+            block taller than the viewport inside a ScrollView creates a
+            phantom scrollable gap above the logo. flexGrow:1 still lets the
+            background fill; content flows from the top and scrolls if tall. */}
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24 }}>
           {/* Logo + Brand — marginTop: 60 keeps the logo off the status bar
               even on phones with short notches. 16px gap between logo image
               and the wordmark, then a slim subtitle. */}
