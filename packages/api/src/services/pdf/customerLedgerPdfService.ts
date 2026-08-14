@@ -14,7 +14,7 @@ import { prisma } from '../../lib/prisma.js';
 import { getPdfAccentColor, setPdfAccent, currentPdfAccent } from './pdfTheme.js';
 import { getCustomerLedger } from '../paymentService.js';
 import { getGroupLedger } from '../customerGroupPortalService.js';
-import { formatMoney, formatDate, formatDateCompact } from './pdfLayoutUtils.js';
+import { formatDate, formatMoney } from './pdfLayoutUtils.js';
 
 // A4 landscape
 const PAGE_WIDTH = 842;
@@ -47,31 +47,29 @@ interface Col {
 // Emp Cost (74→70) and Received (72→68). Money cols cap slightly (lakh
 // figures 15→14 chars) — the practical range on real invoices is much
 // smaller than the cap and this trade unlocks 25% more narration space.
+// 2026-08-14 layout: compact money (no "Rs.", no commas, ≤2dp via ledgerMoney)
+// + DD/MM/YY date (ledgerDate) free up space vs the old "Rs. 99,99,999.00"
+// budget, which flows to Narration (100→190pt). Headers use FULL words
+// ("Delivered Fulls", "Collected Empties", "Pending Empties", "Pending Empties
+// Cost", "Total Amount", "Due Amount") and wrap to 2 lines — column widths are
+// sized so each label fits in ≤2 lines at caption bold (see drawTableHeader,
+// header height bumped to two lines). Money columns: Amount / Pending Empties
+// Cost / Received hold the "9999999.99" (10-char) data ceiling; Total Amount /
+// Due Amount / Overdue are CUMULATIVE running balances at 62pt so a >1-crore
+// account ("12345678.99") still renders in full. TABLE_WIDTH stays 762pt.
 const COLS: Col[] = [
-  // 2026-07-31 v11: Date 64→44 (short "16/7/26" format via
-  // formatDateCompact, was "16-Jul-2026"). 20pt reclaimed goes to
-  // Amount 62→82 so the bold Total row "Rs. 1,05,600.00" doesn't
-  // wrap to a second line. TABLE_WIDTH stays 762pt.
   { label: 'Date', width: 44, align: 'left' },
-  { label: 'Type', width: 50, align: 'left' },
-  // 2026-07-31 v5: Narration trimmed 108→100 to donate 8pt to Emp Cost
-  // which was renamed "Pend Emp Cost" (needs ~78pt at caption bold to
-  // render without ellipsis). TABLE_WIDTH stays 762pt (landscape budget).
-  //
-  // 2026-07-31 v10 (Change N): Del F → "Del Full" (30→40, +10),
-  // Emp C → "Coll Emp" (34→44, +10). Borrowed 6pt from Amount, 8pt
-  // from Total Amt, 6pt from Received. All borrowed columns still fit
-  // the full "Rs. 99,99,999.00" ceiling comfortably.
-  { label: 'Narration', width: 100, align: 'left' },
-  { label: 'Del Full', width: 40, align: 'right' },
-  { label: 'Amount', width: 82, align: 'right' },
-  { label: 'Coll Emp', width: 44, align: 'right' },
-  { label: 'Pend E', width: 34, align: 'right' },
-  { label: 'Pend Emp Cost', width: 78, align: 'right' },
-  { label: 'Total Amt', width: 76, align: 'right' },
-  { label: 'Received', width: 62, align: 'right' },
-  { label: 'Due Amt', width: 76, align: 'right' },
-  { label: 'Overdue', width: 76, align: 'right' },
+  { label: 'Type', width: 62, align: 'left' },
+  { label: 'Narration', width: 186, align: 'left' },
+  { label: 'Delivered Fulls', width: 40, align: 'right' },
+  { label: 'Amount', width: 54, align: 'right' },
+  { label: 'Collected Empties', width: 40, align: 'right' },
+  { label: 'Pending Empties', width: 38, align: 'right' },
+  { label: 'Pending Empties Cost', width: 58, align: 'right' },
+  { label: 'Total Amount', width: 62, align: 'right' },
+  { label: 'Received', width: 54, align: 'right' },
+  { label: 'Due Amount', width: 62, align: 'right' },
+  { label: 'Overdue', width: 62, align: 'right' },
 ];
 
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
@@ -79,6 +77,62 @@ const ROW_HEIGHT = 16;
 
 function num(n: number): string {
   return Number(n || 0).toLocaleString('en-IN');
+}
+
+// ── 2026-08-14 statement layout: ledger-local money + date formatters ──
+// Deliberately NOT the shared ledgerMoney()/ledgerDate() — those keep
+// the "Rs. 25,300.00" + dd/MM/yyyy form for GST invoices / credit notes, which
+// have legal formatting expectations. The customer statement (and the group
+// statement) use these compact forms only.
+
+// Compact money: no "Rs." prefix, no thousands separators. Whole numbers show
+// no decimals ("25300"); fractional amounts show up to 2 dp with a trailing
+// zero trimmed ("3500.5", "3500.55"). Matches the customer-requested column
+// budget (max "9999999.99").
+function ledgerMoney(value: number | null | undefined): string {
+  const n = Number(value);
+  const safe = value == null || Number.isNaN(n) ? 0 : n;
+  const rounded = Math.round(safe * 100) / 100;
+  if (Number.isInteger(rounded)) return String(rounded);
+  const s = rounded.toFixed(2);
+  return s.endsWith('0') ? s.slice(0, -1) : s;
+}
+
+// 2026-08-14 — the Closing Balance line keeps "Rs." + thousands grouping but
+// drops the ".00" on whole amounts ("Rs. 25,300 Dr"), per Suneel. Distinct from
+// the TABLE cells (compact ledgerMoney, no "Rs.") and from OTHER off-table
+// figures such as "Deposits Held" / the deposit breakdown, which stay on the
+// usual formatMoney "Rs. 25,300.00" form.
+function ledgerRs(value: number | null | undefined): string {
+  const n = Number(value);
+  const safe = value == null || Number.isNaN(n) ? 0 : n;
+  const rounded = Math.round(safe * 100) / 100;
+  const grouped = rounded.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return `Rs. ${grouped}`;
+}
+
+// Date column: DD/MM/YY (8 chars, e.g. "14/08/26"). Deliberately 2-digit year
+// — a customer-facing, width-constrained display choice that diverges from the
+// app-wide dd/MM/yyyy standard (the "Period:" sub-header still uses the full
+// year via formatDate). TZ-safe: a bare YYYY-MM-DD string is parsed directly,
+// never through new Date(str), so it can't roll a day across the UTC/IST
+// boundary — same rule as pdfLayoutUtils.ddmmyyyy.
+function ledgerDate(d: Date | string | null | undefined): string {
+  if (!d) return '—';
+  let y: number, m: number, day: number;
+  if (typeof d === 'string') {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+    if (iso) { y = Number(iso[1]); m = Number(iso[2]); day = Number(iso[3]); }
+    else {
+      const dt = new Date(d);
+      if (Number.isNaN(dt.getTime())) return '—';
+      y = dt.getFullYear(); m = dt.getMonth() + 1; day = dt.getDate();
+    }
+  } else {
+    if (Number.isNaN(d.getTime())) return '—';
+    y = d.getFullYear(); m = d.getMonth() + 1; day = d.getDate();
+  }
+  return `${String(day).padStart(2, '0')}/${String(m).padStart(2, '0')}/${String(y).slice(-2)}`;
 }
 
 // Truncate text so it always fits its cell width — pdfkit's default
@@ -98,44 +152,43 @@ function fitCell(s: string, maxChars: number): string {
 // Indexed to match the COLS array order — rebalanced alongside the width
 // change above so text no longer ellipsises at typical Indian scale.
 const COL_CHAR_CAP: number[] = [
-  8,  // Date       — v11: "31/12/26" (8) via formatDateCompact
-  11, // Type       — "Adjustment" (10) fits; Q3 "Empties" (7) fits.
-  18, // Narration  — 2026-07-31 v5: 20→18 alongside col width 108→100.
-      //              "Empties: 50× 19 KG" (18) exactly fits;
-      //              deposit rows already run short ("2 × 19 KG @ Rs. 195…"
-      //              → 20 chars → ellipsises 2 chars, acceptable).
-  4,  // Del Full   — 0-999 (renamed from "Del F" in v10 Change N)
-  17, // Amount     — v11: 82pt col — holds "Rs. 9,99,999.00" (15) bold on
-      //              Total row without wrap; ceiling "Rs. 99,99,999.00" (16).
-  4,  // Coll Emp   — 0-999 (renamed from "Emp C" in v10 Change N)
-  4,  // Pend E     — 0-999
-  16, // Emp Cost   — same as Amount
-  15, // Total Amt  — v10: 76pt col holds "Rs. 99,99,999.00" (16) with 1 char
-      //              trim; crore-scale cumulative running total.
-  13, // Received   — v10: 62pt col; "Rs. 12,852.00" (13) fits.
-  16, // Due Amt    — matches Total Amt
-  15, // Overdue    — "Rs. 9,99,999.00"
+  8,  // Date          — "14/08/26" (8) via ledgerDate
+  12, // Type          — "47.5 metal" (10); ceiling 12 chars
+  38, // Narration     — 190pt col ~ 38 chars; long narrations no longer ellipsise
+  3,  // Del Full      — 0-999
+  10, // Amount        — compact "9999999.99" (10) ceiling; typical 4-6 chars
+  3,  // Coll Emp      — 0-999
+  3,  // Pend E        — 0-999
+  10, // Pend Emp Cost — compact money ceiling (10)
+  12, // Total Amt     — cumulative; growable 62pt col holds >1cr "12345678.99" (11)
+  10, // Received      — compact money ceiling (10)
+  12, // Due Amt       — cumulative; matches Total Amt
+  12, // Overdue       — cumulative; matches Total Amt
 ];
+
+// 2026-08-14 — header height fits TWO caption lines so narrow columns whose
+// labels can't fit on one line ("Del Full", "Coll Emp", "Pend Emp Cost") wrap
+// cleanly instead of ellipsising or colliding with row 1. Wide-enough labels
+// still render on a single line (pdfkit only wraps when the text exceeds the
+// column width). ellipsis:true is retained as a safety net for a single word
+// longer than its column.
+const HEADER_HEIGHT = 27;
 
 function drawTableHeader(doc: PDFKit.PDFDocument, y: number): number {
   let x = MARGIN.left;
-  doc.rect(MARGIN.left, y, TABLE_WIDTH, ROW_HEIGHT + 2).fill(THEME.PRIMARY);
+  doc.rect(MARGIN.left, y, TABLE_WIDTH, HEADER_HEIGHT).fill(THEME.PRIMARY);
   doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(TYPO.CAPTION);
   for (const col of COLS) {
-    // lineBreak:false + ellipsis:true forces the header onto ONE line even
-    // if a bold label like "Emp C" or "Pend E" would overflow the column
-    // width (which pdfkit otherwise wraps onto row 2 and pushes data rows
-    // down). Column widths are already picked wide enough for the labels.
     doc.text(col.label, x + 3, y + 4, {
       width: col.width - 6,
       align: col.align,
-      lineBreak: false,
+      lineBreak: true,
       ellipsis: true,
     });
     x += col.width;
   }
   doc.fillColor(THEME.TEXT);
-  return ROW_HEIGHT + 2;
+  return HEADER_HEIGHT;
 }
 
 /**
@@ -178,6 +231,9 @@ function drawPeriodSummary(
   const tileCount = showOpening ? 5 : 4;
   const tileW = Math.floor((s.tableWidth - GAP * (tileCount - 1)) / tileCount);
 
+  // Period-summary tiles sit ABOVE the entries table, so per Suneel (2026-08-14)
+  // they use the usual "Rs. 25,300.00" formatMoney form, not the table's
+  // compact ledgerMoney.
   const tiles: Array<{ label: string; value: string; fill: string; textColor: string }> = [];
   if (showOpening) {
     tiles.push({
@@ -363,16 +419,13 @@ export async function generateCustomerLedgerPdf(
   const title = 'Customer Statement';
   doc.text(title, rightEdge - 250, y, { width: 250, align: 'right' });
 
-  // Change M (2026-07-31 v9): scan-to-pay UPI QR — centered between
-  // the distributor block (left, ~400pt wide) and the "Customer
-  // Statement" title (right, 250pt from rightEdge). Only renders when
-  // upiId is configured — legacy statements without UPI keep the
-  // original two-column header untouched.
+  // Change M (2026-07-31 v9; centered on page 2026-08-14): scan-to-pay UPI QR,
+  // centered on the PAGE (between the left letterhead and the right title).
+  // Only renders when upiId is configured — legacy statements without UPI keep
+  // the original two-column header untouched.
   if (upiQrPng) {
     const qrSize = 70;
-    const availableStartX = MARGIN.left + 400;
-    const availableEndX = rightEdge - 250;
-    const qrX = availableStartX + Math.max(0, (availableEndX - availableStartX - qrSize) / 2);
+    const qrX = (PAGE_WIDTH - qrSize) / 2;
     doc.image(upiQrPng, qrX, y, { fit: [qrSize, qrSize] });
     doc.font('Helvetica').fontSize(TYPO.CAPTION - 1).fillColor(THEME.MUTED);
     doc.text('Scan to pay', qrX - 10, y + qrSize + 2, {
@@ -501,13 +554,13 @@ export async function generateCustomerLedgerPdf(
       '',
       `Page ${pageNum} subtotal`,
       pageDelivered ? num(pageDelivered) : '',
-      pageAmount ? formatMoney(pageAmount) : '',
+      pageAmount ? ledgerMoney(pageAmount) : '',
       pageCollected ? num(pageCollected) : '',
       '',
-      pageEmptyCost ? formatMoney(pageEmptyCost) : '',
-      formatMoney(lastTotalAmount),
-      pageReceived ? formatMoney(pageReceived) : '',
-      formatMoney(lastDueAmount),
+      pageEmptyCost ? ledgerMoney(pageEmptyCost) : '',
+      ledgerMoney(lastTotalAmount),
+      pageReceived ? ledgerMoney(pageReceived) : '',
+      ledgerMoney(lastDueAmount),
       '',
     ];
     // Light divider above the subtotal so it's clearly bounded.
@@ -634,18 +687,18 @@ export async function generateCustomerLedgerPdf(
       // carrying alongside the empties count. Blank when 0 (money-only
       // OB row or unpriced type).
       // v10 (Change N): "-" fallback instead of empty string.
-      const empCost = (row.emptyCylsCost || 0) > 0 ? formatMoney(row.emptyCylsCost) : '-';
+      const empCost = (row.emptyCylsCost || 0) > 0 ? ledgerMoney(row.emptyCylsCost) : '-';
       const pendEDash = pendE || '-';
       cells = [
-        formatDateCompact(row.orderDate),
+        ledgerDate(row.orderDate),
         typeLabel(row),
         narration,
         '-', '-', '-',
         pendEDash,
         empCost,
-        formatMoney(row.totalAmount),
+        ledgerMoney(row.totalAmount),
         '-',
-        formatMoney(row.dueAmount),
+        ledgerMoney(row.dueAmount),
         '-',
       ];
       y += drawRow(doc, y, cells, { bold: true });
@@ -658,16 +711,16 @@ export async function generateCustomerLedgerPdf(
       continue;
     } else if (row.kind === 'payment' || row.kind === 'credit_note') {
       cells = [
-        formatDateCompact(row.orderDate),
+        ledgerDate(row.orderDate),
         typeLabel(row),
         narration,
         // v10 (Change N): "-" in every non-applicable cell for
         // payment/credit_note rows so no cell reads as accidentally
         // blank (was: mix of "-" and empty strings).
         '-', '-', '-', '-', '-',
-        formatMoney(row.totalAmount),
-        formatMoney(row.receivedAmount),
-        formatMoney(row.dueAmount),
+        ledgerMoney(row.totalAmount),
+        ledgerMoney(row.receivedAmount),
+        ledgerMoney(row.dueAmount),
         '-',
       ];
     } else if (row.kind === 'empties_return') {
@@ -688,16 +741,16 @@ export async function generateCustomerLedgerPdf(
       // populates the Emp Cost cell (was hardcoded '-' before).
       if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
       cells = [
-        formatDateCompact(row.orderDate),
+        ledgerDate(row.orderDate),
         typeLabel(row),
         narration,
         '-', '-',
         row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-',
         row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-',
-        (row.emptyCylsCost ?? 0) > 0 ? formatMoney(row.emptyCylsCost) : '-',
-        formatMoney(row.totalAmount),
+        (row.emptyCylsCost ?? 0) > 0 ? ledgerMoney(row.emptyCylsCost) : '-',
+        ledgerMoney(row.totalAmount),
         '-',
-        formatMoney(row.dueAmount),
+        ledgerMoney(row.dueAmount),
         '-',
       ];
     } else if (row.kind === 'defective_collected') {
@@ -722,14 +775,14 @@ export async function generateCustomerLedgerPdf(
       // reflects "fulls that stayed with customer this period".
       if (defQty > 0) totalDelivered -= defQty;
       cells = [
-        formatDateCompact(row.orderDate),
+        ledgerDate(row.orderDate),
         typeLabel(row),
         narration,
         defQty > 0 ? `-${defQty}` : '-',
         '-', '-', '-', '-',
-        formatMoney(row.totalAmount),
+        ledgerMoney(row.totalAmount),
         '-',
-        formatMoney(row.dueAmount),
+        ledgerMoney(row.dueAmount),
         '-',
       ];
     } else {
@@ -751,7 +804,7 @@ export async function generateCustomerLedgerPdf(
         totalCollected += row.emptyCylsCollected;
       }
       cells = [
-        formatDateCompact(row.orderDate),
+        ledgerDate(row.orderDate),
         typeLabel(row),
         narration,
         // 2026-07-31 v10 (Change N): show "-" instead of empty string
@@ -759,14 +812,14 @@ export async function generateCustomerLedgerPdf(
         // visually populated so no reader misreads a blank as "not
         // applicable to this row".
         row.fullCylsDelivered ? num(row.fullCylsDelivered) : '-',
-        formatMoney(row.amount),
+        ledgerMoney(row.amount),
         row.emptyCylsCollected ? num(row.emptyCylsCollected) : '-',
         row.pendingEmptyCyls ? num(row.pendingEmptyCyls) : '-',
-        row.emptyCylsCost ? formatMoney(row.emptyCylsCost) : '-',
-        formatMoney(row.totalAmount),
-        formatMoney(row.receivedAmount),
-        formatMoney(row.dueAmount),
-        formatMoney(row.overDueAmount),
+        row.emptyCylsCost ? ledgerMoney(row.emptyCylsCost) : '-',
+        ledgerMoney(row.totalAmount),
+        ledgerMoney(row.receivedAmount),
+        ledgerMoney(row.dueAmount),
+        ledgerMoney(row.overDueAmount),
       ];
     }
     // 2026-07-23 — cancelled-row visual treatment. Detect via the
@@ -817,10 +870,10 @@ export async function generateCustomerLedgerPdf(
   const s = ledger.summary;
   const summaryCells = [
     'Total', '', '',
-    num(totalDelivered), formatMoney(s.totalAmount),
+    num(totalDelivered), ledgerMoney(s.totalAmount),
     num(totalCollected), num(Math.max(0, totalOpeningPending + totalDelivered - totalCollected)),
-    formatMoney(s.emptyCylsCost), formatMoney(s.totalAmount),
-    formatMoney(s.receivedAmount), formatMoney(s.dueAmount), formatMoney(s.overdueAmount),
+    ledgerMoney(s.emptyCylsCost), ledgerMoney(s.totalAmount),
+    ledgerMoney(s.receivedAmount), ledgerMoney(s.dueAmount), ledgerMoney(s.overdueAmount),
   ];
   y += drawRow(doc, y + 1, summaryCells, { bold: true });
 
@@ -835,7 +888,7 @@ export async function generateCustomerLedgerPdf(
   // Right — Closing Balance (unchanged position).
   doc.font('Helvetica-Bold').fontSize(TYPO.H2).fillColor(THEME.PRIMARY);
   doc.text(
-    `Closing Balance: ${formatMoney(s.dueAmount)} Dr`,
+    `Closing Balance: ${ledgerRs(s.dueAmount)} Dr`,
     MARGIN.left + TABLE_WIDTH - 250,
     summaryRowY,
     { width: 250, align: 'right' },
@@ -914,49 +967,41 @@ export async function generateCustomerLedgerPdf(
 //     DelF 26 | Amount 62 | EmpC 30 | PendE 30 | EmpCost 62 |
 //     TotalAmt 76 | Received 62 | DueAmt 70 | Overdue 70  = 762pt
 
+// 2026-08-14 layout: same compact money (ledgerMoney) + DD/MM/YY (ledgerDate)
+// as the individual table. Property (member name) keeps 70pt; the freed money
+// space goes to Narration (150pt here vs 220 individual — the Property column
+// is the difference). Total Amt / Due Amt / Overdue stay growable at 62pt for
+// >1-crore cumulative balances. Sum stays 762pt (enforced below).
 const GROUP_COLS: Col[] = [
-  // v11: Date 64→44 (compact "16/7/26"); 20pt donated to Amount (62→82).
   { label: 'Date', width: 44, align: 'left' },
-  { label: 'Property', width: 76, align: 'left' },
-  { label: 'Type', width: 44, align: 'left' },
-  // 2026-07-31 v5: Narration 78→74, Property 86→82 → 8pt donated to
-  // Emp Cost (62→70) which was renamed "Pend Emp Cost". Group PDF
-  // total width stays 762pt.
-  //
-  // 2026-07-31 v10 (Change N): Del F → "Del Full" (26→38), Emp C →
-  // "Coll Emp" (30→40). Borrowed 6pt from Property, 2pt from Type,
-  // 6pt from Narration, 6pt from Received, 2pt from Total Amt.
-  { label: 'Narration', width: 68, align: 'left' },
-  { label: 'Del Full', width: 38, align: 'right' },
-  { label: 'Amount', width: 82, align: 'right' },
-  { label: 'Coll Emp', width: 40, align: 'right' },
-  { label: 'Pend E', width: 30, align: 'right' },
-  { label: 'Pend Emp Cost', width: 70, align: 'right' },
-  { label: 'Total Amt', width: 74, align: 'right' },
-  { label: 'Received', width: 56, align: 'right' },
-  { label: 'Due Amt', width: 70, align: 'right' },
-  { label: 'Overdue', width: 70, align: 'right' },
+  { label: 'Property', width: 70, align: 'left' },
+  { label: 'Type', width: 62, align: 'left' },
+  { label: 'Narration', width: 116, align: 'left' },
+  { label: 'Delivered Fulls', width: 40, align: 'right' },
+  { label: 'Amount', width: 54, align: 'right' },
+  { label: 'Collected Empties', width: 40, align: 'right' },
+  { label: 'Pending Empties', width: 38, align: 'right' },
+  { label: 'Pending Empties Cost', width: 58, align: 'right' },
+  { label: 'Total Amount', width: 62, align: 'right' },
+  { label: 'Received', width: 54, align: 'right' },
+  { label: 'Due Amount', width: 62, align: 'right' },
+  { label: 'Overdue', width: 62, align: 'right' },
 ];
 const GROUP_TABLE_WIDTH = GROUP_COLS.reduce((s, c) => s + c.width, 0);
-// Per-column character caps. Property (86pt) needs the widest cap —
-// hotel names like "Royal Kitchen & Caterers" (25 chars) should fit,
-// longer ones ellipsise. Amount/Received caps drop slightly from the
-// individual PDF (14→13) — the crore-scale ceiling still fits, only
-// the pathological "Rs. 99,99,999.00" (16) truncates by one char.
 const GROUP_COL_CHAR_CAP: number[] = [
-  8,  // Date         — v11: "31/12/26" compact
-  14, // Property     — v10: 82→76 to donate to Del Full / Coll Emp
-  8,  // Type         — v10: was 9; 44pt col still fits "Empties"/"Payment"
-  12, // Narration    — v10: 74→68 alongside col shrink
-  4,  // Del Full     — 0-999 (renamed v10)
-  17, // Amount       — v11: 82pt col fits Total-row bold
-  4,  // Coll Emp     — 0-999 (renamed v10)
-  4,  // Pend E
-  12, // Emp Cost
-  13, // Total Amt
-  11, // Received     — v10: 62→56 to donate; "Rs. 9,999.00" (11) fits
-  13, // Due Amt
-  13, // Overdue
+  8,  // Date                 — "14/08/26" via ledgerDate
+  14, // Property             — member/hotel name; longer ellipsise
+  12, // Type                 — "47.5 metal" (10)
+  24, // Narration            — 120pt col ~ 24 chars
+  3,  // Delivered Fulls      — 0-999
+  10, // Amount               — compact "9999999.99" (10)
+  3,  // Collected Empties    — 0-999
+  3,  // Pending Empties      — 0-999
+  10, // Pending Empties Cost — compact money (10)
+  12, // Total Amount         — cumulative; growable, >1cr fits
+  10, // Received             — compact money (10)
+  12, // Due Amount           — cumulative; growable
+  12, // Overdue              — cumulative; growable
 ];
 
 // Sanity check — 762pt landscape budget MUST be respected. If a future
@@ -1084,19 +1129,23 @@ export async function generateGroupLedgerPdf(
   // ── Table header ──
   const drawGroupHeader = (yy: number): number => {
     let x = MARGIN.left;
-    doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, ROW_HEIGHT + 2).fill(THEME.PRIMARY);
+    // 2026-08-14 — taller header (HEADER_HEIGHT) + lineBreak:true so narrow
+    // labels ("Del Full", "Coll Emp", "Pend Emp Cost") wrap to 2 lines instead
+    // of ellipsising; wide-enough labels stay single-line. Mirrors
+    // drawTableHeader for the individual PDF.
+    doc.rect(MARGIN.left, yy, GROUP_TABLE_WIDTH, HEADER_HEIGHT).fill(THEME.PRIMARY);
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(TYPO.CAPTION);
     for (const c of GROUP_COLS) {
       doc.text(c.label, x + 3, yy + 4, {
         width: c.width - 6,
         align: c.align,
-        lineBreak: false,
+        lineBreak: true,
         ellipsis: true,
       });
       x += c.width;
     }
     doc.fillColor(THEME.TEXT);
-    return ROW_HEIGHT + 2;
+    return HEADER_HEIGHT;
   };
 
   const drawGroupRow = (
@@ -1213,16 +1262,16 @@ export async function generateGroupLedgerPdf(
       // 2026-07-21 — Emp Cost carries per-type OB empty liability; see
       // the identical block on the individual PDF above.
       // v10 (Change N): "-" fallback instead of empty string.
-      const empCost = (row.emptyCylsCost || 0) > 0 ? formatMoney(row.emptyCylsCost) : '-';
+      const empCost = (row.emptyCylsCost || 0) > 0 ? ledgerMoney(row.emptyCylsCost) : '-';
       cells = [
-        formatDateCompact(new Date(row.orderDate)),
+        ledgerDate(new Date(row.orderDate)),
         property, type, narration,
         '-', '-', '-',
         pendE,
         empCost,
-        formatMoney(row.totalAmount),
+        ledgerMoney(row.totalAmount),
         '-',
-        formatMoney(row.dueAmount),
+        ledgerMoney(row.dueAmount),
         '-',
       ];
       y += drawGroupRow(y, cells, { bold: true });
@@ -1234,12 +1283,12 @@ export async function generateGroupLedgerPdf(
       continue;
     } else if (row.kind === 'payment' || row.kind === 'credit_note') {
       cells = [
-        formatDateCompact(new Date(row.orderDate)),
+        ledgerDate(new Date(row.orderDate)),
         property, type, narration,
         '-', '-', '-', '-', '-',
-        formatMoney(row.totalAmount),
-        formatMoney(row.receivedAmount),
-        formatMoney(row.dueAmount),
+        ledgerMoney(row.totalAmount),
+        ledgerMoney(row.receivedAmount),
+        ledgerMoney(row.dueAmount),
         '',
       ];
     } else if (row.kind === 'empties_return') {
@@ -1251,15 +1300,15 @@ export async function generateGroupLedgerPdf(
       // individual PDF empties_return branch.
       if (row.emptyCylsCollected > 0) totalCollected += row.emptyCylsCollected;
       cells = [
-        formatDateCompact(new Date(row.orderDate)),
+        ledgerDate(new Date(row.orderDate)),
         property, type, narration,
         '-', '-',
         row.emptyCylsCollected > 0 ? num(row.emptyCylsCollected) : '-',
         row.pendingEmptyCyls > 0 ? num(row.pendingEmptyCyls) : '-',
-        (row.emptyCylsCost ?? 0) > 0 ? formatMoney(row.emptyCylsCost) : '-',
-        formatMoney(row.totalAmount),
+        (row.emptyCylsCost ?? 0) > 0 ? ledgerMoney(row.emptyCylsCost) : '-',
+        ledgerMoney(row.totalAmount),
         '-',
-        formatMoney(row.dueAmount),
+        ledgerMoney(row.dueAmount),
         '-',
       ];
     } else if (row.kind === 'defective_collected') {
@@ -1277,13 +1326,13 @@ export async function generateGroupLedgerPdf(
       // reflects "fulls that stayed with customer this period".
       if (defQty > 0) totalDelivered -= defQty;
       cells = [
-        formatDateCompact(new Date(row.orderDate)),
+        ledgerDate(new Date(row.orderDate)),
         property, type, narration,
         defQty > 0 ? `-${defQty}` : '-',
         '-', '-', '-', '-',
-        formatMoney(row.totalAmount),
+        ledgerMoney(row.totalAmount),
         '-',
-        formatMoney(row.dueAmount),
+        ledgerMoney(row.dueAmount),
         '-',
       ];
     } else {
@@ -1295,20 +1344,20 @@ export async function generateGroupLedgerPdf(
         totalCollected += row.emptyCylsCollected;
       }
       cells = [
-        formatDateCompact(new Date(row.orderDate)),
+        ledgerDate(new Date(row.orderDate)),
         property, type, narration,
         // v10 (Change N): "-" fallback everywhere (was "0" for delivered
         // and always-numeric for collected/pending). "0" reads as
         // meaningful zero; "-" reads as "not applicable to this row".
         row.fullCylsDelivered ? num(row.fullCylsDelivered) : '-',
-        formatMoney(row.amount),
+        ledgerMoney(row.amount),
         row.emptyCylsCollected ? num(row.emptyCylsCollected) : '-',
         row.pendingEmptyCyls ? num(row.pendingEmptyCyls) : '-',
-        row.emptyCylsCost > 0 ? formatMoney(row.emptyCylsCost) : '-',
-        formatMoney(row.totalAmount),
-        formatMoney(row.receivedAmount),
-        formatMoney(row.dueAmount),
-        formatMoney(row.overDueAmount ?? 0),
+        row.emptyCylsCost > 0 ? ledgerMoney(row.emptyCylsCost) : '-',
+        ledgerMoney(row.totalAmount),
+        ledgerMoney(row.receivedAmount),
+        ledgerMoney(row.dueAmount),
+        ledgerMoney(row.overDueAmount ?? 0),
       ];
     }
     // 2026-07-23 — cancelled-row detection (same "Cancelled:" prefix).
@@ -1329,11 +1378,11 @@ export async function generateGroupLedgerPdf(
   const t = ledger.totals;
   const totalsCells = [
     'Total', '', '', '',
-    num(totalDelivered), formatMoney(t.totalDebited),
+    num(totalDelivered), ledgerMoney(t.totalDebited),
     num(totalCollected), num(Math.max(0, totalOpeningPending + totalDelivered - totalCollected)),
-    '', formatMoney(t.totalDebited),
-    formatMoney(t.totalReceived), formatMoney(t.netOutstanding),
-    formatMoney(groupOverdue),
+    '', ledgerMoney(t.totalDebited),
+    ledgerMoney(t.totalReceived), ledgerMoney(t.netOutstanding),
+    ledgerMoney(groupOverdue),
   ];
   y += drawGroupRow(y + 1, totalsCells, { bold: true });
 
@@ -1341,7 +1390,7 @@ export async function generateGroupLedgerPdf(
   y += 4;
   doc.font('Helvetica-Bold').fontSize(TYPO.H2).fillColor(THEME.PRIMARY);
   doc.text(
-    `Group Closing Balance: ${formatMoney(t.netOutstanding)} Dr`,
+    `Group Closing Balance: ${ledgerRs(t.netOutstanding)} Dr`,
     MARGIN.left + GROUP_TABLE_WIDTH - 300,
     y,
     { width: 300, align: 'right' },

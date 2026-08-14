@@ -90,9 +90,9 @@ describe('Ledger PDF consistency — Group column layout', () => {
       return m ? m[1] : '';
     });
     expect(labels).toEqual([
-      'Date', 'Property', 'Type', 'Narration', 'Del Full', 'Amount',
-      'Coll Emp', 'Pend E', 'Pend Emp Cost', 'Total Amt', 'Received',
-      'Due Amt', 'Overdue',
+      'Date', 'Property', 'Type', 'Narration', 'Delivered Fulls', 'Amount',
+      'Collected Empties', 'Pending Empties', 'Pending Empties Cost',
+      'Total Amount', 'Received', 'Due Amount', 'Overdue',
     ]);
   });
 
@@ -105,8 +105,9 @@ describe('Ledger PDF consistency — Group column layout', () => {
     const indLabels = (indMatch![1].match(/label:\s*['"]([^'"]+)['"]/g) ?? [])
       .map((s) => s.replace(/label:\s*['"]([^'"]+)['"]/, '$1'));
     expect(indLabels).toEqual([
-      'Date', 'Type', 'Narration', 'Del Full', 'Amount', 'Coll Emp',
-      'Pend E', 'Pend Emp Cost', 'Total Amt', 'Received', 'Due Amt', 'Overdue',
+      'Date', 'Type', 'Narration', 'Delivered Fulls', 'Amount',
+      'Collected Empties', 'Pending Empties', 'Pending Empties Cost',
+      'Total Amount', 'Received', 'Due Amount', 'Overdue',
     ]);
   });
 
