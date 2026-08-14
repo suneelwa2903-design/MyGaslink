@@ -191,15 +191,9 @@ const KPI_CARDS: (KpiCardConfig & KpiCardDest)[] = [
     iconBgDark: 'rgba(220, 38, 38, 0.15)',
     href: '/finance',
   },
-  {
-    key: 'inventoryAlerts',
-    label: 'Inventory Alerts',
-    icon: 'cube-outline',
-    color: ACCENT.orange,
-    iconBgLight: '#fffbeb',
-    iconBgDark: 'rgba(245, 158, 11, 0.15)',
-    href: '/inventory',
-  },
+  // Inventory Alerts card removed 2026-08-14 (Suneel) — 6 cards. Stock/
+  // threshold alerts still surface in the "Threshold Alerts" briefing section
+  // below and on the Godown screen.
 ];
 
 // Mini-Operator (2026-07-17): reduced KPI grid — Customers, Delivered,
