@@ -162,6 +162,67 @@ router.get('/export',
   }
 );
 
+// GET /api/invoices/credit-notes — every CN for the distributor, newest first.
+// Powers the finance Payments → Credit/Debit Notes flat list (per-invoice CNs
+// are served by /:id/credit-notes). MUST stay ABOVE router.get('/:id') or the
+// literal "credit-notes" segment is captured as an :id.
+router.get('/credit-notes',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const notes = await prisma.creditNote.findMany({
+        where: { invoice: { distributorId: req.user!.distributorId!, deletedAt: null } },
+        orderBy: { createdAt: 'desc' },
+        include: { invoice: { select: { invoiceNumber: true, customerId: true, customer: { select: { businessName: true, customerName: true } } } } },
+      });
+      const rows = notes.map((n) => ({
+        creditNoteId: n.id,
+        noteNumber: n.creditNoteNumber ?? n.invoice?.invoiceNumber ?? '—',
+        type: 'credit' as const,
+        customerId: n.invoice?.customerId ?? '',
+        customerName: n.invoice?.customer?.businessName || n.invoice?.customer?.customerName || '—',
+        amount: Number(n.totalAmount),
+        reason: n.reason,
+        status: String(n.status).replace(/_cn$/, ''),
+        createdAt: n.createdAt.toISOString(),
+      }));
+      return sendSuccess(res, rows);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  }
+);
+
+// GET /api/invoices/debit-notes — every DN for the distributor, newest first.
+router.get('/debit-notes',
+  requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),
+  async (req, res) => {
+    try {
+      const notes = await prisma.debitNote.findMany({
+        where: { invoice: { distributorId: req.user!.distributorId!, deletedAt: null } },
+        orderBy: { createdAt: 'desc' },
+        include: { invoice: { select: { invoiceNumber: true, customerId: true, customer: { select: { businessName: true, customerName: true } } } } },
+      });
+      const rows = notes.map((n) => ({
+        creditNoteId: n.id,
+        noteNumber: n.debitNoteNumber ?? n.invoice?.invoiceNumber ?? '—',
+        type: 'debit' as const,
+        customerId: n.invoice?.customerId ?? '',
+        customerName: n.invoice?.customer?.businessName || n.invoice?.customer?.customerName || '—',
+        amount: Number(n.totalAmount),
+        reason: n.reason,
+        status: String(n.status).replace(/_dn$/, ''),
+        createdAt: n.createdAt.toISOString(),
+      }));
+      return sendSuccess(res, rows);
+    } catch (err: unknown) {
+      const e = err as ServiceError;
+      return sendError(res, e.message, e.statusCode || 500);
+    }
+  }
+);
+
 // GET /api/invoices/:id
 router.get('/:id',
   requireRole('super_admin', 'distributor_admin', 'finance', 'inventory', 'mini_operator_admin'),

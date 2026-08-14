@@ -7,7 +7,7 @@ import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';
 import { api, getErrorMessage } from '../../src/lib/api';
-import { useTheme, formatINR } from '../../src/theme';
+import { useTheme, formatINR, formatDate } from '../../src/theme';
 import { Card, Badge, MetricCard, EmptyState, SelectField, SearchInput } from '../../src/components/ui';
 import type { Invoice } from '@gaslink/shared';
 import { invoiceStatusLabel, invoiceStatusVariant } from '@gaslink/shared';
@@ -75,11 +75,11 @@ export default function FinanceInvoicesScreen() {
           <View style={{ flexDirection: 'row', gap: 16, marginBottom: 8 }}>
             <View>
               <Text style={{ fontSize: 11, color: colors.textSecondary }}>Issue Date</Text>
-              <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }}>{inv.issueDate}</Text>
+              <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }}>{formatDate(inv.issueDate)}</Text>
             </View>
             <View>
               <Text style={{ fontSize: 11, color: colors.textSecondary }}>Due Date</Text>
-              <Text style={{ fontSize: 13, fontWeight: '500', color: daysOverdue > 0 ? '#ef4444' : colors.text }}>{inv.dueDate}</Text>
+              <Text style={{ fontSize: 13, fontWeight: '500', color: daysOverdue > 0 ? '#ef4444' : colors.text }}>{formatDate(inv.dueDate)}</Text>
             </View>
           </View>
 
@@ -323,11 +323,11 @@ function InvoiceDetailModal({
             <View style={{ flexDirection: 'row', gap: 24 }}>
               <View>
                 <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 2 }}>Issue Date</Text>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>{invoice.issueDate}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>{formatDate(invoice.issueDate)}</Text>
               </View>
               <View>
                 <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 2 }}>Due Date</Text>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>{invoice.dueDate}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>{formatDate(invoice.dueDate)}</Text>
               </View>
             </View>
 

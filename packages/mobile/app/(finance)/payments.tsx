@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, RefreshControl, TouchableOpacity,
   Modal, TextInput, Alert, KeyboardAvoidingView, Platform,
@@ -6,7 +6,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../../src/hooks/useApi';
-import { useTheme, formatINR } from '../../src/theme';
+import { useTheme, formatINR, formatDate } from '../../src/theme';
 import { Card, Badge, MetricCard, Button, EmptyState, SearchInput } from '../../src/components/ui';
 import type { Payment, Customer } from '@gaslink/shared';
 import { localTodayISO } from '@gaslink/shared';
@@ -71,11 +71,27 @@ export default function FinancePaymentsScreen() {
   );
   const payments: Payment[] = paymentsResponse?.payments ?? [];
 
-  const { data: creditNotes, isLoading: notesLoading, refetch: refetchNotes } = useApiQuery<CreditNote[]>(
-    ['credit-notes'],
-    '/credit-notes',
-    {},
+  // CN and DN are separate models server-side — fetch both distributor-wide
+  // lists and merge (newest first) so the finance flat list shows a note the
+  // moment it's created/approved (the old single '/credit-notes' 404'd).
+  const cnQuery = useApiQuery<CreditNote[]>(
+    ['credit-notes', 'credit'],
+    '/invoices/credit-notes',
+    undefined,
     { enabled: screenTab === 'credit_notes' },
+  );
+  const dnQuery = useApiQuery<CreditNote[]>(
+    ['credit-notes', 'debit'],
+    '/invoices/debit-notes',
+    undefined,
+    { enabled: screenTab === 'credit_notes' },
+  );
+  const notesLoading = cnQuery.isLoading || dnQuery.isLoading;
+  const refetchNotes = () => { cnQuery.refetch(); dnQuery.refetch(); };
+  const creditNotes: CreditNote[] = useMemo(
+    () => [...(cnQuery.data ?? []), ...(dnQuery.data ?? [])]
+      .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '')),
+    [cnQuery.data, dnQuery.data],
   );
 
   const totalCollected = (payments ?? []).reduce((s, p) => s + (p.amount ?? 0), 0);
@@ -88,10 +104,14 @@ export default function FinancePaymentsScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: colors.bg }}>
-      {/* Screen Tabs */}
+      {/* Screen Tabs — flexGrow:0 pins this horizontal tab strip to its own
+          height. Without it, a horizontal ScrollView in a flex column expands
+          vertically to fill free space, pushing the tab content down and
+          leaving a big gap above it (worst on the short CN/DN + Deposits tabs). */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0 }}
         contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8, gap: 8 }}
       >
         {screenTabs.map((t) => (
@@ -256,7 +276,7 @@ export default function FinancePaymentsScreen() {
                       {note.type === 'credit' ? '-' : '+'}{formatINR(note.amount)}
                     </Text>
                   </View>
-                  <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>{note.createdAt}</Text>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>{formatDate(note.createdAt)}</Text>
                 </Card>
               ))
             )}
