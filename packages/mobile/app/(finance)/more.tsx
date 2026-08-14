@@ -45,12 +45,7 @@ export default function FinanceMoreScreen() {
       subtitle: 'View order list and status (read-only)',
       onPress: () => router.push('/(finance)/orders'),
     },
-    {
-      icon: 'people-outline',
-      label: 'Customers',
-      subtitle: 'Browse customer accounts, ledgers, invoices',
-      onPress: () => router.push('/(finance)/customers'),
-    },
+    // Customers moved to the bottom tab bar (2026-08-14).
     // 2026-06-15: finance-parity additions. Re-exports of admin's
     // inventory + fleet screens. Admin's canEdit gate hides write
     // buttons; finance sees them as read-only operational views.
@@ -66,12 +61,7 @@ export default function FinanceMoreScreen() {
       subtitle: 'Drivers, vehicles, and daily assignments',
       onPress: () => router.push('/(finance)/fleet'),
     },
-    {
-      icon: 'analytics-outline',
-      label: 'Reports',
-      subtitle: 'Sales, aging, GST, performance and more',
-      onPress: () => router.push('/(finance)/reports'),
-    },
+    // Reports moved to the bottom tab bar (2026-08-14).
     // WI-PENDING-PAYMENTS: pending payment approval queue. Re-exports
     // the admin canonical screen via (finance)/pending-payments.tsx.
     {
