@@ -1444,7 +1444,21 @@ export function processLedgerEntries(input: LedgerProcessingInput): CustomerLedg
     // Update pending-empties from any joined order items (BEFORE emit so
     // the emitted row shows the post-delivery pending count, matching the
     // legacy behaviour).
-    if (inv?.order?.items?.length) {
+    //
+    // 2026-08-14 — MUST be gated to `invoice_entry`. A delivery's physical
+    // cylinder movement is recorded exactly once, on the invoice_entry row.
+    // Other entry types (adjustment, credit_note, debit_note) legitimately
+    // carry the SAME invoiceId as a linkage, and inv.order.items is the
+    // shared order — so without this gate the pre-pass re-walked those items
+    // and double-counted delivered/collected. Live symptom: a cancelled
+    // walk-in (invoice_entry + paired 'Cancelled:' adjustment, both pointing
+    // at the same invoice) counted its 5 cylinders TWICE → Total-row Pend E
+    // and Emp Cost were inflated (₹38,500 instead of ₹3,500 on the Taj
+    // Deccan Cafe statement, 2026-08-14). Money columns were never affected
+    // (this block only touches the physical/empties accumulators), so this
+    // is a display-integrity fix with zero balance impact. Guard test:
+    // customer-statement-cancelled-invoice.test.ts.
+    if (entry.entryType === 'invoice_entry' && inv?.order?.items?.length) {
       for (const it of inv.order.items) {
         const delivered = it.deliveredQuantity ?? it.quantity;
         const collected = it.emptiesCollected ?? 0;

@@ -295,8 +295,19 @@ export async function generateCustomerLedgerPdf(
   });
   if (!distributor) throw new Error('Distributor not found');
 
+  // 2026-08-14 — hide cancelled-order pairs on EVERY customer statement, not
+  // just mini-op. The original 2026-07-28 design kept them visible for regular
+  // distributors "so accountants can see the reversal", but in practice that
+  // (a) surfaced the double-count / fake-"Received" engine bug to customers and
+  // (b) confused customers who never placed the cancelled (wrong-customer)
+  // order. The audit trail now lives in the dedicated cancelled-orders report
+  // and the in-app operator ledger tab (which reads raw CustomerLedgerEntry
+  // rows and still shows every cancellation). The filter drops ONLY the
+  // invoice_entry for a cancelled invoice + its paired 'Cancelled:' adjustment;
+  // any real credit_note / payment row against that invoice still renders — so
+  // a cancellation that had a CN raised keeps its money trail visible.
   const ledger = await getCustomerLedger(distributorId, customerId, range, {
-    hideCancelledInvoices: distributor.accountType === 'mini_operator',
+    hideCancelledInvoices: true,
   });
 
   // Change M (2026-07-31 v9): scan-to-pay UPI QR — same intent format
@@ -980,9 +991,10 @@ export async function generateGroupLedgerPdf(
     select: {
       businessName: true, legalName: true, gstin: true,
       address: true, city: true, state: true, pincode: true, phone: true,
-      // 2026-07-28 — same mini-op-only cancelled-row suppression as the
-      // individual statement PDF above. See getGroupLedger's
-      // hideCancelledInvoices option in customerGroupPortalService.
+      // 2026-08-14 — cancelled-row suppression, now applied to EVERY account
+      // type on the consolidated group statement (was mini-op-only). Matches
+      // the individual statement PDF above; see that call site's comment for
+      // the full rationale. accountType retained for other letterhead logic.
       accountType: true,
     },
   });
@@ -997,7 +1009,7 @@ export async function generateGroupLedgerPdf(
       customerId: range?.customerId,
     },
     displayNames,
-    { hideCancelledInvoices: distributor.accountType === 'mini_operator' },
+    { hideCancelledInvoices: true },
   );
 
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: MARGIN.left });

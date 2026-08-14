@@ -246,17 +246,27 @@ describe('Phase A — mobile source guards', () => {
     expect(financeCustomerDetail).toMatch(/export\s*\{\s*default\s*\}\s*from\s*['"]\.\.\/\(admin\)\/customer-detail['"]/);
   });
 
-  it('finance More tab wires Orders / Customers / Reports menu items', () => {
+  it('finance More tab wires Orders (Customers + Reports promoted to the bottom scroller 2026-08-14)', () => {
     expect(financeMore).toMatch(/router\.push\(['"]\/\(finance\)\/orders['"]\)/);
-    expect(financeMore).toMatch(/router\.push\(['"]\/\(finance\)\/customers['"]\)/);
-    expect(financeMore).toMatch(/router\.push\(['"]\/\(finance\)\/reports['"]\)/);
+    // Customers + Reports are now first-class bottom-scroller tabs (see
+    // _layout TAB_CONFIG), so they were removed from the More hub.
+    expect(financeMore).not.toMatch(/router\.push\(['"]\/\(finance\)\/customers['"]\)/);
+    expect(financeMore).not.toMatch(/router\.push\(['"]\/\(finance\)\/reports['"]\)/);
   });
 
-  it('finance _layout mounts the new routes with href: null so the bottom bar stays at 5', () => {
-    // The mounted screen names; href:null keeps each off the tab bar.
-    expect(financeLayout).toMatch(/name:\s*['"]orders['"][^}]*href:\s*null/);
-    expect(financeLayout).toMatch(/name:\s*['"]customers['"][^}]*href:\s*null/);
-    expect(financeLayout).toMatch(/name:\s*['"]reports['"][^}]*href:\s*null/);
-    expect(financeLayout).toMatch(/name:\s*['"]customer-detail['"][^}]*href:\s*null/);
+  it('finance _layout keeps orders + customer-detail hidden, customers + reports visible on the scroller', () => {
+    // Each TAB_CONFIG entry is a single-line object literal (no nested
+    // braces), so a {…}-bounded match isolates one entry by name.
+    const entry = (name: string) =>
+      financeLayout.match(new RegExp(`\\{[^{}]*name:\\s*['"]${name}['"][^{}]*\\}`))?.[0] ?? '';
+    // Still hidden (reachable via More / stack push): href:null is applied by
+    // the render map when hidden:true.
+    expect(entry('orders')).toMatch(/hidden:\s*true/);
+    expect(entry('customer-detail')).toMatch(/hidden:\s*true/);
+    // Promoted to the bottom scroller — present and NOT hidden.
+    expect(entry('customers')).toContain("name: 'customers'");
+    expect(entry('customers')).not.toMatch(/hidden:\s*true/);
+    expect(entry('reports')).toContain("name: 'reports'");
+    expect(entry('reports')).not.toMatch(/hidden:\s*true/);
   });
 });
