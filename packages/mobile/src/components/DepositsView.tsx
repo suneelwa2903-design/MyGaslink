@@ -28,7 +28,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery, useApiMutation } from '../hooks/useApi';
-import { useTheme, formatINR } from '../theme';
+import { useTheme, formatINR, formatDate } from '../theme';
 import { Card, MetricCard, Badge, Button, EmptyState, SearchInput, DateInput, SelectField } from './ui';
 import { localTodayISO } from '@gaslink/shared';
 
@@ -249,7 +249,7 @@ export function DepositsView() {
                       {r.customerName}
                     </Text>
                     <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
-                      {r.entryDate} · {r.cylinderTypeName ?? '—'} × {r.qty}
+                      {formatDate(r.entryDate)} · {r.cylinderTypeName ?? '—'} × {r.qty}
                     </Text>
                   </View>
                   <Text style={{

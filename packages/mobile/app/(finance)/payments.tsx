@@ -193,7 +193,7 @@ export default function FinancePaymentsScreen() {
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                           <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }}>{payment.customerName}</Text>
-                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>{payment.transactionDate}</Text>
+                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>{formatDate(payment.transactionDate)}</Text>
                         </View>
                         <Text style={{ fontWeight: '800', fontSize: 18, color: accent.green }}>{formatINR(payment.amount)}</Text>
                       </View>
