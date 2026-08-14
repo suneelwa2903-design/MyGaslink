@@ -50,6 +50,12 @@ export default function DriverInventoryScreen() {
   const { data: cancelled } = useApiQuery<CancelledItem[]>(
     ['driver-cancelled-stock'],
     '/drivers/me/cancelled-stock',
+    undefined,
+    // Always refetch when the Vehicle Stock tab is (re)opened — belt-and-
+    // suspenders for the SSE `trip_updated` invalidation, so a reconcile that
+    // happened while the driver was off-screen/offline can't leave a returned
+    // cancelled order showing as "on vehicle".
+    { refetchOnMount: 'always' },
   );
 
   const totalFulls = stock.reduce((s, item) => s + (item.fullQuantity ?? 0), 0);

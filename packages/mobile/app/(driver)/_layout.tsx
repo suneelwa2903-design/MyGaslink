@@ -68,6 +68,11 @@ function DriverLayoutInner() {
           queryClient.invalidateQueries({ queryKey: ['driver-trip-stock'] });
           queryClient.invalidateQueries({ queryKey: ['driver-trip-ewbs'] });
           queryClient.invalidateQueries({ queryKey: ['driver-orders'] });
+          // A trip transition includes vehicle reconciliation, which flips the
+          // returned cancelled-stock events to `returned_to_depot`. Without
+          // this the driver's Vehicle Stock kept showing a prior trip's
+          // cancelled order as "on vehicle" across trips even after reconcile.
+          queryClient.invalidateQueries({ queryKey: ['driver-cancelled-stock'] });
           break;
         case 'connected':
           // Handshake — no UI action needed.
