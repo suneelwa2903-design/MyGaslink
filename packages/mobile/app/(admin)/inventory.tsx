@@ -467,6 +467,19 @@ function SummaryTab({
   const vehiclesList = useMemo(() => vehResp?.vehicles ?? [], [vehResp]);
   const driversList = useMemo(() => drvResp?.drivers ?? [], [drvResp]);
 
+  // Web parity (2026-08-16): on a single-supplier tenant, auto-attach the OMC
+  // to Godown incoming-fulls so the load also lands in Corp. Loads /
+  // purchase_entries — matching InventoryPage.IncomingFullsModal's auto-set.
+  // Without this, mobile Godown incoming was inventory-only and never showed
+  // up as a corporation load.
+  const { data: sourceDistResp } = useApiQuery<{ id: string; name: string }[]>(
+    ['source-distributors'], '/source-distributors',
+  );
+  const singleSupplier = useMemo(() => {
+    const list = sourceDistResp ?? [];
+    return list.length === 1 ? list[0] : null;
+  }, [sourceDistResp]);
+
   const adjustMutation = useApiMutation<
     unknown,
     {
@@ -806,7 +819,9 @@ function SummaryTab({
         vehicles={vehiclesList}
         drivers={driversList}
         defaultDate={selectedDate}
-        invalidateKeys={[['inventory', selectedDate]]}
+        invalidateKeys={[['inventory', selectedDate], ['source-distributors'], ['corp-loads']]}
+        sourceDistributorId={activeModal === 'incoming' && singleSupplier ? singleSupplier.id : undefined}
+        sourceName={activeModal === 'incoming' && singleSupplier ? singleSupplier.name : undefined}
       />
 
       {/* Defective Return — customer defective cylinder capture + auto CN. */}
