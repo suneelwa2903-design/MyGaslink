@@ -55,18 +55,28 @@ router.post('/',
   auditLog('create', 'provider_catalog_cylinder_type'),
   async (req, res) => {
     try {
-      // Case-insensitive global short-name check. The DB has a
-      // (providerCode, shortName) unique constraint, but the product rule
-      // is stricter: a shortName must be unique across the whole catalog
-      // regardless of provider, ignoring case ("19KG" == "19kg").
+      // 2026-08-15 — per-PROVIDER short-name check (was global). Each OMC has
+      // its own line of the same weight (IOCL 19 KG, HPCL 19 KG, BPCL 19 KG),
+      // so the same shortName MUST be allowed across different providers — the
+      // schema already keys uniqueness as (providerCode, shortName) and
+      // (providerCode, weight). The previous global check blocked adding a
+      // second provider's identical weight ("Cylinder type already exists in
+      // provider catalog"). We now only reject a duplicate within the SAME
+      // provider (case-insensitive); the (providerCode, weight) collision is
+      // backstopped by the P2002 catch below. Distributor-side import naming
+      // already disambiguates same-weight rows across providers (prefixes with
+      // providerCode on collision — see the import block further down).
       const existing = await prisma.providerCatalogCylinderType.findFirst({
-        where: { shortName: { equals: req.body.shortName, mode: 'insensitive' } },
+        where: {
+          providerCode: req.body.providerCode,
+          shortName: { equals: req.body.shortName, mode: 'insensitive' },
+        },
         select: { id: true, providerCode: true, shortName: true },
       });
       if (existing) {
         return sendError(
           res,
-          'Cylinder type already exists in provider catalog',
+          `${req.body.providerCode} already has a "${req.body.shortName}" cylinder type`,
           409,
           'CATALOG_DUPLICATE_SHORT_NAME',
         );
