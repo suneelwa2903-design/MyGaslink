@@ -35,7 +35,7 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApiQuery } from '../../src/hooks/useApi';

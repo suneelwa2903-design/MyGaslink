@@ -1358,7 +1358,7 @@ function InventoryThresholdsModal({ visible, onClose }: { visible: boolean; onCl
 function UserManagementModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   // 2026-07-28 (anti-pattern #25) — Edit User bottom-sheet Save button
   // clips under Samsung 3-button nav without insets padding.
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+   
   const insetsHook = useSafeAreaInsets();
   const theme = useMoreTheme();
   const [showCreate, setShowCreate] = useState(false);

@@ -158,7 +158,7 @@ async function cleanupMiniOpFixture(distributorId: string): Promise<void> {
     await prisma.user.deleteMany({ where: { distributorId, role: 'mini_operator_admin' } });
     await prisma.distributor.delete({ where: { id: distributorId } });
   } catch (err) {
-    // eslint-disable-next-line no-console
+     
     console.error('[mini-op cleanup]', (err as Error).message);
   }
 }

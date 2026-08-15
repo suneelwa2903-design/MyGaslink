@@ -154,7 +154,7 @@ export function PhotoCapture({ onCapture, onError, orderId }: PhotoCaptureProps)
       <View style={{ height: 300, borderRadius: 8, overflow: 'hidden', backgroundColor: '#000' }}>
         {/* Preview the captured shot before upload — driver can retake if blurry. */}
         {previewUri ? (
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
+           
           <ImagePreview uri={previewUri} />
         ) : null}
       </View>

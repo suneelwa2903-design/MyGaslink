@@ -13,7 +13,7 @@ import {
   TextInput,
   FlatList,
 } from 'react-native';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets as _useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';

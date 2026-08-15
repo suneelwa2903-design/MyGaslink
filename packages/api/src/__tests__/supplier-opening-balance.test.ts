@@ -62,7 +62,7 @@ async function cleanup(distributorId: string) {
     await prisma.user.deleteMany({ where: { distributorId } });
     await prisma.distributor.delete({ where: { id: distributorId } });
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.error('[supplier-ob cleanup]', (e as Error).message);
   }
 }

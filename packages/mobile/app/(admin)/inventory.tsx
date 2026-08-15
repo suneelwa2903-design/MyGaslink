@@ -285,7 +285,7 @@ export default function AdminInventoryScreen() {
   // ReportMismatchModal — the AdminInventoryScreen top-level scroll
   // doesn't need it directly, so this hook call is a defense-in-depth
   // no-op here that also satisfies the picker-guard grep.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   const _insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const isMiniOperator = user?.role === 'mini_operator_admin';
