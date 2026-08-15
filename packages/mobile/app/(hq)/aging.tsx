@@ -55,7 +55,7 @@ export default function HqAgingScreen() {
     '/customer-group-portal/aging',
   );
 
-  const rows = data?.rows ?? [];
+  const rows = useMemo(() => data?.rows ?? [], [data]);
   const totals = data?.totals;
 
   // Filter by active bucket + sort by bucket amount descending. When

@@ -203,9 +203,9 @@ export default function PurchasesScreen() {
     '/cylinder-types',
   );
 
-  const rawRows = data?.purchaseEntries ?? [];
-  const supplierRows = suppliers?.suppliers ?? [];
-  const cylinderTypes = cylinderTypesResp?.cylinderTypes ?? [];
+  const rawRows = useMemo(() => data?.purchaseEntries ?? [], [data]);
+  const supplierRows = useMemo(() => suppliers?.suppliers ?? [], [suppliers]);
+  const cylinderTypes = useMemo(() => cylinderTypesResp?.cylinderTypes ?? [], [cylinderTypesResp]);
   const bg = dark ? '#0f172a' : '#f8fafc';
   const cardBg = dark ? '#1e293b' : '#ffffff';
   const text = dark ? '#f1f5f9' : '#0f172a';

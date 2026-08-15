@@ -398,7 +398,7 @@ export default function AdminOrdersScreen() {
 
   // ─── Derived data ──────────────────────────────────────────────────────
 
-  const orders = ordersData?.orders ?? [];
+  const orders = useMemo(() => ordersData?.orders ?? [], [ordersData]);
   const customers = customersData?.customers ?? [];
   const drivers = driversData?.drivers ?? [];
   // STAGE-B: `vehicles` array dropped — the AssignDriver / BulkAssign
@@ -691,7 +691,7 @@ export default function AdminOrdersScreen() {
         </TouchableOpacity>
       );
     },
-    [expandedOrderId, selectedOrderIds, C, toggleExpand, toggleSelect, handleCancel],
+    [expandedOrderId, selectedOrderIds, C, toggleExpand, toggleSelect, handleCancel, isMiniOperator],
   );
 
   const keyExtractor = useCallback((item: Order) => item.orderId, []);

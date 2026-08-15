@@ -110,7 +110,8 @@ export function DepositInvoiceModal({
     },
   });
   const items = useFieldArray({ control, name: 'items' });
-  const watchedItems = useWatch({ control, name: 'items' }) ?? [];
+  const rawWatchedItems = useWatch({ control, name: 'items' });
+  const watchedItems = useMemo(() => rawWatchedItems ?? [], [rawWatchedItems]);
   const grandTotal = useMemo(
     () => (watchedItems ?? []).reduce((s, it) => s + Number(it?.unitPrice ?? 0) * Number(it?.fullsReceived ?? 0), 0),
     [watchedItems],

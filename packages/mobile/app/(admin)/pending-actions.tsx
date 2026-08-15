@@ -257,7 +257,7 @@ export default function AdminPendingActionsScreen() {
     queryParams,
   );
 
-  const actions = data?.actions ?? [];
+  const actions = useMemo(() => data?.actions ?? [], [data]);
 
   // Group by module — same pattern as the web page.
   const grouped = useMemo(() => {

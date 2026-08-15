@@ -89,7 +89,7 @@ export function LoadListDispatchModal(props: LoadListDispatchModalProps) {
     undefined,
     { enabled: visible, staleTime: 5 * 60_000 },
   );
-  const types = typesResp?.cylinderTypes ?? [];
+  const types = useMemo(() => typesResp?.cylinderTypes ?? [], [typesResp]);
 
   const {
     data: existing,
@@ -101,7 +101,7 @@ export function LoadListDispatchModal(props: LoadListDispatchModalProps) {
     undefined,
     { enabled: visible && !!assignmentId, staleTime: 30_000 },
   );
-  const existingRows = existing?.manifest ?? [];
+  const existingRows = useMemo(() => existing?.manifest ?? [], [existing]);
   const existingByType = useMemo(
     () => new Map(existingRows.map((m) => [m.cylinderTypeId, m])),
     [existingRows],

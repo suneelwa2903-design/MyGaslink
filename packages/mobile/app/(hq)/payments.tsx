@@ -76,7 +76,7 @@ export default function HqPaymentsScreen() {
     '/customer-group-portal/payments',
     params,
   );
-  const payments = data?.payments ?? [];
+  const payments = useMemo(() => data?.payments ?? [], [data]);
   const totalPages = data?.meta.totalPages ?? 1;
 
   const groupTotal = useMemo(

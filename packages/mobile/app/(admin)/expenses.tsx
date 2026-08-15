@@ -159,7 +159,7 @@ export default function ExpensesScreen() {
     ['expense-categories'],
     '/expense-categories',
   );
-  const categories = categoriesResp?.categories ?? [];
+  const categories = useMemo(() => categoriesResp?.categories ?? [], [categoriesResp]);
   const groups = useMemo(() => buildGroupedOptions(categories), [categories]);
 
   return (

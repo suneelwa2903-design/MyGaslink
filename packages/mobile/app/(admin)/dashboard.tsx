@@ -930,7 +930,7 @@ function CustomerLedgerModal({
     { limit: 200 },
     { enabled: visible },
   );
-  const allCustomers = customersResponse?.customers ?? [];
+  const allCustomers = useMemo(() => customersResponse?.customers ?? [], [customersResponse]);
   const filteredCustomers = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return allCustomers;
