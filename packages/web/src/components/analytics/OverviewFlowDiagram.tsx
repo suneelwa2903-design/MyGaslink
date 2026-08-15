@@ -122,22 +122,26 @@ function FlowBox({
   shadow: string; onClick?: () => void; w?: number; h?: number;
 }) {
   const lines = wrapLabel(label);
-  const valY = y + h - 16;
+  const cx = x + w / 2;
+  const n = lines.length;
+  // vertically centre the label(s) + value block inside the box
+  const blockTop = y + h / 2 - (n * 15 + 22) / 2;
   return (
     <g className={onClick ? 'cursor-pointer' : undefined} onClick={onClick}>
       <rect x={x} y={y} width={w} height={h} rx={RADIUS} fill={`url(#g-${hue})`} filter={`url(#${shadow})`} />
       {lines.map((ln, i) => (
         <text
           key={i}
-          x={x + 18}
-          y={valY - 22 - (lines.length - 1 - i) * 15}
+          x={cx}
+          y={blockTop + 13 + i * 15}
+          textAnchor="middle"
           className="fill-white text-[12px] font-semibold"
           style={{ opacity: 0.94 }}
         >
           {ln}
         </text>
       ))}
-      <text x={x + 18} y={valY} className="fill-white text-[19px] font-extrabold">{value}</text>
+      <text x={cx} y={blockTop + n * 15 + 19} textAnchor="middle" className="fill-white text-[19px] font-extrabold">{value}</text>
     </g>
   );
 }
@@ -173,17 +177,24 @@ function MoneySankey({ m, onOpenReport }: { m: OverviewFlow['money']; onOpenRepo
       {ribbon(c2 + BOX_W, botY + expW / 2, c3, topY + BOX_H / 2, expW, 'rose')}
       {netW > 0 && ribbon(c2 + BOX_W, botY + expW + netW / 2, c3, botY + BOX_H / 2, netW, 'emerald')}
 
-      <FlowBox x={c1} y={revY} hue="blue" shadow="mShadow" label="Revenue billed" value={inr(revenue)} onClick={() => onOpenReport('daily-sales')} />
-      <FlowBox x={c2} y={topY} hue="slate" shadow="mShadow" label="Cost of gas → Corporation" value={`${inr(cogs)} · ${pct(cogs)}%`} onClick={() => onOpenReport('corp-purchase-vs-sale-margin')} />
-      <FlowBox x={c2} y={botY} hue="teal" shadow="mShadow" label="Gross margin" value={`${inr(gross)} · ${pct(gross)}%`} />
-      <FlowBox x={c3} y={topY} hue="rose" shadow="mShadow" label="Running costs → out" value={`${inr(expenses)} · ${pct(expenses)}%`} onClick={() => onOpenReport('expense-register')} />
-      <FlowBox x={c3} y={botY} hue={loss ? 'rose' : 'emerald'} shadow="mShadow" label={loss ? 'Net loss' : 'Net profit kept'} value={`${inr(net)} · ${pct(net)}%`} />
+      <FlowBox x={c1} y={revY} hue="blue" shadow="mShadow" label="Revenue Billed" value={inr(revenue)} onClick={() => onOpenReport('daily-sales')} />
+      <FlowBox x={c2} y={topY} hue="slate" shadow="mShadow" label="Corp. Loads Cost" value={`${inr(cogs)} · ${pct(cogs)}%`} onClick={() => onOpenReport('corp-purchase-vs-sale-margin')} />
+      <FlowBox x={c2} y={botY} hue="teal" shadow="mShadow" label="Gross Margin" value={`${inr(gross)} · ${pct(gross)}%`} />
+      <FlowBox x={c3} y={topY} hue="rose" shadow="mShadow" label="Running Costs" value={`${inr(expenses)} · ${pct(expenses)}%`} onClick={() => onOpenReport('expense-register')} />
+      <FlowBox x={c3} y={botY} hue={loss ? 'rose' : 'emerald'} shadow="mShadow" label={loss ? 'Net Loss' : 'Net Profit'} value={`${inr(net)} · ${pct(net)}%`} />
     </svg>
   );
 }
 
-// green (in credit) → deepening red as it ages
-const AGING_COLORS = ['bg-emerald-600', 'bg-red-500', 'bg-red-600', 'bg-red-700', 'bg-red-900'];
+// green (in credit) → deepening rose as it ages — soft vertical gradients that
+// match the flow boxes above (top lighter → bottom deeper), not flat fills.
+const AGING_GRAD: [string, string][] = [
+  ['#56bd93', '#369b73'], // in credit — emerald (same as boxes)
+  ['#e9a2aa', '#d9838d'], // 1-30 — light rose
+  ['#e08a93', '#cf6a76'], // 31-60 — rose (same as boxes)
+  ['#cf6b78', '#b8515f'], // 61-90 — deep rose
+  ['#b8515f', '#973f4c'], // 90+ — deepest rose
+];
 
 function OutstandingBar({ m, onOpenReport }: { m: OverviewFlow['money']; onOpenReport: (s: string) => void }) {
   const total = m.aging.reduce((s, b) => s + b.amount, 0) || 1;
@@ -194,16 +205,17 @@ function OutstandingBar({ m, onOpenReport }: { m: OverviewFlow['money']; onOpenR
         <span className="text-xs font-bold uppercase tracking-widest text-surface-500 dark:text-surface-400">Customers still owe you · aged as of today</span>
         <span className="text-xs font-semibold text-surface-500 dark:text-surface-400">total {inr(total)} · {inr(overdueTotal)} overdue</span>
       </div>
-      <div className="flex h-12 rounded-lg overflow-hidden ring-1 ring-surface-200 dark:ring-surface-700">
+      <div className="flex h-12 rounded-xl overflow-hidden ring-1 ring-surface-200 dark:ring-surface-700">
         {m.aging.map((b, i) => {
           const p = Math.round((b.amount / total) * 100);
           if (b.amount <= 0) return null;
+          const [gA, gB] = AGING_GRAD[i] ?? ['#94a3b8', '#6b7280'];
           return (
             <div
               key={b.label}
-              style={{ flexGrow: Math.max(1, b.amount) }}
+              style={{ flexGrow: Math.max(1, b.amount), background: `linear-gradient(180deg, ${gA}, ${gB})` }}
               onClick={() => onOpenReport('outstanding-aging')}
-              className={`${AGING_COLORS[i]} hover:brightness-110 transition flex flex-col items-center justify-center px-2 cursor-pointer min-w-[72px] text-center`}
+              className="hover:brightness-110 transition flex flex-col items-center justify-center px-2 cursor-pointer min-w-[72px] text-center"
               title={`${b.label}: ${inr(b.amount)} (${p}%)`}
             >
               <span className="text-white text-[10px] font-semibold leading-none opacity-95">{b.label}</span>
@@ -264,12 +276,12 @@ function CylinderSankey({ c, onOpenReport }: { c: OverviewFlow['cylinders']; onO
       {ribbon(c3 + BOX_W, yc - BOX_H / 2 + retW / 2, c4, recCy, retW, 'sky')}
       {ribbon(c3 + BOX_W, yc - BOX_H / 2 + retW + heldW / 2, c4, godCy, heldW, 'amber')}
 
-      <FlowBox x={c1} y={topY} hue="sky" shadow="cShadow" label="Received from Corporation" value={String(c.fullsReceived)} onClick={() => onOpenReport('inventory-movement')} />
-      <FlowBox x={c1} y={botY} hue="slate" shadow="cShadow" label="Drawn from godown" value={String(fromStock)} />
-      <FlowBox x={c2} y={dY} hue="teal" shadow="cShadow" label="Delivered to customers" value={`${c.fullsDelivered} fulls`} onClick={() => onOpenReport('inventory-movement')} />
-      <FlowBox x={c3} y={dY} hue="emerald" shadow="cShadow" label="Empties back" value={String(c.emptiesCollected)} onClick={() => onOpenReport('cylinder-rotation')} />
-      <FlowBox x={c4} y={topY} hue="sky" shadow="cShadow" label="Returned to Corporation" value={String(c.emptiesReturnedToOmc)} onClick={() => onOpenReport('inventory-movement')} />
-      <FlowBox x={c4} y={botY} hue="amber" shadow="cShadow" label="Available at godown" value={String(heldAtGodown)} />
+      <FlowBox x={c1} y={topY} hue="sky" shadow="cShadow" label="Received From Corporation" value={String(c.fullsReceived)} onClick={() => onOpenReport('inventory-movement')} />
+      <FlowBox x={c1} y={botY} hue="slate" shadow="cShadow" label="Drawn From Godown" value={String(fromStock)} />
+      <FlowBox x={c2} y={dY} hue="teal" shadow="cShadow" label="Delivered To Customers" value={`${c.fullsDelivered} fulls`} onClick={() => onOpenReport('inventory-movement')} />
+      <FlowBox x={c3} y={dY} hue="emerald" shadow="cShadow" label="Empties Back" value={String(c.emptiesCollected)} onClick={() => onOpenReport('cylinder-rotation')} />
+      <FlowBox x={c4} y={topY} hue="sky" shadow="cShadow" label="Returned To Corporation" value={String(c.emptiesReturnedToOmc)} onClick={() => onOpenReport('inventory-movement')} />
+      <FlowBox x={c4} y={botY} hue="amber" shadow="cShadow" label="Available At Godown" value={String(heldAtGodown)} />
     </svg>
   );
 }
@@ -304,15 +316,15 @@ export function OverviewCashflowView({ cf, onOpenReport }: { cf: CashflowData; o
   const drop = net < 0;
 
   const sources: FlowNode[] = [
-    { label: 'Collections (sales)', value: cf.collectionsAgainstSales, hue: 'emerald', onClick: () => onOpenReport('payment-collections') },
-    { label: 'Deposits received (refundable)', value: cf.depositsReceived, hue: 'sky' },
-    ...(drop ? [{ label: 'Net cash drop (from reserves)', value: Math.abs(net), hue: 'rose' } as FlowNode] : []),
+    { label: 'Collections (Sales)', value: cf.collectionsAgainstSales, hue: 'emerald', onClick: () => onOpenReport('payment-collections') },
+    { label: 'Deposits Received (Refundable)', value: cf.depositsReceived, hue: 'sky' },
+    ...(drop ? [{ label: 'Net Cash Drop (From Reserves)', value: Math.abs(net), hue: 'rose' } as FlowNode] : []),
   ].filter((n) => n.value > 0);
 
   const sinks: FlowNode[] = [
-    { label: 'Paid to Corporation', value: cf.paidToCorporation, hue: 'slate', onClick: () => onOpenReport('corp-supplier-payment-aging') },
-    { label: 'Expenses paid', value: cf.expenses, hue: 'rose', onClick: () => onOpenReport('expense-register') },
-    ...(!drop ? [{ label: 'Net cash kept', value: net, hue: 'emerald' } as FlowNode] : []),
+    { label: 'Paid To Corporation', value: cf.paidToCorporation, hue: 'slate', onClick: () => onOpenReport('corp-supplier-payment-aging') },
+    { label: 'Expenses Paid', value: cf.expenses, hue: 'rose', onClick: () => onOpenReport('expense-register') },
+    ...(!drop ? [{ label: 'Net Cash Kept', value: net, hue: 'emerald' } as FlowNode] : []),
   ].filter((n) => n.value > 0);
 
   const grand = sources.reduce((s, n) => s + n.value, 0) || 1;
@@ -352,7 +364,7 @@ export function OverviewCashflowView({ cf, onOpenReport }: { cf: CashflowData; o
           {sources.map((n, i) => (
             <FlowBox key={`src-${i}`} x={c1} y={stackY(sources.length, i)} hue={n.hue} shadow="cfShadow" label={n.label} value={inr(n.value)} onClick={n.onClick} />
           ))}
-          <FlowBox x={c2} y={cashY} hue="blue" shadow="cfShadow" label="Cash in" value={inr(cf.cashIn)} />
+          <FlowBox x={c2} y={cashY} hue="blue" shadow="cfShadow" label="Cash In" value={inr(cf.cashIn)} />
           {sinks.map((n, i) => (
             <FlowBox key={`sink-${i}`} x={c3} y={stackY(sinks.length, i)} hue={n.hue} shadow="cfShadow" label={n.label} value={inr(n.value)} onClick={n.onClick} />
           ))}
