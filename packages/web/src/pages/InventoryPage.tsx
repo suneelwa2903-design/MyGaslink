@@ -1913,6 +1913,17 @@ export function IncomingFullsModal({
       // F8: also refresh supplier ledger + purchase list downstream consumers.
       queryClient.invalidateQueries({ queryKey: ['source-distributors'] });
       queryClient.invalidateQueries({ queryKey: ['purchase-entries'] });
+      // 2026-08-15 — a sourced incoming creates a PurchaseEntry that feeds the
+      // FIFO cost-layer ledger + avg-landed + supplier balances. Without these
+      // the Cost Layer panel stayed stale (missing the just-added load).
+      // Keys match the Corp. Loads page (CorporationLedgerPage): the FIFO panel
+      // reads ['corp-cost-layers']; mobile corp uses ['cost-layers'].
+      queryClient.invalidateQueries({ queryKey: ['corp-cost-layers'] });
+      queryClient.invalidateQueries({ queryKey: ['cost-layers'] });
+      queryClient.invalidateQueries({ queryKey: ['corp-avg-landed'] });
+      queryClient.invalidateQueries({ queryKey: ['corp-landed-cost'] });
+      queryClient.invalidateQueries({ queryKey: ['corp-ledger'] });
+      queryClient.invalidateQueries({ queryKey: ['supplier-balances-v2'] });
       onClose();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -1939,26 +1950,35 @@ export function IncomingFullsModal({
   const vehicleOptions = vehicles.map((v) => ({ value: v.vehicleId, label: v.vehicleNumber }));
   const driverOptions = drivers.map((d) => ({ value: d.driverName, label: d.driverName }));
 
-  // F8 (2026-08-06) — bidirectional rate ↔ amount binding (per Suneel Q4).
-  // Editing Rate/cyl auto-fills Amount = rate × qty. Editing Amount auto-fills
-  // Rate = amount ÷ qty. Editing Qty rebalances Amount from the current Rate
-  // (Rate is treated as the "source of truth" for the recompute when both
-  // are dirty). Uses shouldDirty:false on the derived side so the mutation
-  // in the counterpart doesn't fight the user's typing.
-  const rate = useWatch({ control, name: 'unitPrice' });
-  const amount = useWatch({ control, name: 'amount' });
+  // 2026-08-15 — invoice-value entry. The user types the GST-EXCLUSIVE Taxable
+  // Value off the OMC invoice and picks the GST%; each charge carries its own
+  // GST%. We derive the per-cylinder costs live. Downstream convention:
+  // cost/margin use the EXCL base (+ freight base); GST is reclaimable ITC;
+  // supplier payables use the full GST-inclusive total.
+  const taxableValue = useWatch({ control, name: 'taxableValue' });
+  const gstRatePct = useWatch({ control, name: 'gstRate' });
+  const chargesW = useWatch({ control, name: 'charges' });
   const qty = useWatch({ control, name: 'quantity' });
-  const [lastEdited, setLastEdited] = useState<'rate' | 'amount' | null>(null);
-  useEffect(() => {
-    if (!qty || qty <= 0) return;
-    if (lastEdited === 'rate' && typeof rate === 'number' && rate > 0) {
-      const derived = Number((rate * qty).toFixed(2));
-      if (derived !== amount) setValue('amount', derived, { shouldDirty: false });
-    } else if (lastEdited === 'amount' && typeof amount === 'number' && amount > 0) {
-      const derived = Number((amount / qty).toFixed(4));
-      if (derived !== rate) setValue('unitPrice', derived, { shouldDirty: false });
-    }
-  }, [rate, amount, qty, lastEdited, setValue]);
+  const fmt = (n: number) => '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const calc = useMemo(() => {
+    const tax = Math.max(0, Number(taxableValue) || 0);
+    const gst = Math.max(0, Number(gstRatePct) || 0);
+    const q = Math.max(0, Number(qty) || 0);
+    const cylGst = (tax * gst) / 100;
+    const list = chargesW ?? [];
+    const chargeBase = list.reduce((s, c) => s + Math.max(0, Number(c?.amount) || 0), 0);
+    const chargeGst = list.reduce(
+      (s, c) => s + Math.max(0, Number(c?.amount) || 0) * (Math.max(0, Number(c?.gstRate) || 0) / 100), 0);
+    const landed = tax + cylGst + chargeBase + chargeGst;
+    return {
+      q,
+      perBase: q ? tax / q : 0,
+      perExpense: q ? chargeBase / q : 0,
+      perGst: q ? (cylGst + chargeGst) / q : 0,
+      perLanded: q ? landed / q : 0,
+      payable: landed,
+    };
+  }, [taxableValue, gstRatePct, chargesW, qty]);
 
   // Vehicle and Driver are dropdowns — no free-text duplicates. Picking a
   // vehicle copies its plate to the persisted `vehicleNumber` field and
@@ -2014,43 +2034,62 @@ export function IncomingFullsModal({
         <Input label="Supply Date" type="date" required error={errors.documentDate?.message} {...register('documentDate')} />
         <Select label="Vehicle" options={vehicleOptions} placeholder="Select vehicle (optional)" {...register('vehicleId')} />
         <Select label="Driver" options={driverOptions} placeholder="Select driver (optional)" {...register('driverName')} />
-        {/* F8 (2026-08-06) — Rate ↔ Amount bidirectional pair (Suneel Q4). */}
-        <div className="grid grid-cols-2 gap-3">
-          <Input
-            label="Rate / cyl (₹, GST-incl)"
-            type="number"
-            min={0}
-            step="0.01"
-            placeholder="Per-cyl price"
-            error={errors.unitPrice?.message}
-            {...register('unitPrice', {
-              setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v),
-              onChange: () => setLastEdited('rate'),
-            })}
-          />
-          <Input
-            label="Amount (₹, total)"
-            type="number"
-            min={0}
-            step="0.01"
-            placeholder="Line total"
-            error={errors.amount?.message}
-            {...register('amount', {
-              setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v),
-              onChange: () => setLastEdited('amount'),
-            })}
-          />
+        {/* 2026-08-15 — invoice-value money entry. Type the GST-EXCLUSIVE
+            Taxable Value off the OMC invoice + pick GST%; charges carry their
+            own GST%. Per-cylinder costs derive live in the readout below. */}
+        <Input
+          label="Taxable Value (₹, excl GST)"
+          type="number"
+          min={0}
+          step="0.01"
+          placeholder="Line total before GST — copy from invoice"
+          error={errors.taxableValue?.message}
+          {...register('taxableValue', {
+            setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v),
+          })}
+        />
+        <div>
+          <label className="text-sm font-medium text-slate-700">GST %</label>
+          <div className="mt-1 flex items-center gap-2">
+            {[5, 18].map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setValue('gstRate', r, { shouldDirty: true })}
+                className={`px-3.5 py-2 rounded-md text-sm font-medium border ${
+                  Number(gstRatePct) === r
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
+                }`}
+              >
+                {r}%
+              </button>
+            ))}
+            <div className="flex-1">
+              <Input
+                type="number"
+                min={0}
+                max={28}
+                step="0.01"
+                placeholder="Custom %"
+                error={errors.gstRate?.message}
+                {...register('gstRate', {
+                  setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v),
+                })}
+              />
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">5% domestic LPG · 18% commercial — applies to this line, pick per invoice.</p>
         </div>
-        {/* F8 (2026-08-06) — optional freight / handling / other charges
-            (Suneel Q8). Each row becomes a PurchaseEntryCharge on the same
-            PurchaseEntry the service auto-spawns when supplier is set. */}
+        {/* Charges — each carries its own GST% (freight on some OMC invoices is
+            taxed at the goods rate, e.g. GoGas freight @ 5%). */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-sm font-medium text-slate-700">Charges (freight, handling, etc.)</label>
             <Button
               type="button"
               variant="secondary"
-              onClick={() => appendCharge({ chargeType: 'freight', amount: 0 })}
+              onClick={() => appendCharge({ chargeType: 'freight', amount: 0, gstRate: Number(gstRatePct) || 0 })}
             >
               + Add charge
             </Button>
@@ -2060,7 +2099,7 @@ export function IncomingFullsModal({
           ) : (
             <div className="space-y-2">
               {chargeFields.map((f, i) => (
-                <div key={f.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                <div key={f.id} className="grid grid-cols-[1fr_1fr_78px_auto] gap-2 items-end">
                   <Select
                     label={i === 0 ? 'Type' : undefined}
                     options={[
@@ -2073,11 +2112,21 @@ export function IncomingFullsModal({
                     {...register(`charges.${i}.chargeType` as const)}
                   />
                   <Input
-                    label={i === 0 ? 'Amount (₹)' : undefined}
+                    label={i === 0 ? 'Amount (₹, excl GST)' : undefined}
                     type="number"
                     min={0}
                     step="0.01"
                     {...register(`charges.${i}.amount` as const, { valueAsNumber: true })}
+                  />
+                  <Input
+                    label={i === 0 ? 'GST %' : undefined}
+                    type="number"
+                    min={0}
+                    max={28}
+                    step="0.01"
+                    {...register(`charges.${i}.gstRate` as const, {
+                      setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v),
+                    })}
                   />
                   <Button type="button" variant="secondary" onClick={() => removeCharge(i)}>Remove</Button>
                 </div>
@@ -2085,6 +2134,21 @@ export function IncomingFullsModal({
             </div>
           )}
         </div>
+        {/* Live per-cylinder readout */}
+        {calc.q > 0 && (Number(taxableValue) || 0) > 0 && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
+            <div className="flex justify-between"><span className="text-slate-600">Base / cyl (excl GST)</span><span className="font-semibold tabular-nums">{fmt(calc.perBase)}</span></div>
+            {calc.perExpense > 0 && (
+              <div className="flex justify-between"><span className="text-slate-600">+ Expense / cyl (freight etc.)</span><span className="font-semibold tabular-nums">{fmt(calc.perExpense)}</span></div>
+            )}
+            <div className="flex justify-between"><span className="text-slate-600">GST / cyl (reclaimable ITC)</span><span className="font-semibold tabular-nums text-slate-500">{fmt(calc.perGst)}</span></div>
+            <div className="flex justify-between border-t border-slate-200 pt-1"><span className="text-slate-800 font-medium">Landed / cyl (incl GST + expenses)</span><span className="font-bold tabular-nums">{fmt(calc.perLanded)}</span></div>
+            <div className="flex justify-between"><span className="text-slate-600">Payable to supplier (total)</span><span className="font-semibold tabular-nums">{fmt(calc.payable)}</span></div>
+          </div>
+        )}
+        <p className="text-xs text-slate-500">
+          Downstream: cost &amp; margin use the <b>GST-exclusive base</b> (+ freight base); GST is <b>reclaimable ITC</b> shown separately; supplier payables use the full <b>GST-inclusive</b> total.
+        </p>
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
@@ -2259,16 +2323,9 @@ export function OutgoingEmptiesModal({
           error={errors.amount?.message}
           {...register('amount', { setValueAs: (v) => v === '' || v === null || v === undefined ? undefined : Number(v) })}
         />
-        <Select
-          label="Condition"
-          options={[
-            { value: 'good', label: 'Good' },
-            { value: 'defective', label: 'Defective' },
-          ]}
-          placeholder="Select condition (optional)"
-          error={errors.condition?.message}
-          {...register('condition')}
-        />
+        {/* Condition (good/defective) removed 2026-08-15 — it was write-only,
+            never read by any report/logic. Defective handling lives in the
+            "include defective fulls" section below (real F1 flow). */}
         <Input label="Notes" placeholder="Optional notes" {...register('notes')} />
 
         {/* F1-FIX-12 (2026-08-06) — Include defective fulls in this
