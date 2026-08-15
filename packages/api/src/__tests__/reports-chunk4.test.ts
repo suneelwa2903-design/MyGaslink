@@ -517,14 +517,11 @@ describe('N34 — Accountability Log Report', () => {
 // ─── N27 Delivery Challan PDF — placeholder-only ──────────────────────
 
 describe('N27 — Delivery Challan PDF (placeholder)', () => {
-  it('CATALOG — entry exists with comingSoon:true and kind=external', async () => {
+  it('CATALOG — delivery-challan-pdf is hidden (removed from the catalog)', async () => {
     const res = await request(app).get('/api/reports/catalog').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
     const entry = res.body.data.entries.find((e: { slug: string }) => e.slug === 'delivery-challan-pdf');
-    expect(entry).toBeDefined();
-    expect(entry.comingSoon).toBe(true);
-    expect(entry.kind).toBe('external');
-    expect(entry.bucket).toBe('invoicing-payments');
+    expect(entry).toBeUndefined();
   });
 
   it('NO ROUTE — /api/reports/delivery-challan-pdf 404s (no service registered yet)', async () => {

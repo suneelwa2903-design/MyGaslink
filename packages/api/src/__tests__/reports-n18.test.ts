@@ -5,10 +5,12 @@
  *   Revenue        = Σ delivered-order totalAmount over the window
  *   Avg Outstanding = (openingLedgerBalance + closingLedgerBalance) / 2
  *   AR Cost        = Avg Outstanding × (rate/100) × (days/365)
+ *   Cost of Gas    = Σ FIFO landed cost of delivered cyls (computeFifoCogs)
+ *   Gross Margin % = (Revenue − Cost of Gas) / Revenue × 100
  *   Empty Value    = Σ withCustomerQty × EmptyCylinderPrice
  *   Empty Cost     = Empty Value × rateFactor
- *   Adjusted Rev   = Revenue − AR Cost − Empty Cost
- *   Margin %       = Adjusted Rev / Revenue × 100
+ *   Adjusted Rev   = Revenue − Cost of Gas − AR Cost − Empty Cost
+ *   Net Margin %   = Adjusted Rev / Revenue × 100
  *   DSO            = Avg Outstanding / (Revenue / days)
  *
  * Coverage:
@@ -306,9 +308,11 @@ describe('N18 — Customer Profitability', () => {
     expect(res.rows).toHaveLength(1);
     expect(res.rows[0].arCost).toBe(0);
     expect(res.rows[0].emptyCost).toBe(0);
-    // At rate=0, adjusted revenue equals gross revenue.
-    expect(res.rows[0].adjustedRevenue).toBe(40_000);
-    expect(res.rows[0].marginPct).toBe(100);
+    // At rate=0, carrying costs vanish; adjusted revenue = revenue − Cost of Gas.
+    // (Seeded far-future orders have no purchase layers → cogs=0 → margin 100%;
+    // asserted as a relationship so a stray parallel-test layer can't flake it.)
+    expect(res.rows[0].adjustedRevenue).toBe(40_000 - Number(res.rows[0].cogs));
+    expect(res.rows[0].marginPct).toBe(res.rows[0].grossMarginPct);
   });
 
   it('PARAM — arInterestRatePct clamped at 50 (over-max input treated as 50)', async () => {
@@ -324,13 +328,15 @@ describe('N18 — Customer Profitability', () => {
     expect(at50.rows[0].arCost).toBe(at999.rows[0].arCost);
   });
 
-  it('WIRE-SHAPE — 10 columns in expected canonical order', async () => {
+  it('WIRE-SHAPE — 12 columns in expected canonical order (incl Cost of Gas + Gross Margin)', async () => {
     const res = await customerProfitability(distributorId, { dateFrom: DAY_FROM, dateTo: DAY_TO });
     const cols = res.columns.map((c) => c.key);
     expect(cols).toEqual([
       'customer',
       'orders',
       'revenue',
+      'cogs',
+      'grossMarginPct',
       'avgOutstanding',
       'dso',
       'emptiesValue',
@@ -360,6 +366,7 @@ describe('N18 — Customer Profitability', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
     expect(res.text.split('\n')[0]).toContain('Customer');
+    expect(res.text.split('\n')[0]).toContain('Cost of Gas');
     expect(res.text.split('\n')[0]).toContain('Adjusted Revenue');
     expect(res.text.split('\n')[0]).toContain('Margin');
   });

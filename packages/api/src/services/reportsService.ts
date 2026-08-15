@@ -4191,6 +4191,7 @@ export async function customerProfitability(distributorId: string, f: ReportFilt
     },
     select: {
       customerId: true,
+      orderNumber: true,
       totalAmount: true,
       customer: { select: { customerName: true } },
     },
@@ -4205,8 +4206,12 @@ export async function customerProfitability(distributorId: string, f: ReportFilt
     openingBalance: number;
     closingBalance: number;
     emptiesValue: number;
+    cogs: number; /// FIFO landed cost of gas delivered to this customer in-window (GST-INCLUSIVE)
   }
   const per = new Map<string, Agg>();
+  // orderNumber → customerId, so the FIFO consumptions (keyed by orderNumber)
+  // can be attributed back to a customer in Step 3b.
+  const orderToCustomer = new Map<string, string>();
   for (const o of orders) {
     const row = per.get(o.customerId) ?? {
       customerId: o.customerId,
@@ -4216,10 +4221,12 @@ export async function customerProfitability(distributorId: string, f: ReportFilt
       openingBalance: 0,
       closingBalance: 0,
       emptiesValue: 0,
+      cogs: 0,
     };
     row.orders += 1;
     row.revenue += num(o.totalAmount);
     per.set(o.customerId, row);
+    orderToCustomer.set(o.orderNumber, o.customerId);
   }
   const customerIds = [...per.keys()];
   if (customerIds.length === 0) {
@@ -4276,14 +4283,37 @@ export async function customerProfitability(distributorId: string, f: ReportFilt
     row.emptiesValue += b.withCustomerQty * priceEach;
   }
 
-  // Step 4 — derive AR Cost, Empty Cost, Adjusted Revenue, DSO, Margin %.
+  // Step 3b — Cost of Gas Sold per customer (FIFO landed cost). Reuse the
+  // canonical cost-layer engine so the number reconciles with the Corp. Loads
+  // cost ledger and the Cylinder P&L. `computeFifoCogs` returns per-delivery
+  // consumptions keyed by orderNumber; attribute each to its customer.
+  // Without COGS the margin was ~100% (only tiny carrying costs deducted) —
+  // this is what makes the report actually mean something.
+  try {
+    const { computeFifoCogs } = await import('./cogsService.js');
+    const fifo = await computeFifoCogs(distributorId, { from: f.dateFrom, to: f.dateTo });
+    for (const c of fifo.consumptions) {
+      const cid = orderToCustomer.get(c.orderNumber);
+      if (!cid) continue;
+      const row = per.get(cid);
+      if (row) row.cogs += c.cogs;
+    }
+  } catch {
+    // COGS is additive — if the cost engine can't resolve layers, leave cogs=0
+    // rather than failing the whole profitability report.
+  }
+
+  // Step 4 — derive Cost of Gas, Gross Margin, AR Cost, Empty Cost,
+  // Adjusted Revenue, DSO, Net Margin %.
   const rateFactor = (rate / 100) * (days / 365);
   const rows = [...per.values()]
     .map((r) => {
       const avgOutstanding = (r.openingBalance + r.closingBalance) / 2;
       const arCost = avgOutstanding * rateFactor;
       const emptyCost = r.emptiesValue * rateFactor;
-      const adjustedRevenue = r.revenue - arCost - emptyCost;
+      const grossMarginPct =
+        r.revenue > 0 ? Math.round(((r.revenue - r.cogs) / r.revenue) * 10000) / 100 : 0;
+      const adjustedRevenue = r.revenue - r.cogs - arCost - emptyCost;
       const marginPct = r.revenue > 0 ? Math.round((adjustedRevenue / r.revenue) * 10000) / 100 : 0;
       const dso = r.revenue > 0 ? Math.round(avgOutstanding / (r.revenue / days)) : 0;
       return {
@@ -4291,6 +4321,8 @@ export async function customerProfitability(distributorId: string, f: ReportFilt
         customerId: r.customerId,
         orders: r.orders,
         revenue: Math.round(r.revenue),
+        cogs: Math.round(r.cogs),
+        grossMarginPct,
         avgOutstanding: Math.round(avgOutstanding),
         dso,
         emptiesValue: Math.round(r.emptiesValue),
@@ -4304,11 +4336,15 @@ export async function customerProfitability(distributorId: string, f: ReportFilt
     // (customers who are the biggest drag on margin surface first).
     .sort((a, b) => a.adjustedRevenue - b.adjustedRevenue);
 
+  const totRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+  const totCogs = rows.reduce((s, r) => s + r.cogs, 0);
   const totals = {
     customer: 'TOTAL',
     customerId: '',
     orders: rows.reduce((s, r) => s + r.orders, 0),
-    revenue: rows.reduce((s, r) => s + r.revenue, 0),
+    revenue: totRevenue,
+    cogs: totCogs,
+    grossMarginPct: totRevenue > 0 ? Math.round(((totRevenue - totCogs) / totRevenue) * 10000) / 100 : '',
     avgOutstanding: rows.reduce((s, r) => s + r.avgOutstanding, 0),
     dso: rows.length > 0 ? Math.round(rows.reduce((s, r) => s + r.dso, 0) / rows.length) : 0,
     emptiesValue: rows.reduce((s, r) => s + r.emptiesValue, 0),
@@ -4330,13 +4366,15 @@ function n18Columns(): ReportColumn[] {
     { key: 'customer', label: 'Customer' },
     { key: 'orders', label: 'Orders' },
     { key: 'revenue', label: 'Revenue', money: true },
+    { key: 'cogs', label: 'Cost of Gas', money: true },
+    { key: 'grossMarginPct', label: 'Gross Margin %' },
     { key: 'avgOutstanding', label: 'Avg Outstanding', money: true },
     { key: 'dso', label: 'DSO (days)' },
     { key: 'emptiesValue', label: 'Empties Value', money: true },
     { key: 'arCost', label: 'AR Cost', money: true },
     { key: 'emptyCost', label: 'Empty Deposit Cost', money: true },
     { key: 'adjustedRevenue', label: 'Adjusted Revenue', money: true },
-    { key: 'marginPct', label: 'Margin %' },
+    { key: 'marginPct', label: 'Net Margin %' },
   ];
 }
 
@@ -5118,17 +5156,9 @@ export const REPORT_CATALOG: ReportCatalogEntry[] = [
     outputs: ['json', 'csv'],
     roles: ROLES_ALL_STAFF,
   },
-  {
-    slug: 'delivery-challan-pdf',
-    label: 'Delivery Challan (PDF)',
-    bucket: 'invoicing-payments',
-    description: 'Non-taxable delivery challan for delivery-before-invoice flows',
-    kind: 'external',
-    href: '/app/orders',
-    outputs: ['pdf'],
-    roles: ROLES_ALL_STAFF,
-    comingSoon: true,
-  },
+  // Delivery Challan (PDF) report hidden from the catalog per Suneel (2026-08-16)
+  // — removed from web + mobile at once (both read this shared catalog). The PDF
+  // flow still lives on the Orders page; there is simply no report-catalog entry.
   {
     slug: 'outstanding-aging',
     label: 'Outstanding & Aging',

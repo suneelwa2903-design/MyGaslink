@@ -446,13 +446,13 @@ describe('Report Builder — end-to-end integration', () => {
     expect(runRow).toEqual(previewRow);
   });
 
-  it('REGRESSION — /api/reports/catalog still returns 38 entries', async () => {
+  it('REGRESSION — /api/reports/catalog still returns 37 entries', async () => {
     const res = await request(app)
       .get('/api/reports/catalog')
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
-    // 2026-08-12: 38 = 37 + 1 (corp-batch-cost-vs-price, FIFO cost layers).
-    expect(res.body.data.entries.length).toBe(38);
+    // 2026-08-16: 37 = 38 − 1 (delivery-challan-pdf hidden per Suneel).
+    expect(res.body.data.entries.length).toBe(37);
   });
 
   it('REGRESSION — /api/reports/vehicle-ledger still works', async () => {
