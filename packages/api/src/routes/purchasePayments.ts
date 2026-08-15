@@ -32,7 +32,7 @@ import { generateSupplierLedgerPdf } from '../services/pdf/supplierLedgerPdfServ
 // F8 v2 (2026-08-06) — landed cost per cyl type per month.
 import { computeLandedCost, computeAverageLandedCost } from '../services/landedCostService.js';
 // Cost-Layer COGS (2026-08-12) — FIFO layers + valuation (docs/COST-LAYER-COGS-DESIGN.md).
-import { computeStockValuation, computeFifoCogs } from '../services/cogsService.js';
+import { computeStockValuation, computeFifoCogs, computeCostLedger } from '../services/cogsService.js';
 
 const router = Router();
 
@@ -219,6 +219,19 @@ router.get('/cost-layers', validateQuery(costLayersQuerySchema), async (req, res
   try {
     const q = (req.validated?.query ?? req.query) as z.infer<typeof costLayersQuerySchema>;
     const result = await computeStockValuation(req.user!.distributorId!, { asOf: q.asOf });
+    return sendSuccess(res, result);
+  } catch (err) {
+    return sendError(res, (err as Error).message);
+  }
+});
+
+// ─── GET /cost-ledger — merged Cost Layer Ledger (2026-08-15) ────────────────
+// All loads (open + consumed) + MRP per type, for the grouped per-load table
+// with monthly subtotals + dealer margin on the Corp. Loads page.
+router.get('/cost-ledger', validateQuery(costLayersQuerySchema), async (req, res) => {
+  try {
+    const q = (req.validated?.query ?? req.query) as z.infer<typeof costLayersQuerySchema>;
+    const result = await computeCostLedger(req.user!.distributorId!, { asOf: q.asOf });
     return sendSuccess(res, result);
   } catch (err) {
     return sendError(res, (err as Error).message);

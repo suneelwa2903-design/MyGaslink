@@ -853,7 +853,16 @@ model PurchaseEntryCharge {
   id              String                  @id @default(uuid()) @map("purchase_entry_charge_id")
   purchaseEntryId String                  @map("purchase_entry_id")
   chargeType      PurchaseEntryChargeType @map("charge_type")
+  /// GST-EXCLUSIVE (taxable) amount of this charge, INR. The freight/handling
+  /// base as printed on the OMC invoice (e.g. GoGas "FREIGHT CHARGES (PCD)"
+  /// taxable ₹9,600). The GST on top is derived from `gstRate` — do NOT store
+  /// the GST-inclusive figure here.
   amount          Decimal                 @db.Decimal(18, 4)
+  /// 2026-08-15 — GST rate on THIS charge as a percentage (e.g. 5 for GoGas
+  /// freight, 18 for a commercial handling line, 0 for a GST-free add-on).
+  /// Kept per-charge because freight on the same invoice can differ from the
+  /// goods rate. Charge GST is reclaimable ITC downstream, never a cost.
+  gstRate         Decimal                 @default(0) @map("gst_rate") @db.Decimal(5, 2)
   notes           String?
   createdAt       DateTime                @default(now()) @map("created_at")
 

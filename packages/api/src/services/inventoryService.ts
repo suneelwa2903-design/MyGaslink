@@ -369,8 +369,13 @@ export async function recordIncomingFulls(
     documentDate: string;
     vehicleNumber?: string;
     driverName?: string;
+    // 2026-08-15 invoice-value entry: taxableValue is the GST-EXCLUSIVE line
+    // total off the OMC invoice. When set it takes priority — the service
+    // derives the GST-inclusive per-cyl unitPrice from it + gstRate.
+    taxableValue?: number;
     // F8: EITHER unitPrice (rate/cyl, GST-inclusive) OR amount (line total).
     // If both are passed, unitPrice wins. If neither, line total = 0.
+    // (Legacy inputs — kept for backward-compat; taxableValue supersedes them.)
     unitPrice?: number;
     amount?: number;
     notes?: string;
@@ -380,7 +385,10 @@ export async function recordIncomingFulls(
     sourceDistributorId?: string;
     charges?: Array<{
       chargeType: 'freight' | 'handling' | 'testing' | 'insurance' | 'other';
+      // GST-EXCLUSIVE (taxable) base of the charge.
       amount: number;
+      // 2026-08-15 — GST rate on this charge (e.g. 5 for GoGas freight).
+      gstRate?: number;
       notes?: string;
     }>;
     // F8 v2 (2026-08-06) — per-line GST% + OMC plant name. Both optional;
@@ -392,15 +400,31 @@ export async function recordIncomingFulls(
 ) {
   const eventDate = new Date(data.documentDate);
 
-  // F8: rate + line-total normalisation. unitPrice wins if both are set.
+  // Rate + line-total normalisation. Priority (2026-08-15):
+  //   1. taxableValue (GST-EXCLUSIVE line total) → derive GST-inclusive
+  //      per-cyl unitPrice = taxableValue * (1 + gst/100) / qty. This is the
+  //      invoice-value entry — the number copied straight off the OMC invoice.
+  //   2. unitPrice (legacy — already GST-inclusive rate/cyl).
+  //   3. amount / qty (legacy — GST-inclusive line total).
+  // `unitPrice` stored on PurchaseEntryItem stays GST-INCLUSIVE per its schema
+  // convention; the excl-GST base is re-derived downstream as unitPrice/(1+gst).
+  const gstRatePct = typeof data.gstRate === 'number' && data.gstRate > 0 ? data.gstRate : 0;
   const unitPrice =
-    typeof data.unitPrice === 'number' && data.unitPrice > 0
-      ? data.unitPrice
-      : typeof data.amount === 'number' && data.amount > 0 && data.quantity > 0
-        ? data.amount / data.quantity
-        : 0;
+    typeof data.taxableValue === 'number' && data.taxableValue > 0 && data.quantity > 0
+      ? (data.taxableValue * (1 + gstRatePct / 100)) / data.quantity
+      : typeof data.unitPrice === 'number' && data.unitPrice > 0
+        ? data.unitPrice
+        : typeof data.amount === 'number' && data.amount > 0 && data.quantity > 0
+          ? data.amount / data.quantity
+          : 0;
   const lineTotal = unitPrice * data.quantity;
-  const chargeTotal = (data.charges ?? []).reduce((s, c) => s + Math.max(0, c.amount), 0);
+  // Charges: c.amount is the GST-EXCLUSIVE base; add each charge's own GST so
+  // the event/landed total is fully GST-inclusive. Legacy rows have no gstRate
+  // (→ 0), so base == inclusive and behaviour is unchanged for them.
+  const chargeTotal = (data.charges ?? []).reduce(
+    (s, c) => s + Math.max(0, c.amount) * (1 + Math.max(0, c.gstRate ?? 0) / 100),
+    0,
+  );
   const eventAmount = lineTotal + chargeTotal;
 
   // F8 supplier context — fetched once so we can snapshot the name onto
@@ -494,6 +518,7 @@ export async function recordIncomingFulls(
                     .map((c) => ({
                       chargeType: c.chargeType,
                       amount: c.amount,
+                      gstRate: c.gstRate ?? 0,
                       notes: c.notes ?? null,
                     })),
                 }
@@ -528,7 +553,6 @@ export async function recordOutgoingEmpties(
     driverName?: string;
     authorizationRef?: string;
     amount?: number;
-    condition?: 'good' | 'defective';
     notes?: string;
   }
 ) {
@@ -549,7 +573,7 @@ export async function recordOutgoingEmpties(
       driverName: data.driverName,
       authorizationRef: data.authorizationRef,
       amount: data.amount,
-      condition: data.condition,
+      // `condition` removed (2026-08-15) — write-only, never read.
       createdBy: userId,
       notes: data.notes,
     });

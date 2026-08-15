@@ -100,7 +100,11 @@ export async function computeLandedCost(
     select: { gstMode: true },
   });
   const gstMode = (distributor?.gstMode ?? 'disabled') as 'live' | 'sandbox' | 'disabled';
-  const excludeGst = gstMode === 'live' || gstMode === 'sandbox';
+  // 2026-08-15 (Suneel) — landed cost is GST-INCLUSIVE everywhere (cash-margin
+  // basis: settings selling price incl − landed incl). GST is no longer
+  // stripped for ITC (live/sandbox) tenants. `gstMode` is still returned for
+  // the UI footnote. Flip this flag back for strict ITC (GST-exclusive) costing.
+  const excludeGst = false;
 
   // Pull all PurchaseEntry rows for the window, INVOICE type only (deposit
   // invoices excluded). Include items + charges + CN allocations + DN

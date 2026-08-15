@@ -735,7 +735,11 @@ export const PURCHASE_ENTRY_CHARGE_TYPES = [
 ] as const;
 export const purchaseEntryChargeSchema = z.object({
   chargeType: z.enum(PURCHASE_ENTRY_CHARGE_TYPES),
+  // GST-EXCLUSIVE (taxable) amount of the charge, as printed on the invoice.
   amount: z.number().min(0),
+  // 2026-08-15 — GST rate on this charge (e.g. 5 for GoGas freight). Optional;
+  // treated as 0 when omitted. Charge GST is reclaimable ITC, never a cost.
+  gstRate: z.number().min(0).max(28).optional(),
   notes: z.string().max(200).optional(),
 });
 
@@ -752,6 +756,12 @@ export const incomingFullsSchema = z.object({
   vehicleNumber: z.string().max(20).optional(),
   driverName: z.string().max(100).optional(),
   vehicleId: uuid.optional(),
+  // 2026-08-15 — invoice-value entry. `taxableValue` is the GST-EXCLUSIVE line
+  // total for the cylinders as printed on the OMC invoice (e.g. HPCL 19KG
+  // ₹2,32,473.36). Combined with `gstRate` the service derives the GST-
+  // inclusive per-cyl unitPrice it stores. Preferred input going forward;
+  // `unitPrice`/`amount` stay for backward-compat with pre-2026-08-15 callers.
+  taxableValue: nonNegativeNumber.optional(),
   amount: nonNegativeNumber.optional(),
   notes: z.string().max(500).optional(),
   // F8 (2026-08-06) — supplier + rate + charges. All optional; when
@@ -786,7 +796,10 @@ export const outgoingEmptiesSchema = z.object({
   vehicleId: uuid.optional(),
   authorizationRef: z.string().max(100).optional(),
   amount: nonNegativeNumber.optional(),
-  condition: z.enum(['good', 'defective']).optional(),
+  // 2026-08-15 — `condition` (good/defective) removed from the UI: it was
+  // write-only (stored on InventoryEvent.condition, never read by any report or
+  // logic). Field kept out of the schema so nothing re-adds it; the DB column
+  // stays for historical rows (drop in a future cleanup migration).
   notes: z.string().max(500).optional(),
 });
 

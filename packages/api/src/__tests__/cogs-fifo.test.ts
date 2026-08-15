@@ -244,16 +244,20 @@ describe('Backdating + cancellation + stockout (replay correctness)', () => {
 });
 
 describe('GST mode + tenant isolation', () => {
-  it('GST tenant strips ITC from the landed rate; disabled tenant keeps it inclusive', async () => {
+  it('landed rate is GST-INCLUSIVE for every tenant (2026-08-15 — cash-margin basis)', async () => {
+    // Suneel decision: landed cost keeps GST in for ALL tenants so the dealer
+    // margin reads directly against the GST-inclusive settings selling price.
+    // Previously live/sandbox (ITC) tenants stripped GST (1180 → 1000); now they
+    // keep it, same as disabled tenants.
     const gst = await makeTenant('sandbox');
     await gst.addLoad({ date: '2026-08-01', lines: [{ cyl: 'A', qty: 100, rate: 1180, gstRate: 18 }] });
     const gstLayers = await buildCostLayers(gst.distributorId);
-    expect(gstLayers.get(gst.cylA)![0].landedRate).toBe(1000); // 1180 / 1.18
+    expect(gstLayers.get(gst.cylA)![0].landedRate).toBe(1180); // GST kept in
 
     const noGst = await makeTenant('disabled');
     await noGst.addLoad({ date: '2026-08-01', lines: [{ cyl: 'A', qty: 100, rate: 1180, gstRate: 18 }] });
     const noGstLayers = await buildCostLayers(noGst.distributorId);
-    expect(noGstLayers.get(noGst.cylA)![0].landedRate).toBe(1180); // tax is real cost
+    expect(noGstLayers.get(noGst.cylA)![0].landedRate).toBe(1180); // same — inclusive
   });
 
   it('cross-tenant isolation: one tenant layers never feed another tenant deliveries', async () => {

@@ -30,6 +30,7 @@
  */
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { sumChargesIncl } from '../utils/purchaseCharges.js';
 
 type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
@@ -65,10 +66,12 @@ function round2(n: number): number {
  * pre-F8 implementation. */
 function entryTotal(entry: {
   items: Array<{ unitPrice: Prisma.Decimal | number; fullsReceived: number }>;
-  charges?: Array<{ amount: Prisma.Decimal | number }>;
+  charges?: Array<{ amount: Prisma.Decimal | number; gstRate?: Prisma.Decimal | number | null }>;
 }): number {
   const items = entry.items.reduce((s, it) => s + toNum(it.unitPrice) * it.fullsReceived, 0);
-  const charges = (entry.charges ?? []).reduce((s, c) => s + toNum(c.amount), 0);
+  // Payables side: charges are GST-INCLUSIVE — you pay the OMC the full invoice
+  // (freight base + freight GST). See utils/purchaseCharges (anti-pattern #16).
+  const charges = sumChargesIncl(entry.charges ?? []);
   return items + charges;
 }
 
@@ -527,7 +530,7 @@ export async function getSupplierLedger(
           },
         },
         // F8 (2026-08-06) — freight/handling/etc. add to the entry's debit.
-        charges: { select: { amount: true } },
+        charges: { select: { amount: true, gstRate: true } },
       },
     }),
     prisma.purchasePayment.findMany({
@@ -937,7 +940,7 @@ export async function listSupplierBalances(
           purchaseDate: true,
           documentType: true,
           items: { select: { unitPrice: true, fullsReceived: true } },
-          charges: { select: { amount: true } },
+          charges: { select: { amount: true, gstRate: true } },
         },
       },
       purchasePayments: {
@@ -1015,6 +1018,8 @@ export interface OutstandingEntryRow {
   // the Record CN modal picker) + CN offsets so callers can pick
   // truly-remaining outstanding invoices (payment + CN both reduce it).
   supplierDocumentNumber?: string | null;
+  /** 'invoice' (gas) | 'deposit_invoice' — CN/DN modals exclude deposits. */
+  documentType?: string;
   totalCreditNotes?: number;
   amountRemaining?: number;
 }
@@ -1042,9 +1047,13 @@ export async function listOutstandingEntries(
       purchaseDate: true,
       amountPaid: true,
       supplierDocumentNumber: true,
+      // 2026-08-15 — expose documentType so the CN/DN modals can exclude
+      // deposit invoices (CNs/DNs are gas-only; deposits are refundable and
+      // must not be reduced by a volume-incentive CN — Suneel).
+      documentType: true,
       items: { select: { unitPrice: true, fullsReceived: true } },
       // F8 (2026-08-06) — freight/handling/etc. counted into the entry total.
-      charges: { select: { amount: true } },
+      charges: { select: { amount: true, gstRate: true } },
       // F8 (2026-08-06) — CN offsets already applied to this entry.
       cnAllocations: {
         where: { purchaseCreditNote: { deletedAt: null } },
@@ -1067,6 +1076,7 @@ export async function listOutstandingEntries(
         amountPaid: paid,
         outstanding: round2(total - paid),
         supplierDocumentNumber: e.supplierDocumentNumber,
+        documentType: e.documentType,
         totalCreditNotes: cn,
         amountRemaining: remaining,
       };

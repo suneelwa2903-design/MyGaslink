@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
+import { sumChargesIncl } from '../utils/purchaseCharges.js';
 
 /**
  * Reports service — powers GET /api/reports/:reportType (TASK 1).
@@ -4457,7 +4458,7 @@ async function corpStatementRegister(distributorId: string, f: ReportFilters): P
         select: {
           purchaseDate: true,
           items: { select: { unitPrice: true, fullsReceived: true } },
-          charges: { select: { amount: true } },
+          charges: { select: { amount: true, gstRate: true } },
         },
       }),
       prisma.purchasePayment.findMany({
@@ -4488,7 +4489,7 @@ async function corpStatementRegister(distributorId: string, f: ReportFilters): P
         (sum, it) => sum + Number(it.unitPrice) * it.fullsReceived,
         0,
       );
-      const charges = e.charges.reduce((sum, c) => sum + Number(c.amount), 0);
+      const charges = sumChargesIncl(e.charges);
       bump(monthKey(e.purchaseDate), 'purchases', items + charges);
     }
     for (const p of payments) bump(monthKey(p.transactionDate), 'payments', Number(p.amount));
@@ -4764,7 +4765,7 @@ async function corpSupplierPaymentAging(distributorId: string, f: ReportFilters)
         supplierDocumentDate: true,
         amountPaid: true,
         items: { select: { unitPrice: true, fullsReceived: true } },
-        charges: { select: { amount: true } },
+        charges: { select: { amount: true, gstRate: true } },
         cnAllocations: {
           where: { purchaseCreditNote: { deletedAt: null } },
           select: { amount: true },
@@ -4784,7 +4785,7 @@ async function corpSupplierPaymentAging(distributorId: string, f: ReportFilters)
     for (const e of entries) {
       const gross =
         e.items.reduce((sum, it) => sum + Number(it.unitPrice) * it.fullsReceived, 0) +
-        e.charges.reduce((sum, c) => sum + Number(c.amount), 0);
+        sumChargesIncl(e.charges);
       const paid = Number(e.amountPaid);
       const cn = e.cnAllocations.reduce((sum, a) => sum + Number(a.amount), 0);
       const outstanding = gross - paid - cn;

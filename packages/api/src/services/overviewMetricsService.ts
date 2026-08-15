@@ -21,6 +21,7 @@
  * `drillReport` on each metric is the report slug the card links to.
  */
 import { prisma } from '../lib/prisma.js';
+import { sumChargesIncl } from '../utils/purchaseCharges.js';
 import { toNum } from '../utils/decimal.js';
 import { computeCustomerOverdue } from './paymentService.js';
 import { computeFifoCogs } from './cogsService.js';
@@ -236,12 +237,13 @@ export async function getOverviewMetrics(
   //    adjustments (a v1 headline — the Corporation ledger has the exact net). ──
   const allPurchaseEntries = await prisma.purchaseEntry.findMany({
     where: { distributorId, deletedAt: null },
-    select: { amountPaid: true, items: { select: { unitPrice: true, fullsReceived: true } }, charges: { select: { amount: true } } },
+    select: { amountPaid: true, items: { select: { unitPrice: true, fullsReceived: true } }, charges: { select: { amount: true, gstRate: true } } },
   });
   let payableToOmc = 0;
   for (const e of allPurchaseEntries) {
+    // Payables: charges GST-INCLUSIVE (owed to OMC). See utils/purchaseCharges.
     const total = e.items.reduce((s, it) => s + toNum(it.unitPrice) * it.fullsReceived, 0)
-      + e.charges.reduce((s, ch) => s + toNum(ch.amount), 0);
+      + sumChargesIncl(e.charges);
     payableToOmc += Math.max(0, total - toNum(e.amountPaid));
   }
 

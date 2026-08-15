@@ -157,8 +157,13 @@ export async function buildCostLayers(
   distributorId: string,
   opts: { upToDate?: string; opening?: OpeningLayerInput[] } = {},
 ): Promise<Map<string, CostLayer[]>> {
-  const gstMode = await getGstMode(distributorId);
-  const excludeGst = gstMode === 'live' || gstMode === 'sandbox';
+  // 2026-08-15 (Suneel) — landed cost is GST-INCLUSIVE everywhere. The dealer
+  // margin/discount is settings selling price (incl GST) − landed (incl GST),
+  // a consistent cash-margin. GST is NOT stripped even for ITC-claiming
+  // (live/sandbox) tenants; payables are incl-GST too, so nothing double-counts.
+  // (Was: excludeGst = live/sandbox.) Flip this one flag back if a tenant ever
+  // needs strict ITC (GST-exclusive) costing.
+  const excludeGst = false;
   const names = await getCylTypeNames(distributorId);
 
   const entries = await prisma.purchaseEntry.findMany({
@@ -471,4 +476,102 @@ export async function computeStockValuation(
   }
   openLayers.sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName) || a.date.localeCompare(b.date));
   return { gstMode, asOf: opts.asOf ?? null, totalRemainingQty: totalQty, totalValue, openLayers, uncostedQty: uncosted };
+}
+
+export interface CostLedgerRow {
+  cylinderTypeId: string;
+  cylinderTypeName: string;
+  date: string;
+  ref: string;
+  purchaseEntryId: string | null;
+  qtyReceived: number;
+  qtyRemaining: number;
+  grossRate: number;
+  freightPerCyl: number;
+  cnPerCyl: number;
+  dnPerCyl: number;
+  landedRate: number;
+}
+
+/**
+ * Cost Layer Ledger (2026-08-15) — the merged per-load table for the Corp.
+ * Loads page. Same FIFO layers as computeStockValuation, but returns ALL loads
+ * (open AND fully consumed, remaining=0) so the frontend can group by cyl type
+ * → month and show BOTH the monthly average (all purchases) and the open-stock
+ * valuation (remaining) in one table. Also returns MRP (latest settings selling
+ * price) per cyl type so the UI can render the dealer margin = MRP − landed.
+ */
+export async function computeCostLedger(
+  distributorId: string,
+  opts: { asOf?: string } = {},
+): Promise<{
+  gstMode: GstMode;
+  rows: CostLedgerRow[];
+  mrpByType: Record<string, number>;
+  totalRemainingQty: number;
+  totalValue: number;
+}> {
+  const gstMode = await getGstMode(distributorId);
+  const layers = await buildCostLayers(distributorId, { upToDate: opts.asOf });
+  // FIFO-consume deliveries to draw down qtyRemaining (identical to
+  // computeStockValuation — consumed loads end at remaining 0).
+  const orders = await prisma.order.findMany({
+    where: {
+      distributorId,
+      status: { in: ['delivered', 'modified_delivered'] },
+      ...(opts.asOf ? { deliveryDate: { lte: new Date(opts.asOf) } } : {}),
+    },
+    select: { orderNumber: true, deliveryDate: true, items: { select: { cylinderTypeId: true, deliveredQuantity: true, quantity: true } } },
+  });
+  const cons: { date: string; orderNumber: string; cylinderTypeId: string; qty: number }[] = [];
+  for (const o of orders) {
+    const date = toDayString(o.deliveryDate);
+    for (const it of o.items) {
+      const qty = it.deliveredQuantity ?? it.quantity;
+      if (qty > 0) cons.push({ date, orderNumber: o.orderNumber, cylinderTypeId: it.cylinderTypeId, qty });
+    }
+  }
+  cons.sort((a, b) => a.date.localeCompare(b.date) || a.orderNumber.localeCompare(b.orderNumber));
+  const cursor = new Map<string, number>();
+  for (const c of cons) {
+    const list = layers.get(c.cylinderTypeId) ?? [];
+    let idx = cursor.get(c.cylinderTypeId) ?? 0;
+    let need = c.qty;
+    while (need > 0 && idx < list.length) {
+      const L = list[idx];
+      if (L.date > c.date) break;
+      if (L.qtyRemaining <= 0) { idx++; continue; }
+      const take = Math.min(need, L.qtyRemaining);
+      L.qtyRemaining -= take; need -= take;
+      if (L.qtyRemaining === 0) idx++;
+    }
+    cursor.set(c.cylinderTypeId, idx);
+  }
+  const rows: CostLedgerRow[] = [];
+  let totalRemainingQty = 0, totalValue = 0;
+  for (const list of layers.values()) {
+    for (const L of list) {
+      rows.push({
+        cylinderTypeId: L.cylinderTypeId, cylinderTypeName: L.cylinderTypeName,
+        date: L.date, ref: L.ref, purchaseEntryId: L.purchaseEntryId,
+        qtyReceived: L.qtyReceived, qtyRemaining: L.qtyRemaining,
+        grossRate: round4(L.grossRate), freightPerCyl: round4(L.freightPerCyl),
+        cnPerCyl: round4(L.cnPerCyl), dnPerCyl: round4(L.dnPerCyl), landedRate: round4(L.landedRate),
+      });
+      if (L.qtyRemaining > 0) {
+        totalRemainingQty += L.qtyRemaining;
+        totalValue = round2(totalValue + L.qtyRemaining * L.landedRate);
+      }
+    }
+  }
+  rows.sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName) || a.date.localeCompare(b.date));
+  // MRP = latest settings selling price per cyl type (GST-inclusive).
+  const prices = await prisma.cylinderPrice.findMany({
+    where: { distributorId },
+    orderBy: { effectiveDate: 'desc' },
+    select: { cylinderTypeId: true, price: true },
+  });
+  const mrpByType: Record<string, number> = {};
+  for (const p of prices) if (!(p.cylinderTypeId in mrpByType)) mrpByType[p.cylinderTypeId] = toNum(p.price);
+  return { gstMode, rows, mrpByType, totalRemainingQty, totalValue };
 }
