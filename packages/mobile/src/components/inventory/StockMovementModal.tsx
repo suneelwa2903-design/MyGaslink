@@ -27,7 +27,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useApiMutation } from '../../hooks/useApi';
+import { useQueryClient } from '@tanstack/react-query';
+import { useApiMutation, useApiQuery } from '../../hooks/useApi';
+import { api } from '../../lib/api';
 import { useTheme, ACCENT } from '../../theme';
 import { DateInput } from '../ui';
 
@@ -45,7 +47,13 @@ export interface StockMovementModalProps {
   onClose: () => void;
   onSaved?: () => void;
   cylinderOptions: { id: string; name: string }[];
-  availableMappings: VehicleMapping[];
+  /** 2026-08-15 — independent pickers (all vehicles / all drivers), matching
+   *  web. Replaces the old preset vehicle+driver combo chips so the user can
+   *  pair ANY vehicle with ANY driver. `availableMappings` kept optional only
+   *  for backward-compat with un-migrated callers. */
+  vehicles?: { vehicleId: string; vehicleNumber: string }[];
+  drivers?: { driverName: string }[];
+  availableMappings?: VehicleMapping[];
   /** Default document date (Godown: selectedDate; Corp: today). */
   defaultDate: string;
   /** TanStack keys to invalidate on success. */
@@ -64,19 +72,26 @@ interface MovementForm {
   vehicleId: string;
   vehicleNumber: string;
   driverName: string;
+  // Incoming (invoice-value entry): GST-EXCLUSIVE taxable line total + GST%.
+  taxableValue: string;
+  gstRate: string;
+  // Outgoing: value of empties returned.
   amount: string;
   authorizationRef: string;
-  condition: 'good' | 'defective' | '';
   notes: string;
 }
+
+interface ChargeRow { chargeType: 'freight' | 'handling' | 'testing' | 'insurance' | 'other'; amount: string; gstRate: string }
 
 function emptyForm(date: string): MovementForm {
   return {
     cylinderTypeId: '', quantity: '', documentType: '', documentNumber: '',
     documentDate: date, vehicleId: '', vehicleNumber: '', driverName: '',
-    amount: '', authorizationRef: '', condition: '', notes: '',
+    taxableValue: '', gstRate: '', amount: '', authorizationRef: '', notes: '',
   };
 }
+
+const inr = (n: number) => '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function useStockTheme() {
   const { dark, colors } = useTheme();
@@ -96,7 +111,8 @@ function useStockTheme() {
 }
 
 export function StockMovementModal({
-  visible, mode, onClose, onSaved, cylinderOptions, availableMappings,
+  visible, mode, onClose, onSaved, cylinderOptions,
+  vehicles = [], drivers = [],
   defaultDate, invalidateKeys, sourceDistributorId, sourceName,
 }: StockMovementModalProps) {
   const t = useStockTheme();
@@ -105,27 +121,55 @@ export function StockMovementModal({
   // the modal opens (see the `key` on <StockMovementModal> at both call
   // sites), so the form self-resets on mount without a setState-in-effect.
   const [form, setForm] = useState<MovementForm>(() => emptyForm(defaultDate));
+  const [charges, setCharges] = useState<ChargeRow[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const qc = useQueryClient();
   const isIncoming = mode === 'incoming';
+  // Include-defective-fulls (F1, outgoing only) — pending defectives at depot +
+  // the CN-issued rows ready to ship alongside this empties challan.
+  const [includeDefectives, setIncludeDefectives] = useState(false);
+  const { data: defectiveBucket } = useApiQuery<Array<{ cylinderTypeId: string; cylinderTypeName: string; qty: number }>>(
+    ['defective-depot-bucket'], '/defective-returns/depot-bucket', undefined, { enabled: visible && mode === 'outgoing' },
+  );
+  const { data: readyDefectives } = useApiQuery<Array<{ id: string }>>(
+    ['defective-returns-ready'], '/defective-returns', { status: 'cn_issued' }, { enabled: visible && mode === 'outgoing' },
+  );
+  const defectivePendingQty = (defectiveBucket ?? []).reduce((s, b) => s + b.qty, 0);
+  const readyDefectiveIds = (readyDefectives ?? []).map((d) => d.id);
   const accent = isIncoming ? t.green : t.orange;
+  // 2026-08-15 — label parity with web: incoming supplies use "Supply *",
+  // outgoing empties challans use "Challan *".
+  const docLabel = isIncoming ? 'Supply' : 'Challan';
+
+  // Live per-cylinder cost readout (invoice-value entry). Base is GST-EXCLUSIVE;
+  // GST is reclaimable ITC; landed = incl GST + expenses. See web parity.
+  const qtyNum = Math.max(0, parseInt(form.quantity, 10) || 0);
+  const taxNum = Math.max(0, Number(form.taxableValue) || 0);
+  const gstNum = Math.max(0, Number(form.gstRate) || 0);
+  const cylGst = (taxNum * gstNum) / 100;
+  const chargeBase = charges.reduce((s, c) => s + Math.max(0, Number(c.amount) || 0), 0);
+  const chargeGst = charges.reduce((s, c) => s + Math.max(0, Number(c.amount) || 0) * (Math.max(0, Number(c.gstRate) || 0) / 100), 0);
+  const landedTotal = taxNum + cylGst + chargeBase + chargeGst;
+  const perBase = qtyNum ? taxNum / qtyNum : 0;
+  const perExpense = qtyNum ? chargeBase / qtyNum : 0;
+  const perGst = qtyNum ? (cylGst + chargeGst) / qtyNum : 0;
+  const perLanded = qtyNum ? landedTotal / qtyNum : 0;
 
   const onDone = () => { onSaved?.(); onClose(); };
   const incoming = useApiMutation<unknown, Record<string, unknown>>('post', '/inventory/incoming-fulls', {
     invalidateKeys, successMessage: 'Incoming fulls recorded', onSuccess: onDone,
   });
-  const outgoing = useApiMutation<unknown, Record<string, unknown>>('post', '/inventory/outgoing-empties', {
-    invalidateKeys, successMessage: 'Outgoing empties recorded', onSuccess: onDone,
-  });
-  const isPending = incoming.isPending || outgoing.isPending;
+  // Outgoing is a manual chain (empties, then optionally the defective batch),
+  // so it uses the raw api client + a local `submitting` flag rather than a
+  // useApiMutation — mirrors the web OutgoingEmptiesModal.onSubmit.
+  const isPending = incoming.isPending || submitting;
 
   const submit = () => {
     const qty = parseInt(form.quantity, 10);
     if (!form.cylinderTypeId) { Alert.alert('Required', 'Please select a cylinder type.'); return; }
     if (isNaN(qty) || qty <= 0) { Alert.alert('Required', 'Quantity must be a whole number greater than 0.'); return; }
-    if (!form.documentType.trim()) { Alert.alert('Required', 'Document Type is required.'); return; }
-    if (!form.documentNumber.trim()) { Alert.alert('Required', 'Document Number is required.'); return; }
-    const amt = form.amount.trim() ? Number(form.amount) : undefined;
-    if (amt !== undefined && (Number.isNaN(amt) || amt < 0)) { Alert.alert('Required', 'Amount must be 0 or greater.'); return; }
-
+    if (!form.documentType.trim()) { Alert.alert('Required', `${docLabel} Type is required.`); return; }
+    if (!form.documentNumber.trim()) { Alert.alert('Required', `${isIncoming ? 'Supply Reference No.' : 'Challan No.'} is required.`); return; }
     const base: Record<string, unknown> = {
       cylinderTypeId: form.cylinderTypeId,
       quantity: qty,
@@ -135,18 +179,65 @@ export function StockMovementModal({
       ...(form.vehicleId ? { vehicleId: form.vehicleId } : {}),
       ...(form.vehicleNumber.trim() ? { vehicleNumber: form.vehicleNumber.trim() } : {}),
       ...(form.driverName.trim() ? { driverName: form.driverName.trim() } : {}),
-      ...(amt !== undefined ? { amount: amt } : {}),
       ...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
     };
 
     if (isIncoming) {
-      incoming.mutate({ ...base, ...(sourceDistributorId ? { sourceDistributorId } : {}) });
-    } else {
-      outgoing.mutate({
+      // Invoice-value entry: GST-EXCLUSIVE taxable + GST% + charges (each with
+      // its own GST%). Service derives the GST-inclusive per-cyl cost.
+      const tax = form.taxableValue.trim() ? Number(form.taxableValue) : undefined;
+      if (tax !== undefined && (Number.isNaN(tax) || tax < 0)) { Alert.alert('Required', 'Taxable Value must be 0 or greater.'); return; }
+      const gst = form.gstRate.trim() ? Number(form.gstRate) : undefined;
+      const chargePayload = charges
+        .filter((c) => (Number(c.amount) || 0) > 0)
+        .map((c) => ({ chargeType: c.chargeType, amount: Number(c.amount), gstRate: Number(c.gstRate) || 0 }));
+      incoming.mutate({
         ...base,
-        ...(form.authorizationRef.trim() ? { authorizationRef: form.authorizationRef.trim() } : {}),
-        ...(form.condition ? { condition: form.condition } : {}),
+        ...(tax !== undefined ? { taxableValue: tax } : {}),
+        ...(gst !== undefined ? { gstRate: gst } : {}),
+        ...(chargePayload.length > 0 ? { charges: chargePayload } : {}),
+        ...(sourceDistributorId ? { sourceDistributorId } : {}),
       });
+    } else {
+      const amt = form.amount.trim() ? Number(form.amount) : undefined;
+      if (amt !== undefined && (Number.isNaN(amt) || amt < 0)) { Alert.alert('Required', 'Amount must be 0 or greater.'); return; }
+      const outPayload = {
+        ...base,
+        ...(amt !== undefined ? { amount: amt } : {}),
+        ...(form.authorizationRef.trim() ? { authorizationRef: form.authorizationRef.trim() } : {}),
+      };
+      void (async () => {
+        setSubmitting(true);
+        try {
+          await api.post('/inventory/outgoing-empties', outPayload);
+          for (const k of invalidateKeys ?? []) qc.invalidateQueries({ queryKey: k });
+        } catch (e) {
+          setSubmitting(false);
+          const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
+          Alert.alert('Error', msg || 'Failed to record outgoing empties.');
+          return;
+        }
+        // Empties saved. Optionally ship the pending defective fulls on this
+        // same challan (F1) — a failure here is a WARNING, empties still landed.
+        if (includeDefectives && readyDefectiveIds.length > 0) {
+          try {
+            await api.post('/defective-returns/batches', {
+              corporationName: (form.documentType.trim() || 'IOCL').slice(0, 60),
+              challanNumber: form.documentNumber.trim() || undefined,
+              challanDate: form.documentDate || undefined,
+              defectiveIds: readyDefectiveIds,
+              notes: `Piggybacked on outgoing empties challan ${form.documentNumber.trim()}`.trim(),
+            });
+            qc.invalidateQueries({ queryKey: ['defective-depot-bucket'] });
+            qc.invalidateQueries({ queryKey: ['defective-returns-ready'] });
+            qc.invalidateQueries({ queryKey: ['defective-returns-pending-count'] });
+          } catch {
+            Alert.alert('Partial', 'Empties recorded, but the defective batch failed. Defectives still at depot — retry from Outgoing Empties.');
+          }
+        }
+        setSubmitting(false);
+        onDone();
+      })();
     }
   };
 
@@ -206,74 +297,161 @@ export function StockMovementModal({
               value={form.quantity} onChangeText={(v) => setForm((f) => ({ ...f, quantity: v }))}
             />
 
-            {/* Date */}
-            <Text style={[styles.label, { color: t.textSecondary }]}>Date</Text>
+            {/* Supply / Challan Date */}
+            <Text style={[styles.label, { color: t.textSecondary }]}>{docLabel} Date</Text>
             <View style={{ marginBottom: 12 }}>
               <DateInput value={form.documentDate || null} onChange={(v) => setForm((f) => ({ ...f, documentDate: v }))} placeholder="Select date" />
             </View>
 
-            {/* Document Type */}
-            <Text style={[styles.label, { color: t.textSecondary }]}>Document Type <Text style={{ color: t.red }}>*</Text></Text>
+            {/* Supply / Challan Type */}
+            <Text style={[styles.label, { color: t.textSecondary }]}>{docLabel} Type <Text style={{ color: t.red }}>*</Text></Text>
             <TextInput
               style={[styles.input, { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
-              placeholder="e.g. Invoice, DC" placeholderTextColor={t.textMuted}
+              placeholder={isIncoming ? 'e.g. Invoice, DC' : 'e.g. Return Challan'} placeholderTextColor={t.textMuted}
               value={form.documentType} onChangeText={(v) => setForm((f) => ({ ...f, documentType: v }))}
             />
 
-            {/* Document Number */}
-            <Text style={[styles.label, { color: t.textSecondary }]}>Document Number <Text style={{ color: t.red }}>*</Text></Text>
+            {/* Supply Reference No. / Challan No. */}
+            <Text style={[styles.label, { color: t.textSecondary }]}>{isIncoming ? 'Supply Reference No.' : 'Challan No.'} <Text style={{ color: t.red }}>*</Text></Text>
             <TextInput
               style={[styles.input, { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
               placeholder="e.g. INV-2026-001" placeholderTextColor={t.textMuted}
               value={form.documentNumber} onChangeText={(v) => setForm((f) => ({ ...f, documentNumber: v }))}
             />
 
-            {/* Vehicle & Driver */}
-            <Text style={[styles.label, { color: t.textSecondary }]}>Vehicle &amp; Driver <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text></Text>
-            {availableMappings.length === 0 ? (
-              <View style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor: t.cardBorder, backgroundColor: t.inputBg, marginBottom: 14 }}>
-                <Text style={{ fontSize: 13, color: t.textMuted }}>No vehicle mappings for today. Set one up in Transport → Vehicle Mappings, or leave blank.</Text>
+            {/* Vehicle (independent picker — any vehicle) */}
+            <Text style={[styles.label, { color: t.textSecondary }]}>Vehicle <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text></Text>
+            {vehicles.length === 0 ? (
+              <View style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor: t.cardBorder, backgroundColor: t.inputBg, marginBottom: 12 }}>
+                <Text style={{ fontSize: 13, color: t.textMuted }}>No vehicles in Transport yet, or leave blank.</Text>
               </View>
             ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
-                {availableMappings.map((m) => {
-                  const selected = form.vehicleId === m.vehicleId;
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+                {vehicles.map((v) => {
+                  const selected = form.vehicleId === v.vehicleId;
                   return (
                     <TouchableOpacity
-                      key={m.driverId}
-                      onPress={() => setForm((f) => ({ ...f, vehicleId: m.vehicleId ?? '', vehicleNumber: m.vehicleNumber ?? '', driverName: m.driverName }))}
-                      style={{
-                        paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12,
-                        backgroundColor: selected ? accent : t.metricBg,
-                        borderWidth: 1, borderColor: selected ? accent : t.cardBorder,
-                      }}
+                      key={v.vehicleId}
+                      onPress={() => setForm((f) => selected
+                        ? { ...f, vehicleId: '', vehicleNumber: '' }
+                        : { ...f, vehicleId: v.vehicleId, vehicleNumber: v.vehicleNumber })}
+                      style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: selected ? accent : t.metricBg, borderWidth: 1, borderColor: selected ? accent : t.cardBorder }}
                     >
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>{m.vehicleNumber}</Text>
-                      <Text style={{ fontSize: 11, color: selected ? '#fff' : t.textSecondary, marginTop: 2 }}>{m.driverName}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>{v.vehicleNumber}</Text>
                     </TouchableOpacity>
                   );
                 })}
-                {form.vehicleId !== '' && (
-                  <TouchableOpacity
-                    onPress={() => setForm((f) => ({ ...f, vehicleId: '', vehicleNumber: '', driverName: '' }))}
-                    style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: t.cardBorder, alignItems: 'center', justifyContent: 'center' }}
-                  >
-                    <Ionicons name="close" size={14} color={t.textSecondary} />
-                    <Text style={{ fontSize: 11, color: t.textSecondary, marginTop: 2 }}>Clear</Text>
-                  </TouchableOpacity>
-                )}
               </ScrollView>
             )}
 
-            {/* Amount */}
-            <Text style={[styles.label, { color: t.textSecondary }]}>Amount <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text></Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
-              placeholder="e.g. 12000" placeholderTextColor={t.textMuted} keyboardType="decimal-pad"
-              value={form.amount} onChangeText={(v) => setForm((f) => ({ ...f, amount: v.replace(/[^0-9.]/g, '') }))}
-            />
+            {/* Driver (independent picker — any driver) */}
+            <Text style={[styles.label, { color: t.textSecondary }]}>Driver <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text></Text>
+            {drivers.length === 0 ? (
+              <View style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor: t.cardBorder, backgroundColor: t.inputBg, marginBottom: 14 }}>
+                <Text style={{ fontSize: 13, color: t.textMuted }}>No drivers in Transport yet, or leave blank.</Text>
+              </View>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+                {drivers.map((d) => {
+                  const selected = form.driverName === d.driverName;
+                  return (
+                    <TouchableOpacity
+                      key={d.driverName}
+                      onPress={() => setForm((f) => ({ ...f, driverName: selected ? '' : d.driverName }))}
+                      style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: selected ? accent : t.metricBg, borderWidth: 1, borderColor: selected ? accent : t.cardBorder }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>{d.driverName}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
 
-            {/* Outgoing-only: Authorization Ref + Condition */}
+            {isIncoming ? (
+              <>
+                {/* Taxable Value (GST-EXCLUSIVE line total off the invoice) */}
+                <Text style={[styles.label, { color: t.textSecondary }]}>Taxable Value (₹, excl GST) <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text></Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
+                  placeholder="Line total before GST — from invoice" placeholderTextColor={t.textMuted} keyboardType="decimal-pad"
+                  value={form.taxableValue} onChangeText={(v) => setForm((f) => ({ ...f, taxableValue: v.replace(/[^0-9.]/g, '') }))}
+                />
+
+                {/* GST % — 5 / 18 / custom */}
+                <Text style={[styles.label, { color: t.textSecondary }]}>GST %</Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 4, alignItems: 'center' }}>
+                  {[5, 18].map((r) => {
+                    const selected = Number(form.gstRate) === r;
+                    return (
+                      <TouchableOpacity key={r} onPress={() => setForm((f) => ({ ...f, gstRate: String(r) }))}
+                        style={{ paddingHorizontal: 16, paddingVertical: 9, borderRadius: 10, backgroundColor: selected ? accent : t.metricBg, borderWidth: 1, borderColor: selected ? accent : t.cardBorder }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>{r}%</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TextInput
+                    style={[styles.input, { flex: 1, marginBottom: 0, backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
+                    placeholder="Custom %" placeholderTextColor={t.textMuted} keyboardType="decimal-pad"
+                    value={form.gstRate} onChangeText={(v) => setForm((f) => ({ ...f, gstRate: v.replace(/[^0-9.]/g, '') }))}
+                  />
+                </View>
+                <Text style={{ fontSize: 11, color: t.textMuted, marginBottom: 12 }}>5% domestic · 18% commercial — pick per invoice.</Text>
+
+                {/* Charges (each with its own GST%) */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={[styles.label, { color: t.textSecondary, marginBottom: 0 }]}>Charges (freight, etc.)</Text>
+                  <TouchableOpacity onPress={() => setCharges((cs) => [...cs, { chargeType: 'freight', amount: '', gstRate: form.gstRate }])}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: accent }}>+ Add</Text>
+                  </TouchableOpacity>
+                </View>
+                {charges.map((c, i) => (
+                  <View key={i} style={{ flexDirection: 'row', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+                    <TextInput
+                      style={[styles.input, { flex: 1.4, marginBottom: 0, backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
+                      placeholder="freight" placeholderTextColor={t.textMuted}
+                      value={c.chargeType} onChangeText={(v) => setCharges((cs) => cs.map((x, j) => j === i ? { ...x, chargeType: (['freight','handling','testing','insurance','other'].includes(v) ? v : 'other') as ChargeRow['chargeType'] } : x))}
+                    />
+                    <TextInput
+                      style={[styles.input, { flex: 1.2, marginBottom: 0, backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
+                      placeholder="₹ excl GST" placeholderTextColor={t.textMuted} keyboardType="decimal-pad"
+                      value={c.amount} onChangeText={(v) => setCharges((cs) => cs.map((x, j) => j === i ? { ...x, amount: v.replace(/[^0-9.]/g, '') } : x))}
+                    />
+                    <TextInput
+                      style={[styles.input, { width: 56, marginBottom: 0, backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
+                      placeholder="GST%" placeholderTextColor={t.textMuted} keyboardType="decimal-pad"
+                      value={c.gstRate} onChangeText={(v) => setCharges((cs) => cs.map((x, j) => j === i ? { ...x, gstRate: v.replace(/[^0-9.]/g, '') } : x))}
+                    />
+                    <TouchableOpacity onPress={() => setCharges((cs) => cs.filter((_, j) => j !== i))} style={{ padding: 6 }}>
+                      <Ionicons name="close-circle" size={20} color={t.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+
+                {/* Live per-cylinder readout */}
+                {qtyNum > 0 && taxNum > 0 && (
+                  <View style={{ borderRadius: 10, borderWidth: 1, borderColor: t.cardBorder, backgroundColor: t.metricBg, padding: 12, marginTop: 4, marginBottom: 10, gap: 4 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontSize: 12, color: t.textSecondary }}>Base / cyl (excl GST)</Text><Text style={{ fontSize: 12, fontWeight: '700', color: t.text }}>{inr(perBase)}</Text></View>
+                    {perExpense > 0 && <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontSize: 12, color: t.textSecondary }}>+ Expense / cyl</Text><Text style={{ fontSize: 12, fontWeight: '700', color: t.text }}>{inr(perExpense)}</Text></View>}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontSize: 12, color: t.textSecondary }}>GST / cyl (ITC)</Text><Text style={{ fontSize: 12, fontWeight: '700', color: t.textMuted }}>{inr(perGst)}</Text></View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: t.cardBorder, paddingTop: 4 }}><Text style={{ fontSize: 12, fontWeight: '700', color: t.text }}>Landed / cyl (incl GST + exp)</Text><Text style={{ fontSize: 13, fontWeight: '800', color: t.text }}>{inr(perLanded)}</Text></View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ fontSize: 12, color: t.textSecondary }}>Payable to supplier</Text><Text style={{ fontSize: 12, fontWeight: '700', color: t.text }}>{inr(landedTotal)}</Text></View>
+                  </View>
+                )}
+                <Text style={{ fontSize: 11, color: t.textMuted, marginBottom: 12 }}>Cost &amp; margin use the excl-GST base; GST is reclaimable ITC; payables use the incl-GST total.</Text>
+              </>
+            ) : (
+              <>
+                {/* Amount (value of empties returned) */}
+                <Text style={[styles.label, { color: t.textSecondary }]}>Amount <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text></Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: t.inputBg, color: t.text, borderColor: t.cardBorder }]}
+                  placeholder="e.g. 12000" placeholderTextColor={t.textMuted} keyboardType="decimal-pad"
+                  value={form.amount} onChangeText={(v) => setForm((f) => ({ ...f, amount: v.replace(/[^0-9.]/g, '') }))}
+                />
+              </>
+            )}
+
+            {/* Outgoing-only: Authorization Ref + include-defective-fulls */}
             {!isIncoming && (
               <>
                 <Text style={[styles.label, { color: t.textSecondary }]}>Authorization Ref <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text></Text>
@@ -282,21 +460,20 @@ export function StockMovementModal({
                   placeholder="e.g. AUTH-2026-001" placeholderTextColor={t.textMuted}
                   value={form.authorizationRef} onChangeText={(v) => setForm((f) => ({ ...f, authorizationRef: v }))}
                 />
-                <Text style={[styles.label, { color: t.textSecondary }]}>Condition <Text style={{ fontSize: 11, color: t.textMuted }}>(optional)</Text></Text>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-                  {(['good', 'defective'] as const).map((c) => {
-                    const selected = form.condition === c;
-                    return (
-                      <TouchableOpacity
-                        key={c}
-                        onPress={() => setForm((f) => ({ ...f, condition: f.condition === c ? '' : c }))}
-                        style={{ flex: 1, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: selected ? t.orange : t.cardBorder, backgroundColor: selected ? t.orange : t.metricBg, alignItems: 'center' }}
-                      >
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: selected ? '#fff' : t.text }}>{c === 'good' ? 'Good' : 'Defective'}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                {/* Include defective fulls — ship pending CN-issued defectives on
+                    this same challan (F1). Only shown when the depot has some. */}
+                {defectivePendingQty > 0 && readyDefectiveIds.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => setIncludeDefectives((v) => !v)}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, marginBottom: 14, borderRadius: 10, borderWidth: 1, borderColor: includeDefectives ? t.orange : t.cardBorder, backgroundColor: includeDefectives ? (t.dark ? '#2a1d10' : '#fff7ed') : t.inputBg }}
+                  >
+                    <Ionicons name={includeDefectives ? 'checkbox' : 'square-outline'} size={22} color={includeDefectives ? t.orange : t.textMuted} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: t.text }}>Also send defective fulls</Text>
+                      <Text style={{ fontSize: 11, color: t.textSecondary, marginTop: 1 }}>{defectivePendingQty} pending at depot — ship on this challan</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
               </>
             )}
 

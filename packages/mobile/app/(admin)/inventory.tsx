@@ -455,29 +455,17 @@ function SummaryTab({
   // (src/components/inventory/StockMovementModal.tsx) — the ONE modal Godown
   // and Corp. Loads both render.
 
-  // Today's vehicle mappings — drives the vehicle+driver picker shown in
-  // the Incoming/Outgoing modals. Empty `recommendations` ⇒ show the
-  // empty-state CTA ("Map vehicles first in Fleet").
-  const { data: vehicleMappingsToday } = useApiQuery<{
-    date: string;
-    recommendations: Array<{
-      driverId: string;
-      driverName: string;
-      vehicleId: string | null;
-      vehicleNumber: string | null;
-      status: 'confirmed' | 'recommended' | 'unassigned';
-    }>;
-  }>(
-    ['admin-vehicle-mappings', todayString()],
-    '/assignments/vehicle-mappings',
-    { date: todayString() },
+  // 2026-08-15 — independent vehicle/driver pickers (all vehicles, all drivers)
+  // for the Incoming/Outgoing modals, matching web. Replaces the daily-mappings
+  // combo chips so any vehicle can pair with any driver.
+  const { data: vehResp } = useApiQuery<{ vehicles: { vehicleId: string; vehicleNumber: string }[] }>(
+    ['vehicles-all'], '/vehicles',
   );
-  const availableMappings = useMemo(
-    () => (vehicleMappingsToday?.recommendations ?? []).filter(
-      (m) => m.vehicleId && m.vehicleNumber && m.status !== 'unassigned',
-    ),
-    [vehicleMappingsToday],
+  const { data: drvResp } = useApiQuery<{ drivers: { driverName: string }[] }>(
+    ['drivers-active'], '/drivers', { status: 'active' },
   );
+  const vehiclesList = useMemo(() => vehResp?.vehicles ?? [], [vehResp]);
+  const driversList = useMemo(() => drvResp?.drivers ?? [], [drvResp]);
 
   const adjustMutation = useApiMutation<
     unknown,
@@ -815,7 +803,8 @@ function SummaryTab({
         onClose={() => setActiveModal(null)}
         onSaved={() => setActiveModal(null)}
         cylinderOptions={cylinderOptions}
-        availableMappings={availableMappings}
+        vehicles={vehiclesList}
+        drivers={driversList}
         defaultDate={selectedDate}
         invalidateKeys={[['inventory', selectedDate]]}
       />

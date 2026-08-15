@@ -186,6 +186,7 @@ interface OutstandingEntry {
   outstanding: number;
   amountRemaining?: number;
   supplierDocumentNumber?: string | null;
+  documentType?: string | null;
 }
 
 function useCylinderTypes(): SelectOption[] {
@@ -299,7 +300,10 @@ function NoteModal({
     ['purchase-outstanding', corp.sourceDistributorId],
     `/purchase-payments/outstanding/${corp.sourceDistributorId}`,
   );
-  const outstanding = outstandingResp?.entries ?? [];
+  // CN/DN are gas-only — a note must never allocate against a refundable
+  // deposit invoice (mirrors web CorpEntryModals). Excluding deposits here keeps
+  // the ₹ off the deposit ledger so it stays cleanly trackable.
+  const outstanding = (outstandingResp?.entries ?? []).filter((e) => e.documentType !== 'deposit_invoice');
 
   const mutation = useApiMutation<unknown, Record<string, unknown>>('post', endpoint, {
     successMessage: isCredit ? 'Credit note recorded' : 'Debit note recorded',

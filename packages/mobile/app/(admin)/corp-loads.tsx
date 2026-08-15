@@ -32,7 +32,7 @@ import { formatINR, formatDate } from '../../src/theme';
 import {
   AddEntryMenu, CorpEntryModalHost, type CorpEntryKind, type CorpContext,
 } from '../../src/components/corp/CorpEntryModals';
-import { StockMovementModal, type VehicleMapping } from '../../src/components/inventory/StockMovementModal';
+import { StockMovementModal } from '../../src/components/inventory/StockMovementModal';
 
 // ─── Types (mirror the API) ─────────────────────────────────────────────────
 
@@ -65,13 +65,15 @@ interface LedgerResponse {
     totalDebitNotes: number; totalDeposits: number; netOutstanding: number;
   };
 }
-interface AvgLandedCost { avgPerCyl: number; totalCyls: number; windowDays: number }
-interface CostLayer {
-  cylinderTypeId: string; cylinderTypeName: string; purchaseEntryId: string | null;
-  date?: string; grossRate: number | string; landedRate: number | string; qtyRemaining: number;
+interface CostLedgerRow {
+  cylinderTypeId: string; cylinderTypeName: string; date: string; ref: string;
+  purchaseEntryId: string | null;
+  qtyReceived: number; qtyRemaining: number;
+  grossRate: number; freightPerCyl: number; cnPerCyl: number; dnPerCyl: number; landedRate: number;
 }
-interface CostLayersResponse {
-  totalRemainingQty: number; totalValue: number; uncostedQty: number; openLayers: CostLayer[];
+interface CostLedgerResponse {
+  rows: CostLedgerRow[]; mrpByType: Record<string, number>;
+  totalRemainingQty: number; totalValue: number;
 }
 
 const toNum = (v: number | string | null | undefined): number => {
@@ -125,6 +127,9 @@ export default function CorpLoadsScreen() {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [entryOpen, setEntryOpen] = useState<CorpEntryKind | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Top tab — Ledger | MRP vs Landed (mirrors Billing's Invoices/Payments split).
+  const [costTab, setCostTab] = useState<'ledger' | 'cost'>('ledger');
 
   const { data: balancesResp, isLoading: balancesLoading, refetch: refetchBalances } =
     useApiQuery<{ suppliers: SupplierBalance[] }>(['supplier-balances'], '/purchase-payments/supplier-balances');
@@ -138,14 +143,10 @@ export default function CorpLoadsScreen() {
     { from, to },
     { enabled: Boolean(corpId) },
   );
-  const { data: avgLanded } = useApiQuery<AvgLandedCost>(
-    ['corp-avg-landed', corpId],
-    `/purchase-payments/landed-cost/avg/${corpId}`,
-    { days: 30 },
-    { enabled: Boolean(corpId) },
-  );
-  const { data: costLayers, isLoading: costLayersLoading, refetch: refetchCostLayers } =
-    useApiQuery<CostLayersResponse>(['cost-layers'], '/purchase-payments/cost-layers');
+  // 2026-08-15 — the 30-day avg-landed chip was dropped (window meaningless);
+  // the Cost Layer section now uses /cost-ledger (all loads + MRP + margin).
+  const { data: costLedger, isLoading: costLayersLoading, refetch: refetchCostLayers } =
+    useApiQuery<CostLedgerResponse>(['cost-layers'], '/purchase-payments/cost-ledger');
 
   // Picker data for the shared Incoming/Outgoing modal (same endpoints Godown uses).
   const { data: cylResp } = useApiQuery<{ cylinderTypes: { cylinderTypeId: string; typeName: string; isActive?: boolean }[] }>(
@@ -155,18 +156,49 @@ export default function CorpLoadsScreen() {
     () => (cylResp?.cylinderTypes ?? []).filter((c) => c.isActive !== false).map((c) => ({ id: c.cylinderTypeId, name: c.typeName })),
     [cylResp],
   );
-  const { data: mapResp } = useApiQuery<{ recommendations: VehicleMapping[] }>(
-    ['admin-vehicle-mappings', todayLocalIso()], '/assignments/vehicle-mappings', { date: todayLocalIso() },
+  // 2026-08-15 — independent vehicle/driver pickers (all vehicles, all drivers),
+  // matching web. Replaces the daily-mappings combo chips.
+  const { data: vehResp } = useApiQuery<{ vehicles: { vehicleId: string; vehicleNumber: string }[] }>(
+    ['vehicles-all'], '/vehicles',
   );
-  const availableMappings = useMemo(
-    () => (mapResp?.recommendations ?? []).filter((m) => m.vehicleId && m.vehicleNumber && m.status !== 'unassigned'),
-    [mapResp],
+  const { data: drvResp } = useApiQuery<{ drivers: { driverName: string }[] }>(
+    ['drivers-active'], '/drivers', { status: 'active' },
   );
+  const vehiclesList = useMemo(() => vehResp?.vehicles ?? [], [vehResp]);
+  const driversList = useMemo(() => drvResp?.drivers ?? [], [drvResp]);
 
   const rows = useMemo(() => {
     const all = ledger?.rows ?? [];
     return typeFilter === 'all' ? all : all.filter((r) => r.kind === typeFilter);
   }, [ledger, typeFilter]);
+
+  // Cost Layer Ledger — group loads by cyl type → month, with per-type MRP + margin.
+  // Mirrors the web CostLayerLedgerPanel grouping exactly.
+  const costGroups = useMemo(() => {
+    const data = costLedger;
+    if (!data) return [];
+    const types = new Map<string, { id: string; name: string; mrp: number; months: Map<string, CostLedgerRow[]> }>();
+    for (const r of data.rows) {
+      let t = types.get(r.cylinderTypeId);
+      if (!t) {
+        t = { id: r.cylinderTypeId, name: r.cylinderTypeName, mrp: data.mrpByType[r.cylinderTypeId] ?? 0, months: new Map() };
+        types.set(r.cylinderTypeId, t);
+      }
+      const m = (r.date ?? '').slice(0, 7); // YYYY-MM
+      const list = t.months.get(m) ?? [];
+      list.push(r);
+      t.months.set(m, list);
+    }
+    return [...types.values()].map((t) => {
+      const all = [...t.months.values()].flat();
+      const recv = all.reduce((s, r) => s + r.qtyReceived, 0);
+      const landedVal = all.reduce((s, r) => s + r.landedRate * r.qtyReceived, 0);
+      const avgLanded = recv > 0 ? landedVal / recv : 0;
+      const rem = all.reduce((s, r) => s + r.qtyRemaining, 0);
+      const remVal = all.reduce((s, r) => s + r.qtyRemaining * r.landedRate, 0);
+      return { ...t, recv, avgLanded, avgMargin: t.mrp - avgLanded, rem, remVal };
+    });
+  }, [costLedger]);
 
   const refetchAll = () => { refetchBalances(); refetchLedger(); refetchCostLayers(); };
 
@@ -233,145 +265,212 @@ export default function CorpLoadsScreen() {
           <SelectField label="Corporation" value={corpId} onChange={setActiveCorpId} options={corpOptions} />
         )}
 
-        {/* Summary chips */}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          <SummaryChip label="Outstanding" value={formatINR(toNum(activeBalance?.outstanding))}
-            hint={toNum(activeBalance?.outstanding) > 0.005 ? 'You owe' : 'Settled'}
-            tone={toNum(activeBalance?.outstanding) > 0.005 ? 'warn' : 'ok'} {...{ cardBg, text, muted, border }} />
-          <SummaryChip label="Deposit Balance" value={formatINR(toNum(activeBalance?.totalDeposits))}
-            hint="Refundable" tone="neutral" {...{ cardBg, text, muted, border }} />
-          <SummaryChip label="Avg Landed / Cyl" value={formatINR(avgLanded?.avgPerCyl ?? 0)}
-            hint={`Last ${avgLanded?.windowDays ?? 30}d · ${avgLanded?.totalCyls ?? 0} cyl`} tone="neutral" {...{ cardBg, text, muted, border }} />
-          <SummaryChip label="Last Activity" value={activeBalance?.lastPurchaseDate ? formatDate(activeBalance.lastPurchaseDate) : '—'}
-            hint="Latest purchase" tone="neutral" {...{ cardBg, text, muted, border }} />
+        {/* Tab switcher at the very top — Ledger | MRP vs Landed (mirrors
+            Billing's Invoices/Payments). The date/type/PDF filters + summary
+            chips are ledger-only, so they live INSIDE the Ledger tab; the
+            MRP vs Landed tab stays a clean cost-layer view. */}
+        <View style={{
+          flexDirection: 'row', backgroundColor: cardBg, borderRadius: 10,
+          borderWidth: 1, borderColor: border, overflow: 'hidden',
+        }}>
+          {([['ledger', 'Ledger'], ['cost', 'MRP vs Landed']] as const).map(([key, label]) => {
+            const active = costTab === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                onPress={() => setCostTab(key)}
+                style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: active ? accent : 'transparent' }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: active ? '700' : '600', color: active ? '#fff' : muted }}>{label}</Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        {/* Date filter + type + download */}
-        <Card style={{ backgroundColor: cardBg }}>
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: muted, marginBottom: 6 }}>From</Text>
-              <DateInput value={from} onChange={setFrom} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: muted, marginBottom: 6 }}>To</Text>
-              <DateInput value={to} onChange={setTo} />
-            </View>
-          </View>
-          <View style={{ height: 10 }} />
-          <SelectField label="Entry type" value={typeFilter} onChange={setTypeFilter} options={TYPE_FILTER_OPTS} />
-          <TouchableOpacity
-            onPress={downloadStatement}
-            disabled={downloading}
-            style={{
-              marginTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-              borderWidth: 1, borderColor: accent, borderRadius: 8, paddingVertical: 11,
-            }}
-          >
-            {downloading ? <ActivityIndicator size="small" color={accent} /> : <Ionicons name="download-outline" size={18} color={accent} />}
-            <Text style={{ color: accent, fontWeight: '700', fontSize: 14 }}>Download Statement (PDF)</Text>
-          </TouchableOpacity>
-        </Card>
-
-        {/* Ledger */}
-        <Text style={{ fontSize: 13, fontWeight: '700', color: muted, letterSpacing: 0.4, marginTop: 4 }}>LEDGER</Text>
-        {ledgerLoading ? (
-          <Text style={{ color: muted, paddingVertical: 20, textAlign: 'center' }}>Loading ledger…</Text>
-        ) : rows.length === 0 ? (
-          <Card style={{ backgroundColor: cardBg }}>
-            <Text style={{ color: muted, textAlign: 'center', paddingVertical: 16 }}>
-              No entries in this period. Tap + to add one.
-            </Text>
-          </Card>
-        ) : (
-          rows.map((r) => {
-            const debit = toNum(r.debit);
-            const credit = toNum(r.credit);
-            const bal = toNum(r.balance);
-            return (
-              <Card key={r.documentId + r.kind} style={{ backgroundColor: cardBg }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <View style={{
-                    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
-                    backgroundColor: dark ? 'rgba(220,38,38,0.12)' : 'rgba(220,38,38,0.06)',
-                  }}>
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: accent, letterSpacing: 0.3 }}>{KIND_LABELS[r.kind]}</Text>
-                  </View>
-                  <Text style={{ fontSize: 12, color: muted }}>{formatDate(r.entryDate)}</Text>
-                </View>
-                <Text style={{ fontSize: 14, color: text, marginTop: 6 }}>{r.narration}</Text>
-                {(r.supplierDocumentNumber ?? r.documentNumber) ? (
-                  <Text style={{ fontSize: 11, color: muted, marginTop: 2 }}>Doc: {r.supplierDocumentNumber ?? r.documentNumber}</Text>
-                ) : null}
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 8 }}>
-                  <Text style={{ fontSize: 13, color: debit > 0 ? accent : (credit > 0 ? '#16a34a' : muted) }}>
-                    {debit > 0 ? `Debit ${formatINR(debit)}` : credit > 0 ? `Credit ${formatINR(credit)}` : '—'}
-                  </Text>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: text }}>
-                    {formatINR(Math.abs(bal))} <Text style={{ fontSize: 12, color: muted }}>{drCr(bal)}</Text>
-                  </Text>
-                </View>
-              </Card>
-            );
-          })
-        )}
-
-        {/* Cost Layer Ledger */}
-        <Text style={{ fontSize: 13, fontWeight: '700', color: muted, letterSpacing: 0.4, marginTop: 8 }}>COST LAYERS · LANDED COST</Text>
-        <Card style={{ backgroundColor: cardBg }}>
-          {costLayersLoading && !costLayers ? (
-            <Text style={{ color: muted, paddingVertical: 12 }}>Loading valuation…</Text>
-          ) : (
-            <>
-              <View style={{ flexDirection: 'row', gap: 12 }}>
+        {/* ── Tab: Ledger — filters + chips + entries ── */}
+        {costTab === 'ledger' && (
+          <>
+            {/* Date range + entry type + PDF (ledger-only) */}
+            <Card style={{ backgroundColor: cardBg }}>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11, color: muted, fontWeight: '600' }}>STOCK VALUE (LANDED)</Text>
-                  <Text style={{ fontSize: 20, fontWeight: '800', color: text, marginTop: 2 }}>{formatINR(toNum(costLayers?.totalValue))}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: muted, marginBottom: 6 }}>From</Text>
+                  <DateInput value={from} onChange={setFrom} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11, color: muted, fontWeight: '600' }}>FULLS IN STOCK</Text>
-                  <Text style={{ fontSize: 20, fontWeight: '800', color: text, marginTop: 2 }}>{toNum(costLayers?.totalRemainingQty)}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: muted, marginBottom: 6 }}>To</Text>
+                  <DateInput value={to} onChange={setTo} />
                 </View>
               </View>
-              {toNum(costLayers?.uncostedQty) > 0 && (
-                <View style={{
-                  marginTop: 10, padding: 10, borderRadius: 8, borderWidth: 1,
-                  borderColor: dark ? '#78350f' : '#fcd34d', backgroundColor: dark ? 'rgba(180,83,9,0.15)' : '#fffbeb',
-                }}>
-                  <Text style={{ color: dark ? '#fcd34d' : '#92400e', fontSize: 12, fontWeight: '600' }}>
-                    ⚠ {toNum(costLayers?.uncostedQty)} cyl uncosted — enter opening stock / purchase rate for exact COGS.
-                  </Text>
-                </View>
-              )}
-              <View style={{ height: 1, backgroundColor: border, marginVertical: 10 }} />
-              {(costLayers?.openLayers ?? []).length === 0 ? (
-                <Text style={{ color: muted, fontSize: 13 }}>No open cost layers yet.</Text>
-              ) : (
-                (costLayers?.openLayers ?? []).map((L, i) => {
-                  const gross = toNum(L.grossRate);
-                  const landed = toNum(L.landedRate);
-                  return (
-                    <View key={`${L.purchaseEntryId ?? 'open'}-${L.cylinderTypeId}-${i}`} style={{
-                      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
-                      paddingVertical: 8, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: border,
-                    }}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontWeight: '600', color: text }}>
-                          {L.cylinderTypeName}{L.purchaseEntryId == null ? <Text style={{ fontSize: 11, color: muted, fontWeight: '500' }}>  · opening</Text> : null}
-                        </Text>
-                        <Text style={{ fontSize: 12, color: muted, marginTop: 2 }}>{L.qtyRemaining} left{L.date ? ` · ${formatDate(L.date)}` : ''}</Text>
+              <View style={{ height: 10 }} />
+              <SelectField label="Entry type" value={typeFilter} onChange={setTypeFilter} options={TYPE_FILTER_OPTS} />
+              <TouchableOpacity
+                onPress={downloadStatement}
+                disabled={downloading}
+                style={{
+                  marginTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  borderWidth: 1, borderColor: accent, borderRadius: 8, paddingVertical: 11,
+                }}
+              >
+                {downloading ? <ActivityIndicator size="small" color={accent} /> : <Ionicons name="download-outline" size={18} color={accent} />}
+                <Text style={{ color: accent, fontWeight: '700', fontSize: 14 }}>Download Statement (PDF)</Text>
+              </TouchableOpacity>
+            </Card>
+
+            {/* Summary chips (corp financial + stock snapshot) */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+              <SummaryChip label="Outstanding" value={formatINR(toNum(activeBalance?.outstanding))}
+                hint={toNum(activeBalance?.outstanding) > 0.005 ? 'You owe' : 'Settled'}
+                tone={toNum(activeBalance?.outstanding) > 0.005 ? 'warn' : 'ok'} {...{ cardBg, text, muted, border }} />
+              <SummaryChip label="Deposit Balance" value={formatINR(toNum(activeBalance?.totalDeposits))}
+                hint="Refundable" tone="neutral" {...{ cardBg, text, muted, border }} />
+              <SummaryChip label="Stock Value" value={formatINR(toNum(costLedger?.totalValue))}
+                hint={`${costLedger?.totalRemainingQty ?? 0} cyl in stock · landed`} tone="neutral" {...{ cardBg, text, muted, border }} />
+              <SummaryChip label="Last Activity" value={activeBalance?.lastPurchaseDate ? formatDate(activeBalance.lastPurchaseDate) : '—'}
+                hint="Latest purchase" tone="neutral" {...{ cardBg, text, muted, border }} />
+            </View>
+
+            {/* Ledger entries */}
+            {ledgerLoading ? (
+            <Text style={{ color: muted, paddingVertical: 20, textAlign: 'center' }}>Loading ledger…</Text>
+          ) : rows.length === 0 ? (
+            <Card style={{ backgroundColor: cardBg }}>
+              <Text style={{ color: muted, textAlign: 'center', paddingVertical: 16 }}>
+                No entries in this period. Tap + to add one.
+              </Text>
+            </Card>
+          ) : (
+            <>
+              {rows.map((r) => {
+                const debit = toNum(r.debit);
+                const credit = toNum(r.credit);
+                const bal = toNum(r.balance);
+                return (
+                  <Card key={r.documentId + r.kind} style={{ backgroundColor: cardBg }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View style={{
+                        paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+                        backgroundColor: dark ? 'rgba(220,38,38,0.12)' : 'rgba(220,38,38,0.06)',
+                      }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: accent, letterSpacing: 0.3 }}>{KIND_LABELS[r.kind]}</Text>
                       </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: text }}>{formatINR(landed)}</Text>
-                        <Text style={{ fontSize: 11, color: muted, marginTop: 2 }}>{landed !== gross ? `landed · gross ${formatINR(gross)}` : 'landed /cyl'}</Text>
-                      </View>
+                      <Text style={{ fontSize: 12, color: muted }}>{formatDate(r.entryDate)}</Text>
                     </View>
-                  );
-                })
-              )}
+                    <Text style={{ fontSize: 14, color: text, marginTop: 6 }}>{r.narration}</Text>
+                    {(r.supplierDocumentNumber ?? r.documentNumber) ? (
+                      <Text style={{ fontSize: 11, color: muted, marginTop: 2 }}>Doc: {r.supplierDocumentNumber ?? r.documentNumber}</Text>
+                    ) : null}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 8 }}>
+                      <Text style={{ fontSize: 13, color: debit > 0 ? accent : (credit > 0 ? '#16a34a' : muted) }}>
+                        {debit > 0 ? `Debit ${formatINR(debit)}` : credit > 0 ? `Credit ${formatINR(credit)}` : '—'}
+                      </Text>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: text }}>
+                        {formatINR(Math.abs(bal))} <Text style={{ fontSize: 12, color: muted }}>{drCr(bal)}</Text>
+                      </Text>
+                    </View>
+                  </Card>
+                );
+              })}
             </>
+            )}
+          </>
+        )}
+
+        {/* ── Tab: MRP vs Landed (Cost Layer Ledger) — grouped by cyl type → month. ── */}
+        {costTab === 'cost' && (
+        <Card style={{ backgroundColor: cardBg, padding: 0, overflow: 'hidden' }}>
+          {costLayersLoading && !costLedger ? (
+            <Text style={{ color: muted, padding: 14 }}>Loading valuation…</Text>
+          ) : costGroups.length === 0 ? (
+            <Text style={{ color: muted, fontSize: 13, padding: 14 }}>No cost layers yet — record an incoming batch to build them.</Text>
+          ) : (
+            costGroups.map((t) => {
+              const open = !collapsed.has(t.id);
+              const marginColor = t.mrp <= 0 ? muted : t.avgMargin >= 0 ? (dark ? '#4ade80' : '#15803d') : (dark ? '#f87171' : '#dc2626');
+              return (
+                <View key={t.id}>
+                  {/* Type header — blue, tappable, shows the roll-up summary. */}
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => setCollapsed((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
+                      return next;
+                    })}
+                    style={{
+                      paddingHorizontal: 14, paddingVertical: 11,
+                      backgroundColor: dark ? 'rgba(37,99,235,0.16)' : '#eff6ff',
+                      borderTopWidth: 1, borderTopColor: border,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 15, fontWeight: '800', color: dark ? '#93c5fd' : '#1d4ed8' }}>
+                        {open ? '▾' : '▸'}  {t.name}
+                      </Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: text }}>{formatINR(t.remVal)}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6, gap: 14 }}>
+                      <Text style={{ fontSize: 11, color: muted }}>Recv <Text style={{ color: text, fontWeight: '600' }}>{t.recv}</Text></Text>
+                      <Text style={{ fontSize: 11, color: muted }}>In stock <Text style={{ color: text, fontWeight: '600' }}>{t.rem}</Text></Text>
+                      <Text style={{ fontSize: 11, color: muted }}>Avg landed <Text style={{ color: text, fontWeight: '600' }}>{formatINR(t.avgLanded)}</Text></Text>
+                      <Text style={{ fontSize: 11, color: muted }}>MRP <Text style={{ color: text, fontWeight: '600' }}>{t.mrp > 0 ? formatINR(t.mrp) : '—'}</Text></Text>
+                      <Text style={{ fontSize: 11, color: muted }}>Margin <Text style={{ color: marginColor, fontWeight: '700' }}>{t.mrp > 0 ? formatINR(t.avgMargin) : '—'}</Text></Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {open && [...t.months.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, loads]) => {
+                    const sumRecv = loads.reduce((s, r) => s + r.qtyReceived, 0);
+                    const sumLanded = loads.reduce((s, r) => s + r.landedRate * r.qtyReceived, 0);
+                    const sumRem = loads.reduce((s, r) => s + r.qtyRemaining, 0);
+                    const sumRemVal = loads.reduce((s, r) => s + r.qtyRemaining * r.landedRate, 0);
+                    const monthLabel = month ? new Date(`${month}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : '—';
+                    return (
+                      <View key={`${t.id}-${month}`}>
+                        {/* Load rows — white / zebra. */}
+                        {loads.map((r, i) => {
+                          const gross = toNum(r.grossRate);
+                          const landed = toNum(r.landedRate);
+                          const adj = toNum(r.freightPerCyl) + toNum(r.dnPerCyl) - toNum(r.cnPerCyl);
+                          return (
+                            <View key={`${r.purchaseEntryId ?? 'open'}-${i}`} style={{
+                              flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+                              paddingHorizontal: 14, paddingVertical: 8,
+                              backgroundColor: i % 2 === 0 ? cardBg : (dark ? 'rgba(255,255,255,0.03)' : '#fafafa'),
+                            }}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontSize: 13, fontWeight: '600', color: text }}>
+                                  {r.date ? formatDate(r.date) : '—'}{r.ref ? <Text style={{ color: muted, fontWeight: '400' }}>  {r.ref}</Text> : null}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: muted, marginTop: 2 }}>
+                                  {r.qtyReceived} recv · {r.qtyRemaining} left{adj !== 0 ? ` · gross ${formatINR(gross)}` : ''}
+                                </Text>
+                              </View>
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: text, marginLeft: 8 }}>{formatINR(landed)}</Text>
+                            </View>
+                          );
+                        })}
+                        {/* Month subtotal — amber. */}
+                        <View style={{
+                          flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                          paddingHorizontal: 14, paddingVertical: 7,
+                          backgroundColor: dark ? 'rgba(180,83,9,0.14)' : '#fffbeb',
+                        }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: dark ? '#fcd34d' : '#92400e' }}>
+                            {monthLabel} · {sumRecv} recv, {sumRem} left
+                          </Text>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: dark ? '#fcd34d' : '#92400e' }}>
+                            {formatINR(sumRecv > 0 ? sumLanded / sumRecv : 0)}/cyl · {formatINR(sumRemVal)}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })
           )}
         </Card>
+        )}
       </ScrollView>
 
       {/* FAB → Add Entry */}
@@ -405,7 +504,8 @@ export default function CorpLoadsScreen() {
           onClose={() => setEntryOpen(null)}
           onSaved={() => { setEntryOpen(null); refetchAll(); }}
           cylinderOptions={cylOptions}
-          availableMappings={availableMappings}
+          vehicles={vehiclesList}
+          drivers={driversList}
           defaultDate={todayLocalIso()}
           invalidateKeys={[['corp-ledger'], ['supplier-balances'], ['cost-layers'], ['corp-avg-landed'], ['inventory']]}
           sourceDistributorId={corpId}
