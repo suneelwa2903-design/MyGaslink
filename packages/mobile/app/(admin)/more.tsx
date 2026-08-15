@@ -386,9 +386,10 @@ const OV_GROUPS = [
 function AnalyticsOverviewModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  // Last 30 days, local-TZ (localDateISO is the sanctioned mutated-Date helper).
-  const to = localTodayISO();
-  const from = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return localDateISO(d); })();
+  // Date-range filter (defaults to last 30 days, local-TZ). User-adjustable,
+  // same as web Analytics + mobile Corp. Loads — no hardcoded window.
+  const [to, setTo] = useState(() => localTodayISO());
+  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return localDateISO(d); });
 
   const { data, isLoading, refetch } = useApiQuery<OverviewResponse>(
     ['analytics-overview', from, to],
@@ -411,7 +412,17 @@ function AnalyticsOverviewModal({ visible, onClose }: { visible: boolean; onClos
             keyboardShouldPersistTaps="handled"
             refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={ACCENT} />}
           >
-            <Text style={{ fontSize: 12, color: theme.textMuted }}>Last 30 days · {from} → {to}</Text>
+            {/* Date-range filter (From / To) — drives the metrics query */}
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: theme.textMuted, marginBottom: 6 }}>From</Text>
+                <DateInput value={from} onChange={setFrom} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: theme.textMuted, marginBottom: 6 }}>To</Text>
+                <DateInput value={to} onChange={setTo} />
+              </View>
+            </View>
             {OV_GROUPS.map(({ g, title, blurb, color }) => {
               const cards = metrics.filter((m) => m.group === g);
               if (cards.length === 0) return null;
