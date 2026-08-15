@@ -56,24 +56,6 @@ interface UserRecord {
   status?: string;
 }
 
-// Wire shape ACTUALLY returned by GET /analytics/header-metrics
-// (analyticsService.getHeaderMetrics + getAdvancedMetrics). The
-// historical HeaderMetrics interface here described fields the route
-// never returned — every card in the Overview modal resolved to 0
-// (CLAUDE.md anti-pattern #9). Aligned 2026-06-01.
-interface HeaderMetrics {
-  amountInMarket?: number;
-  collectedAmount?: number;
-  dueAmount?: number;
-  overdueAmount?: number;
-  totalCapital?: number;
-  unrecoveredAmount?: number;
-  cylinderUtilizationRate?: number;
-  averageTurnaroundDays?: number;
-  inventoryShrinkage?: number;
-  deliveryEfficiency?: number;
-}
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 type Theme = {
@@ -369,28 +351,52 @@ function Loading({ theme: _theme }: { theme: Theme }) {
 // ANALYTICS OVERVIEW MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
+// 2026-08-15 — mobile Overview now mirrors the web Summary exactly: the same
+// grouped `/analytics/overview` metrics (CASH / MARGIN / CYLINDERS) instead of
+// the retired all-time header-metrics cards. Date-scoped to the last 30 days.
+interface OverviewMetric {
+  key: string;
+  label: string;
+  group: 'cash' | 'margin' | 'cylinders';
+  kind: 'flow' | 'snapshot';
+  value: number;
+  format: 'money' | 'count' | 'percent' | 'days';
+  drillReport: string | null;
+  asOf: 'range' | 'now';
+  sub?: string;
+  description: string;
+}
+interface OverviewResponse { metrics: OverviewMetric[]; hasPurchaseData: boolean }
+
+function fmtOverviewMetric(m: OverviewMetric): string {
+  switch (m.format) {
+    case 'money': return formatCurrency(m.value ?? 0);
+    case 'percent': return `${(m.value ?? 0).toFixed(1)}%`;
+    case 'days': return `${(m.value ?? 0).toFixed(1)} d`;
+    default: return String(Math.round(m.value ?? 0));
+  }
+}
+
+const OV_GROUPS = [
+  { g: 'cash' as const, title: 'CASH', blurb: 'Is money coming back?', color: '#10b981' },
+  { g: 'margin' as const, title: 'MARGIN', blurb: 'Am I actually making money?', color: '#8b5cf6' },
+  { g: 'cylinders' as const, title: 'CYLINDERS', blurb: 'Is my steel coming back?', color: '#0ea5e9' },
+];
+
 function AnalyticsOverviewModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const theme = useMoreTheme();
 
-  const { data: metrics, isLoading, refetch } = useApiQuery<HeaderMetrics>(
-    ['header-metrics'],
-    '/analytics/header-metrics',
-    undefined,
+  // Last 30 days, local-TZ (localDateISO is the sanctioned mutated-Date helper).
+  const to = localTodayISO();
+  const from = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return localDateISO(d); })();
+
+  const { data, isLoading, refetch } = useApiQuery<OverviewResponse>(
+    ['analytics-overview', from, to],
+    '/analytics/overview',
+    { from, to },
     { enabled: visible },
   );
-
-  const metricItems = [
-    { label: 'Amount in Market', value: formatCurrency(metrics?.amountInMarket || 0), icon: 'cash-outline' as const, color: '#10b981' },
-    { label: 'Collected', value: formatCurrency(metrics?.collectedAmount || 0), icon: 'checkmark-circle-outline' as const, color: '#10b981' },
-    { label: 'Due', value: formatCurrency(metrics?.dueAmount || 0), icon: 'time-outline' as const, color: '#f59e0b' },
-    { label: 'Overdue', value: formatCurrency(metrics?.overdueAmount || 0), icon: 'warning-outline' as const, color: '#ef4444' },
-    { label: 'Total Capital', value: formatCurrency(metrics?.totalCapital || 0), icon: 'wallet-outline' as const, color: '#3b82f6' },
-    { label: 'Unrecovered', value: formatCurrency(metrics?.unrecoveredAmount || 0), icon: 'alert-circle-outline' as const, color: '#ef4444' },
-    { label: 'Cylinder Utilization', value: `${(metrics?.cylinderUtilizationRate || 0).toFixed(1)}%`, icon: 'cube-outline' as const, color: '#8b5cf6' },
-    { label: 'Avg Turnaround', value: `${(metrics?.averageTurnaroundDays || 0).toFixed(1)} d`, icon: 'sync-outline' as const, color: '#3b82f6' },
-    { label: 'Delivery Efficiency', value: `${(metrics?.deliveryEfficiency || 0).toFixed(1)}%`, icon: 'trending-up-outline' as const, color: '#10b981' },
-    { label: 'Inventory Shrinkage', value: `${(metrics?.inventoryShrinkage || 0).toFixed(1)}%`, icon: 'stats-chart-outline' as const, color: '#f59e0b' },
-  ];
+  const metrics = data?.metrics ?? [];
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
@@ -401,40 +407,53 @@ function AnalyticsOverviewModal({ visible, onClose }: { visible: boolean; onClos
           <Loading theme={theme} />
         ) : (
           <ScrollView
-            contentContainerStyle={{ padding: 16, gap: 12 }}
+            contentContainerStyle={{ padding: 16, gap: 16 }}
+            keyboardShouldPersistTaps="handled"
             refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={ACCENT} />}
           >
-            {/* 2-column grid */}
-            {Array.from({ length: Math.ceil(metricItems.length / 2) }).map((_, rowIdx) => (
-              <View key={rowIdx} style={{ flexDirection: 'row', gap: 12 }}>
-                {metricItems.slice(rowIdx * 2, rowIdx * 2 + 2).map((m) => (
-                  <View
-                    key={m.label}
-                    style={{
-                      flex: 1,
-                      backgroundColor: theme.cardBg,
-                      borderRadius: 14,
-                      padding: 16,
-                      borderWidth: 1,
-                      borderColor: theme.cardBorder,
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                      <View
-                        style={{
-                          width: 32, height: 32, borderRadius: 8,
-                          backgroundColor: m.color + '14', alignItems: 'center', justifyContent: 'center',
-                        }}
-                      >
-                        <Ionicons name={m.icon} size={16} color={m.color} />
-                      </View>
-                    </View>
-                    <Text style={{ fontSize: 22, fontWeight: '800', color: theme.text }}>{m.value}</Text>
-                    <Text style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>{m.label}</Text>
+            <Text style={{ fontSize: 12, color: theme.textMuted }}>Last 30 days · {from} → {to}</Text>
+            {OV_GROUPS.map(({ g, title, blurb, color }) => {
+              const cards = metrics.filter((m) => m.group === g);
+              if (cards.length === 0) return null;
+              return (
+                <View key={g} style={{ gap: 10 }}>
+                  {/* section header */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
+                    <Text style={{ fontSize: 12, fontWeight: '800', letterSpacing: 0.6, color }}>{title}</Text>
+                    <Text style={{ fontSize: 12, color: theme.textMuted }}>{blurb}</Text>
                   </View>
-                ))}
-              </View>
-            ))}
+                  {/* 2-column grid of metric cards */}
+                  {Array.from({ length: Math.ceil(cards.length / 2) }).map((_, rowIdx) => {
+                    const row = cards.slice(rowIdx * 2, rowIdx * 2 + 2);
+                    return (
+                      <View key={rowIdx} style={{ flexDirection: 'row', gap: 12 }}>
+                        {row.map((m) => (
+                          <View
+                            key={m.key}
+                            style={{
+                              flex: 1, backgroundColor: theme.cardBg, borderRadius: 14, padding: 14,
+                              borderWidth: 1, borderColor: theme.cardBorder, borderTopWidth: 2, borderTopColor: color,
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
+                              <Text style={{ fontSize: 12, color: theme.textMuted, flex: 1 }}>{m.label}</Text>
+                              {m.asOf === 'now' && (
+                                <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 0.4, color: theme.textMuted }}>NOW</Text>
+                              )}
+                            </View>
+                            <Text style={{ fontSize: 20, fontWeight: '800', color: theme.text, marginTop: 4 }}>{fmtOverviewMetric(m)}</Text>
+                            {m.sub ? <Text style={{ fontSize: 11, fontWeight: '600', color: theme.text, marginTop: 2 }}>{m.sub}</Text> : null}
+                            <Text style={{ fontSize: 10, color: theme.textMuted, marginTop: 3, lineHeight: 14 }}>{m.description}</Text>
+                          </View>
+                        ))}
+                        {row.length === 1 && <View style={{ flex: 1 }} />}
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })}
           </ScrollView>
         )}
       </SafeAreaView>

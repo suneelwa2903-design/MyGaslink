@@ -789,7 +789,9 @@ export default function AnalyticsPage() {
             </div>
             )}
 
-            {/* ─── Insights (TASK 2 Part B) — computed from live data ───────── */}
+            {/* ─── Insights (TASK 2 Part B) — Summary view only; the flow/cashflow
+                 lenses are self-explanatory and don't need the list below them. */}
+            {overviewView === 'cards' && (
             <div className="card p-5">
               <h3 className="font-semibold text-surface-900 dark:text-white mb-4">Insights</h3>
               {!insights?.length ? (
@@ -816,6 +818,7 @@ export default function AnalyticsPage() {
                 </ul>
               )}
             </div>
+            )}
           </div>
         )
       )}
