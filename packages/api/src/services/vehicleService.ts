@@ -1,10 +1,27 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, $Enums } from '@prisma/client';
+import { VehicleStatus } from '@prisma/client';
 import { startOfUtcDay } from '../utils/dateOnly.js';
+
+const VALID_VEHICLE_STATUSES = new Set<string>(Object.values(VehicleStatus));
 
 export async function listVehicles(distributorId: string, status?: string) {
   const where: Prisma.VehicleWhereInput = { distributorId, deletedAt: null };
-  if (status) where.status = status as $Enums.VehicleStatus;
+  // 2026-08-15 — accept a comma-separated list of statuses ("idle,dispatched")
+  // as well as a single value. Previously the whole string was cast to one
+  // VehicleStatus enum, so any multi-status caller (Corp. Loads vehicle
+  // dropdown) made Prisma throw "Invalid value for argument status" and the
+  // request failed. We ALSO drop any token that isn't a real VehicleStatus
+  // member (the corp page was passing "reconciled", an assignment status, which
+  // otherwise makes Prisma reject the whole `in` list). Split → filter → `in`;
+  // a lone valid value passes through unchanged; if nothing valid remains the
+  // filter is omitted (returns all).
+  if (status) {
+    const parts = status.split(',').map((s) => s.trim())
+      .filter((s) => VALID_VEHICLE_STATUSES.has(s));
+    if (parts.length > 1) where.status = { in: parts as $Enums.VehicleStatus[] };
+    else if (parts.length === 1) where.status = parts[0] as $Enums.VehicleStatus;
+  }
 
   return prisma.vehicle.findMany({
     where,

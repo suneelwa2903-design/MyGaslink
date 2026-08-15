@@ -1,6 +1,9 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, $Enums } from '@prisma/client';
+import { DriverStatus } from '@prisma/client';
 import { utcDayRange } from '../utils/dateOnly.js';
+
+const VALID_DRIVER_STATUSES = new Set<string>(Object.values(DriverStatus));
 
 export async function listDrivers(
   distributorId: string,
@@ -8,7 +11,14 @@ export async function listDrivers(
   options?: { unlinkedOnly?: boolean },
 ) {
   const where: Prisma.DriverWhereInput = { distributorId, deletedAt: null };
-  if (status) where.status = status as $Enums.DriverStatus;
+  // 2026-08-15 — accept a comma-separated status list too, dropping any token
+  // that isn't a real DriverStatus member (same hardening as listVehicles).
+  if (status) {
+    const parts = status.split(',').map((s) => s.trim())
+      .filter((s) => VALID_DRIVER_STATUSES.has(s));
+    if (parts.length > 1) where.status = { in: parts as $Enums.DriverStatus[] };
+    else if (parts.length === 1) where.status = parts[0] as $Enums.DriverStatus;
+  }
   // Group B Part 3 — when ?unlinked=true on GET /api/drivers, return only
   // drivers without an app-login row. Used by the new Add User modal:
   // role=driver dropdown only offers drivers that DON'T already have a
