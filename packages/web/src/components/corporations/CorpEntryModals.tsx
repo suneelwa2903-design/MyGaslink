@@ -64,6 +64,7 @@ interface OutstandingEntry {
   outstanding: number;
   amountRemaining?: number;
   supplierDocumentNumber?: string | null;
+  documentType?: string;
 }
 
 function useCylinderTypes(): { data: CylinderType[] } {
@@ -414,7 +415,12 @@ function NoteModalShell(props: {
     queryFn: () =>
       apiGet<{ entries: OutstandingEntry[] }>(`/purchase-payments/outstanding/${corp.sourceDistributorId}`),
   });
-  const outstanding = outstandingResp?.entries ?? [];
+  // 2026-08-15 — CN/DN are gas-only; exclude deposit invoices from the
+  // allocation list (a volume-incentive CN must not reduce a refundable
+  // cylinder deposit — Suneel). Deposits are settled via payments/refunds only.
+  const outstanding = (outstandingResp?.entries ?? []).filter(
+    (e) => e.documentType !== 'deposit_invoice',
+  );
 
   const mutation = useMutation({
     mutationFn: (data: unknown) => apiPost(endpoint, data),

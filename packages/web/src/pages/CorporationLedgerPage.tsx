@@ -13,7 +13,7 @@
  * This page replaces the mini-op-parity 2-tab Purchases surface for regular
  * distributor tenants. Mini-op tenants keep the existing PurchasesPage.tsx.
  */
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HiOutlineArrowDownTray, HiOutlineChevronDown } from 'react-icons/hi2';
@@ -150,9 +150,16 @@ export default function CorporationLedgerPage() {
   });
   const cylTypesList = Array.isArray(cylTypesResp) ? cylTypesResp : [];
   const { data: vehiclesResp } = useQuery({
-    queryKey: ['vehicles-active-corp'],
+    queryKey: ['vehicles-all-corp'],
     queryFn: async () => {
-      const res = await apiGet<{ vehicles?: unknown[] } | unknown[]>('/vehicles', { status: 'idle,dispatched,returned,reconciled' });
+      // 2026-08-15 — list ALL vehicles from Transport (no status filter). The
+      // previous `status: 'idle,dispatched,returned,reconciled'` comma-list was
+      // shoved whole into a single VehicleStatus enum by listVehicles and made
+      // Prisma throw "Invalid value for argument status" — so the vehicle
+      // dropdown was always empty on Corp. Loads. A corporation supply can be
+      // received against any vehicle regardless of its current trip state, so
+      // no filter is the correct behaviour (mirrors the Godown incoming modal).
+      const res = await apiGet<{ vehicles?: unknown[] } | unknown[]>('/vehicles');
       return Array.isArray(res) ? res : (res?.vehicles ?? []);
     },
   });
@@ -178,6 +185,11 @@ export default function CorporationLedgerPage() {
     queryClient.invalidateQueries({ queryKey: ['corp-avg-landed', activeCorpId] });
     queryClient.invalidateQueries({ queryKey: ['corp-landed-cost', activeCorpId] });
     queryClient.invalidateQueries({ queryKey: ['purchase-outstanding', activeCorpId] });
+    // 2026-08-15 — the FIFO "Cost Layer Ledger — open loads" panel reads
+    // ['corp-cost-layers'] (see the useQuery at ~L690). It was NOT invalidated
+    // here, so a just-recorded incoming appeared in the ledger + per-month
+    // landed table but its FIFO open-load stayed missing until a hard refresh.
+    queryClient.invalidateQueries({ queryKey: ['corp-cost-layers'] });
     // Cross-page reflect: Inventory Depot History reads the same events.
     queryClient.invalidateQueries({ queryKey: ['inventory'] });
     queryClient.invalidateQueries({ queryKey: ['depot-history'] });
@@ -356,6 +368,7 @@ export default function CorporationLedgerPage() {
               <th className="p-2 text-left">Type</th>
               <th className="p-2 text-left">Doc No</th>
               <th className="p-2 text-left">Narration</th>
+              <th className="p-2 text-right">Qty</th>
               <th className="p-2 text-right">Debit</th>
               <th className="p-2 text-right">Credit</th>
               <th className="p-2 text-right">Balance</th>
@@ -365,13 +378,13 @@ export default function CorporationLedgerPage() {
           <tbody>
             {ledgerLoading ? (
               <tr>
-                <td colSpan={8} className="p-6 text-center text-slate-500 dark:text-surface-400">
+                <td colSpan={9} className="p-6 text-center text-slate-500 dark:text-surface-400">
                   Loading ledger…
                 </td>
               </tr>
             ) : filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="p-6 text-center text-slate-500 dark:text-surface-400">
+                <td colSpan={9} className="p-6 text-center text-slate-500 dark:text-surface-400">
                   No entries in the selected period. Click <b>+ Add Entry</b> to record one.
                 </td>
               </tr>
@@ -389,6 +402,7 @@ export default function CorporationLedgerPage() {
                     {row.supplierDocumentNumber ?? row.documentNumber ?? '—'}
                   </td>
                   <td className="p-2 text-slate-700 dark:text-surface-200">{row.narration}</td>
+                  <td className="p-2 text-right tabular-nums">{row.physicalQty ? row.physicalQty : '—'}</td>
                   <td className="p-2 text-right">{fmtMoney(row.debit)}</td>
                   <td className="p-2 text-right">{fmtMoney(row.credit)}</td>
                   <td className="p-2 text-right">{fmtMoney(row.balance, true)}</td>
@@ -403,6 +417,9 @@ export default function CorporationLedgerPage() {
                 <td colSpan={4} className="p-2 text-right">
                   Totals
                 </td>
+                {/* No Qty total — mixing incoming + outgoing quantities is
+                    meaningless (Suneel 2026-08-15). */}
+                <td className="p-2 text-right text-slate-400">—</td>
                 <td className="p-2 text-right">
                   {fmtMoney(filteredRows.reduce((s, r) => s + r.debit, 0), true)}
                 </td>
@@ -419,14 +436,11 @@ export default function CorporationLedgerPage() {
         </table>
       </div>
 
-      {/* Physical Activity — recent ERV / Incoming pulled from the same ledger,
-          filtered to physical-only rows. */}
-      <PhysicalActivityPanel rows={filteredRows} />
+      {/* Physical Activity panel removed 2026-08-15 — it was a filtered view of
+          the same ledger rows; the Qty column above now carries the quantities. */}
 
-      {/* Landed Cost — per cyl type per month grid */}
-      <LandedCostPanel corpId={activeCorpId} from={from} to={to} />
-
-      {/* Cost Layer Ledger — FIFO open loads with gross→CN→net + stock value */}
+      {/* Cost Layer Ledger — merged: per-load FIFO (open + consumed) grouped by
+          cyl type → month, with month subtotals, MRP, and dealer margin. */}
       <CostLayerLedgerPanel />
 
       {/* Deposit Ledger — deposit invoices as a mini-ledger */}
@@ -493,261 +507,180 @@ export default function CorporationLedgerPage() {
 
 // ─── Below-ledger panels ───────────────────────────────────────────────────
 
-function PhysicalActivityPanel({ rows }: { rows: LedgerRow[] }) {
-  const physical = rows.filter(
-    (r) => r.kind === 'erv_empties' || r.kind === 'erv_defective' || r.kind === 'purchase' || r.kind === 'deposit',
-  );
-  if (physical.length === 0) {
-    return (
-      <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
-        <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
-          Physical Activity
-        </summary>
-        <p className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">No physical activity in the selected period.</p>
-      </details>
-    );
-  }
-  return (
-    <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
-      <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
-        Physical Activity — Incoming / Empties / Defective ({physical.length} events)
-      </summary>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 dark:bg-surface-800 text-xs uppercase text-slate-700 dark:text-surface-200">
-            <tr>
-              <th className="p-2 text-left">Date</th>
-              <th className="p-2 text-left">Kind</th>
-              <th className="p-2 text-left">Cyl / Detail</th>
-              <th className="p-2 text-right">Qty</th>
-              <th className="p-2 text-left">Doc</th>
-            </tr>
-          </thead>
-          <tbody>
-            {physical.map((r, i) => (
-              <tr key={r.documentId + r.kind} className={i % 2 ? 'bg-slate-50 dark:bg-surface-800' : ''}>
-                <td className="p-2 whitespace-nowrap">{r.entryDate}</td>
-                <td className="p-2 whitespace-nowrap text-xs font-medium">{KIND_LABELS[r.kind]}</td>
-                <td className="p-2">{r.cylinderTypeName ?? r.narration}</td>
-                <td className="p-2 text-right">{r.physicalQty ?? '—'}</td>
-                <td className="p-2 font-mono text-xs">{r.supplierDocumentNumber ?? r.documentNumber ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  );
-}
 
-interface LandedCostRow {
-  month: string;
+// ─── Cost Layer Ledger (merged, 2026-08-15) ─────────────────────────────────
+// ONE table replacing the old "Landed Cost per month" + "Cost Layer FIFO" pair.
+// Per-load rows grouped by cyl type → month, with a month-average subtotal
+// (Line/Freight/CN/DN breakdown) and the dealer margin = MRP − landed (MRP from
+// the Settings selling price). All GST-INCLUSIVE.
+interface CostLedgerRow {
   cylinderTypeId: string;
   cylinderTypeName: string;
-  cylindersReceived: number;
-  lineTotal: number;
-  freightAllocated: number;
-  cnOffset: number;
-  dnOffset: number;
-  landedTotal: number;
-  landedPerCyl: number;
+  date: string;
+  ref: string;
+  purchaseEntryId: string | null;
+  qtyReceived: number;
+  qtyRemaining: number;
+  grossRate: number;
+  freightPerCyl: number;
+  cnPerCyl: number;
+  dnPerCyl: number;
+  landedRate: number;
+}
+interface CostLedgerResponse {
   gstMode: 'live' | 'sandbox' | 'disabled';
+  rows: CostLedgerRow[];
+  mrpByType: Record<string, number>;
+  totalRemainingQty: number;
+  totalValue: number;
 }
 
-interface LandedCostResponse {
-  rows: LandedCostRow[];
-  summary: {
-    cylTypes: number;
-    months: number;
-    totalCylsReceived: number;
-    totalLineValue: number;
-    totalFreight: number;
-    totalCnOffset: number;
-    totalDnOffset: number;
-    grandLanded: number;
-  };
-  gstMode: 'live' | 'sandbox' | 'disabled';
-}
-
-function LandedCostPanel({ corpId, from, to }: { corpId: string; from: string; to: string }) {
-  const { data, isLoading } = useQuery<LandedCostResponse>({
-    queryKey: ['corp-landed-cost', corpId, from, to],
-    queryFn: () =>
-      apiGet<LandedCostResponse>('/purchase-payments/landed-cost', {
-        sourceDistributorId: corpId,
-        from,
-        to,
-      }),
-    enabled: Boolean(corpId),
+function CostLayerLedgerPanel() {
+  const { data, isLoading } = useQuery<CostLedgerResponse>({
+    // Key unchanged so onModalSaved's invalidation still refreshes this panel.
+    queryKey: ['corp-cost-layers'],
+    queryFn: () => apiGet<CostLedgerResponse>('/purchase-payments/cost-ledger'),
   });
+  // Collapse state per cyl type. Collapsed → only the type header (which shows
+  // the type-level summary) is visible; expanded → per-load rows + month subtotals.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (name: string) =>
+    setCollapsed((prev) => {
+      const n = new Set(prev);
+      if (n.has(name)) n.delete(name); else n.add(name);
+      return n;
+    });
+
+  // Group loads by cyl type → month, and pre-compute each type's totals so the
+  // type header carries the summary (Suneel: "summarise at header level").
+  const groups = useMemo(() => {
+    if (!data) return [];
+    const types = new Map<string, { id: string; name: string; mrp: number; months: Map<string, CostLedgerRow[]> }>();
+    for (const r of data.rows) {
+      let t = types.get(r.cylinderTypeName);
+      if (!t) {
+        t = { id: r.cylinderTypeId, name: r.cylinderTypeName, mrp: data.mrpByType[r.cylinderTypeId] ?? 0, months: new Map() };
+        types.set(r.cylinderTypeName, t);
+      }
+      const m = r.date.slice(0, 7);
+      const list = t.months.get(m) ?? [];
+      list.push(r);
+      t.months.set(m, list);
+    }
+    return [...types.values()].map((t) => {
+      const all = [...t.months.values()].flat();
+      const recv = all.reduce((s, r) => s + r.qtyReceived, 0);
+      const landedVal = all.reduce((s, r) => s + r.landedRate * r.qtyReceived, 0);
+      const rem = all.reduce((s, r) => s + r.qtyRemaining, 0);
+      const remVal = all.reduce((s, r) => s + r.qtyRemaining * r.landedRate, 0);
+      const avgLanded = recv > 0 ? landedVal / recv : 0;
+      return { ...t, recv, avgLanded, avgMargin: t.mrp - avgLanded, rem, remVal };
+    });
+  }, [data]);
+
   return (
     <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
       <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
-        Landed Cost per Cylinder — per type, per month
+        Cost Layer Ledger · stock value {data ? <b>{fmtMoney(data.totalValue, true)}</b> : null}
       </summary>
       <div className="p-3">
         <p className="mb-2 text-xs text-slate-500 dark:text-surface-400">
-          Formula: (line total + freight + DN − CN) ÷ cylinders received.{' '}
-          {data?.gstMode && data.gstMode !== 'disabled' && (
-            <b>GST-EXCLUSIVE</b>
-          )}{' '}
-          {data?.gstMode === 'disabled' && (
-            <span>GST-inclusive (ITC not claimed — tax is real cost).</span>
-          )}
+          Click a cylinder-type row to expand its loads. Net landed = gross + freight + DN − CN.
+          Margin = MRP (Settings selling price) − landed. <b>GST-INCLUSIVE</b>.
         </p>
         {isLoading ? (
           <div className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">Computing…</div>
         ) : !data || data.rows.length === 0 ? (
-          <p className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">
-            No landed-cost activity in this period.
-          </p>
+          <p className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">No cost layers yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 dark:bg-surface-800 text-xs uppercase text-slate-700 dark:text-surface-200">
                 <tr>
-                  <th className="p-2 text-left">Month</th>
-                  <th className="p-2 text-left">Cyl Type</th>
-                  <th className="p-2 text-right">Received</th>
-                  <th className="p-2 text-right">Line ₹</th>
-                  <th className="p-2 text-right">Freight ₹</th>
-                  <th className="p-2 text-right">CN ₹</th>
-                  <th className="p-2 text-right">DN ₹</th>
-                  <th className="p-2 text-right">Landed Total ₹</th>
-                  <th className="p-2 text-right font-semibold">Landed / Cyl</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((r, i) => (
-                  <tr key={r.month + r.cylinderTypeId} className={i % 2 ? 'bg-slate-50 dark:bg-surface-800' : ''}>
-                    <td className="p-2">{r.month}</td>
-                    <td className="p-2">{r.cylinderTypeName}</td>
-                    <td className="p-2 text-right">{r.cylindersReceived}</td>
-                    <td className="p-2 text-right">{fmtMoney(r.lineTotal)}</td>
-                    <td className="p-2 text-right">{fmtMoney(r.freightAllocated)}</td>
-                    <td className="p-2 text-right">{fmtMoney(r.cnOffset)}</td>
-                    <td className="p-2 text-right">{fmtMoney(r.dnOffset)}</td>
-                    <td className="p-2 text-right">{fmtMoney(r.landedTotal, true)}</td>
-                    <td className="p-2 text-right font-semibold">{fmtMoney(r.landedPerCyl, true)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="bg-slate-100 dark:bg-surface-700 text-sm font-semibold">
-                <tr>
-                  <td colSpan={2} className="p-2 text-right">Totals</td>
-                  <td className="p-2 text-right">{data.summary.totalCylsReceived}</td>
-                  <td className="p-2 text-right">{fmtMoney(data.summary.totalLineValue, true)}</td>
-                  <td className="p-2 text-right">{fmtMoney(data.summary.totalFreight)}</td>
-                  <td className="p-2 text-right">{fmtMoney(data.summary.totalCnOffset)}</td>
-                  <td className="p-2 text-right">{fmtMoney(data.summary.totalDnOffset)}</td>
-                  <td className="p-2 text-right">{fmtMoney(data.summary.grandLanded, true)}</td>
-                  <td className="p-2 text-right">—</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
-      </div>
-    </details>
-  );
-}
-
-// ─── Cost Layer Ledger (FIFO) ───────────────────────────────────────────────
-// Live open purchase loads per cyl type with gross → OMC discount (CN) → net
-// landed rate, remaining qty, and stock value. This is the "running counter
-// per cylinder type as per the load and its landed price" (design §6). Any
-// delivered stock with no purchase layer behind it shows as an uncosted
-// warning (opening stock not yet entered).
-interface CostLayerRow {
-  cylinderTypeName: string;
-  date: string;
-  ref: string;
-  qtyReceived: number;
-  qtyRemaining: number;
-  grossRate: number;
-  cnPerCyl: number;
-  dnPerCyl: number;
-  landedRate: number;
-  isOpening: boolean;
-}
-interface CostLayersResponse {
-  gstMode: 'live' | 'sandbox' | 'disabled';
-  totalRemainingQty: number;
-  totalValue: number;
-  uncostedQty: number;
-  openLayers: CostLayerRow[];
-}
-
-function CostLayerLedgerPanel() {
-  const { data, isLoading } = useQuery<CostLayersResponse>({
-    queryKey: ['corp-cost-layers'],
-    queryFn: () => apiGet<CostLayersResponse>('/purchase-payments/cost-layers'),
-  });
-  return (
-    <details className="rounded-md border border-slate-200 dark:border-surface-700 bg-white dark:bg-surface-800" open>
-      <summary className="cursor-pointer bg-slate-50 dark:bg-surface-800 px-3 py-2 text-sm font-medium">
-        Cost Layer Ledger — open loads (FIFO) · stock value{' '}
-        {data ? <b>{fmtMoney(data.totalValue, true)}</b> : null}
-      </summary>
-      <div className="p-3">
-        <p className="mb-2 text-xs text-slate-500 dark:text-surface-400">
-          Each still-open purchase load, oldest first. Net landed rate ={' '}
-          gross − OMC discount (CN) + extra billed (DN).{' '}
-          {data?.gstMode && data.gstMode !== 'disabled' && <b>GST-EXCLUSIVE</b>}
-        </p>
-        {data && data.uncostedQty > 0 && (
-          <p className="mb-2 rounded-md bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800">
-            ⚠️ {data.uncostedQty} delivered cylinder(s) have no purchase load behind them
-            (opening stock not entered yet) — these are excluded from cost until you record
-            an opening entry.
-          </p>
-        )}
-        {isLoading ? (
-          <div className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">Computing…</div>
-        ) : !data || data.openLayers.length === 0 ? (
-          <p className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">No open cost layers.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-surface-800 text-xs uppercase text-slate-700 dark:text-surface-200">
-                <tr>
-                  <th className="p-2 text-left">Cyl Type</th>
                   <th className="p-2 text-left">Load Date</th>
                   <th className="p-2 text-left">Load Ref</th>
                   <th className="p-2 text-right">Received</th>
+                  <th className="p-2 text-right font-semibold">Landed / Cyl</th>
+                  <th className="p-2 text-right">Margin / Cyl</th>
                   <th className="p-2 text-right">Remaining</th>
-                  <th className="p-2 text-right">Gross / Cyl</th>
-                  <th className="p-2 text-right">OMC Disc / Cyl</th>
-                  <th className="p-2 text-right font-semibold">Net Landed / Cyl</th>
-                  <th className="p-2 text-right">Remaining Value</th>
+                  <th className="p-2 text-right">Rem. Value</th>
                 </tr>
               </thead>
               <tbody>
-                {data.openLayers.map((L, i) => (
-                  <tr key={L.ref + L.date + L.cylinderTypeName} className={i % 2 ? 'bg-slate-50 dark:bg-surface-800' : ''}>
-                    <td className="p-2">{L.cylinderTypeName}</td>
-                    <td className="p-2">{L.date}</td>
-                    <td className="p-2 font-mono text-xs">
-                      {L.ref}
-                      {L.isOpening && <span className="ml-1 rounded bg-slate-200 dark:bg-surface-700 px-1 text-[10px]">opening</span>}
-                    </td>
-                    <td className="p-2 text-right">{L.qtyReceived}</td>
-                    <td className="p-2 text-right font-medium">{L.qtyRemaining}</td>
-                    <td className="p-2 text-right">{fmtMoney(L.grossRate, true)}</td>
-                    <td className="p-2 text-right text-green-700 dark:text-green-400">
-                      {L.cnPerCyl > 0 ? `− ${fmtMoney(L.cnPerCyl, true)}` : '—'}
-                    </td>
-                    <td className="p-2 text-right font-semibold">{fmtMoney(L.landedRate, true)}</td>
-                    <td className="p-2 text-right">{fmtMoney(L.qtyRemaining * L.landedRate)}</td>
-                  </tr>
-                ))}
+                {groups.map((t) => {
+                  const open = !collapsed.has(t.name);
+                  return (
+                    <Fragment key={t.name}>
+                      {/* Type header — coloured, clickable, carries the summary */}
+                      <tr
+                        className="cursor-pointer select-none bg-blue-50 dark:bg-blue-900/25 hover:bg-blue-100 dark:hover:bg-blue-900/40 border-y border-blue-200 dark:border-blue-800"
+                        onClick={() => toggle(t.name)}
+                      >
+                        <td colSpan={2} className="p-2 font-semibold text-blue-900 dark:text-blue-200">
+                          <span className="inline-block w-4 text-blue-500">{open ? '▾' : '▸'}</span>
+                          {t.name} · MRP{' '}
+                          {t.mrp > 0 ? fmtMoney(t.mrp, true) : <span className="text-amber-600">not set in Settings</span>}
+                        </td>
+                        <td className="p-2 text-right tabular-nums font-semibold">{t.recv}</td>
+                        <td className="p-2 text-right tabular-nums font-semibold">{fmtMoney(t.avgLanded, true)}</td>
+                        <td className={`p-2 text-right tabular-nums font-semibold ${t.mrp > 0 ? (t.avgMargin >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600') : ''}`}>
+                          {t.mrp > 0 ? fmtMoney(t.avgMargin, true) : '—'}
+                        </td>
+                        <td className="p-2 text-right tabular-nums font-semibold">{t.rem || '—'}</td>
+                        <td className="p-2 text-right tabular-nums font-semibold">{t.remVal > 0 ? fmtMoney(t.remVal) : '—'}</td>
+                      </tr>
+                      {open && [...t.months.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, loads]) => {
+                        const sumRecv = loads.reduce((s, r) => s + r.qtyReceived, 0);
+                        const sumLine = loads.reduce((s, r) => s + r.grossRate * r.qtyReceived, 0);
+                        const sumFrt = loads.reduce((s, r) => s + r.freightPerCyl * r.qtyReceived, 0);
+                        const sumCn = loads.reduce((s, r) => s + r.cnPerCyl * r.qtyReceived, 0);
+                        const sumDn = loads.reduce((s, r) => s + r.dnPerCyl * r.qtyReceived, 0);
+                        const sumLanded = loads.reduce((s, r) => s + r.landedRate * r.qtyReceived, 0);
+                        const sumRem = loads.reduce((s, r) => s + r.qtyRemaining, 0);
+                        const sumRemVal = loads.reduce((s, r) => s + r.qtyRemaining * r.landedRate, 0);
+                        const avgLanded = sumRecv > 0 ? sumLanded / sumRecv : 0;
+                        return (
+                          <Fragment key={month}>
+                            {loads.map((r, i) => (
+                              <tr key={r.ref + r.date + i} className={i % 2 ? 'bg-slate-50/60 dark:bg-surface-800/60' : 'bg-white dark:bg-surface-800'}>
+                                <td className="p-2 pl-6 whitespace-nowrap text-slate-600 dark:text-surface-300">{r.date}</td>
+                                <td className="p-2 font-mono text-xs">{r.ref}</td>
+                                <td className="p-2 text-right tabular-nums">{r.qtyReceived}</td>
+                                <td className="p-2 text-right tabular-nums font-medium">{fmtMoney(r.landedRate, true)}</td>
+                                <td className={`p-2 text-right tabular-nums ${t.mrp > 0 ? (t.mrp - r.landedRate >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600') : ''}`}>
+                                  {t.mrp > 0 ? fmtMoney(t.mrp - r.landedRate, true) : '—'}
+                                </td>
+                                <td className="p-2 text-right tabular-nums">{r.qtyRemaining || '—'}</td>
+                                <td className="p-2 text-right tabular-nums">{r.qtyRemaining > 0 ? fmtMoney(r.qtyRemaining * r.landedRate) : '—'}</td>
+                              </tr>
+                            ))}
+                            <tr className="bg-amber-50/50 dark:bg-amber-900/10 text-xs font-semibold">
+                              <td className="p-2 pl-6">{month} subtotal</td>
+                              <td className="p-2 font-normal text-slate-500 dark:text-surface-400">
+                                Line {fmtMoney(sumLine, true)}
+                                {sumFrt > 0 && <> · Frt {fmtMoney(sumFrt, true)}</>}
+                                {sumCn > 0 && <> · CN −{fmtMoney(sumCn, true)}</>}
+                                {sumDn > 0 && <> · DN {fmtMoney(sumDn, true)}</>}
+                                {' · '}Landed {fmtMoney(sumLanded, true)}
+                              </td>
+                              <td className="p-2 text-right tabular-nums">{sumRecv}</td>
+                              <td className="p-2 text-right tabular-nums">{fmtMoney(avgLanded, true)}</td>
+                              <td className="p-2 text-right tabular-nums">{t.mrp > 0 ? fmtMoney(t.mrp - avgLanded, true) : '—'}</td>
+                              <td className="p-2 text-right tabular-nums">{sumRem || '—'}</td>
+                              <td className="p-2 text-right tabular-nums">{sumRemVal > 0 ? fmtMoney(sumRemVal) : '—'}</td>
+                            </tr>
+                          </Fragment>
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
               </tbody>
               <tfoot className="bg-slate-100 dark:bg-surface-700 text-sm font-semibold">
                 <tr>
-                  <td colSpan={4} className="p-2 text-right">Total open stock</td>
-                  <td className="p-2 text-right">{data.totalRemainingQty}</td>
-                  <td colSpan={3} className="p-2 text-right">Stock value</td>
-                  <td className="p-2 text-right">{fmtMoney(data.totalValue, true)}</td>
+                  <td colSpan={5} className="p-2 text-right">Total open stock</td>
+                  <td className="p-2 text-right tabular-nums">{data.totalRemainingQty}</td>
+                  <td className="p-2 text-right tabular-nums">{fmtMoney(data.totalValue, true)}</td>
                 </tr>
               </tfoot>
             </table>
