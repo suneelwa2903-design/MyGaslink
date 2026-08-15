@@ -491,6 +491,11 @@ export interface CostLedgerRow {
   cnPerCyl: number;
   dnPerCyl: number;
   landedRate: number;
+  /// MRP (settings selling price, GST-inclusive) EFFECTIVE ON THIS LOAD'S
+  /// DATE — the price with the greatest effectiveDate ≤ row.date. So a July
+  /// load is margined against July's selling price, an August load against
+  /// August's. 0 if no price was configured on/before the load date.
+  mrp: number;
 }
 
 /**
@@ -547,6 +552,30 @@ export async function computeCostLedger(
     }
     cursor.set(c.cylinderTypeId, idx);
   }
+  // Price history per cyl type, ASCENDING by effectiveDate, so each load row
+  // can be margined against the MRP effective ON ITS OWN load date — not a
+  // single current price. A July load → July's MRP, an August load → August's.
+  const priceRows = await prisma.cylinderPrice.findMany({
+    where: { distributorId },
+    orderBy: { effectiveDate: 'asc' },
+    select: { cylinderTypeId: true, price: true, effectiveDate: true },
+  });
+  const priceHist = new Map<string, { date: string; price: number }[]>();
+  for (const p of priceRows) {
+    const arr = priceHist.get(p.cylinderTypeId) ?? [];
+    arr.push({ date: toDayString(p.effectiveDate), price: toNum(p.price) });
+    priceHist.set(p.cylinderTypeId, arr);
+  }
+  // MRP effective at a load date = greatest effectiveDate ≤ date. If the load
+  // predates every configured price, fall back to the earliest known price.
+  const mrpAt = (cylinderTypeId: string, date: string): number => {
+    const arr = priceHist.get(cylinderTypeId);
+    if (!arr || arr.length === 0) return 0;
+    let eff = 0; let found = false;
+    for (const e of arr) { if (e.date <= date) { eff = e.price; found = true; } else break; }
+    return found ? eff : arr[0].price;
+  };
+
   const rows: CostLedgerRow[] = [];
   let totalRemainingQty = 0, totalValue = 0;
   for (const list of layers.values()) {
@@ -557,6 +586,7 @@ export async function computeCostLedger(
         qtyReceived: L.qtyReceived, qtyRemaining: L.qtyRemaining,
         grossRate: round4(L.grossRate), freightPerCyl: round4(L.freightPerCyl),
         cnPerCyl: round4(L.cnPerCyl), dnPerCyl: round4(L.dnPerCyl), landedRate: round4(L.landedRate),
+        mrp: mrpAt(L.cylinderTypeId, L.date),
       });
       if (L.qtyRemaining > 0) {
         totalRemainingQty += L.qtyRemaining;
@@ -565,13 +595,9 @@ export async function computeCostLedger(
     }
   }
   rows.sort((a, b) => a.cylinderTypeName.localeCompare(b.cylinderTypeName) || a.date.localeCompare(b.date));
-  // MRP = latest settings selling price per cyl type (GST-inclusive).
-  const prices = await prisma.cylinderPrice.findMany({
-    where: { distributorId },
-    orderBy: { effectiveDate: 'desc' },
-    select: { cylinderTypeId: true, price: true },
-  });
+  // Current (latest) MRP per cyl type — the header's reference figure. The
+  // per-row `mrp` above is date-effective; this is just "today's price".
   const mrpByType: Record<string, number> = {};
-  for (const p of prices) if (!(p.cylinderTypeId in mrpByType)) mrpByType[p.cylinderTypeId] = toNum(p.price);
+  for (const [cid, arr] of priceHist) if (arr.length) mrpByType[cid] = arr[arr.length - 1].price;
   return { gstMode, rows, mrpByType, totalRemainingQty, totalValue };
 }

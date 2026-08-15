@@ -526,6 +526,7 @@ interface CostLedgerRow {
   cnPerCyl: number;
   dnPerCyl: number;
   landedRate: number;
+  mrp: number; // MRP effective on THIS load's date (date-effective, GST-incl)
 }
 interface CostLedgerResponse {
   gstMode: 'live' | 'sandbox' | 'disabled';
@@ -571,10 +572,17 @@ function CostLayerLedgerPanel() {
       const all = [...t.months.values()].flat();
       const recv = all.reduce((s, r) => s + r.qtyReceived, 0);
       const landedVal = all.reduce((s, r) => s + r.landedRate * r.qtyReceived, 0);
+      // Margin + MRP are now DATE-EFFECTIVE per row — a July load uses July's
+      // MRP, an August load August's. The header shows the qty-weighted blend.
+      const mrpVal = all.reduce((s, r) => s + r.mrp * r.qtyReceived, 0);
+      const marginVal = all.reduce((s, r) => s + (r.mrp - r.landedRate) * r.qtyReceived, 0);
       const rem = all.reduce((s, r) => s + r.qtyRemaining, 0);
       const remVal = all.reduce((s, r) => s + r.qtyRemaining * r.landedRate, 0);
       const avgLanded = recv > 0 ? landedVal / recv : 0;
-      return { ...t, recv, avgLanded, avgMargin: t.mrp - avgLanded, rem, remVal };
+      const avgMrp = recv > 0 ? mrpVal / recv : 0;
+      const avgMargin = recv > 0 ? marginVal / recv : 0;
+      const hasMrp = all.some((r) => r.mrp > 0);
+      return { ...t, recv, avgLanded, avgMrp, avgMargin, hasMrp, rem, remVal };
     });
   }, [data]);
 
@@ -586,7 +594,8 @@ function CostLayerLedgerPanel() {
       <div className="p-3">
         <p className="mb-2 text-xs text-slate-500 dark:text-surface-400">
           Click a cylinder-type row to expand its loads. Net landed = gross + freight + DN − CN.
-          Margin = MRP (Settings selling price) − landed. <b>GST-INCLUSIVE</b>.
+          MRP is the Settings selling price <b>effective on each load date</b> (a July load uses the July MRP,
+          an August load the August MRP). Margin = that MRP − landed; the type header shows the qty-weighted blend. <b>GST-INCLUSIVE</b>.
         </p>
         {isLoading ? (
           <div className="p-4 text-center text-sm text-slate-500 dark:text-surface-400">Computing…</div>
@@ -601,6 +610,7 @@ function CostLayerLedgerPanel() {
                   <th className="p-2 text-left">Load Ref</th>
                   <th className="p-2 text-right">Received</th>
                   <th className="p-2 text-right font-semibold">Landed / Cyl</th>
+                  <th className="p-2 text-right">MRP / Cyl</th>
                   <th className="p-2 text-right">Margin / Cyl</th>
                   <th className="p-2 text-right">Remaining</th>
                   <th className="p-2 text-right">Rem. Value</th>
@@ -618,13 +628,14 @@ function CostLayerLedgerPanel() {
                       >
                         <td colSpan={2} className="p-2 font-semibold text-blue-900 dark:text-blue-200">
                           <span className="inline-block w-4 text-blue-500">{open ? '▾' : '▸'}</span>
-                          {t.name} · MRP{' '}
-                          {t.mrp > 0 ? fmtMoney(t.mrp, true) : <span className="text-amber-600">not set in Settings</span>}
+                          {t.name}
+                          {!t.hasMrp && <span className="ml-2 text-xs font-normal text-amber-600">MRP not set in Settings</span>}
                         </td>
                         <td className="p-2 text-right tabular-nums font-semibold">{t.recv}</td>
                         <td className="p-2 text-right tabular-nums font-semibold">{fmtMoney(t.avgLanded, true)}</td>
-                        <td className={`p-2 text-right tabular-nums font-semibold ${t.mrp > 0 ? (t.avgMargin >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600') : ''}`}>
-                          {t.mrp > 0 ? fmtMoney(t.avgMargin, true) : '—'}
+                        <td className="p-2 text-right tabular-nums font-semibold">{t.hasMrp ? fmtMoney(t.avgMrp, true) : '—'}</td>
+                        <td className={`p-2 text-right tabular-nums font-semibold ${t.hasMrp ? (t.avgMargin >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600') : ''}`}>
+                          {t.hasMrp ? fmtMoney(t.avgMargin, true) : '—'}
                         </td>
                         <td className="p-2 text-right tabular-nums font-semibold">{t.rem || '—'}</td>
                         <td className="p-2 text-right tabular-nums font-semibold">{t.remVal > 0 ? fmtMoney(t.remVal) : '—'}</td>
@@ -639,6 +650,9 @@ function CostLayerLedgerPanel() {
                         const sumRem = loads.reduce((s, r) => s + r.qtyRemaining, 0);
                         const sumRemVal = loads.reduce((s, r) => s + r.qtyRemaining * r.landedRate, 0);
                         const avgLanded = sumRecv > 0 ? sumLanded / sumRecv : 0;
+                        // month's MRP = qty-weighted blend of the loads' date-effective MRPs
+                        // (usually a single value since MRP changes monthly).
+                        const monthMrp = sumRecv > 0 ? loads.reduce((s, r) => s + r.mrp * r.qtyReceived, 0) / sumRecv : 0;
                         return (
                           <Fragment key={month}>
                             {loads.map((r, i) => (
@@ -647,8 +661,9 @@ function CostLayerLedgerPanel() {
                                 <td className="p-2 font-mono text-xs">{r.ref}</td>
                                 <td className="p-2 text-right tabular-nums">{r.qtyReceived}</td>
                                 <td className="p-2 text-right tabular-nums font-medium">{fmtMoney(r.landedRate, true)}</td>
-                                <td className={`p-2 text-right tabular-nums ${t.mrp > 0 ? (t.mrp - r.landedRate >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600') : ''}`}>
-                                  {t.mrp > 0 ? fmtMoney(t.mrp - r.landedRate, true) : '—'}
+                                <td className="p-2 text-right tabular-nums text-slate-600 dark:text-surface-300">{r.mrp > 0 ? fmtMoney(r.mrp, true) : '—'}</td>
+                                <td className={`p-2 text-right tabular-nums ${r.mrp > 0 ? (r.mrp - r.landedRate >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600') : ''}`}>
+                                  {r.mrp > 0 ? fmtMoney(r.mrp - r.landedRate, true) : '—'}
                                 </td>
                                 <td className="p-2 text-right tabular-nums">{r.qtyRemaining || '—'}</td>
                                 <td className="p-2 text-right tabular-nums">{r.qtyRemaining > 0 ? fmtMoney(r.qtyRemaining * r.landedRate) : '—'}</td>
@@ -665,7 +680,8 @@ function CostLayerLedgerPanel() {
                               </td>
                               <td className="p-2 text-right tabular-nums">{sumRecv}</td>
                               <td className="p-2 text-right tabular-nums">{fmtMoney(avgLanded, true)}</td>
-                              <td className="p-2 text-right tabular-nums">{t.mrp > 0 ? fmtMoney(t.mrp - avgLanded, true) : '—'}</td>
+                              <td className="p-2 text-right tabular-nums">{monthMrp > 0 ? fmtMoney(monthMrp, true) : '—'}</td>
+                              <td className="p-2 text-right tabular-nums">{monthMrp > 0 ? fmtMoney(monthMrp - avgLanded, true) : '—'}</td>
                               <td className="p-2 text-right tabular-nums">{sumRem || '—'}</td>
                               <td className="p-2 text-right tabular-nums">{sumRemVal > 0 ? fmtMoney(sumRemVal) : '—'}</td>
                             </tr>
@@ -678,7 +694,7 @@ function CostLayerLedgerPanel() {
               </tbody>
               <tfoot className="bg-slate-100 dark:bg-surface-700 text-sm font-semibold">
                 <tr>
-                  <td colSpan={5} className="p-2 text-right">Total open stock</td>
+                  <td colSpan={6} className="p-2 text-right">Total open stock</td>
                   <td className="p-2 text-right tabular-nums">{data.totalRemainingQty}</td>
                   <td className="p-2 text-right tabular-nums">{fmtMoney(data.totalValue, true)}</td>
                 </tr>

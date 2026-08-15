@@ -70,6 +70,7 @@ interface CostLedgerRow {
   purchaseEntryId: string | null;
   qtyReceived: number; qtyRemaining: number;
   grossRate: number; freightPerCyl: number; cnPerCyl: number; dnPerCyl: number; landedRate: number;
+  mrp: number; // MRP effective on THIS load's date (date-effective, GST-incl)
 }
 interface CostLedgerResponse {
   rows: CostLedgerRow[]; mrpByType: Record<string, number>;
@@ -194,9 +195,15 @@ export default function CorpLoadsScreen() {
       const recv = all.reduce((s, r) => s + r.qtyReceived, 0);
       const landedVal = all.reduce((s, r) => s + r.landedRate * r.qtyReceived, 0);
       const avgLanded = recv > 0 ? landedVal / recv : 0;
+      // Date-effective MRP: each load uses its own month's MRP; header = blend.
+      const mrpVal = all.reduce((s, r) => s + toNum(r.mrp) * r.qtyReceived, 0);
+      const marginVal = all.reduce((s, r) => s + (toNum(r.mrp) - r.landedRate) * r.qtyReceived, 0);
+      const avgMrp = recv > 0 ? mrpVal / recv : 0;
+      const avgMargin = recv > 0 ? marginVal / recv : 0;
+      const hasMrp = all.some((r) => toNum(r.mrp) > 0);
       const rem = all.reduce((s, r) => s + r.qtyRemaining, 0);
       const remVal = all.reduce((s, r) => s + r.qtyRemaining * r.landedRate, 0);
-      return { ...t, recv, avgLanded, avgMargin: t.mrp - avgLanded, rem, remVal };
+      return { ...t, recv, avgLanded, avgMrp, avgMargin, hasMrp, rem, remVal };
     });
   }, [costLedger]);
 
@@ -386,7 +393,7 @@ export default function CorpLoadsScreen() {
           ) : (
             costGroups.map((t) => {
               const open = !collapsed.has(t.id);
-              const marginColor = t.mrp <= 0 ? muted : t.avgMargin >= 0 ? (dark ? '#4ade80' : '#15803d') : (dark ? '#f87171' : '#dc2626');
+              const marginColor = !t.hasMrp ? muted : t.avgMargin >= 0 ? (dark ? '#4ade80' : '#15803d') : (dark ? '#f87171' : '#dc2626');
               return (
                 <View key={t.id}>
                   {/* Type header — blue, tappable, shows the roll-up summary. */}
@@ -413,8 +420,8 @@ export default function CorpLoadsScreen() {
                       <Text style={{ fontSize: 11, color: muted }}>Recv <Text style={{ color: text, fontWeight: '600' }}>{t.recv}</Text></Text>
                       <Text style={{ fontSize: 11, color: muted }}>In stock <Text style={{ color: text, fontWeight: '600' }}>{t.rem}</Text></Text>
                       <Text style={{ fontSize: 11, color: muted }}>Avg landed <Text style={{ color: text, fontWeight: '600' }}>{formatINR(t.avgLanded)}</Text></Text>
-                      <Text style={{ fontSize: 11, color: muted }}>MRP <Text style={{ color: text, fontWeight: '600' }}>{t.mrp > 0 ? formatINR(t.mrp) : '—'}</Text></Text>
-                      <Text style={{ fontSize: 11, color: muted }}>Margin <Text style={{ color: marginColor, fontWeight: '700' }}>{t.mrp > 0 ? formatINR(t.avgMargin) : '—'}</Text></Text>
+                      <Text style={{ fontSize: 11, color: muted }}>MRP <Text style={{ color: text, fontWeight: '600' }}>{t.hasMrp ? formatINR(t.avgMrp) : '—'}</Text></Text>
+                      <Text style={{ fontSize: 11, color: muted }}>Margin <Text style={{ color: marginColor, fontWeight: '700' }}>{t.hasMrp ? formatINR(t.avgMargin) : '—'}</Text></Text>
                     </View>
                   </TouchableOpacity>
 
@@ -422,7 +429,8 @@ export default function CorpLoadsScreen() {
                     const sumRecv = loads.reduce((s, r) => s + r.qtyReceived, 0);
                     const sumLanded = loads.reduce((s, r) => s + r.landedRate * r.qtyReceived, 0);
                     const sumRem = loads.reduce((s, r) => s + r.qtyRemaining, 0);
-                    const sumRemVal = loads.reduce((s, r) => s + r.qtyRemaining * r.landedRate, 0);
+                    const mAvgLanded = sumRecv > 0 ? sumLanded / sumRecv : 0;
+                    const mMrp = sumRecv > 0 ? loads.reduce((s, r) => s + toNum(r.mrp) * r.qtyReceived, 0) / sumRecv : 0;
                     const monthLabel = month ? new Date(`${month}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : '—';
                     return (
                       <View key={`${t.id}-${month}`}>
@@ -430,6 +438,8 @@ export default function CorpLoadsScreen() {
                         {loads.map((r, i) => {
                           const gross = toNum(r.grossRate);
                           const landed = toNum(r.landedRate);
+                          const mrp = toNum(r.mrp);          // date-effective MRP for THIS load
+                          const margin = mrp - landed;
                           const adj = toNum(r.freightPerCyl) + toNum(r.dnPerCyl) - toNum(r.cnPerCyl);
                           return (
                             <View key={`${r.purchaseEntryId ?? 'open'}-${i}`} style={{
@@ -442,10 +452,15 @@ export default function CorpLoadsScreen() {
                                   {r.date ? formatDate(r.date) : '—'}{r.ref ? <Text style={{ color: muted, fontWeight: '400' }}>  {r.ref}</Text> : null}
                                 </Text>
                                 <Text style={{ fontSize: 11, color: muted, marginTop: 2 }}>
-                                  {r.qtyReceived} recv · {r.qtyRemaining} left{adj !== 0 ? ` · gross ${formatINR(gross)}` : ''}
+                                  {r.qtyReceived} recv · {r.qtyRemaining} left · MRP {mrp > 0 ? formatINR(mrp) : '—'}{adj !== 0 ? ` · gross ${formatINR(gross)}` : ''}
                                 </Text>
                               </View>
-                              <Text style={{ fontSize: 13, fontWeight: '700', color: text, marginLeft: 8 }}>{formatINR(landed)}</Text>
+                              <View style={{ alignItems: 'flex-end', marginLeft: 8 }}>
+                                <Text style={{ fontSize: 13, fontWeight: '700', color: text }}>{formatINR(landed)}</Text>
+                                <Text style={{ fontSize: 11, fontWeight: '600', marginTop: 2, color: mrp <= 0 ? muted : margin >= 0 ? (dark ? '#4ade80' : '#15803d') : (dark ? '#f87171' : '#dc2626') }}>
+                                  {mrp > 0 ? `${margin >= 0 ? '+' : ''}${formatINR(margin)}` : '—'}
+                                </Text>
+                              </View>
                             </View>
                           );
                         })}
@@ -459,7 +474,7 @@ export default function CorpLoadsScreen() {
                             {monthLabel} · {sumRecv} recv, {sumRem} left
                           </Text>
                           <Text style={{ fontSize: 11, fontWeight: '700', color: dark ? '#fcd34d' : '#92400e' }}>
-                            {formatINR(sumRecv > 0 ? sumLanded / sumRecv : 0)}/cyl · {formatINR(sumRemVal)}
+                            {formatINR(mAvgLanded)}/cyl{mMrp > 0 ? ` · marg ${formatINR(mMrp - mAvgLanded)}` : ''}
                           </Text>
                         </View>
                       </View>
