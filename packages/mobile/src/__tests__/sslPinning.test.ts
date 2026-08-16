@@ -90,9 +90,14 @@ describe('withSslPinning wiring — app.json + eas.json', () => {
     expect(plugins).toContain('./plugins/withSslPinning');
   });
 
-  it('SSL_PINNING=true on preview AND production build profiles', () => {
-    expect((easJson.build.preview.env as Record<string, string>).SSL_PINNING).toBe('true');
-    expect((easJson.build.production.env as Record<string, string>).SSL_PINNING).toBe('true');
+  // 2026-08-16 (Suneel): v1.3.0 ships pinning OFF on purpose — hold pinning
+  // for a second release after the real-device MITM test (see memory
+  // project_ssl_pinning_off_for_v130 + commit b2b1c8c). This guard now pins
+  // the INTENDED state (false) so an accidental flip still trips CI. When the
+  // pinning release comes, flip both back to 'true' here AND in eas.json.
+  it('SSL_PINNING=false on preview AND production (v1.3.0 hold — flip to true for the pinning release)', () => {
+    expect((easJson.build.preview.env as Record<string, string>).SSL_PINNING).toBe('false');
+    expect((easJson.build.production.env as Record<string, string>).SSL_PINNING).toBe('false');
   });
 
   it('development profile does NOT set SSL_PINNING (dev builds must stay unpinned)', () => {
